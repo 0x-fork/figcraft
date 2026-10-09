@@ -53,8 +53,38 @@ fn new_pixmap(w: u32, h: u32) -> Option<Pixmap> {
     Pixmap::new(w, h)
 }
 
-/// Render a page region.
+/// Render a page region, splitting it into horizontal bands rendered in parallel (desktop).
 pub fn render_view(doc: &Document, page: NodeId, view: &View, opts: &Options) -> Option<Pixmap> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let threads = rayon::current_num_threads().clamp(1, 16) as u32;
+        let bands = threads.min(view.height / 96).max(1);
+        if bands > 1 && view.width.saturating_mul(view.height) > 300_000 {
+            use rayon::prelude::*;
+            let band_h = view.height.div_ceil(bands);
+            let parts: Vec<(u32, Option<Pixmap>)> = (0..bands)
+                .into_par_iter()
+                .map(|i| {
+                    let y0 = i * band_h;
+                    let h = band_h.min(view.height.saturating_sub(y0));
+                    let s = view.scale.max(1e-9);
+                    let v = View { origin: (view.origin.0, view.origin.1 + f64::from(y0) / s), scale: view.scale, width: view.width, height: h.max(1) };
+                    (y0, render_view_single(doc, page, &v, opts))
+                })
+                .collect();
+            let mut out = new_pixmap(view.width, view.height)?;
+            for (y0, part) in parts {
+                let Some(part) = part else { continue };
+                out.draw_pixmap(0, y0 as i32, part.as_ref(), &tiny_skia::PixmapPaint { blend_mode: tiny_skia::BlendMode::Source, ..Default::default() }, tiny_skia::Transform::identity(), None);
+            }
+            return Some(out);
+        }
+    }
+    render_view_single(doc, page, view, opts)
+}
+
+/// Render a page region on the calling thread.
+pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Options) -> Option<Pixmap> {
     let mut pix = new_pixmap(view.width, view.height)?;
     let bg = opts.background.or_else(|| match doc.node(page).map(|p| &p.kind) {
         Some(NodeKind::Page { background, .. }) => Some(*background),

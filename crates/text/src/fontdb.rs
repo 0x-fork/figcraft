@@ -487,5 +487,7 @@ pub fn scan_system_fonts() {
                 w.pending.entry(k).or_insert(v);
             }
         }
+        drop(w);
+        crate::clear_layout_cache();
     }
 }
