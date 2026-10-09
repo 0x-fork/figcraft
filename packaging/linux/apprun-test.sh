@@ -48,7 +48,7 @@ expected_exec="Exec=\"$(readlink -f "$APPIMAGE")\" %F"
 grep -Fxq "$expected_exec" "$DESKTOP" || fail "Exec not rewritten: $(grep '^Exec=' "$DESKTOP")"
 grep -q '^TryExec=' "$DESKTOP" && fail "TryExec kept, the entry would be hidden"
 grep -Fxq "Icon=$APP_ID" "$DESKTOP" || fail "Icon line lost"
-grep -Fxq 'Categories=Graphics;2DGraphics;RasterGraphics;Photography;' "$DESKTOP" || fail "metadata lines lost"
+grep -Fxq 'Categories=Graphics;2DGraphics;VectorGraphics;X-Design;' "$DESKTOP" || fail "metadata lines lost"
 if command -v desktop-file-validate >/dev/null; then
   desktop-file-validate "$DESKTOP" || fail "generated desktop entry is invalid"
 fi
