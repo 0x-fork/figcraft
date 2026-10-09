@@ -1,0 +1,392 @@
+//! FigCraft colour and paint.
+//!
+//! [`Color`] is non-premultiplied sRGB in `0..=1` floats (what a design panel shows as hex + opacity).
+//! [`Paint`] is one entry of a node's fill or stroke list: solid, the four gradient kinds or an
+//! image, each with its own opacity, visibility and blend mode.
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+use serde::{Deserialize, Serialize};
+
+mod blend;
+mod hsx;
+pub use blend::BlendMode;
+pub use hsx::*;
+
+/// A non-premultiplied sRGB colour with alpha, components in `0..=1`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Color {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    #[serde(default = "one")]
+    pub a: f32,
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+fn clamp01(v: f32) -> f32 {
+    if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 }
+}
+
+impl Default for Color {
+    fn default() -> Self {
+        Color::BLACK
+    }
+}
+
+impl Color {
+    pub const BLACK: Color = Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
+    pub const WHITE: Color = Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
+    pub const TRANSPARENT: Color = Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 };
+    /// Figma's default shape fill (#D9D9D9).
+    pub const DEFAULT_SHAPE: Color = Color::from_rgb8_const(0xD9, 0xD9, 0xD9);
+    /// Default page background (#F5F5F5).
+    pub const DEFAULT_PAGE: Color = Color::from_rgb8_const(0xF5, 0xF5, 0xF5);
+
+    pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
+        Self { r: clamp01(r), g: clamp01(g), b: clamp01(b), a: clamp01(a) }
+    }
+
+    pub const fn from_rgb8_const(r: u8, g: u8, b: u8) -> Self {
+        Self { r: r as f32 / 255.0, g: g as f32 / 255.0, b: b as f32 / 255.0, a: 1.0 }
+    }
+
+    pub fn from_rgba8(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self { r: f32::from(r) / 255.0, g: f32::from(g) / 255.0, b: f32::from(b) / 255.0, a: f32::from(a) / 255.0 }
+    }
+
+    pub fn to_rgba8(self) -> [u8; 4] {
+        let q = |v: f32| (clamp01(v) * 255.0).round() as u8;
+        [q(self.r), q(self.g), q(self.b), q(self.a)]
+    }
+
+    pub fn with_alpha(self, a: f32) -> Self {
+        Self { a: clamp01(a), ..self }
+    }
+
+    /// Clamp every component into range and replace NaN (untrusted input).
+    pub fn sanitized(self) -> Self {
+        Self::new(self.r, self.g, self.b, self.a)
+    }
+
+    /// `RRGGBB` (upper-case, no `#`), the way the design panel shows colours.
+    pub fn to_hex(self) -> String {
+        let [r, g, b, _] = self.to_rgba8();
+        format!("{r:02X}{g:02X}{b:02X}")
+    }
+
+    /// `#RRGGBB` or `#RRGGBBAA` when not opaque.
+    pub fn to_css_hex(self) -> String {
+        let [r, g, b, a] = self.to_rgba8();
+        if a == 255 { format!("#{r:02X}{g:02X}{b:02X}") } else { format!("#{r:02X}{g:02X}{b:02X}{a:02X}") }
+    }
+
+    /// Parse hex the way the colour field does: `#` optional, 1, 2, 3, 4, 6 or 8 digits
+    /// (`F` → `FFFFFF`, `AB` → `ABABAB`, `ABC` → `AABBCC`).
+    pub fn from_hex(s: &str) -> Option<Self> {
+        let s = s.trim().trim_start_matches('#');
+        if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+            return None;
+        }
+        let digits: Vec<u8> = s.chars().filter_map(|c| c.to_digit(16)).map(|d| d as u8).collect();
+        let byte = |hi: u8, lo: u8| hi * 16 + lo;
+        let (r, g, b, a) = match digits.as_slice() {
+            [d] => (byte(*d, *d), byte(*d, *d), byte(*d, *d), 255),
+            [a, b] => (byte(*a, *b), byte(*a, *b), byte(*a, *b), 255),
+            [r, g, b] => (byte(*r, *r), byte(*g, *g), byte(*b, *b), 255),
+            [r, g, b, a] => (byte(*r, *r), byte(*g, *g), byte(*b, *b), byte(*a, *a)),
+            [r1, r2, g1, g2, b1, b2] => (byte(*r1, *r2), byte(*g1, *g2), byte(*b1, *b2), 255),
+            [r1, r2, g1, g2, b1, b2, a1, a2] => (byte(*r1, *r2), byte(*g1, *g2), byte(*b1, *b2), byte(*a1, *a2)),
+            _ => return None,
+        };
+        Some(Self::from_rgba8(r, g, b, a))
+    }
+
+    /// Parse a CSS colour: hex, `rgb()/rgba()`, `hsl()/hsla()` or a few common names.
+    pub fn parse_css(s: &str) -> Option<Self> {
+        let t = s.trim().to_ascii_lowercase();
+        if t.starts_with('#') {
+            return Self::from_hex(&t);
+        }
+        if let Some(inner) = t.strip_prefix("rgba(").or_else(|| t.strip_prefix("rgb(")).and_then(|r| r.strip_suffix(')')) {
+            let parts = css_args(inner);
+            let num = |i: usize| -> Option<f32> {
+                let p = parts.get(i)?;
+                if let Some(pc) = p.strip_suffix('%') { pc.trim().parse::<f32>().ok().map(|v| v / 100.0) } else { p.parse::<f32>().ok().map(|v| v / 255.0) }
+            };
+            let alpha = parts.get(3).and_then(|a| parse_alpha(a)).unwrap_or(1.0);
+            return Some(Self::new(num(0)?, num(1)?, num(2)?, alpha));
+        }
+        if let Some(inner) = t.strip_prefix("hsla(").or_else(|| t.strip_prefix("hsl(")).and_then(|r| r.strip_suffix(')')) {
+            let parts = css_args(inner);
+            let h = parts.first()?.trim_end_matches("deg").parse::<f32>().ok()?;
+            let s = parts.get(1)?.trim_end_matches('%').parse::<f32>().ok()? / 100.0;
+            let l = parts.get(2)?.trim_end_matches('%').parse::<f32>().ok()? / 100.0;
+            let alpha = parts.get(3).and_then(|a| parse_alpha(a)).unwrap_or(1.0);
+            return Some(Hsl { h, s, l }.to_color().with_alpha(alpha));
+        }
+        let named = match t.as_str() {
+            "black" => Color::BLACK,
+            "white" => Color::WHITE,
+            "transparent" => Color::TRANSPARENT,
+            "red" => Color::from_rgb8_const(255, 0, 0),
+            "green" => Color::from_rgb8_const(0, 128, 0),
+            "lime" => Color::from_rgb8_const(0, 255, 0),
+            "blue" => Color::from_rgb8_const(0, 0, 255),
+            "yellow" => Color::from_rgb8_const(255, 255, 0),
+            "orange" => Color::from_rgb8_const(255, 165, 0),
+            "purple" => Color::from_rgb8_const(128, 0, 128),
+            "gray" | "grey" => Color::from_rgb8_const(128, 128, 128),
+            _ => return Self::from_hex(&t),
+        };
+        Some(named)
+    }
+
+    /// CSS `rgba(...)` / hex text for copy-as-CSS.
+    pub fn to_css(self) -> String {
+        let [r, g, b, _] = self.to_rgba8();
+        if self.a >= 0.999 { self.to_css_hex() } else { format!("rgba({r}, {g}, {b}, {:.2})", self.a) }
+    }
+
+    /// Linear interpolation in sRGB (as gradients render).
+    pub fn lerp(self, other: Color, t: f32) -> Color {
+        let t = clamp01(t);
+        Color::new(self.r + (other.r - self.r) * t, self.g + (other.g - self.g) * t, self.b + (other.b - self.b) * t, self.a + (other.a - self.a) * t)
+    }
+
+    /// Relative luminance (WCAG).
+    pub fn luminance(self) -> f32 {
+        let lin = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+        0.2126 * lin(self.r) + 0.7152 * lin(self.g) + 0.0722 * lin(self.b)
+    }
+
+    /// WCAG contrast ratio between two opaque colours.
+    pub fn contrast(self, other: Color) -> f32 {
+        let (a, b) = (self.luminance() + 0.05, other.luminance() + 0.05);
+        if a > b { a / b } else { b / a }
+    }
+}
+
+fn css_args(inner: &str) -> Vec<String> {
+    inner.replace('/', ",").split([',', ' ']).map(str::trim).filter(|p| !p.is_empty()).map(str::to_string).collect()
+}
+
+fn parse_alpha(a: &str) -> Option<f32> {
+    if let Some(pc) = a.strip_suffix('%') { pc.parse::<f32>().ok().map(|v| v / 100.0) } else { a.parse::<f32>().ok() }
+}
+
+/// One colour stop of a gradient.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ColorStop {
+    /// Position along the gradient, 0..=1.
+    pub position: f32,
+    pub color: Color,
+}
+
+/// The gradient kinds Figma offers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum GradientKind {
+    #[default]
+    Linear,
+    Radial,
+    Angular,
+    Diamond,
+}
+
+/// A gradient paint. The three handles are in the node's unit box (0..1 on both axes): `from`
+/// is the start (centre for radial/angular/diamond), `to` the end of the main axis, `width` the end
+/// of the secondary axis (ellipse width for radial).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Gradient {
+    pub kind: GradientKind,
+    pub stops: Vec<ColorStop>,
+    pub from: (f64, f64),
+    pub to: (f64, f64),
+    pub width: (f64, f64),
+}
+
+impl Gradient {
+    /// Figma's default gradient for `kind`: black → transparent black? No: the default stop pair is
+    /// the current colour at 100% → the same at 0% opacity. We use black→white for a visible default.
+    pub fn default_for(kind: GradientKind, base: Color) -> Self {
+        let (from, to, width) = match kind {
+            GradientKind::Linear => ((0.5, 0.0), (0.5, 1.0), (0.0, 0.5)),
+            _ => ((0.5, 0.5), (0.5, 1.0), (1.0, 0.5)),
+        };
+        Self {
+            kind,
+            stops: vec![ColorStop { position: 0.0, color: base.with_alpha(1.0) }, ColorStop { position: 1.0, color: base.with_alpha(0.0) }],
+            from,
+            to,
+            width,
+        }
+    }
+
+    /// Stops sorted by position with NaNs removed; at least one stop.
+    pub fn sorted_stops(&self) -> Vec<ColorStop> {
+        let mut s: Vec<ColorStop> =
+            self.stops.iter().filter(|s| s.position.is_finite()).map(|s| ColorStop { position: clamp01(s.position), color: s.color.sanitized() }).collect();
+        s.sort_by(|a, b| a.position.total_cmp(&b.position));
+        if s.is_empty() {
+            s.push(ColorStop { position: 0.0, color: Color::BLACK });
+        }
+        s
+    }
+
+    /// The colour at `t` (0..1) along the gradient.
+    pub fn sample(&self, t: f32) -> Color {
+        let stops = self.sorted_stops();
+        let t = clamp01(t);
+        let mut prev = match stops.first() {
+            Some(s) => *s,
+            None => return Color::BLACK,
+        };
+        if t <= prev.position {
+            return prev.color;
+        }
+        for s in stops.iter().skip(1) {
+            if t <= s.position {
+                let span = s.position - prev.position;
+                let f = if span > 1e-6 { (t - prev.position) / span } else { 1.0 };
+                return prev.color.lerp(s.color, f);
+            }
+            prev = *s;
+        }
+        prev.color
+    }
+}
+
+/// How an image fills its node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ImageScaleMode {
+    #[default]
+    Fill,
+    Fit,
+    Crop,
+    Tile,
+}
+
+/// Image adjustments (all `-1..=1`, 0 = unchanged).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ImageFilters {
+    pub exposure: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub temperature: f32,
+    pub tint: f32,
+    pub highlights: f32,
+    pub shadows: f32,
+}
+
+impl ImageFilters {
+    pub fn is_identity(&self) -> bool {
+        *self == ImageFilters::default()
+    }
+}
+
+/// An image paint: the image is referenced by its content hash in the document's image store.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ImagePaint {
+    pub image: String,
+    #[serde(default)]
+    pub scale_mode: ImageScaleMode,
+    /// Tile scale (Tile mode), 1 = the image's own size.
+    #[serde(default = "one64")]
+    pub scale: f64,
+    /// Rotation in multiples of 90°.
+    #[serde(default)]
+    pub rotation: i32,
+    /// Crop transform (Crop mode): the unit-box → image-uv mapping as a 2×3 matrix.
+    #[serde(default)]
+    pub crop: Option<[f64; 6]>,
+    #[serde(default)]
+    pub filters: ImageFilters,
+}
+
+fn one64() -> f64 {
+    1.0
+}
+
+/// What a paint paints with.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum PaintKind {
+    Solid { color: Color },
+    Gradient(Gradient),
+    Image(ImagePaint),
+}
+
+/// One fill or stroke paint.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Paint {
+    #[serde(flatten)]
+    pub kind: PaintKind,
+    #[serde(default = "one")]
+    pub opacity: f32,
+    #[serde(default = "yes")]
+    pub visible: bool,
+    #[serde(default)]
+    pub blend: BlendMode,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Paint {
+    pub fn solid(color: Color) -> Self {
+        Self { kind: PaintKind::Solid { color: color.with_alpha(1.0) }, opacity: color.a, visible: true, blend: BlendMode::Normal }
+    }
+
+    pub fn gradient(g: Gradient) -> Self {
+        Self { kind: PaintKind::Gradient(g), opacity: 1.0, visible: true, blend: BlendMode::Normal }
+    }
+
+    pub fn image(hash: impl Into<String>, mode: ImageScaleMode) -> Self {
+        Self {
+            kind: PaintKind::Image(ImagePaint { image: hash.into(), scale_mode: mode, scale: 1.0, rotation: 0, crop: None, filters: ImageFilters::default() }),
+            opacity: 1.0,
+            visible: true,
+            blend: BlendMode::Normal,
+        }
+    }
+
+    /// The solid colour (with the paint opacity folded into alpha), if solid.
+    pub fn solid_color(&self) -> Option<Color> {
+        match &self.kind {
+            PaintKind::Solid { color } => Some(color.with_alpha(color.a * self.opacity)),
+            _ => None,
+        }
+    }
+
+    /// A short label for the panel row ("D9D9D9", "Linear", "Image").
+    pub fn label(&self) -> String {
+        match &self.kind {
+            PaintKind::Solid { color } => color.to_hex(),
+            PaintKind::Gradient(g) => match g.kind {
+                GradientKind::Linear => "Linear".into(),
+                GradientKind::Radial => "Radial".into(),
+                GradientKind::Angular => "Angular".into(),
+                GradientKind::Diamond => "Diamond".into(),
+            },
+            PaintKind::Image(_) => "Image".into(),
+        }
+    }
+
+    /// A representative colour (for swatches and outlines).
+    pub fn preview_color(&self) -> Color {
+        match &self.kind {
+            PaintKind::Solid { color } => color.with_alpha(color.a * self.opacity),
+            PaintKind::Gradient(g) => g.sample(0.0),
+            PaintKind::Image(_) => Color::from_rgb8_const(0xB3, 0xB3, 0xB3),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

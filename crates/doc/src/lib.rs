@@ -1,0 +1,689 @@
+//! The FigCraft document model.
+//!
+//! A [`Document`] holds pages; each page is the root of a tree of [`Node`]s (frames, groups, shapes,
+//! text, components, instances…). Nodes are stored by id in a map of `Arc`s, so cloning a document
+//! (an undo snapshot) only copies pointers, and editing one node copies only that node.
+//!
+//! Everything here is pure data plus queries and structural edits; commands, history and rendering
+//! live in higher crates.
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+pub mod geometry;
+pub mod node;
+pub mod props;
+pub mod proto;
+pub mod styles;
+pub mod text;
+pub mod vector;
+
+pub use figcraft_color as color;
+pub use figcraft_geom as geom;
+pub use node::*;
+pub use props::*;
+pub use styles::*;
+pub use text::*;
+pub use vector::*;
+
+use figcraft_color::Color;
+use figcraft_geom::{Affine, Point, Rect};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+/// Stable node identifier, unique within a document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct NodeId(pub u64);
+
+impl std::fmt::Display for NodeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::str::FromStr for NodeId {
+    type Err = std::num::ParseIntError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Accept "12" and Figma-style "0:12".
+        let t = s.trim();
+        let t = t.rsplit(':').next().unwrap_or(t);
+        t.parse::<u64>().map(NodeId)
+    }
+}
+
+#[derive(Debug, thiserror::Error, PartialEq)]
+pub enum DocError {
+    #[error("no such node {0}")]
+    NoNode(NodeId),
+    #[error("{0} can't contain children")]
+    NotContainer(NodeId),
+    #[error("moving {0} into {1} would create a cycle")]
+    Cycle(NodeId, NodeId),
+    #[error("{0}")]
+    Invalid(String),
+}
+
+pub type DocResult<T> = Result<T, DocError>;
+
+/// Raw image bytes (encoded PNG/JPEG/…) kept by content hash.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImageData {
+    pub bytes: Arc<Vec<u8>>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A whole design file.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Document {
+    pub name: String,
+    /// Page ids in order.
+    pub pages: Vec<NodeId>,
+    nodes: BTreeMap<NodeId, Arc<Node>>,
+    next_id: u64,
+    #[serde(default)]
+    pub styles: Vec<Style>,
+    #[serde(default)]
+    pub variables: Variables,
+    /// Images by content hash; serialized separately by the format crate.
+    #[serde(skip)]
+    pub images: BTreeMap<String, ImageData>,
+    /// The page shown when the file opens.
+    #[serde(default)]
+    pub current_page: Option<NodeId>,
+    /// Colours used recently / saved in "Document colors".
+    #[serde(default)]
+    pub document_colors: Vec<Color>,
+}
+
+impl Default for Document {
+    fn default() -> Self {
+        Self::new("Untitled")
+    }
+}
+
+impl Document {
+    /// A new file with one empty page ("Page 1").
+    pub fn new(name: impl Into<String>) -> Self {
+        let mut doc = Self {
+            name: name.into(),
+            pages: Vec::new(),
+            nodes: BTreeMap::new(),
+            next_id: 1,
+            styles: Vec::new(),
+            variables: Variables::default(),
+            images: BTreeMap::new(),
+            current_page: None,
+            document_colors: Vec::new(),
+        };
+        let p = doc.add_page("Page 1");
+        doc.current_page = Some(p);
+        doc
+    }
+
+    /// A fresh unused id.
+    pub fn alloc_id(&mut self) -> NodeId {
+        let id = NodeId(self.next_id);
+        self.next_id = self.next_id.saturating_add(1);
+        id
+    }
+
+    pub fn node(&self, id: NodeId) -> Option<&Node> {
+        self.nodes.get(&id).map(Arc::as_ref)
+    }
+
+    pub fn node_arc(&self, id: NodeId) -> Option<&Arc<Node>> {
+        self.nodes.get(&id)
+    }
+
+    /// Mutable access (copy-on-write when a snapshot shares the node).
+    pub fn node_mut(&mut self, id: NodeId) -> Option<&mut Node> {
+        self.nodes.get_mut(&id).map(Arc::make_mut)
+    }
+
+    pub fn get(&self, id: NodeId) -> DocResult<&Node> {
+        self.node(id).ok_or(DocError::NoNode(id))
+    }
+
+    pub fn get_mut(&mut self, id: NodeId) -> DocResult<&mut Node> {
+        self.node_mut(id).ok_or(DocError::NoNode(id))
+    }
+
+    pub fn contains(&self, id: NodeId) -> bool {
+        self.nodes.contains_key(&id)
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Every node id (pages included), ascending.
+    pub fn ids(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.nodes.keys().copied()
+    }
+
+    pub fn nodes(&self) -> impl Iterator<Item = &Node> + '_ {
+        self.nodes.values().map(Arc::as_ref)
+    }
+
+    /// Add a page at the end.
+    pub fn add_page(&mut self, name: &str) -> NodeId {
+        let id = self.alloc_id();
+        let node = Node::new(
+            id,
+            NodeKind::Page { background: Color::DEFAULT_PAGE, flows: Vec::new(), prototype: Default::default(), guides: Vec::new() },
+            name,
+            0.0,
+            0.0,
+        );
+        self.nodes.insert(id, Arc::new(node));
+        self.pages.push(id);
+        id
+    }
+
+    /// The page a node is on (a page is on itself).
+    pub fn page_of(&self, id: NodeId) -> Option<NodeId> {
+        let mut cur = id;
+        for _ in 0..10_000 {
+            let n = self.node(cur)?;
+            if n.is_page() {
+                return Some(cur);
+            }
+            cur = n.parent?;
+        }
+        None
+    }
+
+    pub fn first_page(&self) -> Option<NodeId> {
+        self.pages.first().copied()
+    }
+
+    /// Insert `node` (its id must come from [`alloc_id`](Self::alloc_id)) as a child of `parent` at
+    /// `index` (None = on top).
+    pub fn insert(&mut self, mut node: Node, parent: NodeId, index: Option<usize>) -> DocResult<NodeId> {
+        let p = self.get(parent)?;
+        if !p.kind.is_container() {
+            return Err(DocError::NotContainer(parent));
+        }
+        let id = node.id;
+        if self.nodes.contains_key(&id) {
+            return Err(DocError::Invalid(format!("node {id} already exists")));
+        }
+        if id.0 >= self.next_id {
+            self.next_id = id.0.saturating_add(1);
+        }
+        node.parent = Some(parent);
+        self.nodes.insert(id, Arc::new(node));
+        let p = self.get_mut(parent)?;
+        let at = index.unwrap_or(p.children.len()).min(p.children.len());
+        p.children.insert(at, id);
+        Ok(id)
+    }
+
+    /// Create a node of `kind` under `parent`, positioned at `(x, y)` in the parent's space.
+    pub fn create(&mut self, parent: NodeId, kind: NodeKind, name: &str, x: f64, y: f64, w: f64, h: f64) -> DocResult<NodeId> {
+        let id = self.alloc_id();
+        let mut node = Node::new(id, kind, name, w, h);
+        node.transform = Affine::translate((x, y));
+        self.insert(node, parent, None)
+    }
+
+    /// Whether `ancestor` is `id` or one of its ancestors.
+    pub fn is_ancestor(&self, ancestor: NodeId, id: NodeId) -> bool {
+        let mut cur = Some(id);
+        let mut guard = 0;
+        while let Some(c) = cur {
+            if c == ancestor {
+                return true;
+            }
+            guard += 1;
+            if guard > 10_000 {
+                return false;
+            }
+            cur = self.node(c).and_then(|n| n.parent);
+        }
+        false
+    }
+
+    /// Ancestors from the parent up to (and including) the page.
+    pub fn ancestors(&self, id: NodeId) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        let mut cur = self.node(id).and_then(|n| n.parent);
+        while let Some(c) = cur {
+            if out.len() > 10_000 {
+                break;
+            }
+            out.push(c);
+            cur = self.node(c).and_then(|n| n.parent);
+        }
+        out
+    }
+
+    /// `id` and all its descendants, pre-order.
+    pub fn subtree(&self, id: NodeId) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        let mut stack = vec![id];
+        while let Some(c) = stack.pop() {
+            if out.len() > 5_000_000 {
+                break;
+            }
+            let Some(n) = self.node(c) else { continue };
+            out.push(c);
+            stack.extend(n.children.iter().rev());
+        }
+        out
+    }
+
+    /// Remove a node and its subtree. Pages can only be removed while another page remains.
+    pub fn remove(&mut self, id: NodeId) -> DocResult<()> {
+        let node = self.get(id)?;
+        let parent = node.parent;
+        if node.is_page() {
+            if self.pages.len() <= 1 {
+                return Err(DocError::Invalid("a file needs at least one page".into()));
+            }
+            self.pages.retain(|p| *p != id);
+            if self.current_page == Some(id) {
+                self.current_page = self.pages.first().copied();
+            }
+        }
+        if let Some(parent) = parent
+            && let Some(p) = self.node_mut(parent)
+        {
+            p.children.retain(|c| *c != id);
+        }
+        for d in self.subtree(id) {
+            self.nodes.remove(&d);
+        }
+        Ok(())
+    }
+
+    /// Index of `id` among its siblings.
+    pub fn index_in_parent(&self, id: NodeId) -> Option<usize> {
+        let parent = self.node(id)?.parent?;
+        self.node(parent)?.children.iter().position(|c| *c == id)
+    }
+
+    /// Move `id` under `new_parent` at `index` (None = top), keeping its world position.
+    pub fn reparent(&mut self, id: NodeId, new_parent: NodeId, index: Option<usize>) -> DocResult<()> {
+        if self.is_ancestor(id, new_parent) {
+            return Err(DocError::Cycle(id, new_parent));
+        }
+        let np = self.get(new_parent)?;
+        if !np.kind.is_container() {
+            return Err(DocError::NotContainer(new_parent));
+        }
+        let node = self.get(id)?;
+        if node.is_page() {
+            return Err(DocError::Invalid("pages can't be moved into nodes".into()));
+        }
+        let world = self.world_transform(id);
+        let old_parent = node.parent;
+        let old_index = self.index_in_parent(id);
+        if let Some(op) = old_parent
+            && let Some(p) = self.node_mut(op)
+        {
+            p.children.retain(|c| *c != id);
+        }
+        let parent_world = self.world_transform(new_parent);
+        let np = self.get_mut(new_parent)?;
+        let mut at = index.unwrap_or(np.children.len());
+        // Moving within the same parent: the removal shifted later indices.
+        if old_parent == Some(new_parent)
+            && let (Some(oi), Some(_)) = (old_index, index)
+            && oi < at
+        {
+            at = at.saturating_sub(1);
+        }
+        let at = at.min(np.children.len());
+        np.children.insert(at, id);
+        let n = self.get_mut(id)?;
+        n.parent = Some(new_parent);
+        n.transform = parent_world.inverse() * world;
+        Ok(())
+    }
+
+    /// Reorder `id` within its parent to `index`.
+    pub fn reorder(&mut self, id: NodeId, index: usize) -> DocResult<()> {
+        let parent = self.get(id)?.parent.ok_or(DocError::Invalid("page".into()))?;
+        let p = self.get_mut(parent)?;
+        p.children.retain(|c| *c != id);
+        let at = index.min(p.children.len());
+        p.children.insert(at, id);
+        Ok(())
+    }
+
+    /// Transform from `id`'s local space to its page.
+    pub fn world_transform(&self, id: NodeId) -> Affine {
+        let mut xf = Affine::IDENTITY;
+        let mut cur = Some(id);
+        let mut guard = 0;
+        while let Some(c) = cur {
+            let Some(n) = self.node(c) else { break };
+            if n.is_page() {
+                break;
+            }
+            xf = n.transform * xf;
+            cur = n.parent;
+            guard += 1;
+            if guard > 10_000 {
+                break;
+            }
+        }
+        xf
+    }
+
+    /// Set `id`'s transform so that its world transform becomes `world`.
+    pub fn set_world_transform(&mut self, id: NodeId, world: Affine) -> DocResult<()> {
+        let parent = self.get(id)?.parent;
+        let pw = parent.map(|p| self.world_transform(p)).unwrap_or(Affine::IDENTITY);
+        self.get_mut(id)?.transform = pw.inverse() * world;
+        Ok(())
+    }
+
+    /// Axis-aligned bounds of the node's box in page coordinates.
+    pub fn world_bounds(&self, id: NodeId) -> Option<Rect> {
+        let n = self.node(id)?;
+        if n.is_page() {
+            return self.page_content_bounds(id);
+        }
+        Some(figcraft_geom::transform_rect_bbox(self.world_transform(id), n.local_rect()))
+    }
+
+    /// Bounds of everything painted by a node, effects and strokes included (page coordinates).
+    pub fn world_render_bounds(&self, id: NodeId) -> Option<Rect> {
+        let n = self.node(id)?;
+        let reach = n.paint_reach();
+        let mut r = figcraft_geom::transform_rect_bbox(self.world_transform(id), n.local_rect().inflate(reach, reach));
+        if !(n.clip && n.kind.is_frame_like()) || n.kind.bounds_follow_children() {
+            for c in &n.children {
+                if let Some(cr) = self.world_render_bounds(*c) {
+                    r = r.union(cr);
+                }
+            }
+        }
+        Some(r)
+    }
+
+    /// Union of the top-level nodes' bounds on a page.
+    pub fn page_content_bounds(&self, page: NodeId) -> Option<Rect> {
+        let p = self.node(page)?;
+        p.children.iter().filter_map(|c| self.world_bounds(*c)).reduce(|a, b| a.union(b))
+    }
+
+    /// Union of several nodes' world bounds.
+    pub fn bounds_of(&self, ids: &[NodeId]) -> Option<Rect> {
+        ids.iter().filter_map(|i| self.world_bounds(*i)).reduce(|a, b| a.union(b))
+    }
+
+    /// Resize a group/boolean so its box tightly wraps its children (children keep world position).
+    pub fn fit_to_children(&mut self, id: NodeId) -> DocResult<()> {
+        let n = self.get(id)?;
+        if n.children.is_empty() {
+            return Ok(());
+        }
+        let world = self.world_transform(id);
+        let inv = world.inverse();
+        // Children bounds in the group's current local space.
+        let mut local: Option<Rect> = None;
+        for c in &n.children {
+            let Some(cn) = self.node(*c) else { continue };
+            let r = figcraft_geom::transform_rect_bbox(inv * self.world_transform(*c), cn.local_rect());
+            local = Some(local.map_or(r, |l| l.union(r)));
+        }
+        let Some(local) = local else { return Ok(()) };
+        let children = n.children.clone();
+        let child_worlds: Vec<(NodeId, Affine)> = children.iter().map(|c| (*c, self.world_transform(*c))).collect();
+        let shift = Affine::translate((local.x0, local.y0));
+        let nw = world * shift;
+        {
+            let g = self.get_mut(id)?;
+            g.transform = g.transform * shift;
+            g.width = local.width();
+            g.height = local.height();
+        }
+        let ninv = nw.inverse();
+        for (c, w) in child_worlds {
+            if let Some(cn) = self.node_mut(c) {
+                cn.transform = ninv * w;
+            }
+        }
+        Ok(())
+    }
+
+    /// Fit every group/boolean ancestor of `id` (innermost first).
+    pub fn fit_ancestors(&mut self, id: NodeId) {
+        for a in self.ancestors(id) {
+            let follows = self.node(a).is_some_and(|n| n.kind.bounds_follow_children());
+            if follows {
+                let _ = self.fit_to_children(a);
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Deep-copy `id`'s subtree under `parent` (at `index`), returning the new root id. The copy
+    /// keeps the original's local transform; ids are fresh.
+    pub fn duplicate_into(&mut self, id: NodeId, parent: NodeId, index: Option<usize>) -> DocResult<NodeId> {
+        let mut map = BTreeMap::new();
+        let src_nodes: Vec<Node> = self.subtree(id).into_iter().filter_map(|i| self.node(i).cloned()).collect();
+        for n in &src_nodes {
+            let nid = self.alloc_id();
+            map.insert(n.id, nid);
+        }
+        self.paste_nodes(&src_nodes, &map, id, parent, index)
+    }
+
+    /// Insert copies of `nodes` (a subtree rooted at `root`, from this or another document) with ids
+    /// remapped by `map`. Interactions and instance references pointing inside the subtree are
+    /// remapped too.
+    pub fn paste_nodes(&mut self, nodes: &[Node], map: &BTreeMap<NodeId, NodeId>, root: NodeId, parent: NodeId, index: Option<usize>) -> DocResult<NodeId> {
+        let p = self.get(parent)?;
+        if !p.kind.is_container() {
+            return Err(DocError::NotContainer(parent));
+        }
+        let new_root = *map.get(&root).ok_or(DocError::NoNode(root))?;
+        for n in nodes {
+            let Some(new_id) = map.get(&n.id) else { continue };
+            let mut c = n.clone();
+            c.id = *new_id;
+            c.children = n.children.iter().filter_map(|k| map.get(k).copied()).collect();
+            c.parent = if n.id == root { Some(parent) } else { n.parent.and_then(|p| map.get(&p).copied()) };
+            for it in &mut c.interactions {
+                for a in &mut it.actions {
+                    remap_action(a, map);
+                }
+            }
+            if let NodeKind::Instance { component, .. } = &mut c.kind
+                && let Some(m) = map.get(component)
+            {
+                *component = *m;
+            }
+            if new_id.0 >= self.next_id {
+                self.next_id = new_id.0.saturating_add(1);
+            }
+            self.nodes.insert(*new_id, Arc::new(c));
+        }
+        let p = self.get_mut(parent)?;
+        let at = index.unwrap_or(p.children.len()).min(p.children.len());
+        p.children.insert(at, new_root);
+        Ok(new_root)
+    }
+
+    /// Find nodes on `page` (or all pages) whose name contains `query` (case-insensitive).
+    pub fn find_by_name(&self, query: &str, page: Option<NodeId>) -> Vec<NodeId> {
+        let q = query.to_lowercase();
+        let roots: Vec<NodeId> = page.map(|p| vec![p]).unwrap_or_else(|| self.pages.clone());
+        roots
+            .into_iter()
+            .flat_map(|r| self.subtree(r))
+            .filter(|i| self.node(*i).is_some_and(|n| !n.is_page() && n.name.to_lowercase().contains(&q)))
+            .collect()
+    }
+
+    /// The nearest frame-like ancestor (excluding `id` itself).
+    pub fn containing_frame(&self, id: NodeId) -> Option<NodeId> {
+        self.ancestors(id).into_iter().find(|a| self.node(*a).is_some_and(|n| n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. })))
+    }
+
+    /// The top-level frame containing `id` (or `id` if it is one).
+    pub fn top_level_frame(&self, id: NodeId) -> Option<NodeId> {
+        let mut chain = vec![id];
+        chain.extend(self.ancestors(id));
+        // chain ends with the page; the element before it is the top-level node.
+        let page_pos = chain.iter().position(|c| self.node(*c).is_some_and(Node::is_page))?;
+        let top = *chain.get(page_pos.checked_sub(1)?)?;
+        self.node(top).filter(|n| n.kind.is_frame_like()).map(|_| top)
+    }
+
+    /// Top-level frames of a page in reading order (rows top to bottom, then left to right).
+    pub fn top_frames(&self, page: NodeId) -> Vec<NodeId> {
+        let Some(p) = self.node(page) else { return vec![] };
+        let mut v: Vec<(NodeId, Rect)> = p
+            .children
+            .iter()
+            .filter(|c| self.node(**c).is_some_and(|n| n.kind.is_frame_like()))
+            .filter_map(|c| self.world_bounds(*c).map(|b| (*c, b)))
+            .collect();
+        v.sort_by(|a, b| a.1.y0.total_cmp(&b.1.y0).then(a.1.x0.total_cmp(&b.1.x0)));
+        v.into_iter().map(|(i, _)| i).collect()
+    }
+
+    /// A unique name like "Frame 3" for a new node of a kind.
+    pub fn next_name(&self, base: &str) -> String {
+        let mut max = 0u64;
+        for n in self.nodes() {
+            if let Some(rest) = n.name.strip_prefix(base)
+                && let Some(num) = rest.strip_prefix(' ')
+                && let Ok(k) = num.parse::<u64>()
+            {
+                max = max.max(k);
+            }
+        }
+        format!("{base} {}", max + 1)
+    }
+
+    pub fn style(&self, id: &str) -> Option<&Style> {
+        self.styles.iter().find(|s| s.id == id || s.name == id)
+    }
+
+    /// The effective variable modes for a node (walking up its ancestors).
+    pub fn modes_for(&self, id: NodeId) -> BTreeMap<CollectionId, ModeId> {
+        let mut out = BTreeMap::new();
+        let mut chain = vec![id];
+        chain.extend(self.ancestors(id));
+        for c in chain.into_iter().rev() {
+            if let Some(n) = self.node(c) {
+                for (k, v) in &n.var_modes {
+                    out.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Check structural invariants (used by tests and after loading untrusted files).
+    pub fn validate(&self) -> Vec<String> {
+        let mut issues = Vec::new();
+        for (id, n) in &self.nodes {
+            if n.id != *id {
+                issues.push(format!("node key {id} has id {}", n.id));
+            }
+            for c in &n.children {
+                match self.node(*c) {
+                    Some(cn) if cn.parent == Some(*id) => {}
+                    Some(_) => issues.push(format!("child {c} of {id} has another parent")),
+                    None => issues.push(format!("child {c} of {id} missing")),
+                }
+            }
+            if let Some(p) = n.parent
+                && !self.node(p).is_some_and(|pn| pn.children.contains(id))
+            {
+                issues.push(format!("{id} not listed in parent {p}"));
+            }
+            if n.is_page() != self.pages.contains(id) {
+                issues.push(format!("page list mismatch for {id}"));
+            }
+        }
+        issues
+    }
+
+    /// Repair what [`validate`](Self::validate) reports (lenient loading of untrusted files).
+    pub fn repair(&mut self) {
+        let ids: Vec<NodeId> = self.nodes.keys().copied().collect();
+        for id in &ids {
+            if let Some(n) = self.nodes.get_mut(id) {
+                let n = Arc::make_mut(n);
+                n.id = *id;
+            }
+        }
+        // Drop dangling children and children claimed by another parent.
+        let parents: BTreeMap<NodeId, Option<NodeId>> = self.nodes.iter().map(|(k, n)| (*k, n.parent)).collect();
+        for id in &ids {
+            let Some(n) = self.nodes.get(id) else { continue };
+            let keep: Vec<NodeId> = n.children.iter().copied().filter(|c| parents.get(c).copied().flatten() == Some(*id)).collect();
+            if keep != n.children
+                && let Some(n) = self.nodes.get_mut(id)
+            {
+                Arc::make_mut(n).children = keep;
+            }
+        }
+        // Orphans (parent missing or not listing them) are removed.
+        loop {
+            let orphan = self.nodes.iter().find_map(|(k, n)| {
+                if n.is_page() {
+                    return None;
+                }
+                match n.parent {
+                    Some(p) if self.nodes.get(&p).is_some_and(|pn| pn.children.contains(k)) => None,
+                    _ => Some(*k),
+                }
+            });
+            let Some(o) = orphan else { break };
+            for d in self.subtree(o) {
+                self.nodes.remove(&d);
+            }
+        }
+        self.pages.retain(|p| self.nodes.get(p).is_some_and(|n| n.is_page()));
+        for (k, n) in &self.nodes {
+            if n.is_page() && !self.pages.contains(k) {
+                self.pages.push(*k);
+            }
+        }
+        if self.pages.is_empty() {
+            let p = self.add_page("Page 1");
+            self.current_page = Some(p);
+        }
+        if let Some(max) = self.nodes.keys().max()
+            && self.next_id <= max.0
+        {
+            self.next_id = max.0.saturating_add(1);
+        }
+        if self.current_page.is_none_or(|p| !self.pages.contains(&p)) {
+            self.current_page = self.pages.first().copied();
+        }
+    }
+
+    /// Hit test: the topmost visible, unlocked node under `pt` on `page` for a click.
+    /// `deep` selects the innermost leaf (Cmd-click); otherwise top-level children of frames
+    /// resolve like Figma's click-through rules (see [`geometry::select_target`]).
+    pub fn hit_test(&self, page: NodeId, pt: Point, tolerance: f64) -> Option<NodeId> {
+        geometry::hit_leaf(self, page, pt, tolerance)
+    }
+}
+
+fn remap_action(a: &mut proto::Action, map: &BTreeMap<NodeId, NodeId>) {
+    use proto::Action::*;
+    match a {
+        Navigate { dest } | ScrollTo { dest } | OpenOverlay { dest, .. } | SwapOverlay { dest } | ChangeTo { dest } => {
+            if let Some(m) = map.get(dest) {
+                *dest = *m;
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests;
