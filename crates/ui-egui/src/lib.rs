@@ -18,6 +18,7 @@ pub mod icons;
 pub mod layers;
 pub mod menus;
 pub mod present;
+pub mod proto_canvas;
 pub mod proto_panel;
 pub mod render_worker;
 pub mod right;

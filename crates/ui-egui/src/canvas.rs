@@ -192,6 +192,9 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
 }
 
 fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
+    if crate::proto_canvas::input(app, ui, resp) {
+        return;
+    }
     let ctx = ui.ctx().clone();
     let (mods, scroll, zoom_delta, hover_pos, space) =
         ctx.input(|i| (i.modifiers, i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos(), i.key_down(egui::Key::Space)));
@@ -472,29 +475,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
         }
     }
     // Prototype connections.
-    if app.ui.right_tab == crate::RightTab::Prototype {
-        for id in doc.subtree(page) {
-            let Some(n) = doc.node(id) else { continue };
-            for it in &n.interactions {
-                for a in &it.actions {
-                    let Some(dest) = a.dest() else { continue };
-                    let (Some(from), Some(to)) = (doc.world_bounds(id), doc.world_bounds(dest)) else { continue };
-                    let a0 = app.to_screen(from.x1, from.center().y);
-                    let b0 = app.to_screen(to.x0, to.center().y);
-                    let mid = (b0.x - a0.x).abs().max(60.0) * 0.5;
-                    let curve = egui::epaint::CubicBezierShape::from_points_stroke(
-                        [a0, a0 + vec2(mid, 0.0), b0 - vec2(mid, 0.0), b0],
-                        false,
-                        Color32::TRANSPARENT,
-                        stroke(ACCENT, 1.5),
-                    );
-                    painter.add(curve);
-                    painter.circle_filled(a0, 4.0, ACCENT);
-                    painter.add(Shape::convex_polygon(vec![b0, b0 + vec2(-7.0, -4.0), b0 + vec2(-7.0, 4.0)], ACCENT, Stroke::NONE));
-                }
-            }
-        }
-    }
+    crate::proto_canvas::draw(app, painter);
     // Hover outline.
     if let Some(h) = ds.hover
         && !sel.contains(&h)

@@ -1,249 +1,1434 @@
-//! The prototype player: presents a frame full-window, follows interactions with transitions.
+//! The prototype player: presents a frame full-window and follows its interactions.
+//!
+//! The player works on its own copy of the document (interactive components, variables and scroll
+//! offsets change it without touching the user's file). Every frame is rendered through
+//! `figcraft_render::render_node` into a texture. Smart animate interpolates a temporary document
+//! between the outgoing and incoming states ([`smart_interpolate`]) and renders it each animation
+//! frame; the other transitions move or fade the two cached textures ([`transition_frames`]).
 
-use egui::{Align2, Color32, CornerRadius, Rect, Sense, Ui, pos2, vec2};
-use figcraft_doc::proto::{Action, Transition, Trigger};
-use figcraft_doc::{NodeId, NodeKind};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+
+use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
+use figcraft_color::{Color, Paint, PaintKind};
+use figcraft_doc::proto::{Action, Direction, Easing, Overflow, OverlayPosition, ScrollPosition, Transition, Trigger};
+use figcraft_doc::{Document, Node, NodeId, NodeKind, VariableValue};
+use figcraft_geom::{Affine, Point};
 
 use crate::FigApp;
-use crate::theme::{regular, semibold};
+use crate::theme::{ACCENT, regular, semibold};
+
+const BAR_H: f32 = 40.0;
+
+/// A page in the player's history (what Back returns to, and how).
+#[derive(Clone, Debug)]
+pub struct Visit {
+    pub frame: NodeId,
+    pub transition: Transition,
+    pub dur: f64,
+    pub easing: Easing,
+}
+
+/// An open overlay.
+#[derive(Clone, Debug)]
+pub struct OverlayState {
+    pub id: NodeId,
+    pub position: OverlayPosition,
+    pub close_on_outside: bool,
+    pub background: Option<Color>,
+    /// Screen rect of the layer that opened it (manual position).
+    pub anchor: Option<Rect>,
+    opened: f64,
+    transition: Transition,
+    dur: f64,
+    easing: Easing,
+}
+
+#[derive(Clone)]
+struct FrameTex {
+    key: (u64, u64),
+    tex: egui::TextureHandle,
+    /// Page-space rect the texture covers.
+    bounds: figcraft_geom::Rect,
+}
+
+/// A transition in progress from a captured state to the current one.
+struct Anim {
+    from_doc: Document,
+    from_frame: NodeId,
+    from_tex: Option<FrameTex>,
+    transition: Transition,
+    start: f64,
+    dur: f64,
+    easing: Easing,
+}
+
+struct ScrollAnim {
+    frame: NodeId,
+    from: (f64, f64),
+    to: (f64, f64),
+    start: f64,
+    dur: f64,
+    easing: Easing,
+}
+
+#[derive(Clone)]
+struct Snapshot {
+    current: NodeId,
+    doc: Document,
+    overlays: Vec<OverlayState>,
+    history: Vec<Visit>,
+    scroll: HashMap<NodeId, (f64, f64)>,
+}
+
+/// A "while hovering / while pressing" state that reverts when the pointer leaves / lifts.
+struct Temp {
+    rect: Rect,
+    press: bool,
+    snap: Snapshot,
+    transition: Transition,
+    dur: f64,
+    easing: Easing,
+}
 
 pub struct Presenter {
     pub current: NodeId,
-    pub history: Vec<NodeId>,
-    /// Transition in progress: (from, kind, started at, duration s).
-    pub anim: Option<(NodeId, Transition, f64, f64, figcraft_doc::proto::Easing)>,
-    pub overlay: Option<NodeId>,
-    texture: Option<(NodeId, egui::TextureHandle, f64)>,
-    from_texture: Option<egui::TextureHandle>,
-    pub delay_started: f64,
+    pub history: Vec<Visit>,
+    pub overlays: Vec<OverlayState>,
+    /// Scroll offsets of frames with overflow (page units).
+    pub scroll: HashMap<NodeId, (f64, f64)>,
+    /// Milliseconds the last smart-animate frame took to build and render.
+    pub render_ms: f64,
+    start: NodeId,
+    original: Option<Document>,
+    doc: Option<Document>,
+    rev: u64,
+    display: Option<(u64, Document)>,
+    scroll_anim: Option<ScrollAnim>,
+    anim: Option<Anim>,
+    anim_tex: Option<egui::TextureHandle>,
+    temp: Option<Temp>,
+    textures: HashMap<NodeId, FrameTex>,
+    arrived: f64,
+    delays_fired: HashSet<(NodeId, usize)>,
+    hovered: Vec<NodeId>,
+    press: Option<Pos2>,
+    dragged: bool,
+    flash_until: f64,
+    urls: Vec<String>,
 }
 
 impl Presenter {
     pub fn new(start: NodeId) -> Self {
-        Self { current: start, history: Vec::new(), anim: None, overlay: None, texture: None, from_texture: None, delay_started: -1.0 }
+        Self {
+            current: start,
+            history: Vec::new(),
+            overlays: Vec::new(),
+            scroll: HashMap::new(),
+            render_ms: 0.0,
+            start,
+            original: None,
+            doc: None,
+            rev: 0,
+            display: None,
+            scroll_anim: None,
+            anim: None,
+            anim_tex: None,
+            temp: None,
+            textures: HashMap::new(),
+            arrived: -1.0,
+            delays_fired: HashSet::new(),
+            hovered: Vec::new(),
+            press: None,
+            dragged: false,
+            flash_until: 0.0,
+            urls: Vec::new(),
+        }
+    }
+
+    /// The player's document with scroll offsets applied (cached per revision).
+    fn display(&mut self) -> Option<Document> {
+        if let Some((r, d)) = &self.display
+            && *r == self.rev
+        {
+            return Some(d.clone());
+        }
+        let d = apply_scroll(self.doc.as_ref()?, &self.scroll);
+        self.display = Some((self.rev, d.clone()));
+        Some(d)
+    }
+
+    fn snapshot(&self) -> Option<Snapshot> {
+        Some(Snapshot {
+            current: self.current,
+            doc: self.doc.clone()?,
+            overlays: self.overlays.clone(),
+            history: self.history.clone(),
+            scroll: self.scroll.clone(),
+        })
+    }
+
+    /// Start a transition from the state as it is now; call before changing the state.
+    fn begin(&mut self, transition: Transition, dur: f64, easing: Easing, now: f64) {
+        let Some(from_doc) = self.display() else { return };
+        let from_tex = self.textures.get(&self.current).cloned();
+        self.anim = if matches!(transition, Transition::Instant) || dur <= 0.0 {
+            None
+        } else {
+            Some(Anim { from_doc, from_frame: self.current, from_tex, transition, start: now, dur, easing })
+        };
+    }
+
+    fn arrive(&mut self, now: f64) {
+        self.arrived = now;
+        self.delays_fired.clear();
+        self.hovered.clear();
+        self.rev += 1;
+    }
+
+    fn go(&mut self, frame: NodeId, transition: Transition, dur: f64, easing: Easing, now: f64, remember: bool) {
+        self.begin(transition, dur, easing, now);
+        if remember {
+            self.history.push(Visit { frame: self.current, transition, dur, easing });
+        }
+        self.overlays.clear();
+        self.scroll.clear();
+        self.scroll_anim = None;
+        self.temp = None;
+        self.current = frame;
+        self.arrive(now);
+    }
+
+    fn restart(&mut self, start: NodeId, now: f64) {
+        self.start = start;
+        self.current = start;
+        self.history.clear();
+        self.overlays.clear();
+        self.scroll.clear();
+        self.scroll_anim = None;
+        self.anim = None;
+        self.temp = None;
+        self.doc = self.original.clone();
+        self.arrive(now);
+    }
+
+    fn revert(&mut self, now: f64) {
+        let Some(t) = self.temp.take() else { return };
+        self.begin(t.transition.reversed(), t.dur, t.easing, now);
+        self.current = t.snap.current;
+        self.doc = Some(t.snap.doc);
+        self.overlays = t.snap.overlays;
+        self.history = t.snap.history;
+        self.scroll = t.snap.scroll;
+        self.hovered.clear();
+        self.rev += 1;
+    }
+
+    /// Run the actions of interaction `k` on `node`. `rect` is the layer's screen rect.
+    fn fire(&mut self, node: NodeId, k: usize, rect: Option<Rect>, now: f64) -> bool {
+        let Some(it) = self.doc.as_ref().and_then(|d| d.node(node)).and_then(|n| n.interactions.get(k)).cloned() else { return false };
+        let dur = f64::from(it.duration_ms) / 1000.0;
+        let temp = match it.trigger {
+            Trigger::OnHover => Some(false),
+            Trigger::OnPress => Some(true),
+            _ => None,
+        };
+        let snap = if temp.is_some() && self.temp.is_none() { self.snapshot() } else { None };
+        let mut did = false;
+        for a in &it.actions {
+            did |= self.perform(a, node, it.transition, dur, it.easing, rect, now);
+        }
+        if did && let (Some(press), Some(snap), Some(rect)) = (temp, snap, rect) {
+            self.temp = Some(Temp { rect, press, snap, transition: it.transition, dur, easing: it.easing });
+        }
+        did
+    }
+
+    fn perform(&mut self, a: &Action, node: NodeId, tr: Transition, dur: f64, easing: Easing, rect: Option<Rect>, now: f64) -> bool {
+        let Some(doc) = self.doc.clone() else { return false };
+        match a {
+            Action::Navigate { dest } => {
+                let top = doc.top_level_frame(*dest).unwrap_or(*dest);
+                if !doc.contains(top) || (top == self.current && self.overlays.is_empty()) {
+                    return false;
+                }
+                self.go(top, tr, dur, easing, now, true);
+                true
+            }
+            Action::Back => {
+                if !self.overlays.is_empty() {
+                    self.overlays.pop();
+                    return true;
+                }
+                match self.history.pop() {
+                    Some(v) => {
+                        self.go(v.frame, v.transition.reversed(), v.dur, v.easing, now, false);
+                        true
+                    }
+                    None => false,
+                }
+            }
+            Action::ScrollTo { dest } => {
+                let Some(frame) = doc.ancestors(*dest).into_iter().find(|a| doc.node(*a).is_some_and(|n| n.overflow != Overflow::None)) else {
+                    return false;
+                };
+                let (Some(dn), Some(fnode)) = (doc.node(*dest), doc.node(frame)) else { return false };
+                let rel = doc.world_transform(frame).inverse() * doc.world_transform(*dest);
+                let b = figcraft_geom::transform_rect_bbox(rel, dn.local_rect());
+                let (rx, ry) = scroll_range(&doc, frame);
+                let hx = matches!(fnode.overflow, Overflow::Horizontal | Overflow::Both);
+                let vy = matches!(fnode.overflow, Overflow::Vertical | Overflow::Both);
+                let from = self.scroll.get(&frame).copied().unwrap_or((0.0, 0.0));
+                let to = (if hx { b.x0.clamp(0.0, rx) } else { from.0 }, if vy { b.y0.clamp(0.0, ry) } else { from.1 });
+                if matches!(tr, Transition::Instant) || dur <= 0.0 {
+                    self.scroll.insert(frame, to);
+                    self.rev += 1;
+                } else {
+                    self.scroll_anim = Some(ScrollAnim { frame, from, to, start: now, dur, easing });
+                }
+                true
+            }
+            Action::OpenOverlay { dest, position, close_on_outside, background } => {
+                if !doc.contains(*dest) {
+                    return false;
+                }
+                self.overlays.push(OverlayState {
+                    id: *dest,
+                    position: *position,
+                    close_on_outside: *close_on_outside,
+                    background: *background,
+                    anchor: rect,
+                    opened: now,
+                    transition: tr,
+                    dur,
+                    easing,
+                });
+                self.hovered.clear();
+                true
+            }
+            Action::SwapOverlay { dest } => {
+                if !doc.contains(*dest) {
+                    return false;
+                }
+                match self.overlays.last_mut() {
+                    Some(o) => {
+                        o.id = *dest;
+                        o.opened = now;
+                        o.transition = tr;
+                        o.dur = dur;
+                        o.easing = easing;
+                    }
+                    None => self.overlays.push(OverlayState {
+                        id: *dest,
+                        position: OverlayPosition::Center,
+                        close_on_outside: true,
+                        background: None,
+                        anchor: rect,
+                        opened: now,
+                        transition: tr,
+                        dur,
+                        easing,
+                    }),
+                }
+                self.hovered.clear();
+                true
+            }
+            Action::CloseOverlay => self.overlays.pop().is_some(),
+            Action::OpenUrl { url } => {
+                if !url.trim().is_empty() {
+                    self.urls.push(url.clone());
+                }
+                true
+            }
+            Action::ChangeTo { dest } => {
+                let inst = if matches!(doc.node(node).map(|n| &n.kind), Some(NodeKind::Instance { .. })) {
+                    Some(node)
+                } else {
+                    figcraft_engine::components::owning_instance(&doc, node)
+                };
+                let Some(inst) = inst else { return false };
+                if !doc.contains(*dest) {
+                    return false;
+                }
+                self.begin(tr, dur, easing, now);
+                let Some(d) = self.doc.as_mut() else { return false };
+                if let Some(n) = d.node_mut(inst)
+                    && let NodeKind::Instance { component, .. } = &mut n.kind
+                {
+                    *component = *dest;
+                }
+                figcraft_engine::components::sync_instance(d, inst);
+                self.rev += 1;
+                true
+            }
+            Action::SetVariable { variable, value } => {
+                let Some(d) = self.doc.as_mut() else { return false };
+                let Some(var) = d.variables.get(variable).cloned() else { return false };
+                let Some(v) = variable_value(&var.values, value) else { return false };
+                if let Some(slot) = d.variables.variables.iter_mut().find(|x| x.id == var.id) {
+                    for val in slot.values.values_mut() {
+                        *val = v.clone();
+                    }
+                }
+                figcraft_engine::cmd::styles::apply_bindings(d);
+                self.rev += 1;
+                true
+            }
+        }
+    }
+
+    fn texture(&mut self, ctx: &egui::Context, doc: &Document, id: NodeId, px_scale: f64) -> Option<FrameTex> {
+        let key = (self.rev, px_scale.to_bits());
+        if let Some(t) = self.textures.get(&id)
+            && t.key == key
+        {
+            return Some(t.clone());
+        }
+        let bounds = figcraft_render::export_bounds(doc, id)?;
+        let pix = figcraft_render::render_node(doc, id, px_scale)?;
+        let img = egui::ColorImage::from_rgba_premultiplied([pix.width() as usize, pix.height() as usize], pix.data());
+        let tex = ctx.load_texture(format!("present-{}", id.0), img, egui::TextureOptions::LINEAR);
+        let ft = FrameTex { key, tex, bounds };
+        self.textures.insert(id, ft.clone());
+        Some(ft)
     }
 }
 
-fn frame_texture(app: &FigApp, ctx: &egui::Context, id: NodeId, scale: f64) -> Option<egui::TextureHandle> {
-    let doc = app.session.doc().ok()?;
-    let pix = figcraft_render::render_node(doc, id, scale)?;
-    let img = egui::ColorImage::from_rgba_premultiplied([pix.width() as usize, pix.height() as usize], pix.data());
-    Some(ctx.load_texture(format!("present-{}", id.0), img, egui::TextureOptions::LINEAR))
+/// Page → screen mapping for one presented frame.
+#[derive(Clone, Copy, Debug)]
+pub struct Place {
+    pub page_min: (f64, f64),
+    pub origin: Pos2,
+    pub scale: f64,
 }
 
-fn navigate(p: &mut Presenter, dest: NodeId, tr: Transition, dur: f64, easing: figcraft_doc::proto::Easing, now: f64) {
-    if dest == p.current {
-        return;
+impl Place {
+    fn centered(fb: figcraft_geom::Rect, center: Pos2, scale: f64) -> Self {
+        let size = vec2((fb.width() * scale) as f32, (fb.height() * scale) as f32);
+        Place { page_min: (fb.x0, fb.y0), origin: center - size / 2.0, scale }
     }
-    p.history.push(p.current);
-    p.anim = if matches!(tr, Transition::Instant) { None } else { Some((p.current, tr, now, dur.max(0.01), easing)) };
-    p.from_texture = p.texture.take().map(|(_, t, _)| t);
-    p.current = dest;
-    p.delay_started = now;
+    pub fn pt(&self, x: f64, y: f64) -> Pos2 {
+        pos2(self.origin.x + ((x - self.page_min.0) * self.scale) as f32, self.origin.y + ((y - self.page_min.1) * self.scale) as f32)
+    }
+    pub fn rect(&self, r: figcraft_geom::Rect) -> Rect {
+        Rect::from_min_max(self.pt(r.x0, r.y0), self.pt(r.x1, r.y1))
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pure prototype logic (tested below).
+
+/// Layer names from below `root` down to `id`, joined (the smart-animate matching key).
+pub fn name_path(doc: &Document, root: NodeId, id: NodeId) -> Option<String> {
+    let mut parts: Vec<&str> = Vec::new();
+    let mut cur = id;
+    for _ in 0..1024 {
+        if cur == root {
+            parts.reverse();
+            return Some(parts.join("\u{1f}"));
+        }
+        let n = doc.node(cur)?;
+        parts.push(n.name.as_str());
+        cur = n.parent?;
+    }
+    None
+}
+
+/// Smart-animate pairs `(from layer, to layer)`: same name path below the two roots; repeated
+/// paths pair up in layer order.
+pub fn match_layers(from: &Document, from_root: NodeId, to: &Document, to_root: NodeId) -> Vec<(NodeId, NodeId)> {
+    let mut pool: HashMap<String, VecDeque<NodeId>> = HashMap::new();
+    for id in from.subtree(from_root).into_iter().skip(1) {
+        if let Some(p) = name_path(from, from_root, id) {
+            pool.entry(p).or_default().push_back(id);
+        }
+    }
+    let mut out = Vec::new();
+    for id in to.subtree(to_root).into_iter().skip(1) {
+        if let Some(p) = name_path(to, to_root, id)
+            && let Some(q) = pool.get_mut(&p)
+            && let Some(f) = q.pop_front()
+        {
+            out.push((f, id));
+        }
+    }
+    out
+}
+
+fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
+}
+
+/// Centre, rotation and scale of a node box `(w, h)` placed by `m`.
+fn decompose(m: Affine, (w, h): (f64, f64)) -> Option<[f64; 5]> {
+    let [a, b, c, d, _, _] = m.as_coeffs();
+    let sx = a.hypot(b);
+    if !sx.is_finite() || sx < 1e-9 {
+        return None;
+    }
+    let sy = (a * d - b * c) / sx;
+    let ctr = m * Point::new(w / 2.0, h / 2.0);
+    Some([ctr.x, ctr.y, b.atan2(a), sx, sy])
+}
+
+/// Interpolate two placements of a box: centre, rotation (shortest way round) and scale; the box
+/// size is `size` (already interpolated).
+pub fn lerp_transform(a: Affine, sa: (f64, f64), b: Affine, sb: (f64, f64), size: (f64, f64), t: f64) -> Affine {
+    match (decompose(a, sa), decompose(b, sb)) {
+        (Some(x), Some(y)) if (x[4] < 0.0) == (y[4] < 0.0) => {
+            let mut da = y[2] - x[2];
+            while da > std::f64::consts::PI {
+                da -= std::f64::consts::TAU;
+            }
+            while da < -std::f64::consts::PI {
+                da += std::f64::consts::TAU;
+            }
+            let (cx, cy) = (lerp(x[0], y[0], t), lerp(x[1], y[1], t));
+            let ang = x[2] + da * t;
+            let (sx, sy) = (lerp(x[3], y[3], t), lerp(x[4], y[4], t));
+            Affine::translate((cx, cy)) * Affine::rotate(ang) * Affine::scale_non_uniform(sx, sy) * Affine::translate((-size.0 / 2.0, -size.1 / 2.0))
+        }
+        _ => {
+            if t < 0.5 {
+                a
+            } else {
+                b
+            }
+        }
+    }
+}
+
+fn lerp_paints(from: &[Paint], to: &mut [Paint], t: f64) {
+    for (f, p) in from.iter().zip(to.iter_mut()) {
+        if let (PaintKind::Solid { color: fc }, PaintKind::Solid { color: tc }) = (&f.kind, &mut p.kind) {
+            *tc = fc.lerp(*tc, t.clamp(0.0, 1.0) as f32);
+            p.opacity = lerp(f64::from(f.opacity), f64::from(p.opacity), t.clamp(0.0, 1.0)) as f32;
+        }
+    }
+}
+
+/// The document as it looks at eased progress `t` of a smart-animate transition from
+/// `from_root` (in `from`) to `to_root` (in `to`): matched layers tween position, size, rotation,
+/// opacity, corner radius and solid fill colours; layers only in the destination fade in and
+/// layers only in the source are copied in and fade out. Render `to_root` of the result.
+pub fn smart_interpolate(from: &Document, from_root: NodeId, to: &Document, to_root: NodeId, t: f64) -> Document {
+    let mut out = to.clone();
+    if !t.is_finite() || t >= 1.0 {
+        return out;
+    }
+    let t = t.max(-1.0);
+    let fade = t.clamp(0.0, 1.0);
+    let pairs = match_layers(from, from_root, to, to_root);
+    let src_of: HashMap<NodeId, NodeId> = pairs.iter().map(|(f, d)| (*d, *f)).collect();
+    let dst_of: HashMap<NodeId, NodeId> = pairs.iter().copied().collect();
+    let fw_inv = from.world_transform(from_root).inverse();
+    let tw_inv = to.world_transform(to_root).inverse();
+    if let (Some(fr), Some(m)) = (from.node(from_root), out.node_mut(to_root)) {
+        lerp_paints(&fr.fills, &mut m.fills, t);
+    }
+    let mut interp: HashMap<NodeId, Affine> = HashMap::new();
+    interp.insert(to_root, Affine::IDENTITY);
+    let mut faded: HashSet<NodeId> = HashSet::new();
+    for id in to.subtree(to_root).into_iter().skip(1) {
+        let Some(n) = to.node(id) else { continue };
+        let parent = n.parent.unwrap_or(to_root);
+        let p_interp = interp.get(&parent).copied().unwrap_or(Affine::IDENTITY);
+        match src_of.get(&id).and_then(|s| from.node(*s).map(|sn| (*s, sn))) {
+            Some((s, sn)) => {
+                let rel_s = fw_inv * from.world_transform(s);
+                let rel_d = tw_inv * to.world_transform(id);
+                let (w, h) = (lerp(sn.width, n.width, t).max(0.0), lerp(sn.height, n.height, t).max(0.0));
+                let xf = lerp_transform(rel_s, (sn.width, sn.height), rel_d, (n.width, n.height), (w, h), t);
+                interp.insert(id, xf);
+                if let Some(m) = out.node_mut(id) {
+                    m.width = w;
+                    m.height = h;
+                    m.transform = p_interp.inverse() * xf;
+                    m.opacity = lerp(f64::from(sn.opacity), f64::from(n.opacity), fade) as f32;
+                    for (r, (a, b)) in m.corners.radii.iter_mut().zip(sn.corners.radii.iter().zip(n.corners.radii.iter())) {
+                        *r = lerp(*a, *b, t).max(0.0);
+                    }
+                    lerp_paints(&sn.fills, &mut m.fills, t);
+                    lerp_paints(&sn.strokes, &mut m.strokes, t);
+                }
+            }
+            None => {
+                interp.insert(id, p_interp * n.transform);
+                if !faded.contains(&parent)
+                    && let Some(m) = out.node_mut(id)
+                {
+                    m.opacity *= fade as f32;
+                }
+                faded.insert(id);
+            }
+        }
+    }
+    // Layers only in the source: copy the top-most ones in, fading out.
+    let tops: Vec<NodeId> = from
+        .subtree(from_root)
+        .into_iter()
+        .skip(1)
+        .filter(|id| !dst_of.contains_key(id))
+        .filter(|id| from.node(*id).and_then(|n| n.parent).is_some_and(|p| p == from_root || dst_of.contains_key(&p)))
+        .collect();
+    for id in tops {
+        let Some(n) = from.node(id) else { continue };
+        let pf = n.parent.unwrap_or(from_root);
+        let matched_parent = dst_of.get(&pf).copied().filter(|p| out.node(*p).is_some_and(|pn| pn.kind.is_container()));
+        let (parent, local) = match matched_parent {
+            Some(p) if pf != from_root => (p, n.transform),
+            _ => (to_root, fw_inv * from.world_transform(id)),
+        };
+        let nodes: Vec<Node> = from.subtree(id).into_iter().filter_map(|i| from.node(i).cloned()).collect();
+        let mut map = BTreeMap::new();
+        for nn in &nodes {
+            map.insert(nn.id, out.alloc_id());
+        }
+        let index = from.index_in_parent(id);
+        if let Ok(new) = out.paste_nodes(&nodes, &map, id, parent, index)
+            && let Some(m) = out.node_mut(new)
+        {
+            m.transform = local;
+            m.opacity *= (1.0 - fade) as f32;
+        }
+    }
+    out
+}
+
+/// How far `frame`'s content can scroll `(x, y)` (0 when it doesn't overflow or doesn't scroll).
+pub fn scroll_range(doc: &Document, frame: NodeId) -> (f64, f64) {
+    let Some(n) = doc.node(frame) else { return (0.0, 0.0) };
+    if n.overflow == Overflow::None {
+        return (0.0, 0.0);
+    }
+    let (mut x1, mut y1) = (0.0f64, 0.0f64);
+    for c in &n.children {
+        let Some(cn) = doc.node(*c) else { continue };
+        if !cn.visible || cn.scroll_position == ScrollPosition::Fixed {
+            continue;
+        }
+        let b = figcraft_geom::transform_rect_bbox(cn.transform, cn.local_rect());
+        x1 = x1.max(b.x1);
+        y1 = y1.max(b.y1);
+    }
+    if let Some(l) = &n.layout {
+        x1 += l.padding[1];
+        y1 += l.padding[2];
+    }
+    let rx = if matches!(n.overflow, Overflow::Horizontal | Overflow::Both) { (x1 - n.width).max(0.0) } else { 0.0 };
+    let ry = if matches!(n.overflow, Overflow::Vertical | Overflow::Both) { (y1 - n.height).max(0.0) } else { 0.0 };
+    (if rx.is_finite() { rx } else { 0.0 }, if ry.is_finite() { ry } else { 0.0 })
+}
+
+/// Shift scrolling frames' children by their scroll offsets. Fixed children stay put; sticky
+/// children scroll until they reach the frame's top/left edge, then stay there.
+pub fn apply_scroll(doc: &Document, scroll: &HashMap<NodeId, (f64, f64)>) -> Document {
+    let mut out = doc.clone();
+    let sticky = |pos: f64, s: f64| if pos >= 0.0 && pos - s < 0.0 { -pos } else { -s };
+    for (&frame, &(sx, sy)) in scroll {
+        if !sx.is_finite() || !sy.is_finite() || (sx == 0.0 && sy == 0.0) {
+            continue;
+        }
+        let Some(n) = doc.node(frame) else { continue };
+        for &c in &n.children {
+            let Some(cn) = doc.node(c) else { continue };
+            let (dx, dy) = match cn.scroll_position {
+                ScrollPosition::Fixed => continue,
+                ScrollPosition::Scrolls => (-sx, -sy),
+                ScrollPosition::Sticky => {
+                    let b = figcraft_geom::transform_rect_bbox(cn.transform, cn.local_rect());
+                    (sticky(b.x0, sx), sticky(b.y0, sy))
+                }
+            };
+            if let Some(m) = out.node_mut(c) {
+                m.transform = Affine::translate((dx, dy)) * m.transform;
+            }
+        }
+    }
+    out
+}
+
+/// Where the outgoing and incoming frames are drawn at eased progress `t`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FramePlacement {
+    /// Offsets as fractions of each frame's size.
+    pub from_off: (f32, f32),
+    pub from_alpha: f32,
+    pub to_off: (f32, f32),
+    pub to_alpha: f32,
+    pub from_on_top: bool,
+}
+
+/// The unit vector a direction moves along (screen space, y down).
+pub fn direction_vec(d: Direction) -> (f32, f32) {
+    match d {
+        Direction::Left => (-1.0, 0.0),
+        Direction::Right => (1.0, 0.0),
+        Direction::Top => (0.0, -1.0),
+        Direction::Bottom => (0.0, 1.0),
+    }
+}
+
+/// Frame offsets/opacities for a transition. Directions name where things move: "Move in, left"
+/// brings the new frame in from the right edge moving left.
+pub fn transition_frames(tr: Transition, t: f32) -> FramePlacement {
+    let mul = |(x, y): (f32, f32), k: f32| (x * k, y * k);
+    let base = FramePlacement { from_off: (0.0, 0.0), from_alpha: 1.0, to_off: (0.0, 0.0), to_alpha: 1.0, from_on_top: false };
+    match tr {
+        Transition::Instant => FramePlacement { from_alpha: 0.0, ..base },
+        Transition::Dissolve | Transition::SmartAnimate => FramePlacement { to_alpha: t.clamp(0.0, 1.0), ..base },
+        Transition::MoveIn { direction } => FramePlacement { to_off: mul(direction_vec(direction), -(1.0 - t)), ..base },
+        Transition::MoveOut { direction } => FramePlacement { from_off: mul(direction_vec(direction), t), from_on_top: true, ..base },
+        Transition::Push { direction } => {
+            let d = direction_vec(direction);
+            FramePlacement { from_off: mul(d, t), to_off: mul(d, -(1.0 - t)), ..base }
+        }
+        Transition::SlideIn { direction } => {
+            let d = direction_vec(direction);
+            FramePlacement { from_off: mul(d, 0.3 * t), to_off: mul(d, -(1.0 - t)), ..base }
+        }
+        Transition::SlideOut { direction } => {
+            let d = direction_vec(direction);
+            FramePlacement { from_off: mul(d, t), to_off: mul(d, -0.3 * (1.0 - t)), from_on_top: true, ..base }
+        }
+    }
+}
+
+/// Screen rect of an overlay of `size` over the frame drawn at `base`.
+pub fn overlay_rect(pos: OverlayPosition, base: Rect, size: Vec2, anchor: Option<Rect>) -> Rect {
+    let cx = base.center().x - size.x / 2.0;
+    let cy = base.center().y - size.y / 2.0;
+    let (x, y) = match pos {
+        OverlayPosition::Center => (cx, cy),
+        OverlayPosition::TopLeft => (base.min.x, base.min.y),
+        OverlayPosition::TopCenter => (cx, base.min.y),
+        OverlayPosition::TopRight => (base.max.x - size.x, base.min.y),
+        OverlayPosition::BottomLeft => (base.min.x, base.max.y - size.y),
+        OverlayPosition::BottomCenter => (cx, base.max.y - size.y),
+        OverlayPosition::BottomRight => (base.max.x - size.x, base.max.y - size.y),
+        OverlayPosition::Manual => anchor.map(|a| (a.min.x, a.max.y)).unwrap_or((cx, cy)),
+    };
+    Rect::from_min_size(pos2(x, y), size)
+}
+
+fn variable_value(values: &BTreeMap<String, VariableValue>, v: &serde_json::Value) -> Option<VariableValue> {
+    let sample = values.values().next();
+    Some(match (sample, v) {
+        (Some(VariableValue::Color(_)), _) => VariableValue::Color(figcraft_engine::params::color_of(v)?),
+        (Some(VariableValue::Number(_)), _) => VariableValue::Number(figcraft_engine::params::f64_of(v)?),
+        (Some(VariableValue::Boolean(_)), _) => VariableValue::Boolean(match v {
+            serde_json::Value::Bool(b) => *b,
+            serde_json::Value::String(s) => s == "true",
+            serde_json::Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
+            _ => return None,
+        }),
+        (_, serde_json::Value::String(s)) => VariableValue::String(s.clone()),
+        (_, serde_json::Value::Bool(b)) => VariableValue::Boolean(*b),
+        (_, serde_json::Value::Number(n)) => VariableValue::Number(n.as_f64()?),
+        _ => return None,
+    })
+}
+
+/// Layers with interactions under `root`, with their (clipped) screen rects, bottom-most first.
+fn hotspots(doc: &Document, root: NodeId, place: &Place) -> Vec<(NodeId, Rect)> {
+    let mut out = Vec::new();
+    let mut hidden: HashSet<NodeId> = HashSet::new();
+    for id in doc.subtree(root) {
+        let Some(n) = doc.node(id) else { continue };
+        if !n.visible || n.parent.is_some_and(|p| hidden.contains(&p)) {
+            hidden.insert(id);
+            continue;
+        }
+        if n.interactions.is_empty() {
+            continue;
+        }
+        let Some(b) = doc.world_bounds(id) else { continue };
+        let mut r = place.rect(b);
+        let mut cur = n.parent;
+        if id != root {
+            while let Some(a) = cur {
+                if let Some(an) = doc.node(a)
+                    && an.clip
+                    && an.kind.is_frame_like()
+                    && let Some(ab) = doc.world_bounds(a)
+                {
+                    r = r.intersect(place.rect(ab));
+                }
+                if a == root {
+                    break;
+                }
+                cur = doc.node(a).and_then(|x| x.parent);
+            }
+        }
+        if r.is_positive() {
+            out.push((id, r));
+        }
+    }
+    out
+}
+
+/// The first interaction index on `id` whose trigger satisfies `want`.
+fn find_trigger(doc: &Document, id: NodeId, want: impl Fn(&Trigger) -> bool) -> Option<usize> {
+    doc.node(id)?.interactions.iter().position(|it| want(&it.trigger))
+}
+
+// ---------------------------------------------------------------------------------------------
+// The player UI.
+
+struct Layout {
+    disp: Document,
+    scale: f64,
+    place: Place,
+    target: Rect,
+    overlays: Vec<(NodeId, Place, Rect)>,
+}
+
+fn layout(p: &mut Presenter, area: Rect) -> Option<Layout> {
+    let disp = p.display()?;
+    let fb = disp.world_bounds(p.current)?;
+    let avail = area.shrink(32.0);
+    let scale = (f64::from(avail.width()) / fb.width().max(1.0)).min(f64::from(avail.height()) / fb.height().max(1.0)).clamp(0.01, 1.0);
+    let place = Place::centered(fb, area.center(), scale);
+    let target = place.rect(fb);
+    let mut overlays = Vec::new();
+    for o in &p.overlays {
+        let Some(ob) = disp.world_bounds(o.id) else { continue };
+        let size = vec2((ob.width() * scale) as f32, (ob.height() * scale) as f32);
+        let r = overlay_rect(o.position, target, size, o.anchor);
+        overlays.push((o.id, Place { page_min: (ob.x0, ob.y0), origin: r.min, scale }, r));
+    }
+    Some(Layout { disp, scale, place, target, overlays })
 }
 
 pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let now = ctx.input(|i| i.time);
     let Some(mut pres) = app.ui.present.take() else { return };
-    let bg = app
-        .session
-        .ds()
-        .ok()
-        .and_then(|ds| match ds.doc.node(ds.page).map(|n| &n.kind) {
-            Some(NodeKind::Page { prototype, .. }) => Some(crate::theme::c32(prototype.background)),
+    if pres.doc.is_none() {
+        let doc = app.session.doc().ok().cloned();
+        pres.original = doc.clone();
+        pres.doc = doc;
+        pres.arrived = now;
+    }
+    let bg = pres
+        .doc
+        .as_ref()
+        .and_then(|d| d.page_of(pres.current).and_then(|pg| d.node(pg)))
+        .and_then(|n| match &n.kind {
+            NodeKind::Page { prototype, .. } => Some(crate::theme::c32(prototype.background)),
             _ => None,
         })
         .unwrap_or(Color32::from_rgb(0x1E, 0x1E, 0x1E));
     let mut exit = false;
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| {
-        let rect = ui.max_rect();
-        let Ok(doc) = app.session.doc().cloned() else { return };
-        let Some(frame) = doc.node(pres.current).cloned() else {
-            exit = true;
-            return;
-        };
-        // Fit the frame (max 1:1 like Figma's "fit" for small frames).
-        let avail = rect.shrink(48.0);
-        let scale = (f64::from(avail.width()) / frame.width.max(1.0)).min(f64::from(avail.height()) / frame.height.max(1.0)).min(1.0);
-        let ppp = f64::from(ctx.pixels_per_point());
-        let need = pres.texture.as_ref().is_none_or(|(id, _, s)| *id != pres.current || (*s - scale * ppp).abs() > 1e-6);
-        if need && let Some(tex) = frame_texture(app, &ctx, pres.current, scale * ppp) {
-            pres.texture = Some((pres.current, tex, scale * ppp));
-        }
-        let size = vec2((frame.width * scale) as f32, (frame.height * scale) as f32);
-        let target = Rect::from_center_size(rect.center(), size);
-        let mut t_anim = 1.0;
-        if let Some((_, tr, start, dur, easing)) = pres.anim {
-            let raw = ((now - start) / dur).clamp(0.0, 1.0);
-            t_anim = easing.eval(raw) as f32;
-            if raw >= 1.0 {
-                pres.anim = None;
-                pres.from_texture = None;
-            } else {
-                ctx.request_repaint();
-            }
-            let _ = tr;
-        }
-        let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-        let anim = pres.anim.as_ref().map(|a| a.1);
-        match (anim, &pres.from_texture, &pres.texture) {
-            (Some(tr), Some(from), Some((_, to, _))) => {
-                let w = target.width();
-                match tr {
-                    Transition::Dissolve | Transition::SmartAnimate => {
-                        ui.painter().image(from.id(), target, uv, Color32::WHITE.gamma_multiply(1.0 - t_anim));
-                        ui.painter().image(to.id(), target, uv, Color32::WHITE.gamma_multiply(t_anim));
-                    }
-                    Transition::Push { .. } | Transition::SlideIn { .. } | Transition::MoveIn { .. } => {
-                        let dx = w * (1.0 - t_anim);
-                        let painter = ui.painter_at(target);
-                        if matches!(tr, Transition::Push { .. }) {
-                            painter.image(from.id(), target.translate(vec2(dx - w, 0.0)), uv, Color32::WHITE);
-                        } else {
-                            painter.image(from.id(), target, uv, Color32::WHITE);
-                        }
-                        painter.image(to.id(), target.translate(vec2(dx, 0.0)), uv, Color32::WHITE);
-                    }
-                    _ => {
-                        ui.painter().image(to.id(), target, uv, Color32::WHITE);
-                    }
-                }
-            }
-            (_, _, Some((_, tex, _))) => {
-                ui.painter().image(tex.id(), target, uv, Color32::WHITE);
-            }
-            _ => {}
-        }
-        // Hotspots: clickable layers with interactions inside the frame.
-        let fw = doc.world_transform(pres.current);
-        let inv = fw.inverse();
-        let mut hot: Vec<(NodeId, Rect)> = Vec::new();
-        for id in doc.subtree(pres.current) {
-            let Some(n) = doc.node(id) else { continue };
-            if n.interactions.is_empty() || !n.visible {
-                continue;
-            }
-            if let Some(b) = doc.world_bounds(id) {
-                let a = inv * figcraft_geom::Point::new(b.x0, b.y0);
-                let c = inv * figcraft_geom::Point::new(b.x1, b.y1);
-                let r = Rect::from_min_max(
-                    pos2(target.min.x + (a.x * scale) as f32, target.min.y + (a.y * scale) as f32),
-                    pos2(target.min.x + (c.x * scale) as f32, target.min.y + (c.y * scale) as f32),
-                );
-                hot.push((id, r));
-            }
-        }
-        let click = ui.interact(rect, ui.id().with("present_click"), Sense::click());
-        let pointer = ctx.input(|i| i.pointer.hover_pos());
-        let mut fired = false;
-        for (id, r) in hot.iter().rev() {
-            let Some(n) = doc.node(*id) else { continue };
-            let over = pointer.is_some_and(|p| r.contains(p));
-            if over {
-                ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
-            }
-            for it in &n.interactions {
-                let trigger_hit = match it.trigger {
-                    Trigger::OnClick | Trigger::MouseUp | Trigger::MouseDown | Trigger::OnPress => over && click.clicked(),
-                    Trigger::OnHover | Trigger::MouseEnter => over,
-                    Trigger::AfterDelay { ms } => {
-                        *id == pres.current && pres.anim.is_none() && pres.delay_started >= 0.0 && now - pres.delay_started > f64::from(ms) / 1000.0
-                    }
-                    _ => false,
-                };
-                if !trigger_hit || fired {
-                    continue;
-                }
-                for a in &it.actions {
-                    match a {
-                        Action::Navigate { dest } | Action::ChangeTo { dest } => {
-                            let top = doc.top_level_frame(*dest).unwrap_or(*dest);
-                            navigate(&mut pres, top, it.transition, f64::from(it.duration_ms) / 1000.0, it.easing, now);
-                            fired = true;
-                        }
-                        Action::Back => {
-                            if let Some(prev) = pres.history.pop() {
-                                pres.from_texture = pres.texture.take().map(|(_, t, _)| t);
-                                pres.anim = None;
-                                pres.current = prev;
-                                fired = true;
-                            }
-                        }
-                        Action::OpenUrl { url } => {
-                            app.services.open_url(url);
-                            fired = true;
-                        }
-                        Action::OpenOverlay { dest, .. } | Action::SwapOverlay { dest } => {
-                            pres.overlay = Some(*dest);
-                            fired = true;
-                        }
-                        Action::CloseOverlay => {
-                            pres.overlay = None;
-                            fired = true;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        if !fired && click.clicked() {
-            // Clicking empty space flashes hotspots (Figma behaviour): outline them briefly.
-            for (_, r) in &hot {
-                ui.painter().rect_stroke(
-                    *r,
-                    CornerRadius::same(2),
-                    egui::Stroke::new(2.0, crate::theme::ACCENT.gamma_multiply(0.6)),
-                    egui::StrokeKind::Outside,
-                );
-            }
-        }
-        // Overlay frame on top.
-        if let Some(ov) = pres.overlay
-            && let Some(on) = doc.node(ov)
-            && let Some(tex) = frame_texture(app, &ctx, ov, scale * ppp)
-        {
-            let osize = vec2((on.width * scale) as f32, (on.height * scale) as f32);
-            let orect = Rect::from_center_size(target.center(), osize);
-            ui.painter().rect_filled(target, CornerRadius::ZERO, Color32::from_black_alpha(80));
-            ui.painter().image(tex.id(), orect, uv, Color32::WHITE);
-            if click.clicked() && pointer.is_some_and(|p| !orect.contains(p)) {
-                pres.overlay = None;
-            }
-        }
-        // Top bar.
-        let bar = Rect::from_min_size(rect.min, vec2(rect.width(), 40.0));
-        ui.painter().rect_filled(bar, CornerRadius::ZERO, Color32::from_black_alpha(140));
-        ui.painter().text(pos2(bar.min.x + 16.0, bar.center().y), Align2::LEFT_CENTER, &frame.name, semibold(12.0), Color32::WHITE);
-        ui.painter().text(
-            pos2(bar.max.x - 16.0, bar.center().y),
-            Align2::RIGHT_CENTER,
-            "Esc to close · ← → for frames",
-            regular(11.0),
-            Color32::from_gray(200),
-        );
-        if pres.delay_started < 0.0 {
-            pres.delay_started = now;
-        }
-        ctx.request_repaint_after(std::time::Duration::from_millis(100));
-        // Arrow keys step through top-level frames.
-        let frames = doc.top_frames(doc.page_of(pres.current).unwrap_or(pres.current));
-        let idx = frames.iter().position(|f| *f == pres.current);
-        let (left, right) = ctx.input(|i| (i.key_pressed(egui::Key::ArrowLeft), i.key_pressed(egui::Key::ArrowRight)));
-        if let Some(i) = idx {
-            if right && let Some(n) = frames.get(i + 1) {
-                navigate(&mut pres, *n, Transition::Instant, 0.0, Default::default(), now);
-            }
-            if left
-                && i > 0
-                && let Some(n) = frames.get(i - 1)
-            {
-                navigate(&mut pres, *n, Transition::Instant, 0.0, Default::default(), now);
-            }
-        }
+        exit = player(&mut pres, ui, &ctx, now);
     });
+    for u in pres.urls.drain(..) {
+        app.services.open_url(&u);
+    }
     if exit || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         return;
     }
     app.ui.present = Some(pres);
+}
+
+/// One frame of the player; returns true to close it.
+fn player(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, now: f64) -> bool {
+    let rect = ui.max_rect();
+    let bar = Rect::from_min_size(rect.min, vec2(rect.width(), BAR_H));
+    let area = Rect::from_min_max(pos2(rect.min.x, rect.min.y + BAR_H), rect.max);
+    if p.doc.as_ref().is_none_or(|d| !d.contains(p.current)) {
+        return true;
+    }
+    // Scroll animation (Scroll to).
+    if let Some(sa) = &p.scroll_anim {
+        let raw = ((now - sa.start) / sa.dur.max(1e-3)).clamp(0.0, 1.0);
+        let e = sa.easing.eval(raw);
+        p.scroll.insert(sa.frame, (lerp(sa.from.0, sa.to.0, e), lerp(sa.from.1, sa.to.1, e)));
+        p.rev += 1;
+        if raw >= 1.0 {
+            p.scroll_anim = None;
+        }
+        ctx.request_repaint();
+    }
+    let resp = ui.interact(area, ui.id().with("present_area"), Sense::click_and_drag());
+    let close = top_bar(p, ui, bar, now);
+    if let Some(l) = layout(p, area) {
+        input(p, ctx, &l, resp.contains_pointer(), now);
+    }
+    let Some(l) = layout(p, area) else { return true };
+    draw(p, ui, ctx, &l, area, now);
+    // Timers: the soonest pending "after delay".
+    let mut next: Option<f64> = None;
+    for id in l.disp.subtree(p.current) {
+        let Some(n) = l.disp.node(id) else { continue };
+        for (k, it) in n.interactions.iter().enumerate() {
+            if let Trigger::AfterDelay { ms } = it.trigger
+                && !p.delays_fired.contains(&(id, k))
+            {
+                let due = p.arrived + f64::from(ms) / 1000.0 - now;
+                next = Some(next.map_or(due, |x: f64| x.min(due)));
+            }
+        }
+    }
+    match next {
+        Some(d) => ctx.request_repaint_after(std::time::Duration::from_secs_f64(d.clamp(0.0, 60.0))),
+        None => ctx.request_repaint_after(std::time::Duration::from_millis(250)),
+    }
+    close
+}
+
+fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64) -> bool {
+    let painter = ui.painter();
+    painter.rect_filled(bar, CornerRadius::ZERO, Color32::from_rgb(0x2C, 0x2C, 0x2C));
+    let Some(doc) = p.doc.clone() else { return true };
+    let name = doc.node(p.current).map(|n| n.name.clone()).unwrap_or_default();
+    let flows = match doc.page_of(p.start).and_then(|pg| doc.node(pg)).map(|n| &n.kind) {
+        Some(NodeKind::Page { flows, .. }) => flows.clone(),
+        _ => vec![],
+    };
+    let mut close = false;
+    // Right: close, restart.
+    let mut x = bar.max.x - 8.0;
+    let button = |ui: &mut Ui, label: &str, id: &str, x: &mut f32| -> bool {
+        let galley = ui.painter().layout_no_wrap(label.to_string(), regular(11.5), Color32::WHITE);
+        let r = Rect::from_min_size(pos2(*x - galley.size().x - 16.0, bar.center().y - 12.0), vec2(galley.size().x + 16.0, 24.0));
+        *x = r.min.x - 4.0;
+        let resp = ui.interact(r, ui.id().with(("pbar", id)), Sense::click());
+        if resp.hovered() {
+            ui.painter().rect_filled(r, CornerRadius::same(5), Color32::from_white_alpha(28));
+        }
+        ui.painter().galley(pos2(r.min.x + 8.0, r.center().y - galley.size().y / 2.0), galley, Color32::WHITE);
+        resp.clicked()
+    };
+    if button(ui, "Close", "close", &mut x) {
+        close = true;
+    }
+    if button(ui, "Restart", "restart", &mut x) {
+        p.restart(p.start, now);
+    }
+    // Left: flow picker and the frame's name.
+    let mut lx = bar.min.x + 12.0;
+    let flow_name = flows.iter().find(|f| f.start == p.start).map(|f| f.name.clone());
+    if !flows.is_empty() {
+        let label = format!("{}  ▾", flow_name.clone().unwrap_or_else(|| "Flows".into()));
+        let galley = ui.painter().layout_no_wrap(label, semibold(11.5), Color32::WHITE);
+        let r = Rect::from_min_size(pos2(lx, bar.center().y - 12.0), vec2(galley.size().x + 16.0, 24.0));
+        let resp = ui.interact(r, ui.id().with("pflows"), Sense::click()).on_hover_text("Flows");
+        if resp.hovered() {
+            ui.painter().rect_filled(r, CornerRadius::same(5), Color32::from_white_alpha(28));
+        }
+        ui.painter().galley(pos2(r.min.x + 8.0, r.center().y - galley.size().y / 2.0), galley, Color32::WHITE);
+        egui::Popup::menu(&resp).width(200.0).show(|ui| {
+            for f in &flows {
+                if crate::right::menu_item(ui, &f.name, "") {
+                    p.restart(f.start, now);
+                    ui.close();
+                }
+            }
+        });
+        lx = r.max.x + 8.0;
+        ui.painter().text(pos2(lx, bar.center().y), Align2::LEFT_CENTER, "/", regular(11.5), Color32::from_gray(140));
+        lx += 14.0;
+    }
+    ui.painter().text(pos2(lx, bar.center().y), Align2::LEFT_CENTER, name, regular(11.5), Color32::from_gray(220));
+    close
+}
+
+fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, now: f64) {
+    let (pos, pressed, released, down, wheel, keys) = ctx.input(|i| {
+        let keys: Vec<egui::Key> = i
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                egui::Event::Key { key, pressed: true, repeat: false, .. } => Some(*key),
+                _ => None,
+            })
+            .collect();
+        (
+            i.pointer.hover_pos(),
+            i.pointer.button_pressed(egui::PointerButton::Primary),
+            i.pointer.button_released(egui::PointerButton::Primary),
+            i.pointer.primary_down(),
+            i.smooth_scroll_delta,
+            keys,
+        )
+    });
+    let pos = pos.filter(|_| over_area || p.press.is_some());
+    // The active layer: the top overlay, else the frame.
+    let (root, place) = match l.overlays.last() {
+        Some((id, pl, _)) => (*id, *pl),
+        None => (p.current, l.place),
+    };
+    let doc = &l.disp;
+    let hot = hotspots(doc, root, &place);
+    // "While hovering / pressing" reverts.
+    if let Some(tmp) = &p.temp {
+        let leave = if tmp.press { released || !down } else { pos.is_none_or(|q| !tmp.rect.contains(q)) };
+        if leave {
+            p.revert(now);
+            return;
+        }
+    }
+    // Wheel scrolls the innermost scrollable frame under the pointer.
+    if wheel != Vec2::ZERO
+        && let Some(q) = pos
+        && let Some(base) = p.doc.clone()
+    {
+        let mut frames: Vec<NodeId> = doc.subtree(root).into_iter().filter(|i| doc.node(*i).is_some_and(|n| n.overflow != Overflow::None)).collect();
+        frames.reverse();
+        for f in frames {
+            let Some(b) = doc.world_bounds(f) else { continue };
+            if !place.rect(b).contains(q) {
+                continue;
+            }
+            let (rx, ry) = scroll_range(&base, f);
+            let cur = p.scroll.get(&f).copied().unwrap_or((0.0, 0.0));
+            let next = ((cur.0 - f64::from(wheel.x) / l.scale).clamp(0.0, rx), (cur.1 - f64::from(wheel.y) / l.scale).clamp(0.0, ry));
+            if (next.0 - cur.0).abs() > 1e-6 || (next.1 - cur.1).abs() > 1e-6 {
+                p.scroll.insert(f, next);
+                p.scroll_anim = None;
+                p.rev += 1;
+                break;
+            }
+        }
+    }
+    let hits: Vec<(NodeId, Rect)> = hot.iter().rev().filter(|(_, r)| pos.is_some_and(|q| r.contains(q))).copied().collect();
+    if !hits.is_empty() {
+        ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    // First (top-most) hit that has a matching trigger.
+    let pick = |want: &dyn Fn(&Trigger) -> bool| -> Option<(NodeId, usize, Rect)> {
+        hits.iter().find_map(|(id, r)| find_trigger(doc, *id, want).map(|k| (*id, k, *r)))
+    };
+    // Enter / leave.
+    let ids: Vec<NodeId> = hits.iter().map(|h| h.0).collect();
+    let entered: Vec<(NodeId, Rect)> = hits.iter().filter(|(id, _)| !p.hovered.contains(id)).copied().collect();
+    let left: Vec<NodeId> = p.hovered.iter().filter(|id| !ids.contains(id)).copied().collect();
+    p.hovered = ids;
+    for id in left {
+        if let Some(k) = find_trigger(doc, id, |t| *t == Trigger::MouseLeave)
+            && p.fire(id, k, None, now)
+        {
+            return;
+        }
+    }
+    for (id, r) in &entered {
+        if let Some(k) = find_trigger(doc, *id, |t| *t == Trigger::MouseEnter)
+            && p.fire(*id, k, Some(*r), now)
+        {
+            return;
+        }
+    }
+    if p.temp.is_none()
+        && !entered.is_empty()
+        && let Some((id, k, r)) = pick(&|t| *t == Trigger::OnHover)
+        && entered.iter().any(|e| e.0 == id)
+        && p.fire(id, k, Some(r), now)
+    {
+        return;
+    }
+    // Press / drag / release.
+    if pressed && pos.is_some() && over_area {
+        p.press = pos;
+        p.dragged = false;
+        if let (Some((_, _, orect)), Some(o), Some(q)) = (l.overlays.last(), p.overlays.last(), pos)
+            && !orect.contains(q)
+        {
+            if o.close_on_outside {
+                p.overlays.pop();
+                p.press = None;
+                p.hovered.clear();
+            }
+            return;
+        }
+        if let Some((id, k, r)) = pick(&|t| *t == Trigger::MouseDown)
+            && p.fire(id, k, Some(r), now)
+        {
+            return;
+        }
+        if let Some((id, k, r)) = pick(&|t| *t == Trigger::OnPress)
+            && p.fire(id, k, Some(r), now)
+        {
+            return;
+        }
+    }
+    if down
+        && !p.dragged
+        && let (Some(start), Some(q)) = (p.press, pos)
+        && start.distance(q) > 6.0
+    {
+        p.dragged = true;
+        let at_start: Vec<(NodeId, Rect)> = hot.iter().rev().filter(|(_, r)| r.contains(start)).copied().collect();
+        if let Some((id, k, r)) = at_start.iter().find_map(|(id, r)| find_trigger(doc, *id, |t| *t == Trigger::OnDrag).map(|k| (*id, k, *r)))
+            && p.fire(id, k, Some(r), now)
+        {
+            p.press = None;
+            return;
+        }
+    }
+    if released && p.press.is_some() {
+        let dragged = p.dragged;
+        p.press = None;
+        p.dragged = false;
+        if let Some((id, k, r)) = pick(&|t| *t == Trigger::MouseUp)
+            && p.fire(id, k, Some(r), now)
+        {
+            return;
+        }
+        if !dragged {
+            if let Some((id, k, r)) = pick(&|t| *t == Trigger::OnClick)
+                && p.fire(id, k, Some(r), now)
+            {
+                return;
+            }
+            // Clicking where nothing reacts flashes the hotspots.
+            p.flash_until = now + 0.5;
+        }
+    }
+    // Keys.
+    for key in &keys {
+        let name = key.name();
+        let found = doc.subtree(root).into_iter().find_map(|id| {
+            find_trigger(doc, id, |t| matches!(t, Trigger::KeyPress { key } if key.eq_ignore_ascii_case(name) || key_alias(key) == Some(name)))
+                .map(|k| (id, k))
+        });
+        if let Some((id, k)) = found {
+            if p.fire(id, k, None, now) {
+                return;
+            }
+            continue;
+        }
+        // Arrow keys step through top-level frames when nothing else uses them.
+        if matches!(key, egui::Key::ArrowLeft | egui::Key::ArrowRight)
+            && p.overlays.is_empty()
+            && let Some(base) = p.doc.clone()
+        {
+            let frames = base.top_frames(base.page_of(p.current).unwrap_or(p.current));
+            if let Some(i) = frames.iter().position(|f| *f == p.current) {
+                let next = if *key == egui::Key::ArrowRight { frames.get(i + 1) } else { i.checked_sub(1).and_then(|j| frames.get(j)) };
+                if let Some(n) = next {
+                    p.go(*n, Transition::Instant, 0.0, Easing::Linear, now, true);
+                    return;
+                }
+            }
+        }
+    }
+    // After delay (timers start when the frame appears; not while animating).
+    if p.anim.is_none() {
+        let mut due: Option<(NodeId, usize)> = None;
+        for id in doc.subtree(root) {
+            let Some(n) = doc.node(id) else { continue };
+            for (k, it) in n.interactions.iter().enumerate() {
+                if let Trigger::AfterDelay { ms } = it.trigger
+                    && !p.delays_fired.contains(&(id, k))
+                    && now - p.arrived >= f64::from(ms) / 1000.0
+                {
+                    due = Some((id, k));
+                    break;
+                }
+            }
+            if due.is_some() {
+                break;
+            }
+        }
+        if let Some((id, k)) = due {
+            p.delays_fired.insert((id, k));
+            p.fire(id, k, None, now);
+        }
+    }
+}
+
+/// Alternative spellings people type for keys.
+fn key_alias(k: &str) -> Option<&'static str> {
+    Some(match k.to_ascii_lowercase().as_str() {
+        "space" | " " => "Space",
+        "return" | "enter" => "Enter",
+        "esc" | "escape" => "Escape",
+        "left" | "arrowleft" | "←" => "ArrowLeft",
+        "right" | "arrowright" | "→" => "ArrowRight",
+        "up" | "arrowup" | "↑" => "ArrowUp",
+        "down" | "arrowdown" | "↓" => "ArrowDown",
+        "tab" => "Tab",
+        "backspace" => "Backspace",
+        "delete" => "Delete",
+        _ => return None,
+    })
+}
+
+fn draw(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, l: &Layout, area: Rect, now: f64) {
+    let ppp = f64::from(ctx.pixels_per_point());
+    let px = l.scale * ppp;
+    let painter = ui.painter_at(area);
+    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    let to_tex = p.texture(ctx, &l.disp, p.current, px);
+    // Transition progress.
+    let mut drawn = false;
+    if let Some(a) = &p.anim {
+        let raw = ((now - a.start) / a.dur.max(1e-3)).clamp(0.0, 1.0);
+        if raw >= 1.0 {
+            p.anim = None;
+        } else {
+            ctx.request_repaint();
+            let e = a.easing.eval(raw);
+            let from_place = a.from_doc.world_bounds(a.from_frame).map(|fb| Place::centered(fb, area.center(), l.scale));
+            if matches!(a.transition, Transition::SmartAnimate) {
+                #[cfg(not(target_arch = "wasm32"))]
+                let t0 = std::time::Instant::now();
+                let tmp = smart_interpolate(&a.from_doc, a.from_frame, &l.disp, p.current, e);
+                let bounds = figcraft_render::export_bounds(&tmp, p.current);
+                if let (Some(b), Some(pix)) = (bounds, figcraft_render::render_node(&tmp, p.current, px)) {
+                    let img = egui::ColorImage::from_rgba_premultiplied([pix.width() as usize, pix.height() as usize], pix.data());
+                    let tex = match &mut p.anim_tex {
+                        Some(t) => {
+                            t.set(img, egui::TextureOptions::LINEAR);
+                            t.clone()
+                        }
+                        None => {
+                            let t = ctx.load_texture("present-anim", img, egui::TextureOptions::LINEAR);
+                            p.anim_tex = Some(t.clone());
+                            t
+                        }
+                    };
+                    painter.with_clip_rect(l.target).image(tex.id(), l.place.rect(b), uv, Color32::WHITE);
+                    drawn = true;
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    p.render_ms = t0.elapsed().as_secs_f64() * 1000.0;
+                }
+            } else if let (Some(ft), Some(to), Some(fp)) = (&a.from_tex, &to_tex, from_place) {
+                let f = transition_frames(a.transition, e as f32);
+                let from_rect = fp.rect(ft.bounds);
+                let from_frame_rect = a.from_doc.world_bounds(a.from_frame).map(|b| fp.rect(b)).unwrap_or(from_rect);
+                let to_rect = l.place.rect(to.bounds);
+                let off = |r: Rect, o: (f32, f32)| vec2(r.width() * o.0, r.height() * o.1);
+                let clip =
+                    painter.with_clip_rect(l.target.union(if matches!(a.transition, Transition::Dissolve) { from_frame_rect } else { l.target }));
+                let draw_from = |p: &egui::Painter| {
+                    if f.from_alpha > 0.0 {
+                        p.image(ft.tex.id(), from_rect.translate(off(from_frame_rect, f.from_off)), uv, Color32::WHITE.gamma_multiply(f.from_alpha));
+                    }
+                };
+                let draw_to = |p: &egui::Painter| {
+                    p.image(to.tex.id(), to_rect.translate(off(l.target, f.to_off)), uv, Color32::WHITE.gamma_multiply(f.to_alpha));
+                };
+                if f.from_on_top {
+                    draw_to(&clip);
+                    draw_from(&clip);
+                } else {
+                    draw_from(&clip);
+                    draw_to(&clip);
+                }
+                drawn = true;
+            }
+        }
+    }
+    if !drawn && let Some(to) = &to_tex {
+        painter.image(to.tex.id(), l.place.rect(to.bounds), uv, Color32::WHITE);
+    }
+    // Overlays (each with its background and opening transition).
+    let ovs = p.overlays.clone();
+    for (o, (id, place, orect)) in ovs.iter().zip(l.overlays.iter()) {
+        let raw = if o.dur > 0.0 { ((now - o.opened) / o.dur).clamp(0.0, 1.0) } else { 1.0 };
+        if raw < 1.0 {
+            ctx.request_repaint();
+        }
+        let e = o.easing.eval(raw) as f32;
+        let f = if matches!(o.transition, Transition::Instant) {
+            transition_frames(Transition::Dissolve, 1.0)
+        } else {
+            transition_frames(o.transition, e)
+        };
+        if let Some(bgc) = o.background {
+            let c = crate::theme::c32(bgc);
+            painter.rect_filled(l.target, CornerRadius::ZERO, c.gamma_multiply(raw as f32));
+        }
+        if let Some(tex) = p.texture(ctx, &l.disp, *id, px) {
+            let r = place.rect(tex.bounds).translate(vec2(orect.width() * f.to_off.0, orect.height() * f.to_off.1));
+            painter.with_clip_rect(l.target).image(tex.tex.id(), r, uv, Color32::WHITE.gamma_multiply(f.to_alpha));
+        }
+    }
+    // Hotspot flash after a click on nothing.
+    if now < p.flash_until {
+        let (root, place) = match l.overlays.last() {
+            Some((id, pl, _)) => (*id, *pl),
+            None => (p.current, l.place),
+        };
+        let a = ((p.flash_until - now) / 0.5) as f32;
+        for (_, r) in hotspots(&l.disp, root, &place) {
+            painter.rect_filled(r, CornerRadius::same(2), ACCENT.gamma_multiply(0.25 * a));
+            painter.rect_stroke(r, CornerRadius::same(2), Stroke::new(1.5, ACCENT.gamma_multiply(a)), StrokeKind::Outside);
+        }
+        ctx.request_repaint();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use figcraft_doc::NodeKind;
+
+    fn doc_with_two_frames() -> (Document, NodeId, NodeId) {
+        let mut d = Document::new("t");
+        let page = d.add_page("Page 1");
+        let a = d.create(page, NodeKind::Frame, "A", 0.0, 0.0, 200.0, 400.0).unwrap();
+        let b = d.create(page, NodeKind::Frame, "B", 300.0, 0.0, 200.0, 400.0).unwrap();
+        (d, a, b)
+    }
+
+    #[test]
+    fn matching_by_name_path() {
+        let (mut d, a, b) = doc_with_two_frames();
+        let ga = d.create(a, NodeKind::Group, "Card", 0.0, 0.0, 10.0, 10.0).unwrap();
+        let ra = d.create(ga, NodeKind::Rectangle, "Box", 0.0, 0.0, 10.0, 10.0).unwrap();
+        let ra2 = d.create(ga, NodeKind::Rectangle, "Box", 0.0, 0.0, 10.0, 10.0).unwrap();
+        let only_a = d.create(a, NodeKind::Rectangle, "Gone", 0.0, 0.0, 10.0, 10.0).unwrap();
+        let gb = d.create(b, NodeKind::Group, "Card", 0.0, 0.0, 10.0, 10.0).unwrap();
+        let rb = d.create(gb, NodeKind::Rectangle, "Box", 0.0, 0.0, 10.0, 10.0).unwrap();
+        let rb2 = d.create(gb, NodeKind::Rectangle, "Box", 0.0, 0.0, 10.0, 10.0).unwrap();
+        // Same name, different parent: no match.
+        let _other = d.create(b, NodeKind::Rectangle, "Box", 0.0, 0.0, 10.0, 10.0).unwrap();
+        let m = match_layers(&d, a, &d, b);
+        assert_eq!(m, vec![(ga, gb), (ra, rb), (ra2, rb2)]);
+        assert!(!m.iter().any(|(f, _)| *f == only_a));
+        assert_eq!(name_path(&d, a, ra).as_deref(), Some("Card\u{1f}Box"));
+        assert_eq!(name_path(&d, b, ra), None);
+    }
+
+    #[test]
+    fn smart_interpolate_tweens_matched_and_fades_the_rest() {
+        let (mut d, a, b) = doc_with_two_frames();
+        let ra = d.create(a, NodeKind::Rectangle, "Box", 0.0, 0.0, 20.0, 20.0).unwrap();
+        let rb = d.create(b, NodeKind::Rectangle, "Box", 100.0, 200.0, 60.0, 40.0).unwrap();
+        {
+            let n = d.get_mut(ra).unwrap();
+            n.fills = vec![Paint::solid(Color::new(1.0, 0.0, 0.0, 1.0))];
+            n.corners.radii = [0.0; 4];
+            n.opacity = 1.0;
+        }
+        {
+            let n = d.get_mut(rb).unwrap();
+            n.fills = vec![Paint::solid(Color::new(0.0, 0.0, 1.0, 1.0))];
+            n.corners.radii = [20.0; 4];
+            n.opacity = 0.5;
+            // Rotate 90° about its centre.
+            let c = (130.0, 220.0);
+            n.transform = Affine::translate(c) * Affine::rotate(std::f64::consts::FRAC_PI_2) * Affine::translate((-30.0, -20.0));
+        }
+        let only_b = d.create(b, NodeKind::Rectangle, "New", 0.0, 0.0, 5.0, 5.0);
+        let only_a = d.create(a, NodeKind::Rectangle, "Old", 0.0, 0.0, 5.0, 5.0).unwrap();
+        let mid = smart_interpolate(&d, a, &d, b, 0.5);
+        let n = mid.node(rb).unwrap();
+        assert!((n.width - 40.0).abs() < 1e-9 && (n.height - 30.0).abs() < 1e-9);
+        assert!((n.opacity - 0.75).abs() < 1e-6);
+        assert!((n.corners.radii[0] - 10.0).abs() < 1e-9);
+        let c = n.fills[0].solid_color().unwrap();
+        assert!((c.r - 0.5).abs() < 0.02 && (c.b - 0.5).abs() < 0.02, "{c:?}");
+        // Centre halfway between (10, 10) and (130, 220) in frame space; rotated 45°.
+        let ctr = mid.world_transform(b).inverse() * mid.world_transform(rb) * Point::new(n.width / 2.0, n.height / 2.0);
+        assert!((ctr.x - 70.0).abs() < 1e-6 && (ctr.y - 115.0).abs() < 1e-6, "{ctr:?}");
+        let [aa, bb, ..] = n.transform.as_coeffs();
+        assert!((bb.atan2(aa) - std::f64::consts::FRAC_PI_4).abs() < 1e-6);
+        if let Ok(ob) = only_b {
+            assert!((mid.node(ob).unwrap().opacity - 0.5).abs() < 1e-6);
+        }
+        // The source-only layer is copied into the destination frame, half faded.
+        let copies: Vec<_> = mid.node(b).unwrap().children.iter().filter_map(|c| mid.node(*c)).filter(|n| n.name == "Old").collect();
+        assert_eq!(copies.len(), 1);
+        assert!((copies[0].opacity - 0.5).abs() < 1e-6);
+        assert_ne!(copies[0].id, only_a);
+        // At the end it is exactly the destination.
+        let end = smart_interpolate(&d, a, &d, b, 1.0);
+        assert_eq!(end.node(rb), d.node(rb));
+        assert_eq!(end.node(b).unwrap().children, d.node(b).unwrap().children);
+        // At the start the matched layer sits where the source was.
+        let start = smart_interpolate(&d, a, &d, b, 0.0);
+        let s = start.world_bounds(rb).unwrap();
+        let f = start.world_bounds(b).unwrap();
+        assert!((s.x0 - f.x0).abs() < 1e-6 && (s.y0 - f.y0).abs() < 1e-6 && (s.width() - 20.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn scroll_offsets_fixed_and_sticky() {
+        let (mut d, a, _) = doc_with_two_frames();
+        d.get_mut(a).unwrap().overflow = Overflow::Vertical;
+        let long = d.create(a, NodeKind::Rectangle, "Long", 0.0, 0.0, 200.0, 1000.0).unwrap();
+        let fixed = d.create(a, NodeKind::Rectangle, "Bar", 0.0, 350.0, 200.0, 50.0).unwrap();
+        let sticky = d.create(a, NodeKind::Rectangle, "Header", 0.0, 100.0, 200.0, 40.0).unwrap();
+        d.get_mut(fixed).unwrap().scroll_position = ScrollPosition::Fixed;
+        d.get_mut(sticky).unwrap().scroll_position = ScrollPosition::Sticky;
+        assert_eq!(scroll_range(&d, a), (0.0, 600.0));
+        d.get_mut(a).unwrap().overflow = Overflow::Horizontal;
+        assert_eq!(scroll_range(&d, a), (0.0, 0.0));
+        d.get_mut(a).unwrap().overflow = Overflow::Vertical;
+        let mut s = HashMap::new();
+        s.insert(a, (0.0, 50.0));
+        let out = apply_scroll(&d, &s);
+        let y = |doc: &Document, id| doc.world_bounds(id).unwrap().y0;
+        assert_eq!(y(&out, long), -50.0);
+        assert_eq!(y(&out, fixed), 350.0);
+        assert_eq!(y(&out, sticky), 50.0);
+        s.insert(a, (0.0, 300.0));
+        let out = apply_scroll(&d, &s);
+        assert_eq!(y(&out, long), -300.0);
+        assert_eq!(y(&out, sticky), 0.0);
+    }
+
+    #[test]
+    fn transitions_move_the_right_way() {
+        let left = transition_frames(Transition::MoveIn { direction: Direction::Left }, 0.0);
+        assert_eq!(left.to_off, (1.0, 0.0));
+        assert_eq!(transition_frames(Transition::MoveIn { direction: Direction::Left }, 1.0).to_off, (0.0, 0.0));
+        let push = transition_frames(Transition::Push { direction: Direction::Top }, 0.5);
+        assert_eq!(push.from_off, (0.0, -0.5));
+        assert_eq!(push.to_off, (0.0, 0.5));
+        let out = transition_frames(Transition::MoveOut { direction: Direction::Right }, 0.25);
+        assert!(out.from_on_top);
+        assert_eq!(out.from_off, (0.25, 0.0));
+        assert_eq!(transition_frames(Transition::Dissolve, 0.3).to_alpha, 0.3);
+        assert_eq!(transition_frames(Transition::Instant, 0.0).from_alpha, 0.0);
+        let r = Transition::SlideIn { direction: Direction::Bottom }.reversed();
+        assert_eq!(r, Transition::SlideOut { direction: Direction::Top });
+    }
+
+    #[test]
+    fn overlay_positions() {
+        let base = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 800.0));
+        let size = vec2(200.0, 100.0);
+        assert_eq!(overlay_rect(OverlayPosition::Center, base, size, None).min, pos2(100.0, 350.0));
+        assert_eq!(overlay_rect(OverlayPosition::BottomCenter, base, size, None).min, pos2(100.0, 700.0));
+        assert_eq!(overlay_rect(OverlayPosition::TopRight, base, size, None).min, pos2(200.0, 0.0));
+        let anchor = Rect::from_min_size(pos2(30.0, 40.0), vec2(50.0, 20.0));
+        assert_eq!(overlay_rect(OverlayPosition::Manual, base, size, Some(anchor)).min, pos2(30.0, 60.0));
+    }
+
+    #[test]
+    fn variables_parse_by_type() {
+        let mut m = BTreeMap::new();
+        m.insert("m1".to_string(), VariableValue::Number(1.0));
+        assert_eq!(variable_value(&m, &serde_json::json!("4")), Some(VariableValue::Number(4.0)));
+        m.insert("m1".to_string(), VariableValue::Boolean(false));
+        assert_eq!(variable_value(&m, &serde_json::json!(true)), Some(VariableValue::Boolean(true)));
+        assert_eq!(variable_value(&m, &serde_json::json!({})), None);
+    }
+
+    /// Smart animate renders a temporary document per animation frame; keep that cheap.
+    #[test]
+    fn smart_animate_frame_cost() {
+        let (mut d, a, b) = doc_with_two_frames();
+        for (f, dx) in [(a, 0.0), (b, 40.0)] {
+            for i in 0..40 {
+                let r = d.create(f, NodeKind::Rectangle, &format!("Row {i}"), dx + 10.0, 10.0 + f64::from(i) * 9.0, 120.0, 8.0).unwrap();
+                d.get_mut(r).unwrap().corners.radii = [4.0; 4];
+            }
+        }
+        let t0 = std::time::Instant::now();
+        let n = 10;
+        for k in 0..n {
+            let tmp = smart_interpolate(&d, a, &d, b, f64::from(k) / f64::from(n));
+            assert!(figcraft_render::render_node(&tmp, b, 2.0).is_some());
+        }
+        let per = t0.elapsed().as_secs_f64() * 1000.0 / f64::from(n);
+        eprintln!("smart animate: {per:.2} ms per frame (80 layers, 400x800 px)");
+    }
 }
