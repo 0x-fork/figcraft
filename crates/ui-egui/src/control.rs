@@ -207,6 +207,20 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             if let Some(h) = p.get("mainMenu").and_then(Value::as_bool) {
                 app.ui.main_menu = h;
             }
+            // Comment thread popover: an id opens it, null closes it.
+            if let Some(v) = p.get("commentOpen") {
+                app.ui.comments.open = v.as_u64();
+                app.ui.comments.draft = None;
+            }
+            if let Some(v) = p.get("commentDraft") {
+                match (v.get("x").and_then(Value::as_f64), v.get("y").and_then(Value::as_f64)) {
+                    (Some(x), Some(y)) => crate::comments::start_draft(app, x, y),
+                    _ => app.ui.comments.draft = None,
+                }
+            }
+            if let Some(v) = p.get("showResolvedComments").and_then(Value::as_bool) {
+                app.ui.comments.show_resolved = v;
+            }
             Ok(app.inspect())
         }
         "ui.render" => {

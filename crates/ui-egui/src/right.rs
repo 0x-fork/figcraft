@@ -129,6 +129,11 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     ui.painter().line_segment([tabs.left_bottom(), tabs.right_bottom()], Stroke::new(1.0, t.border));
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+        if app.session.tool.tool == figcraft_engine::ToolId::Comment {
+            crate::comments::panel(app, ui);
+            ui.add_space(80.0);
+            return;
+        }
         match app.ui.right_tab {
             RightTab::Design => design(app, ui),
             RightTab::Prototype => crate::proto_panel::prototype(app, ui),

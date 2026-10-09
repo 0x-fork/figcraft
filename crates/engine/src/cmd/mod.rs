@@ -1,6 +1,7 @@
 //! The command registry. Each area module exposes `specs()`; [`all_commands`] collects them once.
 
 pub mod arrange;
+pub mod comment;
 pub mod component;
 pub mod create;
 pub mod edit;
@@ -70,6 +71,7 @@ fn registry() -> &'static Registry {
         list.extend(styles::specs());
         list.extend(component::specs());
         list.extend(proto::specs());
+        list.extend(comment::specs());
         list.extend(crate::vectoredit::specs());
         let mut index = HashMap::new();
         for (i, s) in list.iter().enumerate() {

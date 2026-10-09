@@ -8,6 +8,7 @@
 //! live in higher crates.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod comments;
 pub mod geometry;
 pub mod node;
 pub mod props;
@@ -16,6 +17,7 @@ pub mod styles;
 pub mod text;
 pub mod vector;
 
+pub use comments::*;
 pub use figcraft_color as color;
 pub use figcraft_geom as geom;
 pub use node::*;
@@ -107,6 +109,9 @@ pub struct Document {
     /// Colours used recently / saved in "Document colors".
     #[serde(default)]
     pub document_colors: Vec<Color>,
+    /// Comment threads on any page.
+    #[serde(default)]
+    pub comments: Vec<Comment>,
 }
 
 impl Default for Document {
@@ -129,6 +134,7 @@ impl Document {
             images: BTreeMap::new(),
             current_page: None,
             document_colors: Vec::new(),
+            comments: Vec::new(),
         };
         let p = doc.add_page("Page 1");
         doc.current_page = Some(p);

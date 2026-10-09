@@ -124,6 +124,8 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     }
     overlays(app, &painter, &t);
     crate::handles::draw(app, &painter);
+    crate::comments::draw(app, &painter);
+    crate::comments::popovers(app, &ctx);
     // Cursor.
     if resp.hovered() {
         let c = if app.canvas.space_pan || app.canvas.middle_pan.is_some() {
@@ -249,6 +251,9 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
         if !middle_down && !ctx.input(|i| i.pointer.primary_down()) {
             app.canvas.middle_pan = None;
         }
+        return;
+    }
+    if !app.canvas.dragging && resp.hovered() && crate::comments::input(app, &ctx, pos) {
         return;
     }
     if !app.canvas.dragging && resp.hovered() && crate::handles::input(app, &ctx, pos) {

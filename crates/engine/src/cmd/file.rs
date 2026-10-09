@@ -133,14 +133,7 @@ fn version_list() -> &'static std::sync::Mutex<std::collections::HashMap<u64, Ve
 }
 
 fn now_secs() -> u64 {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        0
-    }
+    super::comment::now_secs()
 }
 
 fn push_version(ds: &DocState, name: String, desc: String, doc: Arc<Document>) {

@@ -7,6 +7,7 @@
 
 pub mod canvas;
 pub mod colorpicker;
+pub mod comments;
 pub mod component_panel;
 pub mod control;
 pub mod credits;
@@ -107,6 +108,7 @@ pub struct UiState {
     pub zoom_menu: bool,
     pub find: Option<(String, String)>,
     pub left_collapsed: bool,
+    pub comments: comments::CommentUi,
 }
 
 impl Default for UiState {
@@ -143,6 +145,7 @@ impl Default for UiState {
             zoom_menu: false,
             find: None,
             left_collapsed: false,
+            comments: comments::CommentUi::default(),
         }
     }
 }
@@ -216,7 +219,11 @@ impl FigApp {
                 }
                 "open.help" => self.services.open_url("https://getartcraft.com/apps/figcraft"),
                 "layers.collapseAll" => self.ui.expanded.clear(),
-                "comment.new" => self.toast("Comments are local notes (coming soon)"),
+                "comment.new" => {
+                    let x = r.data.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let y = r.data.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    comments::start_draft(self, x, y);
+                }
                 "dialog.unsaved" => self.toast("This file has unsaved changes"),
                 _ => {}
             }
@@ -388,6 +395,7 @@ impl FigApp {
             "presenting": self.ui.present.is_some(),
             "mainMenu": self.ui.main_menu,
             "palette": self.ui.palette.is_some(),
+            "comments": {"open": self.ui.comments.open, "draft": self.ui.comments.draft.as_ref().map(|d| [d.0, d.1]), "showResolved": self.ui.comments.show_resolved},
             "frameMs": self.ui.frame_ms,
             "renderMs": self.ui.render_ms,
             "canvas": {"rect": [self.canvas.rect.min.x, self.canvas.rect.min.y, self.canvas.rect.max.x, self.canvas.rect.max.y]},
