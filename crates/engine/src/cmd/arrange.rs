@@ -1,0 +1,416 @@
+//! Arrange: align, distribute, tidy, z-order, flips, rotations and numeric transforms.
+
+use figcraft_doc::*;
+use figcraft_geom::{Affine, Point, Rect};
+use serde_json::{Value, json};
+
+use super::edit::{roots, z_sorted};
+use super::{CommandSpec, ok};
+use crate::params::*;
+use crate::{Result, Session, bad, spec};
+
+pub fn specs() -> Vec<CommandSpec> {
+    vec![
+        spec!("align.left", "Align left", "{ids?}", true, |s, p| align(s, p, Al::Left)),
+        spec!("align.hcenter", "Align horizontal centers", "{ids?}", true, |s, p| align(s, p, Al::HCenter)),
+        spec!("align.right", "Align right", "{ids?}", true, |s, p| align(s, p, Al::Right)),
+        spec!("align.top", "Align top", "{ids?}", true, |s, p| align(s, p, Al::Top)),
+        spec!("align.vcenter", "Align vertical centers", "{ids?}", true, |s, p| align(s, p, Al::VCenter)),
+        spec!("align.bottom", "Align bottom", "{ids?}", true, |s, p| align(s, p, Al::Bottom)),
+        spec!("distribute.horizontal", "Distribute horizontal spacing", "{ids?, spacing?}", true, |s, p| distribute(s, p, true)),
+        spec!("distribute.vertical", "Distribute vertical spacing", "{ids?, spacing?}", true, |s, p| distribute(s, p, false)),
+        spec!("arrange.tidy", "Tidy up", "{ids?, spacing?}", true, tidy),
+        spec!("arrange.packH", "Pack horizontal", "{ids?}", true, |s, p| pack(s, p, true)),
+        spec!("arrange.packV", "Pack vertical", "{ids?}", true, |s, p| pack(s, p, false)),
+        spec!("arrange.roundToPixels", "Round to pixels", "{ids?}", true, round_px),
+        spec!("arrange.front", "Bring to front", "{ids?}", true, |s, p| zorder(s, p, Z::Front)),
+        spec!("arrange.forward", "Bring forward", "{ids?}", true, |s, p| zorder(s, p, Z::Forward)),
+        spec!("arrange.backward", "Send backward", "{ids?}", true, |s, p| zorder(s, p, Z::Backward)),
+        spec!("arrange.back", "Send to back", "{ids?}", true, |s, p| zorder(s, p, Z::Back)),
+        spec!("object.flipH", "Flip horizontal", "{ids?}", true, |s, p| flip(s, p, true)),
+        spec!("object.flipV", "Flip vertical", "{ids?}", true, |s, p| flip(s, p, false)),
+        spec!("object.rotate180", "Rotate 180°", "{ids?}", true, |s, p| rotate_by(s, p, 180.0)),
+        spec!("object.rotateLeft", "Rotate 90° left", "{ids?}", true, |s, p| rotate_by(s, p, 90.0)),
+        spec!("object.rotateRight", "Rotate 90° right", "{ids?}", true, |s, p| rotate_by(s, p, -90.0)),
+        spec!("transform.move", "Move", "{ids?, dx, dy}  (page units)", true, |s, p| {
+            let (dx, dy) = (num_or(p, "dx", 0.0), num_or(p, "dy", 0.0));
+            let ids = req_targets("transform.move", s, p)?;
+            let doc = s.doc_mut()?;
+            for i in roots(doc, &ids) {
+                move_world(doc, i, dx, dy)?;
+            }
+            ok()
+        }),
+        spec!("transform.moveTo", "Move to", "{ids?, x, y} (page coordinates of the selection's top-left)", true, |s, p| {
+            let ids = req_targets("transform.moveTo", s, p)?;
+            let doc = s.doc_mut()?;
+            let ids = roots(doc, &ids);
+            let b = doc.bounds_of(&ids).ok_or_else(|| bad("transform.moveTo", "nothing to move"))?;
+            let (dx, dy) = (num_or(p, "x", b.x0) - b.x0, num_or(p, "y", b.y0) - b.y0);
+            for i in ids {
+                move_world(doc, i, dx, dy)?;
+            }
+            ok()
+        }),
+        spec!("transform.rotate", "Rotate", "{ids?, degrees, cx?, cy? (pivot, page coords; default the selection centre)}", true, |s, p| {
+            let deg = req_num("transform.rotate", p, "degrees")?;
+            let ids = req_targets("transform.rotate", s, p)?;
+            let doc = s.doc_mut()?;
+            let ids = roots(doc, &ids);
+            let c = doc.bounds_of(&ids).map(|b| b.center()).unwrap_or_default();
+            let pivot = Point::new(num_or(p, "cx", c.x), num_or(p, "cy", c.y));
+            for i in ids {
+                rotate_world(doc, i, pivot, deg)?;
+            }
+            ok()
+        }),
+        spec!("transform.scale", "Scale", "{ids?, factor, cx?, cy? (pivot; default top-left)} — scales size, strokes, effects, text (the K tool)", true, scale_cmd),
+        spec!("transform.resize", "Resize", "{ids?, width?, height?, anchor? (tl|t|tr|l|c|r|bl|b|br)}", true, resize_cmd),
+    ]
+}
+
+#[derive(Clone, Copy)]
+enum Al {
+    Left,
+    HCenter,
+    Right,
+    Top,
+    VCenter,
+    Bottom,
+}
+
+/// Move a node by `(dx, dy)` in page units.
+pub fn move_world(doc: &mut Document, id: NodeId, dx: f64, dy: f64) -> Result<()> {
+    let n = doc.get(id)?;
+    let pw = n.parent.map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY);
+    let d = pw.inverse() * Affine::translate((dx, dy)) * pw;
+    let n = doc.get_mut(id)?;
+    n.transform = d * n.transform;
+    Ok(())
+}
+
+pub fn rotate_world(doc: &mut Document, id: NodeId, pivot: Point, deg: f64) -> Result<()> {
+    let world = doc.world_transform(id);
+    let nw = figcraft_geom::rotate_about(world, pivot, deg);
+    doc.set_world_transform(id, nw)?;
+    Ok(())
+}
+
+fn align(s: &mut Session, p: &Value, a: Al) -> Result<Value> {
+    let ids = req_targets("align", s, p)?;
+    let doc = s.doc_mut()?;
+    let ids = roots(doc, &ids);
+    // One layer aligns within its parent frame; several align to their combined bounds.
+    let target: Rect = if ids.len() == 1 {
+        let Some(id) = ids.first() else { return ok() };
+        let parent = doc.get(*id)?.parent;
+        match parent.filter(|pp| !doc.node(*pp).is_some_and(Node::is_page)) {
+            Some(pp) => doc.world_bounds(pp).unwrap_or_default(),
+            None => return ok(),
+        }
+    } else {
+        doc.bounds_of(&ids).unwrap_or_default()
+    };
+    for i in ids {
+        let Some(b) = doc.world_bounds(i) else { continue };
+        let (dx, dy) = match a {
+            Al::Left => (target.x0 - b.x0, 0.0),
+            Al::HCenter => (target.center().x - b.center().x, 0.0),
+            Al::Right => (target.x1 - b.x1, 0.0),
+            Al::Top => (0.0, target.y0 - b.y0),
+            Al::VCenter => (0.0, target.center().y - b.center().y),
+            Al::Bottom => (0.0, target.y1 - b.y1),
+        };
+        move_world(doc, i, dx, dy)?;
+    }
+    ok()
+}
+
+fn distribute(s: &mut Session, p: &Value, horizontal: bool) -> Result<Value> {
+    let ids = req_targets("distribute", s, p)?;
+    let doc = s.doc_mut()?;
+    let ids = roots(doc, &ids);
+    if ids.len() < 3 && num(p, "spacing").is_none() {
+        return ok();
+    }
+    let mut items: Vec<(NodeId, Rect)> = ids.iter().filter_map(|i| doc.world_bounds(*i).map(|b| (*i, b))).collect();
+    items.sort_by(|a, b| if horizontal { a.1.x0.total_cmp(&b.1.x0) } else { a.1.y0.total_cmp(&b.1.y0) });
+    let total: f64 = items.iter().map(|(_, b)| if horizontal { b.width() } else { b.height() }).sum();
+    let (Some(first), Some(last)) = (items.first(), items.last()) else { return ok() };
+    let span = if horizontal { last.1.x1 - first.1.x0 } else { last.1.y1 - first.1.y0 };
+    let gap = num(p, "spacing").unwrap_or((span - total) / (items.len().saturating_sub(1).max(1)) as f64);
+    let mut pos = if horizontal { first.1.x0 } else { first.1.y0 };
+    for (i, b) in items.clone() {
+        if horizontal {
+            move_world(doc, i, pos - b.x0, 0.0)?;
+            pos += b.width() + gap;
+        } else {
+            move_world(doc, i, 0.0, pos - b.y0)?;
+            pos += b.height() + gap;
+        }
+    }
+    ok()
+}
+
+/// Tidy up: snap the selection into a grid of rows/columns with even spacing.
+fn tidy(s: &mut Session, p: &Value) -> Result<Value> {
+    let ids = req_targets("arrange.tidy", s, p)?;
+    let doc = s.doc_mut()?;
+    let ids = roots(doc, &ids);
+    let mut items: Vec<(NodeId, Rect)> = ids.iter().filter_map(|i| doc.world_bounds(*i).map(|b| (*i, b))).collect();
+    if items.len() < 2 {
+        return ok();
+    }
+    // Group into rows by vertical centre overlap.
+    items.sort_by(|a, b| a.1.y0.total_cmp(&b.1.y0));
+    let mut rows: Vec<Vec<(NodeId, Rect)>> = Vec::new();
+    for it in items {
+        match rows.last_mut() {
+            Some(row) if row.iter().any(|(_, b)| it.1.center().y < b.y1 && it.1.center().y > b.y0) => row.push(it),
+            _ => rows.push(vec![it]),
+        }
+    }
+    let all: Vec<Rect> = rows.iter().flatten().map(|(_, b)| *b).collect();
+    let (Some(origin), maxw, maxh) = (all.iter().copied().reduce(|a, b| a.union(b)), all.iter().map(Rect::width).fold(0.0, f64::max), all.iter().map(Rect::height).fold(0.0, f64::max)) else {
+        return ok();
+    };
+    let gap = num(p, "spacing").unwrap_or_else(|| {
+        // Keep the average existing horizontal gap (min 10).
+        10f64.max(rows.iter().filter(|r| r.len() > 1).map(|r| (r.iter().map(|(_, b)| b.x1).fold(f64::MIN, f64::max) - r.iter().map(|(_, b)| b.x0).fold(f64::MAX, f64::min) - r.iter().map(|(_, b)| b.width()).sum::<f64>()) / (r.len() - 1) as f64).fold(0.0, f64::max))
+    });
+    for (ri, row) in rows.iter_mut().enumerate() {
+        row.sort_by(|a, b| a.1.x0.total_cmp(&b.1.x0));
+        for (ci, (id, b)) in row.iter().enumerate() {
+            let x = origin.x0 + ci as f64 * (maxw + gap);
+            let y = origin.y0 + ri as f64 * (maxh + gap);
+            move_world(doc, *id, x - b.x0, y - b.y0)?;
+        }
+    }
+    ok()
+}
+
+fn pack(s: &mut Session, p: &Value, horizontal: bool) -> Result<Value> {
+    let mut q = p.clone();
+    if let Some(o) = q.as_object_mut() {
+        o.insert("spacing".into(), json!(0.0));
+    }
+    distribute(s, &q, horizontal)
+}
+
+fn round_px(s: &mut Session, p: &Value) -> Result<Value> {
+    let ids = req_targets("arrange.roundToPixels", s, p)?;
+    let doc = s.doc_mut()?;
+    for i in ids {
+        let n = doc.get_mut(i)?;
+        let c = n.transform.as_coeffs();
+        n.transform = Affine::new([c[0], c[1], c[2], c[3], c[4].round(), c[5].round()]);
+        n.width = n.width.round().max(if n.width > 0.0 { 1.0 } else { 0.0 });
+        n.height = n.height.round().max(if n.height > 0.0 { 1.0 } else { 0.0 });
+    }
+    ok()
+}
+
+#[derive(Clone, Copy)]
+enum Z {
+    Front,
+    Forward,
+    Backward,
+    Back,
+}
+
+fn zorder(s: &mut Session, p: &Value, z: Z) -> Result<Value> {
+    let ids = req_targets("arrange", s, p)?;
+    let doc = s.doc_mut()?;
+    let ids = z_sorted(doc, &roots(doc, &ids));
+    let order: Vec<NodeId> = match z {
+        Z::Front | Z::Forward => ids.iter().rev().copied().collect(),
+        _ => ids.clone(),
+    };
+    for i in order {
+        let Some(parent) = doc.get(i)?.parent else { continue };
+        let len = doc.get(parent)?.children.len();
+        let cur = doc.index_in_parent(i).unwrap_or(0);
+        let siblings_selected = |k: usize, doc: &Document| doc.node(parent).and_then(|pn| pn.children.get(k)).is_some_and(|c| ids.contains(c));
+        let target = match z {
+            Z::Front => len.saturating_sub(1),
+            Z::Back => 0,
+            Z::Forward => {
+                if cur + 1 < len && !siblings_selected(cur + 1, doc) {
+                    cur + 1
+                } else {
+                    cur
+                }
+            }
+            Z::Backward => {
+                if cur > 0 && !siblings_selected(cur - 1, doc) {
+                    cur - 1
+                } else {
+                    cur
+                }
+            }
+        };
+        doc.reorder(i, target)?;
+    }
+    // Front/Back of several keep their relative order.
+    if matches!(z, Z::Front) {
+        for i in &ids {
+            let parent = doc.get(*i)?.parent;
+            if let Some(pp) = parent {
+                let len = doc.get(pp)?.children.len();
+                doc.reorder(*i, len)?;
+            }
+        }
+    }
+    if matches!(z, Z::Back) {
+        for (k, i) in ids.iter().enumerate() {
+            doc.reorder(*i, k)?;
+        }
+    }
+    ok()
+}
+
+fn flip(s: &mut Session, p: &Value, horizontal: bool) -> Result<Value> {
+    let ids = req_targets("flip", s, p)?;
+    let doc = s.doc_mut()?;
+    let ids = roots(doc, &ids);
+    let Some(b) = doc.bounds_of(&ids) else { return ok() };
+    let c = b.center();
+    let m = if horizontal { Affine::new([-1.0, 0.0, 0.0, 1.0, 2.0 * c.x, 0.0]) } else { Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, 2.0 * c.y]) };
+    for i in ids {
+        let w = doc.world_transform(i);
+        doc.set_world_transform(i, m * w)?;
+    }
+    ok()
+}
+
+fn rotate_by(s: &mut Session, p: &Value, deg: f64) -> Result<Value> {
+    let ids = req_targets("rotate", s, p)?;
+    let doc = s.doc_mut()?;
+    let ids = roots(doc, &ids);
+    let Some(b) = doc.bounds_of(&ids) else { return ok() };
+    for i in ids {
+        rotate_world(doc, i, b.center(), deg)?;
+    }
+    ok()
+}
+
+/// Scale nodes uniformly including strokes, effects, radii and text sizes (the Scale tool).
+pub fn scale_node(doc: &mut Document, id: NodeId, k: f64) -> Result<()> {
+    let k = if k.is_finite() && k > 0.0 { k } else { return Ok(()) };
+    let sub = doc.subtree(id);
+    for (depth, i) in sub.iter().enumerate() {
+        let n = doc.get_mut(*i)?;
+        n.stroke.weight *= k;
+        if let Some(sides) = n.stroke.sides.as_mut() {
+            for v in sides.iter_mut() {
+                *v *= k;
+            }
+        }
+        for d in &mut n.stroke.dashes {
+            *d *= k;
+        }
+        n.corners.radii = n.corners.radii.map(|r| r * k);
+        for e in &mut n.effects {
+            match &mut e.kind {
+                EffectKind::DropShadow(sh) | EffectKind::InnerShadow(sh) => {
+                    sh.radius *= k;
+                    sh.spread *= k;
+                    sh.offset = (sh.offset.0 * k, sh.offset.1 * k);
+                }
+                EffectKind::LayerBlur { radius } | EffectKind::BackgroundBlur { radius } => *radius *= k,
+                _ => {}
+            }
+        }
+        if let Some(l) = n.layout.as_mut() {
+            l.gap *= k;
+            l.cross_gap *= k;
+            l.padding = l.padding.map(|x| x * k);
+        }
+        if let NodeKind::Text(t) = &mut n.kind {
+            t.style.font_size *= k;
+            if let LineHeight::Pixels(v) = &mut t.style.line_height {
+                *v *= k;
+            }
+            if let LetterSpacing::Pixels(v) = &mut t.style.letter_spacing {
+                *v *= k;
+            }
+            for r in &mut t.runs {
+                r.style.font_size *= k;
+                if let LineHeight::Pixels(v) = &mut r.style.line_height {
+                    *v *= k;
+                }
+            }
+            t.paragraph_spacing *= k;
+        }
+        if let NodeKind::Vector { network } = &mut n.kind {
+            network.scale(k, k);
+        }
+        n.width *= k;
+        n.height *= k;
+        if depth > 0 {
+            let c = n.transform.as_coeffs();
+            n.transform = Affine::new([c[0], c[1], c[2], c[3], c[4] * k, c[5] * k]);
+        }
+    }
+    Ok(())
+}
+
+fn scale_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    let k = req_num("transform.scale", p, "factor")?;
+    if k <= 0.0 {
+        return Err(bad("transform.scale", "`factor` must be positive"));
+    }
+    let ids = req_targets("transform.scale", s, p)?;
+    let doc = s.doc_mut()?;
+    let ids = roots(doc, &ids);
+    let b = doc.bounds_of(&ids).unwrap_or_default();
+    let pivot = Point::new(num_or(p, "cx", b.x0), num_or(p, "cy", b.y0));
+    for i in ids {
+        let Some(nb) = doc.world_bounds(i) else { continue };
+        scale_node(doc, i, k)?;
+        // Keep relative position to the pivot.
+        let target = Point::new(pivot.x + (nb.x0 - pivot.x) * k, pivot.y + (nb.y0 - pivot.y) * k);
+        if let Some(after) = doc.world_bounds(i) {
+            move_world(doc, i, target.x - after.x0, target.y - after.y0)?;
+        }
+    }
+    ok()
+}
+
+fn resize_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    let ids = req_targets("transform.resize", s, p)?;
+    let anchor = string(p, "anchor").unwrap_or_else(|| "tl".into());
+    let (ax, ay) = match anchor.as_str() {
+        "t" => (0.5, 0.0),
+        "tr" => (1.0, 0.0),
+        "l" => (0.0, 0.5),
+        "c" => (0.5, 0.5),
+        "r" => (1.0, 0.5),
+        "bl" => (0.0, 1.0),
+        "b" => (0.5, 1.0),
+        "br" => (1.0, 1.0),
+        _ => (0.0, 0.0),
+    };
+    let doc = s.doc_mut()?;
+    for i in ids {
+        let n = doc.get(i)?;
+        let (ow, oh) = (n.width, n.height);
+        let (w, h) = (num(p, "width").unwrap_or(ow).max(0.0), num(p, "height").unwrap_or(oh).max(0.0));
+        let fixed_local = Point::new(ow * ax, oh * ay);
+        let before = n.transform * fixed_local;
+        super::props::resize_node(doc, i, w, h)?;
+        let n = doc.get_mut(i)?;
+        let after = n.transform * Point::new(w * ax, h * ay);
+        n.transform = Affine::translate(before - after) * n.transform;
+        if num(p, "width").is_some() {
+            n.child_layout.sizing_h = Sizing::Fixed;
+        }
+        if num(p, "height").is_some() {
+            n.child_layout.sizing_v = Sizing::Fixed;
+        }
+        if let NodeKind::Text(t) = &mut n.kind {
+            t.auto_resize = if num(p, "height").is_some() { TextAutoResize::None } else { TextAutoResize::Height };
+        }
+    }
+    ok()
+}

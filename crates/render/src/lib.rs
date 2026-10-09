@@ -11,7 +11,7 @@ pub mod images;
 pub mod paint;
 
 pub use draw::{node_outline, subtree_outline, ts_path};
-pub use tiny_skia::Pixmap;
+pub use tiny_skia::{FillRule, Pixmap};
 
 use figcraft_color::Color;
 use figcraft_doc::{Document, NodeId, NodeKind};

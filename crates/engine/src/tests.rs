@@ -1,0 +1,262 @@
+use serde_json::json;
+
+use super::*;
+use figcraft_doc::NodeKind;
+
+fn sess() -> Session {
+    Session::new()
+}
+
+fn id(v: &Value) -> NodeId {
+    params::id_of(&v["id"]).unwrap()
+}
+
+#[test]
+fn create_select_undo_redo() {
+    let mut s = sess();
+    let r = s.execute("node.create", &json!({"type": "rectangle", "x": 10, "y": 20, "width": 30, "height": 40})).unwrap();
+    let rid = id(&r);
+    assert_eq!(s.selection(), vec![rid]);
+    assert_eq!(s.doc().unwrap().world_bounds(rid).unwrap().x0, 10.0);
+    assert!(s.undo().unwrap());
+    assert!(!s.doc().unwrap().contains(rid));
+    assert!(s.redo().unwrap());
+    assert!(s.doc().unwrap().contains(rid));
+}
+
+#[test]
+fn node_set_and_errors_roll_back() {
+    let mut s = sess();
+    let rid = id(&s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap());
+    s.execute("node.set", &json!({"id": rid, "props": {"fill": "#ff0000", "cornerRadius": 4, "opacity": 0.5, "name": "Red"}})).unwrap();
+    let n = s.doc().unwrap().node(rid).unwrap().clone();
+    assert_eq!(n.name, "Red");
+    assert_eq!(n.corners.radii, [4.0; 4]);
+    assert_eq!(n.fills[0].solid_color().unwrap().to_hex(), "FF0000");
+    let undo = s.ds().unwrap().history.undo.len();
+    assert!(s.execute("node.set", &json!({"id": rid, "props": {"name": "X", "bogus": 1}})).is_err());
+    assert_eq!(s.doc().unwrap().node(rid).unwrap().name, "Red");
+    assert_eq!(s.ds().unwrap().history.undo.len(), undo);
+    assert!(s.execute("no.such", &json!({})).is_err());
+}
+
+#[test]
+fn group_ungroup_and_frame() {
+    let mut s = sess();
+    let a = id(&s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap());
+    let b = id(&s.execute("shape.ellipse", &json!({"x": 50, "y": 50, "width": 10, "height": 10})).unwrap());
+    let g = id(&s.execute("object.group", &json!({"ids": [a, b]})).unwrap());
+    let doc = s.doc().unwrap();
+    assert_eq!(doc.node(g).unwrap().kind.type_name(), "GROUP");
+    assert_eq!(doc.world_bounds(g).unwrap().width(), 60.0);
+    s.execute("object.ungroup", &json!({"ids": [g]})).unwrap();
+    assert!(!s.doc().unwrap().contains(g));
+    let f = id(&s.execute("object.frameSelection", &json!({"ids": [a, b]})).unwrap());
+    assert_eq!(s.doc().unwrap().node(a).unwrap().parent, Some(f));
+    assert_eq!(s.doc().unwrap().world_bounds(a).unwrap().x0, 0.0);
+}
+
+#[test]
+fn auto_layout_add_hugs() {
+    let mut s = sess();
+    let a = id(&s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 40, "height": 20})).unwrap());
+    let b = id(&s.execute("shape.rectangle", &json!({"x": 60, "y": 0, "width": 40, "height": 20})).unwrap());
+    let r = s.execute("layout.add", &json!({"ids": [a, b]})).unwrap();
+    let f = params::id_of(&r["ids"][0]).unwrap();
+    let doc = s.doc().unwrap();
+    let fnode = doc.node(f).unwrap();
+    assert!(fnode.layout.is_some());
+    assert_eq!(fnode.width, 100.0);
+    // Change gap: frame hugs.
+    s.execute("node.set", &json!({"id": f, "props": {"gap": 0}})).unwrap();
+    assert_eq!(s.doc().unwrap().node(f).unwrap().width, 80.0);
+    // Padding.
+    s.execute("node.set", &json!({"id": f, "props": {"padding": 10}})).unwrap();
+    assert_eq!(s.doc().unwrap().node(f).unwrap().width, 100.0);
+    assert_eq!(s.doc().unwrap().node(f).unwrap().height, 40.0);
+}
+
+#[test]
+fn text_create_autosize_and_edit() {
+    let mut s = sess();
+    let t = id(&s.execute("text.create", &json!({"text": "Hello", "x": 0, "y": 0, "props": {"fontSize": 24}})).unwrap());
+    let w0 = s.doc().unwrap().node(t).unwrap().width;
+    textedit::begin(&mut s, t, Some(5), false).unwrap();
+    textedit::insert(&mut s, " world").unwrap();
+    textedit::key(&mut s, "Backspace", false, false, false).unwrap();
+    textedit::end(&mut s).unwrap();
+    let n = s.doc().unwrap().node(t).unwrap().clone();
+    assert_eq!(n.kind.text().unwrap().characters, "Hello worl");
+    if figcraft_text::find_face("Inter", "Regular").is_some() {
+        assert!(n.width > w0);
+    }
+    // One undo step for the whole edit session.
+    s.undo().unwrap();
+    assert_eq!(s.doc().unwrap().node(t).unwrap().kind.text().unwrap().characters, "Hello");
+}
+
+#[test]
+fn components_and_instances_sync() {
+    let mut s = sess();
+    let f = id(&s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 100, "height": 50, "name": "Button"})).unwrap());
+    let label = id(&s.execute("text.create", &json!({"text": "OK", "x": 10, "y": 10, "parent": f})).unwrap());
+    let c = id(&s.execute("component.create", &json!({"ids": [f]})).unwrap());
+    assert_eq!(c, f);
+    let i = id(&s.execute("instance.create", &json!({"component": c, "x": 200, "y": 0})).unwrap());
+    let doc = s.doc().unwrap();
+    assert_eq!(doc.node(i).unwrap().children.len(), 1);
+    let inst_label = doc.node(i).unwrap().children[0];
+    // Edit the main: instance follows.
+    s.execute("node.set", &json!({"id": c, "props": {"fill": "#00ff00"}})).unwrap();
+    assert_eq!(s.doc().unwrap().node(i).unwrap().fills[0].solid_color().unwrap().to_hex(), "00FF00");
+    // Override text in the instance, then change main text: override wins.
+    s.execute("text.set", &json!({"id": inst_label, "characters": "Cancel"})).unwrap();
+    s.execute("text.set", &json!({"id": label, "characters": "Yes"})).unwrap();
+    let doc = s.doc().unwrap();
+    let kid = doc.node(i).unwrap().children[0];
+    assert_eq!(kid, inst_label, "ids are stable across syncs");
+    assert_eq!(doc.node(kid).unwrap().kind.text().unwrap().characters, "Cancel");
+    // Reset clears overrides.
+    s.execute("component.resetInstance", &json!({"ids": [i]})).unwrap();
+    let doc = s.doc().unwrap();
+    let kid = doc.node(i).unwrap().children[0];
+    assert_eq!(doc.node(kid).unwrap().kind.text().unwrap().characters, "Yes");
+    // Detach.
+    s.execute("component.detach", &json!({"ids": [i]})).unwrap();
+    assert_eq!(s.doc().unwrap().node(i).unwrap().kind.type_name(), "FRAME");
+    assert!(s.doc().unwrap().validate().is_empty());
+}
+
+#[test]
+fn variants_switch() {
+    let mut s = sess();
+    let a = id(&s.execute("node.create", &json!({"type": "component", "x": 0, "y": 0, "width": 40, "height": 40, "name": "State=Default", "props": {"fill": "#ff0000"}})).unwrap());
+    let b = id(&s.execute("node.create", &json!({"type": "component", "x": 60, "y": 0, "width": 40, "height": 40, "name": "State=Hover", "props": {"fill": "#0000ff"}})).unwrap());
+    s.execute("component.combineVariants", &json!({"ids": [a, b]})).unwrap();
+    let i = id(&s.execute("instance.create", &json!({"component": a, "x": 0, "y": 200})).unwrap());
+    s.execute("instance.setProperties", &json!({"ids": [i], "properties": {"State": "Hover"}})).unwrap();
+    let n = s.doc().unwrap().node(i).unwrap().clone();
+    assert!(matches!(n.kind, NodeKind::Instance { component, .. } if component == b));
+    assert_eq!(n.fills[0].solid_color().unwrap().to_hex(), "0000FF");
+}
+
+#[test]
+fn styles_and_variables() {
+    let mut s = sess();
+    let r = id(&s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10, "props": {"fill": "#123456"}})).unwrap());
+    let st = s.execute("style.create", &json!({"type": "paint", "name": "Brand/Primary", "from": r})).unwrap();
+    let sid = st["id"].as_str().unwrap().to_string();
+    let r2 = id(&s.execute("shape.rectangle", &json!({"x": 20, "y": 0, "width": 10, "height": 10})).unwrap());
+    s.execute("style.apply", &json!({"ids": [r2], "style": "Brand/Primary"})).unwrap();
+    assert_eq!(s.doc().unwrap().node(r2).unwrap().fills[0].solid_color().unwrap().to_hex(), "123456");
+    s.execute("style.update", &json!({"style": sid, "value": ["#ff00ff"]})).unwrap();
+    assert_eq!(s.doc().unwrap().node(r2).unwrap().fills[0].solid_color().unwrap().to_hex(), "FF00FF");
+    // Variables with modes.
+    s.execute("variable.createCollection", &json!({"name": "Theme", "modes": ["Light", "Dark"]})).unwrap();
+    s.execute("variable.create", &json!({"collection": "Theme", "name": "bg", "type": "color", "values": {"Light": "#ffffff", "Dark": "#000000"}})).unwrap();
+    s.execute("variable.bind", &json!({"ids": [r], "field": "fill", "variable": "bg"})).unwrap();
+    assert_eq!(s.doc().unwrap().node(r).unwrap().fills[0].solid_color().unwrap().to_hex(), "FFFFFF");
+    let page = s.page().unwrap();
+    s.execute("variable.setMode", &json!({"ids": [page], "collection": "Theme", "mode": "Dark"})).unwrap();
+    assert_eq!(s.doc().unwrap().node(r).unwrap().fills[0].solid_color().unwrap().to_hex(), "000000");
+}
+
+#[test]
+fn align_distribute_zorder() {
+    let mut s = sess();
+    let a = id(&s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap());
+    let b = id(&s.execute("shape.rectangle", &json!({"x": 30, "y": 20, "width": 10, "height": 10})).unwrap());
+    let c = id(&s.execute("shape.rectangle", &json!({"x": 100, "y": 5, "width": 10, "height": 10})).unwrap());
+    s.execute("align.top", &json!({"ids": [a, b, c]})).unwrap();
+    assert_eq!(s.doc().unwrap().world_bounds(b).unwrap().y0, 0.0);
+    s.execute("distribute.horizontal", &json!({"ids": [a, b, c]})).unwrap();
+    assert_eq!(s.doc().unwrap().world_bounds(b).unwrap().x0, 50.0);
+    s.execute("arrange.back", &json!({"ids": [c]})).unwrap();
+    let page = s.page().unwrap();
+    assert_eq!(s.doc().unwrap().node(page).unwrap().children[0], c);
+}
+
+#[test]
+fn copy_paste_and_duplicate() {
+    let mut s = sess();
+    let a = id(&s.execute("shape.rectangle", &json!({"x": 5, "y": 5, "width": 10, "height": 10})).unwrap());
+    s.execute("edit.copy", &json!({"ids": [a]})).unwrap();
+    let r = s.execute("edit.paste", &json!({})).unwrap();
+    let pid = params::id_of(&r["ids"][0]).unwrap();
+    assert_ne!(pid, a);
+    assert_eq!(s.doc().unwrap().world_bounds(pid).unwrap().x0, 5.0);
+    let d = s.execute("edit.duplicate", &json!({"ids": [a]})).unwrap();
+    assert_eq!(d["ids"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn boolean_and_flatten() {
+    let mut s = sess();
+    let a = id(&s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 20, "height": 20})).unwrap());
+    let b = id(&s.execute("shape.rectangle", &json!({"x": 10, "y": 10, "width": 20, "height": 20})).unwrap());
+    let g = id(&s.execute("bool.union", &json!({"ids": [a, b]})).unwrap());
+    assert_eq!(s.doc().unwrap().node(g).unwrap().kind.type_name(), "BOOLEAN_OPERATION");
+    let v = id(&s.execute("vector.flatten", &json!({"ids": [g]})).unwrap());
+    let n = s.doc().unwrap().node(v).unwrap().clone();
+    assert_eq!(n.kind.type_name(), "VECTOR");
+    assert_eq!((n.width, n.height), (30.0, 30.0));
+}
+
+#[test]
+fn pointer_draw_move_resize() {
+    let mut s = sess();
+    s.set_tool(ToolId::Rectangle);
+    let z = 1.0;
+    s.pointer(&PointerEvent::at(PointerKind::Down, 10.0, 10.0, z)).unwrap();
+    s.pointer(&PointerEvent::at(PointerKind::Move, 60.0, 40.0, z)).unwrap();
+    s.pointer(&PointerEvent::at(PointerKind::Up, 60.0, 40.0, z)).unwrap();
+    let r = s.selection()[0];
+    assert_eq!(s.doc().unwrap().world_bounds(r).unwrap(), figcraft_geom::Rect::new(10.0, 10.0, 60.0, 40.0));
+    assert_eq!(s.tool.tool, ToolId::Move);
+    let undo_len = s.ds().unwrap().history.undo.len();
+    // Move it.
+    s.pointer(&PointerEvent::at(PointerKind::Down, 30.0, 20.0, z)).unwrap();
+    s.pointer(&PointerEvent::at(PointerKind::Move, 130.0, 120.0, z)).unwrap();
+    s.pointer(&PointerEvent::at(PointerKind::Up, 130.0, 120.0, z)).unwrap();
+    assert_eq!(s.doc().unwrap().world_bounds(r).unwrap().x0, 110.0);
+    assert_eq!(s.ds().unwrap().history.undo.len(), undo_len + 1);
+    // Resize from the bottom-right corner.
+    s.pointer(&PointerEvent::at(PointerKind::Down, 160.0, 140.0, z)).unwrap();
+    s.pointer(&PointerEvent::at(PointerKind::Move, 210.0, 190.0, z)).unwrap();
+    s.pointer(&PointerEvent::at(PointerKind::Up, 210.0, 190.0, z)).unwrap();
+    let b = s.doc().unwrap().world_bounds(r).unwrap();
+    assert_eq!((b.width(), b.height()), (100.0, 80.0));
+    // Marquee empty space deselects then selects.
+    s.pointer(&PointerEvent::at(PointerKind::Down, 500.0, 500.0, z)).unwrap();
+    assert!(s.selection().is_empty());
+    s.pointer(&PointerEvent::at(PointerKind::Move, 100.0, 100.0, z)).unwrap();
+    s.pointer(&PointerEvent::at(PointerKind::Up, 100.0, 100.0, z)).unwrap();
+    assert_eq!(s.selection(), vec![r]);
+}
+
+#[test]
+fn every_command_survives_junk_params() {
+    // A junk-parameter sweep: no command may panic (guard turns panics into Internal errors,
+    // which would fail this test).
+    let junk = [json!({}), json!(null), json!({"ids": ["x", -1, 99999]}), json!({"id": "nope", "x": "NaN", "props": 5}), json!([1, 2, 3])];
+    for spec in all_commands() {
+        if matches!(spec.id, "file.open" | "file.save" | "file.saveAs" | "file.import" | "file.export" | "file.exportSvg" | "file.placeImage" | "image.place" | "file.revert") {
+            continue;
+        }
+        for j in &junk {
+            let mut s = sess();
+            let _ = s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10}));
+            let _ = s.execute("text.create", &json!({"text": "t"}));
+            if let Err(EngineError::Internal { cmd, msg }) = s.execute(spec.id, j) {
+                panic!("{cmd} panicked on {j}: {msg}");
+            }
+        }
+    }
+}
+
+#[test]
+fn parity_catalog_mostly_covered() {
+    let (done, total, missing) = catalog::parity(&[]);
+    assert!(total > 150);
+    assert!(done as f64 / total as f64 > 0.8, "{done}/{total} missing: {missing:?}");
+}

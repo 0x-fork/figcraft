@@ -1,0 +1,203 @@
+//! View menu, preferences and tools. View state is per document and drivable like everything else.
+
+use figcraft_doc::*;
+use serde_json::{Value, json};
+
+use super::{CommandSpec, ok};
+use crate::params::*;
+use crate::tools::ToolId;
+use crate::{Result, Session, ViewState, bad, spec};
+
+fn view(s: &mut Session) -> Result<&mut ViewState> {
+    Ok(&mut s.ds_mut()?.view)
+}
+
+fn flag(s: &mut Session, p: &Value, f: fn(&mut ViewState) -> &mut bool) -> Result<Value> {
+    let v = view(s)?;
+    let slot = f(v);
+    *slot = boolean(p, "on").unwrap_or(!*slot);
+    Ok(json!({"on": *slot}))
+}
+
+fn zoom_to(s: &mut Session, z: f64) -> Result<Value> {
+    let v = view(s)?;
+    let c = (v.cx, v.cy);
+    v.set_zoom_at(z, c);
+    Ok(json!({"zoom": v.zoom}))
+}
+
+/// Figma's zoom steps.
+const STEPS: &[f64] = &[0.02, 0.03, 0.06, 0.13, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0];
+
+fn step(z: f64, up: bool) -> f64 {
+    if up { STEPS.iter().copied().find(|s| *s > z * 1.001).unwrap_or(256.0) } else { STEPS.iter().rev().copied().find(|s| *s < z * 0.999).unwrap_or(0.02) }
+}
+
+fn zoom_frame(s: &mut Session, dir: i64) -> Result<Value> {
+    let ds = s.ds()?;
+    let frames = ds.doc.top_frames(ds.page);
+    if frames.is_empty() {
+        return ok();
+    }
+    let cur = ds.selection.first().and_then(|i| ds.doc.top_level_frame(*i)).and_then(|f| frames.iter().position(|x| *x == f));
+    let n = frames.len() as i64;
+    let next = match cur {
+        Some(c) => (c as i64 + dir).rem_euclid(n) as usize,
+        None => 0,
+    };
+    let Some(f) = frames.get(next).copied() else { return ok() };
+    let b = ds.doc.world_bounds(f).unwrap_or_default();
+    let ds = s.ds_mut()?;
+    ds.selection = vec![f];
+    ds.view.fit(b, 256.0);
+    Ok(json!({"frame": f}))
+}
+
+fn page_step(s: &mut Session, dir: i64) -> Result<Value> {
+    let ds = s.ds()?;
+    let pages = &ds.doc.pages;
+    let i = pages.iter().position(|p| *p == ds.page).unwrap_or(0) as i64;
+    let n = pages.len() as i64;
+    let next = (i + dir).clamp(0, n - 1) as usize;
+    let Some(pg) = pages.get(next).copied() else { return ok() };
+    let ds = s.ds_mut()?;
+    ds.page = pg;
+    ds.selection.clear();
+    ds.zoom_to_fit();
+    Ok(json!({"page": pg}))
+}
+
+fn ui(s: &mut Session, kind: &str) -> Result<Value> {
+    s.request_ui(kind, json!({}));
+    ok()
+}
+
+fn pref(s: &mut Session, p: &Value, f: fn(&mut crate::Prefs) -> &mut bool) -> Result<Value> {
+    let slot = f(&mut s.prefs);
+    *slot = boolean(p, "on").unwrap_or(!*slot);
+    Ok(json!({"on": *slot}))
+}
+
+fn tool(s: &mut Session, t: ToolId) -> Result<Value> {
+    s.set_tool(t);
+    Ok(json!({"tool": t.id()}))
+}
+
+pub fn specs() -> Vec<CommandSpec> {
+    vec![
+        spec!("view.zoomIn", "Zoom in", "{}", false, |s, _| {
+            let z = view(s)?.zoom;
+            zoom_to(s, step(z, true))
+        }),
+        spec!("view.zoomOut", "Zoom out", "{}", false, |s, _| {
+            let z = view(s)?.zoom;
+            zoom_to(s, step(z, false))
+        }),
+        spec!("view.zoom100", "Zoom to 100%", "{}", false, |s, _| zoom_to(s, 1.0)),
+        spec!("view.zoom50", "Zoom to 50%", "{}", false, |s, _| zoom_to(s, 0.5)),
+        spec!("view.zoom200", "Zoom to 200%", "{}", false, |s, _| zoom_to(s, 2.0)),
+        spec!("view.zoomFit", "Zoom to fit", "{}", false, |s, _| {
+            let ds = s.ds_mut()?;
+            if let Some(b) = ds.doc.page_content_bounds(ds.page) {
+                ds.view.fit(b, 256.0);
+            }
+            Ok(json!({"zoom": ds.view.zoom}))
+        }),
+        spec!("view.zoomSelection", "Zoom to selection", "{}", false, |s, _| {
+            let ds = s.ds_mut()?;
+            if let Some(b) = ds.doc.bounds_of(&ds.selection) {
+                ds.view.fit(b, 256.0);
+            }
+            Ok(json!({"zoom": ds.view.zoom}))
+        }),
+        spec!("view.set", "Set view", "{zoom?, cx?, cy? (page coordinate at the centre), vw?, vh? (viewport size)}", false, |s, p| {
+            let v = view(s)?;
+            if let Some(z) = num(p, "zoom") {
+                v.zoom = z.clamp(ViewState::MIN_ZOOM, ViewState::MAX_ZOOM);
+            }
+            v.cx = num_or(p, "cx", v.cx);
+            v.cy = num_or(p, "cy", v.cy);
+            if let Some(w) = num(p, "vw") {
+                v.vw = w.clamp(10.0, 20000.0);
+            }
+            if let Some(h) = num(p, "vh") {
+                v.vh = h.clamp(10.0, 20000.0);
+            }
+            Ok(serde_json::to_value(&*v).unwrap_or(Value::Null))
+        }),
+        spec!("view.get", "Get view", "{}", false, |s, _| Ok(serde_json::to_value(&s.ds()?.view).unwrap_or(Value::Null))),
+        spec!("view.prevFrame", "Zoom to previous frame", "{}", false, |s, _| zoom_frame(s, -1)),
+        spec!("view.nextFrame", "Zoom to next frame", "{}", false, |s, _| zoom_frame(s, 1)),
+        spec!("view.prevPage", "Previous page", "{}", false, |s, _| page_step(s, -1)),
+        spec!("view.nextPage", "Next page", "{}", false, |s, _| page_step(s, 1)),
+        spec!("view.pixelGrid", "Pixel grid", "{on?}", false, |s, p| flag(s, p, |v| &mut v.pixel_grid)),
+        spec!("view.layoutGrids", "Layout grids", "{on?}", false, |s, p| flag(s, p, |v| &mut v.layout_grids)),
+        spec!("view.rulers", "Rulers", "{on?}", false, |s, p| flag(s, p, |v| &mut v.rulers)),
+        spec!("view.slices", "Slices", "{on?}", false, |s, p| flag(s, p, |v| &mut v.show_slices)),
+        spec!("view.comments", "Comments", "{on?}", false, |s, p| flag(s, p, |v| &mut v.comments)),
+        spec!("view.outlines", "Outlines", "{on?}", false, |s, p| flag(s, p, |v| &mut v.outlines)),
+        spec!("view.pixelPreview", "Pixel preview", "{on?}", false, |s, p| flag(s, p, |v| &mut v.pixel_preview)),
+        spec!("view.frameOutlines", "Frame outlines", "{on?}", false, |s, p| flag(s, p, |v| &mut v.frame_outlines)),
+        spec!("view.snapGeometry", "Snap to geometry", "{on?}", false, |s, p| flag(s, p, |v| &mut v.snap_geometry)),
+        spec!("view.snapObjects", "Snap to objects", "{on?}", false, |s, p| flag(s, p, |v| &mut v.snap_objects)),
+        spec!("view.snapPixel", "Snap to pixel grid", "{on?}", false, |s, p| flag(s, p, |v| &mut v.snap_pixel)),
+        spec!("view.toggleUi", "Show/Hide UI", "{on?}", false, |s, p| flag(s, p, |v| &mut v.ui_hidden)),
+        spec!("view.layers", "Layers panel", "{}", false, |s, _| ui(s, "panel.layers")),
+        spec!("view.assets", "Assets panel", "{}", false, |s, _| ui(s, "panel.assets")),
+        spec!("view.design", "Design panel", "{}", false, |s, _| ui(s, "panel.design")),
+        spec!("view.prototype", "Prototype panel", "{}", false, |s, _| ui(s, "panel.prototype")),
+        spec!("view.themeLight", "Light theme", "{}", false, |s, _| {
+            s.prefs.theme = "light".into();
+            ok()
+        }),
+        spec!("view.themeDark", "Dark theme", "{}", false, |s, _| {
+            s.prefs.theme = "dark".into();
+            ok()
+        }),
+        spec!("view.themeSystem", "Follow system theme", "{}", false, |s, _| {
+            s.prefs.theme = "system".into();
+            ok()
+        }),
+        spec!("pref.keepTool", "Keep tool selected after use", "{on?}", false, |s, p| pref(s, p, |x| &mut x.keep_tool)),
+        spec!("pref.highlightHover", "Highlight layers on hover", "{on?}", false, |s, p| pref(s, p, |x| &mut x.highlight_on_hover)),
+        spec!("pref.renameDuplicates", "Rename duplicated layers", "{on?}", false, |s, p| pref(s, p, |x| &mut x.rename_duplicates)),
+        spec!("pref.showDimensions", "Show dimensions on objects", "{on?}", false, |s, p| pref(s, p, |x| &mut x.show_dimensions)),
+        spec!("pref.numberKeysOpacity", "Use number keys for opacity", "{on?}", false, |s, p| pref(s, p, |x| &mut x.number_keys_opacity)),
+        spec!("pref.nudge", "Nudge amount", "{small?, big?}", false, |s, p| {
+            s.prefs.nudge_small = num(p, "small").unwrap_or(s.prefs.nudge_small).clamp(0.01, 1000.0);
+            s.prefs.nudge_big = num(p, "big").unwrap_or(s.prefs.nudge_big).clamp(0.01, 10000.0);
+            Ok(json!({"small": s.prefs.nudge_small, "big": s.prefs.nudge_big}))
+        }),
+        spec!("app.preferences", "Preferences", "{}", false, |s, _| ui(s, "dialog.preferences")),
+        spec!("app.actions", "Actions", "{}", false, |s, _| ui(s, "palette.actions")),
+        spec!("help.shortcuts", "Keyboard shortcuts", "{}", false, |s, _| ui(s, "panel.shortcuts")),
+        spec!("help.about", "About FigCraft", "{}", false, |s, _| ui(s, "dialog.about")),
+        spec!("help.page", "Help page", "{}", false, |s, _| ui(s, "open.help")),
+        spec!("libraries.open", "Libraries", "{}", false, |s, _| ui(s, "dialog.libraries")),
+        spec!("tool.set", "Choose tool", "{tool: move|scale|hand|frame|section|slice|rectangle|line|arrow|ellipse|polygon|star|pen|pencil|text|comment}", false, |s, p| {
+            let t = req_string("tool.set", p, "tool")?;
+            let t = ToolId::from_id(&t).ok_or_else(|| bad("tool.set", format!("unknown tool `{t}`")))?;
+            tool(s, t)
+        }),
+        spec!("tool.move", "Move", "{}", false, |s, _| tool(s, ToolId::Move)),
+        spec!("tool.scale", "Scale", "{}", false, |s, _| tool(s, ToolId::Scale)),
+        spec!("tool.hand", "Hand", "{}", false, |s, _| tool(s, ToolId::Hand)),
+        spec!("tool.frame", "Frame", "{}", false, |s, _| tool(s, ToolId::Frame)),
+        spec!("tool.section", "Section", "{}", false, |s, _| tool(s, ToolId::Section)),
+        spec!("tool.slice", "Slice", "{}", false, |s, _| tool(s, ToolId::Slice)),
+        spec!("tool.rectangle", "Rectangle", "{}", false, |s, _| tool(s, ToolId::Rectangle)),
+        spec!("tool.line", "Line", "{}", false, |s, _| tool(s, ToolId::Line)),
+        spec!("tool.arrow", "Arrow", "{}", false, |s, _| tool(s, ToolId::Arrow)),
+        spec!("tool.ellipse", "Ellipse", "{}", false, |s, _| tool(s, ToolId::Ellipse)),
+        spec!("tool.polygon", "Polygon", "{}", false, |s, _| tool(s, ToolId::Polygon)),
+        spec!("tool.star", "Star", "{}", false, |s, _| tool(s, ToolId::Star)),
+        spec!("tool.pen", "Pen", "{}", false, |s, _| tool(s, ToolId::Pen)),
+        spec!("tool.pencil", "Pencil", "{}", false, |s, _| tool(s, ToolId::Pencil)),
+        spec!("tool.text", "Text", "{}", false, |s, _| tool(s, ToolId::Text)),
+        spec!("tool.comment", "Comment", "{}", false, |s, _| tool(s, ToolId::Comment)),
+        spec!("edit.pickColor", "Pick color", "{}", false, |s, _| tool(s, ToolId::Eyedropper)),
+    ]
+}
+
+#[allow(dead_code)]
+fn unused(_: NodeId) {}

@@ -1,0 +1,406 @@
+//! Shared styles (paint, text, effect, grid) and variables (collections, modes, bindings).
+
+use std::collections::BTreeMap;
+
+use figcraft_color::Color;
+use figcraft_doc::*;
+use serde_json::{Value, json};
+
+use super::{CommandSpec, ok};
+use crate::params::*;
+use crate::{EngineError, Result, Session, bad, spec};
+
+pub fn specs() -> Vec<CommandSpec> {
+    vec![
+        spec!("style.create", "Create style", "{type: paint|text|effect|grid, name, from? (node id; default first selected), description?, value? (paints/effects/grids/text style JSON)}", true, create),
+        spec!("style.apply", "Apply style", "{ids?, style (id or name), target? (fill|stroke; paint styles)}", true, apply),
+        spec!("style.detach", "Detach style", "{ids?, which: fill|stroke|effect|grid|text}", true, |s, p| {
+            let which = req_string("style.detach", p, "which")?;
+            for i in req_targets("style.detach", s, p)? {
+                let n = s.doc_mut()?.get_mut(i)?;
+                match which.as_str() {
+                    "fill" => n.styles.fill = None,
+                    "stroke" => n.styles.stroke = None,
+                    "effect" => n.styles.effect = None,
+                    "grid" => n.styles.grid = None,
+                    "text" => n.styles.text = None,
+                    _ => return Err(bad("style.detach", "which: fill|stroke|effect|grid|text")),
+                }
+            }
+            ok()
+        }),
+        spec!("style.update", "Edit style", "{style, name?, description?, value?, from? (node id: redefine from it)}", true, update),
+        spec!("style.delete", "Delete style", "{style}", true, |s, p| {
+            let id = req_string("style.delete", p, "style")?;
+            let doc = s.doc_mut()?;
+            let sid = doc.style(&id).map(|st| st.id.clone()).ok_or_else(|| bad("style.delete", "no such style"))?;
+            doc.styles.retain(|st| st.id != sid);
+            // Nodes keep their values but lose the link.
+            for nid in doc.ids().collect::<Vec<_>>() {
+                if let Some(n) = doc.node(nid)
+                    && [&n.styles.fill, &n.styles.stroke, &n.styles.effect, &n.styles.grid, &n.styles.text].iter().any(|r| r.as_deref() == Some(sid.as_str()))
+                {
+                    let n = doc.get_mut(nid)?;
+                    for r in [&mut n.styles.fill, &mut n.styles.stroke, &mut n.styles.effect, &mut n.styles.grid, &mut n.styles.text] {
+                        if r.as_deref() == Some(sid.as_str()) {
+                            *r = None;
+                        }
+                    }
+                }
+            }
+            ok()
+        }),
+        spec!("style.list", "List styles", "{type?}", false, |s, p| {
+            let t = string(p, "type");
+            Ok(Value::Array(s.doc()?.styles.iter().filter(|st| t.as_deref().is_none_or(|t| st.kind.type_name() == t)).map(|st| serde_json::to_value(st).unwrap_or(Value::Null)).collect()))
+        }),
+        spec!("variable.createCollection", "Create variable collection", "{name, modes? [names]}", true, |s, p| {
+            let name = req_string("variable.createCollection", p, "name")?;
+            let doc = s.doc_mut()?;
+            let id = format!("VariableCollectionId:{}", doc.variables.collections.len() + 1);
+            let modes: Vec<String> = match get(p, "modes") {
+                Some(Value::Array(a)) => a.iter().filter_map(|m| m.as_str().map(str::to_string)).collect(),
+                _ => vec!["Mode 1".into()],
+            };
+            let modes = modes.into_iter().enumerate().map(|(i, m)| Mode { id: format!("{id}/mode{}", i + 1), name: m }).collect();
+            doc.variables.collections.push(Collection { id: id.clone(), name, modes });
+            Ok(json!({"id": id}))
+        }),
+        spec!("variable.addMode", "Add mode", "{collection, name}", true, |s, p| {
+            let c = req_string("variable.addMode", p, "collection")?;
+            let name = req_string("variable.addMode", p, "name")?;
+            let doc = s.doc_mut()?;
+            let coll = doc.variables.collections.iter_mut().find(|x| x.id == c || x.name == c).ok_or_else(|| bad("variable.addMode", "no such collection"))?;
+            let mid = format!("{}/mode{}", coll.id, coll.modes.len() + 1);
+            let first = coll.modes.first().map(|m| m.id.clone());
+            coll.modes.push(Mode { id: mid.clone(), name });
+            let cid = coll.id.clone();
+            // New mode starts with the default mode's values.
+            for v in doc.variables.variables.iter_mut().filter(|v| v.collection == cid) {
+                if let Some(val) = first.as_ref().and_then(|f| v.values.get(f)).cloned() {
+                    v.values.insert(mid.clone(), val);
+                }
+            }
+            Ok(json!({"id": mid}))
+        }),
+        spec!("variable.create", "Create variable", "{collection, name, type: color|number|string|boolean, value (default mode) | values {modeName: value}}", true, var_create),
+        spec!("variable.set", "Set variable value", "{variable, mode? (name or id; default first), value}", true, var_set),
+        spec!("variable.delete", "Delete variable", "{variable}", true, |s, p| {
+            let v = req_string("variable.delete", p, "variable")?;
+            let doc = s.doc_mut()?;
+            let id = doc.variables.get(&v).map(|x| x.id.clone()).ok_or_else(|| bad("variable.delete", "no such variable"))?;
+            doc.variables.variables.retain(|x| x.id != id);
+            ok()
+        }),
+        spec!("variable.bind", "Bind variable", "{ids?, field (fill|stroke|width|height|opacity|cornerRadius|gap|padding|characters|visible|fontSize…), variable (null unbinds)}", true, |s, p| {
+            let field = req_string("variable.bind", p, "field")?;
+            let var = string(p, "variable");
+            let ids = req_targets("variable.bind", s, p)?;
+            let doc = s.doc_mut()?;
+            if let Some(v) = &var
+                && doc.variables.get(v).is_none()
+            {
+                return Err(bad("variable.bind", "no such variable"));
+            }
+            let vid = var.and_then(|v| doc.variables.get(&v).map(|x| x.id.clone()));
+            for i in ids {
+                let n = doc.get_mut(i)?;
+                match &vid {
+                    Some(v) => {
+                        n.bound.insert(field.clone(), v.clone());
+                    }
+                    None => {
+                        n.bound.remove(&field);
+                    }
+                }
+            }
+            ok()
+        }),
+        spec!("variable.setMode", "Set variable mode", "{ids? (frames/page), collection, mode}", true, |s, p| {
+            let c = req_string("variable.setMode", p, "collection")?;
+            let m = req_string("variable.setMode", p, "mode")?;
+            let doc = s.doc()?;
+            let coll = doc.variables.collection(&c).ok_or_else(|| bad("variable.setMode", "no such collection"))?;
+            let mode = coll.modes.iter().find(|x| x.id == m || x.name == m).map(|x| x.id.clone()).ok_or_else(|| bad("variable.setMode", "no such mode"))?;
+            let cid = coll.id.clone();
+            let mut ids = targets(s, p);
+            if ids.is_empty() {
+                ids = vec![s.page()?];
+            }
+            let doc = s.doc_mut()?;
+            for i in ids {
+                doc.get_mut(i)?.var_modes.insert(cid.clone(), mode.clone());
+            }
+            ok()
+        }),
+        spec!("variable.list", "List variables", "{}", false, |s, _| Ok(serde_json::to_value(&s.doc()?.variables).unwrap_or(Value::Null))),
+    ]
+}
+
+fn next_style_id(doc: &Document) -> String {
+    let mut k = doc.styles.len() + 1;
+    loop {
+        let id = format!("S:{k}");
+        if doc.style(&id).is_none() {
+            return id;
+        }
+        k += 1;
+    }
+}
+
+fn kind_from_node(t: &str, n: &Node) -> Option<StyleKind> {
+    Some(match t {
+        "paint" | "color" | "fill" => StyleKind::Paint { paints: n.fills.clone() },
+        "stroke" => StyleKind::Paint { paints: n.strokes.clone() },
+        "text" => StyleKind::Text { style: n.kind.text()?.style.clone() },
+        "effect" => StyleKind::Effect { effects: n.effects.clone() },
+        "grid" => StyleKind::Grid { grids: n.grids.clone() },
+        _ => return None,
+    })
+}
+
+fn create(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "style.create";
+    let t = req_string(cmd, p, "type")?.to_ascii_lowercase();
+    let name = req_string(cmd, p, "name")?;
+    let from = id(p, "from").or_else(|| s.selection().first().copied());
+    let doc = s.doc_mut()?;
+    let kind = if let Some(v) = get(p, "value") {
+        match t.as_str() {
+            "paint" | "color" | "fill" => StyleKind::Paint { paints: paints_of(v).ok_or_else(|| bad(cmd, "value: paints"))? },
+            "text" => StyleKind::Text { style: serde_json::from_value(v.clone()).map_err(|e| bad(cmd, e.to_string()))? },
+            "effect" => StyleKind::Effect { effects: serde_json::from_value(v.clone()).map_err(|e| bad(cmd, e.to_string()))? },
+            "grid" => StyleKind::Grid { grids: serde_json::from_value(v.clone()).map_err(|e| bad(cmd, e.to_string()))? },
+            _ => return Err(bad(cmd, "type: paint|text|effect|grid")),
+        }
+    } else {
+        let n = from.and_then(|f| doc.node(f)).ok_or_else(|| bad(cmd, "pass `value` or select a layer to take it from"))?;
+        kind_from_node(&t, n).ok_or_else(|| bad(cmd, "that layer has no such property"))?
+    };
+    let sid = next_style_id(doc);
+    doc.styles.push(Style { id: sid.clone(), name, description: string(p, "description").unwrap_or_default(), kind });
+    // The source layer becomes linked to the new style.
+    if let Some(f) = from
+        && get(p, "value").is_none()
+    {
+        let field = match t.as_str() {
+            "stroke" => "strokeStyle",
+            "text" => "textStyle",
+            "effect" => "effectStyle",
+            "grid" => "gridStyle",
+            _ => "fillStyle",
+        };
+        apply_style_ref(doc, f, field, Some(&sid))?;
+    }
+    Ok(json!({"id": sid}))
+}
+
+/// Link node `id` to style `sid` for `field` (fillStyle, strokeStyle, …) and copy its value in.
+pub fn apply_style_ref(doc: &mut Document, id: NodeId, field: &str, sid: Option<&str>) -> Result<()> {
+    let style = match sid {
+        Some(s) => Some(doc.style(s).cloned().ok_or_else(|| EngineError::Other(format!("no such style `{s}`")))?),
+        None => None,
+    };
+    let n = doc.get_mut(id)?;
+    match (field, &style) {
+        ("fillStyle", Some(Style { kind: StyleKind::Paint { paints }, id, .. })) => {
+            n.fills = paints.clone();
+            n.styles.fill = Some(id.clone());
+        }
+        ("strokeStyle", Some(Style { kind: StyleKind::Paint { paints }, id, .. })) => {
+            n.strokes = paints.clone();
+            n.styles.stroke = Some(id.clone());
+        }
+        ("effectStyle", Some(Style { kind: StyleKind::Effect { effects }, id, .. })) => {
+            n.effects = effects.clone();
+            n.styles.effect = Some(id.clone());
+        }
+        ("gridStyle", Some(Style { kind: StyleKind::Grid { grids }, id, .. })) => {
+            n.grids = grids.clone();
+            n.styles.grid = Some(id.clone());
+        }
+        ("textStyle", Some(Style { kind: StyleKind::Text { style }, id, .. })) => {
+            if let NodeKind::Text(t) = &mut n.kind {
+                let keep_fills = t.style.fills.clone();
+                t.style = TextStyle { fills: keep_fills, ..style.clone() };
+                t.runs.clear();
+            }
+            n.styles.text = Some(id.clone());
+        }
+        ("fillStyle", None) => n.styles.fill = None,
+        ("strokeStyle", None) => n.styles.stroke = None,
+        ("effectStyle", None) => n.styles.effect = None,
+        ("gridStyle", None) => n.styles.grid = None,
+        ("textStyle", None) => n.styles.text = None,
+        _ => return Err(EngineError::Other(format!("style doesn't fit `{field}`"))),
+    }
+    Ok(())
+}
+
+fn apply(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "style.apply";
+    let st = req_string(cmd, p, "style")?;
+    let ids = req_targets(cmd, s, p)?;
+    let doc = s.doc_mut()?;
+    let style = doc.style(&st).cloned().ok_or_else(|| bad(cmd, format!("no style `{st}`")))?;
+    let field = match (&style.kind, string(p, "target").as_deref()) {
+        (StyleKind::Paint { .. }, Some("stroke")) => "strokeStyle",
+        (StyleKind::Paint { .. }, _) => "fillStyle",
+        (StyleKind::Text { .. }, _) => "textStyle",
+        (StyleKind::Effect { .. }, _) => "effectStyle",
+        (StyleKind::Grid { .. }, _) => "gridStyle",
+    };
+    for i in ids {
+        apply_style_ref(doc, i, field, Some(&style.id))?;
+    }
+    ok()
+}
+
+fn update(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "style.update";
+    let st = req_string(cmd, p, "style")?;
+    let doc = s.doc_mut()?;
+    let idx = doc.styles.iter().position(|x| x.id == st || x.name == st).ok_or_else(|| bad(cmd, "no such style"))?;
+    let from = id(p, "from");
+    let new_kind = if let Some(v) = get(p, "value") {
+        let cur = doc.styles.get(idx).map(|x| x.kind.type_name()).unwrap_or("paint");
+        Some(match cur {
+            "paint" => StyleKind::Paint { paints: paints_of(v).ok_or_else(|| bad(cmd, "value: paints"))? },
+            "text" => StyleKind::Text { style: serde_json::from_value(v.clone()).map_err(|e| bad(cmd, e.to_string()))? },
+            "effect" => StyleKind::Effect { effects: serde_json::from_value(v.clone()).map_err(|e| bad(cmd, e.to_string()))? },
+            _ => StyleKind::Grid { grids: serde_json::from_value(v.clone()).map_err(|e| bad(cmd, e.to_string()))? },
+        })
+    } else if let Some(f) = from {
+        let t = doc.styles.get(idx).map(|x| x.kind.type_name()).unwrap_or("paint");
+        doc.node(f).and_then(|n| kind_from_node(t, n))
+    } else {
+        None
+    };
+    let Some(style) = doc.styles.get_mut(idx) else { return Err(bad(cmd, "no such style")) };
+    if let Some(n) = string(p, "name") {
+        style.name = n;
+    }
+    if let Some(d) = string(p, "description") {
+        style.description = d;
+    }
+    if let Some(k) = new_kind {
+        style.kind = k;
+    }
+    let sid = style.id.clone();
+    propagate_style(doc, &sid);
+    ok()
+}
+
+/// Re-apply style `sid` to every node linked to it.
+pub fn propagate_style(doc: &mut Document, sid: &str) {
+    let ids: Vec<NodeId> = doc.ids().collect();
+    for i in ids {
+        let Some(n) = doc.node(i) else { continue };
+        let refs = n.styles.clone();
+        for (field, r) in [("fillStyle", &refs.fill), ("strokeStyle", &refs.stroke), ("effectStyle", &refs.effect), ("gridStyle", &refs.grid), ("textStyle", &refs.text)] {
+            if r.as_deref() == Some(sid) {
+                let _ = apply_style_ref(doc, i, field, Some(sid));
+            }
+        }
+    }
+}
+
+fn var_value(kind: VariableType, v: &Value) -> Option<VariableValue> {
+    if let Some(a) = v.get("alias").and_then(Value::as_str) {
+        return Some(VariableValue::Alias(a.to_string()));
+    }
+    Some(match kind {
+        VariableType::Color => VariableValue::Color(color_of(v)?),
+        VariableType::Number => VariableValue::Number(f64_of(v)?),
+        VariableType::String => VariableValue::String(v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())),
+        VariableType::Boolean => VariableValue::Boolean(v.as_bool()?),
+    })
+}
+
+fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "variable.create";
+    let c = req_string(cmd, p, "collection")?;
+    let name = req_string(cmd, p, "name")?;
+    let kind = match req_string(cmd, p, "type")?.to_ascii_lowercase().as_str() {
+        "color" => VariableType::Color,
+        "number" | "float" => VariableType::Number,
+        "string" => VariableType::String,
+        "boolean" | "bool" => VariableType::Boolean,
+        _ => return Err(bad(cmd, "type: color|number|string|boolean")),
+    };
+    let doc = s.doc_mut()?;
+    let coll = doc.variables.collection(&c).cloned().ok_or_else(|| bad(cmd, "no such collection"))?;
+    let mut values = BTreeMap::new();
+    if let Some(Value::Object(m)) = get(p, "values") {
+        for (mode, v) in m {
+            let mid = coll.modes.iter().find(|x| x.id == *mode || x.name == *mode).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, format!("no mode `{mode}`")))?;
+            values.insert(mid, var_value(kind, v).ok_or_else(|| bad(cmd, "invalid value"))?);
+        }
+    }
+    if let Some(v) = get(p, "value") {
+        let val = var_value(kind, v).ok_or_else(|| bad(cmd, "invalid value"))?;
+        for m in &coll.modes {
+            values.entry(m.id.clone()).or_insert_with(|| val.clone());
+        }
+    }
+    let default = match kind {
+        VariableType::Color => VariableValue::Color(Color::BLACK),
+        VariableType::Number => VariableValue::Number(0.0),
+        VariableType::String => VariableValue::String(String::new()),
+        VariableType::Boolean => VariableValue::Boolean(true),
+    };
+    for m in &coll.modes {
+        values.entry(m.id.clone()).or_insert_with(|| default.clone());
+    }
+    let id = format!("VariableID:{}", doc.variables.variables.len() + 1);
+    doc.variables.variables.push(Variable { id: id.clone(), name, collection: coll.id, kind, values, description: string(p, "description").unwrap_or_default() });
+    Ok(json!({"id": id}))
+}
+
+fn var_set(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "variable.set";
+    let v = req_string(cmd, p, "variable")?;
+    let doc = s.doc_mut()?;
+    let var = doc.variables.get(&v).cloned().ok_or_else(|| bad(cmd, "no such variable"))?;
+    let coll = doc.variables.collection(&var.collection).cloned().ok_or_else(|| bad(cmd, "variable has no collection"))?;
+    let mode = match string(p, "mode") {
+        Some(m) => coll.modes.iter().find(|x| x.id == m || x.name == m).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, "no such mode"))?,
+        None => coll.default_mode().cloned().ok_or_else(|| bad(cmd, "collection has no modes"))?,
+    };
+    let val = get(p, "value").and_then(|x| var_value(var.kind, x)).ok_or_else(|| bad(cmd, "invalid value"))?;
+    if let Some(slot) = doc.variables.variables.iter_mut().find(|x| x.id == var.id) {
+        slot.values.insert(mode, val);
+    }
+    ok()
+}
+
+/// Write bound variable values into nodes (called during normalisation).
+pub fn apply_bindings(doc: &mut Document) {
+    if doc.variables.variables.is_empty() {
+        return;
+    }
+    let bound: Vec<NodeId> = doc.nodes().filter(|n| !n.bound.is_empty()).map(|n| n.id).collect();
+    for id in bound {
+        let modes = doc.modes_for(id);
+        let Some(n) = doc.node(id) else { continue };
+        let binds = n.bound.clone();
+        let mut sets = serde_json::Map::new();
+        for (field, var) in binds {
+            let Some(val) = doc.variables.resolve(&var, &modes) else { continue };
+            let jv = match &val {
+                VariableValue::Color(c) => json!(c.to_css_hex()),
+                VariableValue::Number(x) => json!(x),
+                VariableValue::String(x) => json!(x),
+                VariableValue::Boolean(b) => json!(b),
+                VariableValue::Alias(_) => continue,
+            };
+            let key = match field.as_str() {
+                "fill" | "fills" | "fills/0" | "fills/0/color" => "fill",
+                "stroke" | "strokes/0/color" => "stroke",
+                other => other,
+            };
+            sets.insert(key.to_string(), jv);
+        }
+        let _ = super::props::apply("variables", doc, id, &sets);
+    }
+}

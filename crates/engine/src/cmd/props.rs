@@ -1,0 +1,598 @@
+//! Property editing: `node.set` and the shorthand keys every surface uses.
+
+use figcraft_color::{Color, Paint};
+use figcraft_doc::*;
+use figcraft_geom::{Affine, Point};
+use serde_json::{Map, Value, json};
+
+use crate::params::*;
+use crate::{Result, bad};
+
+/// Keys `node.set` understands (documented for agents).
+pub const KEYS: &str = "name, visible, locked, opacity (0-1), blend, x, y (parent-relative), width, height, rotation (degrees), \
+fills (paints or colours), fill (colour), strokes, stroke (colour), strokeWeight, strokeAlign (inside|center|outside), strokeSides [t,r,b,l], \
+strokeCap / startCap / endCap, strokeJoin, dashes [..], cornerRadius (n or [tl,tr,br,bl]), cornerSmoothing (0-1), effects, \
+clip, isMask, layout (null|horizontal|vertical|grid|{...}), gap, crossGap, padding (n or [t,r,b,l]), paddingTop/Right/Bottom/Left, \
+mainAlign (min|center|max|spaceBetween), crossAlign (min|center|max|baseline), wrap, gridColumns, gridRows, sizingH / sizingV (fixed|hug|fill), \
+absolute, minWidth, maxWidth, minHeight, maxHeight, constraints {horizontal, vertical}, grids, exports, characters, fontFamily, fontStyle, \
+fontSize, lineHeight (auto|px|\"150%\"), letterSpacing (px|\"2%\"), textAlign (left|center|right|justified), textAlignVertical, textAutoResize \
+(widthAndHeight|height|none|truncate), textDecoration, textCase, paragraphSpacing, listStyle, pointCount, innerRadius, arcStart, arcSweep, \
+arcInner, constrainProportions, description, interactions, overflow, pluginData {k: v}";
+
+fn enum_of<T: serde::de::DeserializeOwned>(v: &Value) -> Option<T> {
+    let s = v.as_str()?;
+    // Accept camelCase, snake/upper-case and spaced variants.
+    let norm: String = {
+        let mut out = String::new();
+        let mut up = false;
+        for (i, ch) in s.trim().chars().enumerate() {
+            if ch == '_' || ch == '-' || ch == ' ' {
+                up = true;
+                continue;
+            }
+            if i == 0 {
+                out.extend(ch.to_lowercase());
+            } else if up {
+                out.extend(ch.to_uppercase());
+                up = false;
+            } else if s.chars().all(|c| !c.is_lowercase() || !c.is_alphabetic()) {
+                out.extend(ch.to_lowercase());
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    };
+    serde_json::from_value(Value::String(norm)).ok()
+}
+
+fn sizing(v: &Value) -> Option<Sizing> {
+    match v.as_str()?.to_ascii_lowercase().as_str() {
+        "fixed" => Some(Sizing::Fixed),
+        "hug" | "auto" | "hug contents" => Some(Sizing::Hug),
+        "fill" | "fill container" | "stretch" => Some(Sizing::Fill),
+        _ => None,
+    }
+}
+
+fn line_height(v: &Value) -> Option<LineHeight> {
+    match v {
+        Value::String(s) if s.eq_ignore_ascii_case("auto") => Some(LineHeight::Auto),
+        Value::String(s) if s.trim().ends_with('%') => s.trim().trim_end_matches('%').trim().parse().ok().map(LineHeight::Percent),
+        Value::Object(_) => serde_json::from_value(v.clone()).ok(),
+        other => f64_of(other).map(LineHeight::Pixels),
+    }
+}
+
+fn letter_spacing(v: &Value) -> Option<LetterSpacing> {
+    match v {
+        Value::String(s) if s.trim().ends_with('%') => s.trim().trim_end_matches('%').trim().parse().ok().map(LetterSpacing::Percent),
+        Value::Object(_) => serde_json::from_value(v.clone()).ok(),
+        other => f64_of(other).map(LetterSpacing::Pixels),
+    }
+}
+
+fn four(v: &Value) -> Option<[f64; 4]> {
+    match v {
+        Value::Array(a) => {
+            let f: Vec<f64> = a.iter().filter_map(f64_of).collect();
+            match f.as_slice() {
+                [x] => Some([*x; 4]),
+                [a, b] => Some([*a, *b, *a, *b]),
+                [a, b, c, d] => Some([*a, *b, *c, *d]),
+                _ => None,
+            }
+        }
+        other => f64_of(other).map(|x| [x; 4]),
+    }
+}
+
+fn text_mut<'a>(cmd: &str, n: &'a mut Node) -> Result<&'a mut TextData> {
+    let id = n.id;
+    n.kind.text_mut().ok_or_else(|| bad(cmd, format!("node {id} is not text")))
+}
+
+fn ensure_layout(n: &mut Node) -> &mut AutoLayout {
+    n.layout.get_or_insert_with(|| AutoLayout { padding: [0.0; 4], gap: 0.0, ..Default::default() })
+}
+
+/// Apply a property map to one node. `x`/`y` are relative to the parent.
+pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Value>) -> Result<()> {
+    let mut unknown = Vec::new();
+    // Geometry keys first so rotation applies to the final size.
+    let order = |k: &str| match k {
+        "width" | "height" | "w" | "h" => 0,
+        "rotation" => 2,
+        "x" | "y" => 3,
+        _ => 1,
+    };
+    let mut keys: Vec<(&String, &Value)> = props.iter().collect();
+    keys.sort_by_key(|(k, _)| order(k));
+    for (k, v) in keys {
+        let k = k.as_str();
+        match k {
+            "x" | "y" => {
+                let val = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?;
+                let n = doc.get_mut(id)?;
+                let b = figcraft_geom::transform_rect_bbox(n.transform, n.local_rect());
+                let c = n.transform.as_coeffs();
+                // Figma's X/Y are the node's own origin (its rotated top-left) for rotated nodes.
+                let (mut tx, mut ty) = (c[4], c[5]);
+                let _ = b;
+                if k == "x" {
+                    tx = val;
+                } else {
+                    ty = val;
+                }
+                n.transform = Affine::new([c[0], c[1], c[2], c[3], tx, ty]);
+            }
+            "width" | "height" | "w" | "h" => {
+                let val = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?.max(0.0);
+                let (ow, oh, keep) = {
+                    let n = doc.get(id)?;
+                    (n.width, n.height, n.constrain_proportions && !props.contains_key("width") || !props.contains_key("height"))
+                };
+                let _ = keep;
+                let (nw, nh) = if k.starts_with('w') { (val, oh) } else { (ow, val) };
+                resize_node(doc, id, nw, nh)?;
+                // Explicit size makes text fixed in that dimension.
+                if let Some(t) = doc.get_mut(id)?.kind.text_mut() {
+                    t.auto_resize = if k.starts_with('w') {
+                        if t.auto_resize == TextAutoResize::WidthAndHeight { TextAutoResize::Height } else { t.auto_resize }
+                    } else {
+                        TextAutoResize::None
+                    };
+                }
+                // Explicit width/height makes hugging/filling fixed (like typing into W/H).
+                let n = doc.get_mut(id)?;
+                if k.starts_with('w') {
+                    n.child_layout.sizing_h = Sizing::Fixed;
+                } else {
+                    n.child_layout.sizing_v = Sizing::Fixed;
+                }
+            }
+            "rotation" => {
+                let deg = f64_of(v).ok_or_else(|| bad(cmd, "`rotation` must be degrees"))?;
+                let n = doc.get_mut(id)?;
+                n.transform = figcraft_geom::set_rotation_about_center(n.transform, n.width, n.height, deg);
+            }
+            "name" => doc.get_mut(id)?.name = string_val(v).ok_or_else(|| bad(cmd, "`name` must be a string"))?,
+            "visible" => doc.get_mut(id)?.visible = v.as_bool().ok_or_else(|| bad(cmd, "`visible` must be a boolean"))?,
+            "locked" => doc.get_mut(id)?.locked = v.as_bool().ok_or_else(|| bad(cmd, "`locked` must be a boolean"))?,
+            "opacity" => {
+                let o = f64_of(v).ok_or_else(|| bad(cmd, "`opacity` must be a number"))?;
+                let o = if o > 1.0 { o / 100.0 } else { o };
+                doc.get_mut(id)?.opacity = o.clamp(0.0, 1.0) as f32;
+            }
+            "blend" | "blendMode" => {
+                let b = v.as_str().and_then(figcraft_color::BlendMode::from_name).ok_or_else(|| bad(cmd, "unknown blend mode"))?;
+                doc.get_mut(id)?.blend = b;
+            }
+            "fills" => doc.get_mut(id)?.fills = paints_of(v).ok_or_else(|| bad(cmd, "`fills` must be paints or colours"))?,
+            "fill" => {
+                let c = color_of(v).ok_or_else(|| bad(cmd, "`fill` must be a colour"))?;
+                doc.get_mut(id)?.fills = vec![Paint::solid(c)];
+            }
+            "strokes" => doc.get_mut(id)?.strokes = paints_of(v).ok_or_else(|| bad(cmd, "`strokes` must be paints or colours"))?,
+            "stroke" => {
+                let c = color_of(v).ok_or_else(|| bad(cmd, "`stroke` must be a colour"))?;
+                doc.get_mut(id)?.strokes = vec![Paint::solid(c)];
+            }
+            "strokeWeight" => doc.get_mut(id)?.stroke.weight = f64_of(v).ok_or_else(|| bad(cmd, "`strokeWeight` must be a number"))?.max(0.0),
+            "strokeAlign" => doc.get_mut(id)?.stroke.align = enum_of(v).ok_or_else(|| bad(cmd, "strokeAlign: inside|center|outside"))?,
+            "strokeSides" => doc.get_mut(id)?.stroke.sides = if v.is_null() { None } else { Some(four(v).ok_or_else(|| bad(cmd, "strokeSides: [t,r,b,l]"))?) },
+            "strokeCap" => {
+                let c: StrokeCap = enum_of(v).ok_or_else(|| bad(cmd, "unknown stroke cap"))?;
+                let n = doc.get_mut(id)?;
+                n.stroke.cap_start = c;
+                n.stroke.cap_end = c;
+            }
+            "startCap" => doc.get_mut(id)?.stroke.cap_start = enum_of(v).ok_or_else(|| bad(cmd, "unknown stroke cap"))?,
+            "endCap" => doc.get_mut(id)?.stroke.cap_end = enum_of(v).ok_or_else(|| bad(cmd, "unknown stroke cap"))?,
+            "strokeJoin" => doc.get_mut(id)?.stroke.join = enum_of(v).ok_or_else(|| bad(cmd, "strokeJoin: miter|bevel|round"))?,
+            "miterLimit" => doc.get_mut(id)?.stroke.miter_limit = f64_of(v).unwrap_or(4.0).clamp(1.0, 100.0),
+            "dashes" => {
+                let d: Vec<f64> = v.as_array().map(|a| a.iter().filter_map(f64_of).map(|x| x.max(0.0)).collect()).unwrap_or_default();
+                doc.get_mut(id)?.stroke.dashes = d;
+            }
+            "cornerRadius" => {
+                let r = four(v).ok_or_else(|| bad(cmd, "cornerRadius: n or [tl,tr,br,bl]"))?;
+                doc.get_mut(id)?.corners.radii = r.map(|x| x.max(0.0));
+            }
+            "topLeftRadius" | "topRightRadius" | "bottomRightRadius" | "bottomLeftRadius" => {
+                let i = ["topLeftRadius", "topRightRadius", "bottomRightRadius", "bottomLeftRadius"].iter().position(|x| *x == k).unwrap_or(0);
+                let r = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?.max(0.0);
+                if let Some(slot) = doc.get_mut(id)?.corners.radii.get_mut(i) {
+                    *slot = r;
+                }
+            }
+            "cornerSmoothing" => doc.get_mut(id)?.corners.smoothing = f64_of(v).unwrap_or(0.0).clamp(0.0, 1.0),
+            "effects" => doc.get_mut(id)?.effects = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("effects: {e}")))?,
+            "clip" | "clipsContent" => doc.get_mut(id)?.clip = v.as_bool().ok_or_else(|| bad(cmd, "`clip` must be a boolean"))?,
+            "isMask" => doc.get_mut(id)?.is_mask = v.as_bool().unwrap_or(false),
+            "layout" | "layoutMode" => {
+                let n = doc.get_mut(id)?;
+                if !n.kind.is_frame_like() {
+                    return Err(bad(cmd, "auto layout needs a frame"));
+                }
+                match v {
+                    Value::Null => n.layout = None,
+                    Value::String(s) if s.eq_ignore_ascii_case("none") => n.layout = None,
+                    Value::String(s) => {
+                        let mode = match s.to_ascii_lowercase().as_str() {
+                            "horizontal" | "row" => LayoutMode::Horizontal,
+                            "vertical" | "column" => LayoutMode::Vertical,
+                            "grid" => LayoutMode::Grid,
+                            _ => return Err(bad(cmd, "layout: none|horizontal|vertical|grid")),
+                        };
+                        ensure_layout(n).mode = mode;
+                    }
+                    Value::Object(_) => n.layout = Some(serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("layout: {e}")))?),
+                    _ => return Err(bad(cmd, "layout: none|horizontal|vertical|grid|{...}")),
+                }
+            }
+            "gap" | "itemSpacing" => ensure_layout(doc.get_mut(id)?).gap = f64_of(v).ok_or_else(|| bad(cmd, "`gap` must be a number"))?,
+            "crossGap" | "counterAxisSpacing" => ensure_layout(doc.get_mut(id)?).cross_gap = f64_of(v).ok_or_else(|| bad(cmd, "`crossGap` must be a number"))?,
+            "padding" => {
+                let p = four(v).ok_or_else(|| bad(cmd, "padding: n or [t,r,b,l]"))?;
+                ensure_layout(doc.get_mut(id)?).padding = p.map(|x| x.max(0.0));
+            }
+            "paddingTop" | "paddingRight" | "paddingBottom" | "paddingLeft" => {
+                let i = ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"].iter().position(|x| *x == k).unwrap_or(0);
+                let val = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?.max(0.0);
+                if let Some(slot) = ensure_layout(doc.get_mut(id)?).padding.get_mut(i) {
+                    *slot = val;
+                }
+            }
+            "paddingHorizontal" => {
+                let val = f64_of(v).unwrap_or(0.0).max(0.0);
+                let l = ensure_layout(doc.get_mut(id)?);
+                l.padding[1] = val;
+                l.padding[3] = val;
+            }
+            "paddingVertical" => {
+                let val = f64_of(v).unwrap_or(0.0).max(0.0);
+                let l = ensure_layout(doc.get_mut(id)?);
+                l.padding[0] = val;
+                l.padding[2] = val;
+            }
+            "mainAlign" | "primaryAxisAlignItems" => ensure_layout(doc.get_mut(id)?).main_align = enum_of(v).ok_or_else(|| bad(cmd, "mainAlign: min|center|max|spaceBetween"))?,
+            "crossAlign" | "counterAxisAlignItems" => ensure_layout(doc.get_mut(id)?).cross_align = enum_of(v).ok_or_else(|| bad(cmd, "crossAlign: min|center|max|baseline"))?,
+            "wrap" => ensure_layout(doc.get_mut(id)?).wrap = v.as_bool().unwrap_or(false),
+            "gridColumns" => ensure_layout(doc.get_mut(id)?).grid_columns = f64_of(v).unwrap_or(2.0).clamp(1.0, 1000.0) as u32,
+            "gridRows" => ensure_layout(doc.get_mut(id)?).grid_rows = f64_of(v).unwrap_or(2.0).clamp(1.0, 1000.0) as u32,
+            "strokesIncluded" => ensure_layout(doc.get_mut(id)?).strokes_included = v.as_bool().unwrap_or(false),
+            "reverseZ" => ensure_layout(doc.get_mut(id)?).reverse_z = v.as_bool().unwrap_or(false),
+            "sizingH" | "layoutSizingHorizontal" => {
+                let s = sizing(v).ok_or_else(|| bad(cmd, "sizing: fixed|hug|fill"))?;
+                set_sizing(cmd, doc, id, s, true)?;
+            }
+            "sizingV" | "layoutSizingVertical" => {
+                let s = sizing(v).ok_or_else(|| bad(cmd, "sizing: fixed|hug|fill"))?;
+                set_sizing(cmd, doc, id, s, false)?;
+            }
+            "absolute" => doc.get_mut(id)?.child_layout.absolute = v.as_bool().unwrap_or(false),
+            "minWidth" => doc.get_mut(id)?.child_layout.min_w = f64_of(v),
+            "maxWidth" => doc.get_mut(id)?.child_layout.max_w = f64_of(v),
+            "minHeight" => doc.get_mut(id)?.child_layout.min_h = f64_of(v),
+            "maxHeight" => doc.get_mut(id)?.child_layout.max_h = f64_of(v),
+            "constraints" => {
+                let n = doc.get_mut(id)?;
+                if let Some(h) = v.get("horizontal") {
+                    n.constraints.horizontal = enum_of(h).ok_or_else(|| bad(cmd, "horizontal: left|right|leftRight|center|scale"))?;
+                }
+                if let Some(vv) = v.get("vertical") {
+                    n.constraints.vertical = enum_of(vv).ok_or_else(|| bad(cmd, "vertical: top|bottom|topBottom|center|scale"))?;
+                }
+            }
+            "grids" | "layoutGrids" => doc.get_mut(id)?.grids = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("grids: {e}")))?,
+            "exports" | "exportSettings" => doc.get_mut(id)?.exports = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("exports: {e}")))?,
+            "interactions" => doc.get_mut(id)?.interactions = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("interactions: {e}")))?,
+            "overflow" => doc.get_mut(id)?.overflow = enum_of(v).ok_or_else(|| bad(cmd, "overflow: none|horizontal|vertical|both"))?,
+            "scrollPosition" => doc.get_mut(id)?.scroll_position = enum_of(v).ok_or_else(|| bad(cmd, "scrollPosition: scrolls|fixed|sticky"))?,
+            "constrainProportions" => doc.get_mut(id)?.constrain_proportions = v.as_bool().unwrap_or(false),
+            "characters" | "text" => {
+                let s = string_val(v).ok_or_else(|| bad(cmd, "`characters` must be a string"))?;
+                let n = doc.get_mut(id)?;
+                let t = text_mut(cmd, n)?;
+                let len = t.char_count();
+                t.replace_range(0, len, &s);
+                n.overrides.insert("characters".into());
+            }
+            "fontFamily" | "fontStyle" | "fontWeight" | "fontSize" | "lineHeight" | "letterSpacing" | "textDecoration" | "textCase" | "hyperlink" | "textFills" => {
+                let n = doc.get_mut(id)?;
+                let t = text_mut(cmd, n)?;
+                let (start, end) = range_of(props, t.char_count());
+                apply_text_style(cmd, t, start, end, k, v)?;
+            }
+            "textAlign" | "textAlignHorizontal" => text_mut(cmd, doc.get_mut(id)?)?.align_h = enum_of(v).ok_or_else(|| bad(cmd, "textAlign: left|center|right|justified"))?,
+            "textAlignVertical" => text_mut(cmd, doc.get_mut(id)?)?.align_v = enum_of(v).ok_or_else(|| bad(cmd, "textAlignVertical: top|middle|bottom"))?,
+            "textAutoResize" => text_mut(cmd, doc.get_mut(id)?)?.auto_resize = enum_of(v).ok_or_else(|| bad(cmd, "textAutoResize: widthAndHeight|height|none|truncate"))?,
+            "paragraphSpacing" => text_mut(cmd, doc.get_mut(id)?)?.paragraph_spacing = f64_of(v).unwrap_or(0.0).max(0.0),
+            "paragraphIndent" => text_mut(cmd, doc.get_mut(id)?)?.paragraph_indent = f64_of(v).unwrap_or(0.0).max(0.0),
+            "listStyle" => text_mut(cmd, doc.get_mut(id)?)?.list = enum_of(v).ok_or_else(|| bad(cmd, "listStyle: none|bulleted|numbered"))?,
+            "maxLines" => text_mut(cmd, doc.get_mut(id)?)?.max_lines = f64_of(v).unwrap_or(0.0).clamp(0.0, 10_000.0) as u32,
+            "start" | "end" => {}
+            "pointCount" => {
+                let c = f64_of(v).unwrap_or(5.0).clamp(3.0, 120.0) as u32;
+                match &mut doc.get_mut(id)?.kind {
+                    NodeKind::Polygon { count } | NodeKind::Star { count, .. } => *count = c,
+                    _ => return Err(bad(cmd, "pointCount applies to polygons and stars")),
+                }
+            }
+            "innerRadius" | "ratio" => {
+                let r = f64_of(v).unwrap_or(0.38);
+                let r = if r > 1.0 { r / 100.0 } else { r };
+                match &mut doc.get_mut(id)?.kind {
+                    NodeKind::Star { inner_ratio, .. } => *inner_ratio = r.clamp(0.0, 1.0),
+                    _ => return Err(bad(cmd, "innerRadius applies to stars")),
+                }
+            }
+            "arcStart" | "arcSweep" | "arcInner" => {
+                let val = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?;
+                match &mut doc.get_mut(id)?.kind {
+                    NodeKind::Ellipse { start, sweep, inner } => match k {
+                        "arcStart" => *start = val.to_radians(),
+                        "arcSweep" => *sweep = val.clamp(-360.0, 360.0).to_radians(),
+                        _ => *inner = (if val > 1.0 { val / 100.0 } else { val }).clamp(0.0, 0.99),
+                    },
+                    _ => return Err(bad(cmd, "arc applies to ellipses")),
+                }
+            }
+            "description" => match &mut doc.get_mut(id)?.kind {
+                NodeKind::Component { description, .. } | NodeKind::ComponentSet { description } => *description = string_val(v).unwrap_or_default(),
+                _ => return Err(bad(cmd, "description applies to components")),
+            },
+            "pluginData" => {
+                let n = doc.get_mut(id)?;
+                if let Some(o) = v.as_object() {
+                    for (pk, pv) in o {
+                        if pv.is_null() {
+                            n.plugin_data.remove(pk);
+                        } else {
+                            n.plugin_data.insert(pk.clone(), string_val(pv).unwrap_or_else(|| pv.to_string()));
+                        }
+                    }
+                }
+            }
+            "fillStyle" | "strokeStyle" | "effectStyle" | "textStyle" | "gridStyle" => {
+                let sid = string_val(v);
+                crate::cmd::styles::apply_style_ref(doc, id, k, sid.as_deref())?;
+            }
+            "boundVariables" => {
+                let n = doc.get_mut(id)?;
+                if let Some(o) = v.as_object() {
+                    for (field, var) in o {
+                        match var.as_str() {
+                            Some(vid) => {
+                                n.bound.insert(field.clone(), vid.to_string());
+                            }
+                            None => {
+                                n.bound.remove(field);
+                            }
+                        }
+                    }
+                }
+            }
+            "variableModes" => {
+                let n = doc.get_mut(id)?;
+                if let Some(o) = v.as_object() {
+                    for (coll, mode) in o {
+                        match mode.as_str() {
+                            Some(m) => {
+                                n.var_modes.insert(coll.clone(), m.to_string());
+                            }
+                            None => {
+                                n.var_modes.remove(coll);
+                            }
+                        }
+                    }
+                }
+            }
+            "booleanOperation" => match &mut doc.get_mut(id)?.kind {
+                NodeKind::BooleanOp { op } => *op = enum_of(v).ok_or_else(|| bad(cmd, "booleanOperation: union|subtract|intersect|exclude"))?,
+                _ => return Err(bad(cmd, "not a boolean group")),
+            },
+            "sectionContentsHidden" => {
+                if let NodeKind::Section { contents_hidden } = &mut doc.get_mut(id)?.kind {
+                    *contents_hidden = v.as_bool().unwrap_or(false);
+                }
+            }
+            "background" => {
+                let c = color_of(v).ok_or_else(|| bad(cmd, "`background` must be a colour"))?;
+                match &mut doc.get_mut(id)?.kind {
+                    NodeKind::Page { background, .. } => *background = c,
+                    _ => return Err(bad(cmd, "background applies to pages")),
+                }
+            }
+            "componentProperties" => {
+                if let NodeKind::Instance { props: p, .. } = &mut doc.get_mut(id)?.kind
+                    && let Some(o) = v.as_object()
+                {
+                    for (pk, pv) in o {
+                        p.insert(pk.clone(), pv.clone());
+                    }
+                }
+            }
+            other => unknown.push(other.to_string()),
+        }
+    }
+    if !unknown.is_empty() {
+        return Err(bad(cmd, format!("unknown properties: {} (known: {KEYS})", unknown.join(", "))));
+    }
+    // Inside an instance, record which property groups were overridden.
+    let n = doc.get_mut(id)?;
+    if n.source.is_some() {
+        for k in props.keys() {
+            n.overrides.insert(override_group(k).to_string());
+        }
+    }
+    Ok(())
+}
+
+/// The override group a property key belongs to.
+pub fn override_group(k: &str) -> &'static str {
+    match k {
+        "fills" | "fill" => "fills",
+        "strokes" | "stroke" | "strokeWeight" | "strokeAlign" | "dashes" | "strokeCap" | "startCap" | "endCap" | "strokeJoin" | "strokeSides" => "strokes",
+        "effects" => "effects",
+        "opacity" | "blend" | "blendMode" => "opacity",
+        "visible" => "visible",
+        "name" => "name",
+        "characters" | "text" => "characters",
+        "cornerRadius" | "cornerSmoothing" | "topLeftRadius" | "topRightRadius" | "bottomRightRadius" | "bottomLeftRadius" => "corners",
+        "width" | "height" | "w" | "h" | "sizingH" | "sizingV" => "size",
+        k if k.starts_with("font") || k.starts_with("text") || k.starts_with("letter") || k.starts_with("line") || k.starts_with("paragraph") => "textStyle",
+        _ => "other",
+    }
+}
+
+fn string_val(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+fn range_of(props: &Map<String, Value>, len: usize) -> (usize, usize) {
+    let s = props.get("start").and_then(f64_of).map(|v| v.max(0.0) as usize).unwrap_or(0);
+    let e = props.get("end").and_then(f64_of).map(|v| v.max(0.0) as usize).unwrap_or(len);
+    (s.min(len), e.min(len))
+}
+
+/// Set one text style property on chars `start..end`.
+pub fn apply_text_style(cmd: &str, t: &mut TextData, start: usize, end: usize, k: &str, v: &Value) -> Result<()> {
+    match k {
+        "fontFamily" => {
+            let fam = string_val(v).ok_or_else(|| bad(cmd, "`fontFamily` must be a string"))?;
+            // Keep the style if the new family has it, else the nearest.
+            let styles = figcraft_text::family_styles(&fam);
+            t.restyle(start, end, |s| {
+                s.font_family = fam.clone();
+                if !styles.is_empty() && !styles.contains(&s.font_style) {
+                    let want = s.weight();
+                    if let Some(best) = styles.iter().min_by_key(|st| (i32::from(style_weight(st)) - i32::from(want)).abs()) {
+                        s.font_style = best.clone();
+                    }
+                }
+            });
+        }
+        "fontStyle" => {
+            let st = string_val(v).ok_or_else(|| bad(cmd, "`fontStyle` must be a string"))?;
+            t.restyle(start, end, |s| s.font_style = st.clone());
+        }
+        "fontWeight" => {
+            let w = f64_of(v).ok_or_else(|| bad(cmd, "`fontWeight` must be a number"))?;
+            let name = weight_name(w as u16);
+            t.restyle(start, end, |s| {
+                s.font_style = if s.italic() { format!("{name} Italic").replace("Regular Italic", "Italic") } else { name.to_string() }
+            });
+        }
+        "fontSize" => {
+            let sz = f64_of(v).ok_or_else(|| bad(cmd, "`fontSize` must be a number"))?.clamp(1.0, 5000.0);
+            t.restyle(start, end, |s| s.font_size = sz);
+        }
+        "lineHeight" => {
+            let lh = line_height(v).ok_or_else(|| bad(cmd, "lineHeight: auto | px | \"150%\""))?;
+            t.restyle(start, end, |s| s.line_height = lh);
+        }
+        "letterSpacing" => {
+            let ls = letter_spacing(v).ok_or_else(|| bad(cmd, "letterSpacing: px | \"2%\""))?;
+            t.restyle(start, end, |s| s.letter_spacing = ls);
+        }
+        "textDecoration" => {
+            let d: TextDecoration = enum_of(v).ok_or_else(|| bad(cmd, "textDecoration: none|underline|strikethrough"))?;
+            t.restyle(start, end, |s| s.decoration = d);
+        }
+        "textCase" => {
+            let c: TextCase = enum_of(v).ok_or_else(|| bad(cmd, "textCase: original|upper|lower|title"))?;
+            t.restyle(start, end, |s| s.case = c);
+        }
+        "hyperlink" => {
+            let l = string_val(v);
+            t.restyle(start, end, |s| s.link = l.clone());
+        }
+        "textFills" => {
+            let p = if v.is_null() { None } else { Some(paints_of(v).ok_or_else(|| bad(cmd, "textFills: paints"))?) };
+            t.restyle(start, end, |s| s.fills = p.clone());
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+pub fn weight_name(w: u16) -> &'static str {
+    match w {
+        0..=149 => "Thin",
+        150..=249 => "Extra Light",
+        250..=349 => "Light",
+        350..=449 => "Regular",
+        450..=549 => "Medium",
+        550..=649 => "Semi Bold",
+        650..=749 => "Bold",
+        750..=849 => "Extra Bold",
+        _ => "Black",
+    }
+}
+
+fn set_sizing(cmd: &str, doc: &mut Document, id: NodeId, s: Sizing, horizontal: bool) -> Result<()> {
+    let parent_al = doc.get(id)?.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some());
+    let n = doc.get_mut(id)?;
+    match s {
+        Sizing::Fill if !parent_al => return Err(bad(cmd, "Fill needs an auto layout parent")),
+        Sizing::Hug if n.layout.is_none() && !matches!(n.kind, NodeKind::Text(_)) => return Err(bad(cmd, "Hug needs auto layout or text")),
+        _ => {}
+    }
+    if horizontal {
+        n.child_layout.sizing_h = s;
+    } else {
+        n.child_layout.sizing_v = s;
+    }
+    if let NodeKind::Text(t) = &mut n.kind {
+        t.auto_resize = match (n.child_layout.sizing_h, n.child_layout.sizing_v) {
+            (Sizing::Hug, _) => TextAutoResize::WidthAndHeight,
+            (_, Sizing::Hug) => TextAutoResize::Height,
+            _ => TextAutoResize::None,
+        };
+    }
+    Ok(())
+}
+
+/// Resize a node's box from its top-left, applying constraints / group scaling to children.
+pub fn resize_node(doc: &mut Document, id: NodeId, w: f64, h: f64) -> Result<()> {
+    let n = doc.get(id)?;
+    let (ow, oh) = (n.width, n.height);
+    let group = n.kind.bounds_follow_children();
+    figcraft_layout::set_size(doc, id, w, h);
+    if group {
+        let kx = if ow > 1e-9 { w / ow } else { 1.0 };
+        let ky = if oh > 1e-9 { h / oh } else { 1.0 };
+        figcraft_layout::scale_group_children(doc, id, kx, ky);
+    } else if doc.get(id)?.layout.is_none() {
+        figcraft_layout::apply_constraints(doc, id, ow, oh);
+    }
+    Ok(())
+}
+
+/// The design-panel view of a node (used by the UI and inspect).
+pub fn describe(doc: &Document, id: NodeId) -> Value {
+    let Some(n) = doc.node(id) else { return Value::Null };
+    let c = n.transform.as_coeffs();
+    let mut v = json!({
+        "id": n.id,
+        "name": n.name,
+        "type": n.kind.type_name(),
+        "x": c[4], "y": c[5],
+        "width": n.width, "height": n.height,
+        "rotation": figcraft_geom::round_to(figcraft_geom::rotation_degrees(n.transform), 3),
+        "visible": n.visible, "locked": n.locked,
+        "opacity": n.opacity, "blend": n.blend,
+    });
+    if let Some(b) = doc.world_bounds(id) {
+        v["absoluteBounds"] = json!({"x": b.x0, "y": b.y0, "width": b.width(), "height": b.height()});
+    }
+    let _ = Point::ZERO;
+    let _ = Color::BLACK;
+    v
+}

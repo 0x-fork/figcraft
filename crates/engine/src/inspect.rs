@@ -1,0 +1,219 @@
+//! Document inspection as JSON, so agents can verify their work without screenshots.
+
+use figcraft_doc::*;
+use serde_json::{Value, json};
+
+use crate::Session;
+
+/// A node and (to `depth`) its children, with the properties a designer would check.
+pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
+    let Some(n) = doc.node(id) else { return Value::Null };
+    let c = n.transform.as_coeffs();
+    let mut v = json!({
+        "id": n.id,
+        "name": n.name,
+        "type": n.kind.type_name(),
+    });
+    let Some(o) = v.as_object_mut() else { return v };
+    if !n.is_page() {
+        o.insert("x".into(), json!(round(c[4])));
+        o.insert("y".into(), json!(round(c[5])));
+        o.insert("width".into(), json!(round(n.width)));
+        o.insert("height".into(), json!(round(n.height)));
+        let rot = figcraft_geom::rotation_degrees(n.transform);
+        if rot.abs() > 1e-6 {
+            o.insert("rotation".into(), json!(round(rot)));
+        }
+        if let Some(b) = doc.world_bounds(id) {
+            o.insert("absoluteBounds".into(), json!({"x": round(b.x0), "y": round(b.y0), "width": round(b.width()), "height": round(b.height())}));
+        }
+        if !n.visible {
+            o.insert("visible".into(), json!(false));
+        }
+        if n.locked {
+            o.insert("locked".into(), json!(true));
+        }
+        if n.opacity < 1.0 {
+            o.insert("opacity".into(), json!(n.opacity));
+        }
+        if !matches!(n.blend, figcraft_color::BlendMode::Normal | figcraft_color::BlendMode::PassThrough) {
+            o.insert("blend".into(), json!(n.blend));
+        }
+        if !n.fills.is_empty() {
+            o.insert("fills".into(), paints(&n.fills));
+        }
+        if !n.strokes.is_empty() {
+            o.insert("strokes".into(), paints(&n.strokes));
+            o.insert("strokeWeight".into(), json!(n.stroke.weight));
+            o.insert("strokeAlign".into(), json!(n.stroke.align));
+            if n.stroke.sides.is_some() {
+                o.insert("strokeSides".into(), json!(n.stroke.sides));
+            }
+            if !n.stroke.dashes.is_empty() {
+                o.insert("dashes".into(), json!(n.stroke.dashes));
+            }
+        }
+        if !n.effects.is_empty() {
+            o.insert("effects".into(), serde_json::to_value(&n.effects).unwrap_or(Value::Null));
+        }
+        if n.corners.radii.iter().any(|r| *r > 0.0) {
+            o.insert("cornerRadius".into(), match n.corners.uniform() {
+                Some(r) => json!(r),
+                None => json!(n.corners.radii),
+            });
+            if n.corners.smoothing > 0.0 {
+                o.insert("cornerSmoothing".into(), json!(n.corners.smoothing));
+            }
+        }
+        if let Some(l) = &n.layout {
+            o.insert("layout".into(), serde_json::to_value(l).unwrap_or(Value::Null));
+        }
+        let parent_al = n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some());
+        if n.layout.is_some() || parent_al || matches!(n.kind, NodeKind::Text(_)) {
+            o.insert("sizing".into(), json!({"horizontal": n.child_layout.sizing_h, "vertical": n.child_layout.sizing_v}));
+        }
+        if n.child_layout.absolute {
+            o.insert("absolute".into(), json!(true));
+        }
+        if !parent_al && n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.kind.is_frame_like()) {
+            o.insert("constraints".into(), serde_json::to_value(n.constraints).unwrap_or(Value::Null));
+        }
+        if n.kind.is_frame_like() {
+            o.insert("clip".into(), json!(n.clip));
+        }
+        if n.is_mask {
+            o.insert("isMask".into(), json!(true));
+        }
+        if !n.grids.is_empty() {
+            o.insert("grids".into(), serde_json::to_value(&n.grids).unwrap_or(Value::Null));
+        }
+        if !n.exports.is_empty() {
+            o.insert("exports".into(), serde_json::to_value(&n.exports).unwrap_or(Value::Null));
+        }
+        if !n.interactions.is_empty() {
+            o.insert("interactions".into(), serde_json::to_value(&n.interactions).unwrap_or(Value::Null));
+        }
+        if !n.styles.is_empty() {
+            o.insert("styles".into(), serde_json::to_value(&n.styles).unwrap_or(Value::Null));
+        }
+        if !n.bound.is_empty() {
+            o.insert("boundVariables".into(), json!(n.bound));
+        }
+        if !n.overrides.is_empty() {
+            o.insert("overrides".into(), json!(n.overrides));
+        }
+    }
+    match &n.kind {
+        NodeKind::Text(t) => {
+            o.insert("characters".into(), json!(t.characters));
+            o.insert("fontFamily".into(), json!(t.style.font_family));
+            o.insert("fontStyle".into(), json!(t.style.font_style));
+            o.insert("fontSize".into(), json!(t.style.font_size));
+            o.insert("lineHeight".into(), json!(t.style.line_height.label()));
+            o.insert("letterSpacing".into(), json!(t.style.letter_spacing.label()));
+            o.insert("textAlign".into(), json!(t.align_h));
+            o.insert("textAutoResize".into(), json!(t.auto_resize));
+            if t.style.decoration != TextDecoration::None {
+                o.insert("textDecoration".into(), json!(t.style.decoration));
+            }
+            if !t.runs.is_empty() {
+                o.insert("styledRuns".into(), serde_json::to_value(&t.runs).unwrap_or(Value::Null));
+            }
+        }
+        NodeKind::Ellipse { start, sweep, inner } if (*sweep).abs() < std::f64::consts::TAU - 1e-9 || *inner > 0.0 => {
+            o.insert("arc".into(), json!({"start": start.to_degrees(), "sweep": sweep.to_degrees(), "inner": inner}));
+        }
+        NodeKind::Polygon { count } => {
+            o.insert("pointCount".into(), json!(count));
+        }
+        NodeKind::Star { count, inner_ratio } => {
+            o.insert("pointCount".into(), json!(count));
+            o.insert("innerRadius".into(), json!(inner_ratio));
+        }
+        NodeKind::BooleanOp { op } => {
+            o.insert("booleanOperation".into(), json!(op));
+        }
+        NodeKind::Instance { component, props } => {
+            o.insert("mainComponent".into(), json!(component));
+            o.insert("mainComponentName".into(), json!(doc.node(*component).map(|c| c.name.clone())));
+            if !props.is_empty() {
+                o.insert("componentProperties".into(), json!(props));
+            }
+        }
+        NodeKind::Component { description, props } => {
+            if !description.is_empty() {
+                o.insert("description".into(), json!(description));
+            }
+            if !props.is_empty() {
+                o.insert("componentPropertyDefinitions".into(), serde_json::to_value(props).unwrap_or(Value::Null));
+            }
+        }
+        NodeKind::Vector { network } => {
+            o.insert("vertices".into(), json!(network.vertices.len()));
+            o.insert("segments".into(), json!(network.segments.len()));
+        }
+        NodeKind::Page { background, flows, .. } => {
+            o.insert("background".into(), json!(background.to_css_hex()));
+            if !flows.is_empty() {
+                o.insert("flows".into(), serde_json::to_value(flows).unwrap_or(Value::Null));
+            }
+        }
+        _ => {}
+    }
+    if !n.children.is_empty() {
+        if depth > 0 {
+            o.insert("children".into(), Value::Array(n.children.iter().map(|c| node_json(doc, *c, depth - 1)).collect()));
+        } else {
+            o.insert("childCount".into(), json!(n.children.len()));
+        }
+    }
+    v
+}
+
+fn round(v: f64) -> f64 {
+    figcraft_geom::round_to(v, 2)
+}
+
+fn paints(p: &[figcraft_color::Paint]) -> Value {
+    Value::Array(
+        p.iter()
+            .map(|x| match &x.kind {
+                figcraft_color::PaintKind::Solid { color } => {
+                    let mut v = json!({"type": "solid", "color": color.to_css_hex()});
+                    if x.opacity < 1.0 {
+                        v["opacity"] = json!(x.opacity);
+                    }
+                    if !x.visible {
+                        v["visible"] = json!(false);
+                    }
+                    v
+                }
+                _ => serde_json::to_value(x).unwrap_or(Value::Null),
+            })
+            .collect(),
+    )
+}
+
+/// The whole document (current page in depth, other pages summarised).
+pub fn document(s: &Session, depth: usize, all_pages: bool) -> Value {
+    let Ok(ds) = s.ds() else { return json!({"documents": 0}) };
+    let doc = &ds.doc;
+    let pages: Vec<Value> = doc
+        .pages
+        .iter()
+        .map(|p| if all_pages || *p == ds.page { node_json(doc, *p, depth) } else { node_json(doc, *p, 0) })
+        .collect();
+    json!({
+        "name": doc.name,
+        "path": ds.path,
+        "dirty": ds.is_dirty(),
+        "currentPage": ds.page,
+        "selection": ds.selection,
+        "pages": pages,
+        "styles": doc.styles.iter().map(|st| json!({"id": st.id, "name": st.name, "type": st.kind.type_name()})).collect::<Vec<_>>(),
+        "variables": doc.variables.variables.len(),
+        "images": doc.images.len(),
+        "textEdit": ds.text_edit,
+        "history": {"undo": ds.history.undo.iter().rev().take(20).map(|h| h.label.clone()).collect::<Vec<_>>(), "redo": ds.history.redo.len()},
+    })
+}
