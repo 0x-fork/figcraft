@@ -31,6 +31,7 @@ pub mod tabs;
 pub mod theme;
 pub mod toolbar;
 pub mod typography;
+pub mod variable_ui;
 pub mod vector_panel;
 pub mod widgets;
 
@@ -365,6 +366,7 @@ impl FigApp {
         });
         shortcuts::handle(self, &ctx);
         menus::popups(self, &ctx);
+        variable_ui::picker(self, &ctx);
         dialogs::show(self, &ctx);
         self.toast_ui(&ctx);
         #[cfg(not(target_arch = "wasm32"))]
