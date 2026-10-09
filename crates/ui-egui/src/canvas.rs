@@ -123,6 +123,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         painter.image(tex.id(), Rect::from_min_size(tl, vec2(w, h)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
     overlays(app, &painter, &t);
+    crate::handles::draw(app, &painter);
     // Cursor.
     if resp.hovered() {
         let c = if app.canvas.space_pan || app.canvas.middle_pan.is_some() {
@@ -248,6 +249,9 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
         if !middle_down && !ctx.input(|i| i.pointer.primary_down()) {
             app.canvas.middle_pan = None;
         }
+        return;
+    }
+    if !app.canvas.dragging && resp.hovered() && crate::handles::input(app, &ctx, pos) {
         return;
     }
     if resp.secondary_clicked() {
@@ -600,27 +604,6 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
                 let r = Rect::from_center_size(pos2(cx, bottom + 8.0 + galley.size().y / 2.0 + 3.0), galley.size() + vec2(8.0, 4.0));
                 painter.rect_filled(r, CornerRadius::same(3), col);
                 painter.galley(r.min + vec2(4.0, 2.0), galley, Color32::WHITE);
-            }
-        }
-        // Auto layout: show padding/gap hints on a single selected AL frame.
-        if sel.len() == 1
-            && let Some(id) = sel.first()
-            && let Some(n) = doc.node(*id)
-            && let Some(al) = &n.layout
-            && zoom > 0.25
-        {
-            let w = doc.world_transform(*id);
-            let [pt, pr, pb, pl] = al.padding;
-            let pink = Color32::from_rgba_unmultiplied(0xF2, 0x48, 0x8C, 30);
-            for (x0, y0, x1, y1) in
-                [(0.0, 0.0, n.width, pt), (n.width - pr, 0.0, n.width, n.height), (0.0, n.height - pb, n.width, n.height), (0.0, 0.0, pl, n.height)]
-            {
-                if x1 - x0 <= 0.0 || y1 - y0 <= 0.0 {
-                    continue;
-                }
-                let a = w * Point::new(x0, y0);
-                let b = w * Point::new(x1, y1);
-                painter.rect_filled(Rect::from_two_pos(app.to_screen(a.x, a.y), app.to_screen(b.x, b.y)), CornerRadius::ZERO, pink);
             }
         }
     }
