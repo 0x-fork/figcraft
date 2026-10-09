@@ -159,7 +159,7 @@ pub fn image_transform(img: &ImagePaint, iw: f64, ih: f64, w: f64, h: f64) -> Tr
         }
         ImageScaleMode::Crop => {
             // crop = unit box → image uv (a, b, c, d, e, f). Inverse maps uv → unit box.
-            let m = img.crop.unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+            let m = img.effective_crop(iw, ih, w, h);
             let uv_to_unit =
                 Transform::from_row(m[0] as f32, m[1] as f32, m[2] as f32, m[3] as f32, m[4] as f32, m[5] as f32).invert().unwrap_or_default();
             Transform::from_scale((1.0 / rw) as f32, (1.0 / rh) as f32).post_concat(uv_to_unit).post_scale(w as f32, h as f32)

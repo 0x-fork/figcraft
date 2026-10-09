@@ -1,8 +1,9 @@
 //! On-canvas editing handles that sit above the pointer tools: gradient handles (while a
-//! gradient fill is open in the colour picker) and auto layout padding/gap handles.
+//! gradient fill is open in the colour picker), image crop handles (while a Crop-mode image
+//! fill is open) and auto layout padding/gap handles.
 
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Shape, Stroke, StrokeKind, pos2, vec2};
-use figcraft_color::{Paint, PaintKind};
+use figcraft_color::{ImagePaint, ImageScaleMode, Paint, PaintKind};
 use figcraft_doc::{LayoutMode, NodeId};
 use figcraft_geom::Point;
 use serde_json::json;
@@ -35,6 +36,45 @@ enum Drag {
         value: f64,
         vertical: bool,
     },
+    /// Image crop: corner 0..4 (tl, tr, br, bl) scales about the opposite corner, 4 moves.
+    Crop {
+        id: NodeId,
+        fills: bool,
+        index: usize,
+        which: usize,
+        start: (f64, f64),
+        rect: (f64, f64, f64, f64),
+    },
+}
+
+/// The Crop-mode image being edited: (node, fills, index, paint, image rect in the unit box).
+type UnitRect = (f64, f64, f64, f64);
+
+fn crop_target(app: &FigApp) -> Option<(NodeId, bool, usize, ImagePaint, UnitRect)> {
+    let Some(PickerTarget::Paint { fills, index, ids }) = &app.ui.picker else { return None };
+    if ids.len() != 1 {
+        return None;
+    }
+    let id = *ids.first()?;
+    let doc = app.session.doc().ok()?;
+    let n = doc.node(id)?;
+    let list = if *fills { &n.fills } else { &n.strokes };
+    let PaintKind::Image(img) = &list.get(*index)?.kind else { return None };
+    if img.scale_mode != ImageScaleMode::Crop {
+        return None;
+    }
+    let data = doc.images.get(&img.image)?;
+    let crop = img.effective_crop(f64::from(data.width), f64::from(data.height), n.width, n.height);
+    Some((id, *fills, *index, img.clone(), ImagePaint::crop_rect(crop)))
+}
+
+fn crop_corners(app: &FigApp, id: NodeId, r: (f64, f64, f64, f64)) -> Option<[Pos2; 4]> {
+    Some([
+        unit_to_screen(app, id, (r.0, r.1))?,
+        unit_to_screen(app, id, (r.2, r.1))?,
+        unit_to_screen(app, id, (r.2, r.3))?,
+        unit_to_screen(app, id, (r.0, r.3))?,
+    ])
 }
 
 fn drag_id() -> Id {
@@ -146,6 +186,18 @@ pub fn draw(app: &FigApp, painter: &egui::Painter) {
         }
         return;
     }
+    if let Some((id, _, _, _, r)) = crop_target(app) {
+        let Some(c) = crop_corners(app, id, r) else { return };
+        let outline = vec![c[0], c[1], c[2], c[3], c[0]];
+        painter.add(Shape::line(outline.clone(), Stroke::new(2.0, Color32::WHITE)));
+        painter.add(Shape::line(outline, Stroke::new(1.0, ACCENT)));
+        for p in c {
+            let hr = Rect::from_center_size(p, vec2(8.0, 8.0));
+            painter.rect_filled(hr, CornerRadius::ZERO, Color32::WHITE);
+            painter.rect_stroke(hr, CornerRadius::ZERO, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
+        }
+        return;
+    }
     let tool_move = app.session.tool.tool == figcraft_engine::ToolId::Move && !app.session.tool.busy();
     let dragging: Option<Drag> = painter.ctx().data(|d| d.get_temp(drag_id()));
     if !tool_move && dragging.is_none() {
@@ -225,6 +277,29 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Pos2) -> bool {
         }
         return false;
     }
+    if let Some((id, fills, index, _, rect)) = crop_target(app) {
+        let Some(c) = crop_corners(app, id, rect) else { return false };
+        let start = screen_to_unit(app, id, pos).unwrap_or((0.0, 0.0));
+        let corner = c.iter().position(|p| (*p - pos).length() <= 8.0);
+        let inside = start.0 >= rect.0.min(rect.2) && start.0 <= rect.0.max(rect.2) && start.1 >= rect.1.min(rect.3) && start.1 <= rect.1.max(rect.3);
+        let which = match corner {
+            Some(i) => i,
+            None if inside => 4,
+            None => return false,
+        };
+        ctx.set_cursor_icon(if which == 4 {
+            egui::CursorIcon::Move
+        } else if which % 2 == 0 {
+            egui::CursorIcon::ResizeNwSe
+        } else {
+            egui::CursorIcon::ResizeNeSw
+        });
+        if pressed {
+            let _ = app.session.begin_interaction("Crop image");
+            ctx.data_mut(|d| d.insert_temp(drag_id(), Drag::Crop { id, fills, index, which, start, rect }));
+        }
+        return true;
+    }
     if app.session.tool.tool != figcraft_engine::ToolId::Move || app.session.tool.busy() {
         return false;
     }
@@ -286,6 +361,40 @@ fn apply(app: &mut FigApp, drag: &Drag, pos: Pos2, shift: bool) {
             let props =
                 if shift { if side % 2 == 0 { json!({"paddingVertical": v}) } else { json!({"paddingHorizontal": v}) } } else { json!({ key: v }) };
             let _ = app.session.execute("node.set", &json!({"ids": [id], "props": props}));
+        }
+        Drag::Crop { id, fills, index, which, start, rect } => {
+            let Some(u) = screen_to_unit(app, *id, pos) else { return };
+            let (x0, y0, x1, y1) = *rect;
+            let r = if *which == 4 {
+                let (dx, dy) = (u.0 - start.0, u.1 - start.1);
+                (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
+            } else {
+                // Scale about the opposite corner, keeping the image's aspect ratio unless Shift.
+                let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+                let (ax, ay) = corners.get((*which + 2) % 4).copied().unwrap_or((x0, y0));
+                let (cx, cy) = corners.get(*which).copied().unwrap_or((x1, y1));
+                let (ow, oh) = (cx - ax, cy - ay);
+                let (mut nw, mut nh) = (u.0 - ax, u.1 - ay);
+                if !shift {
+                    // Node aspect matters: the unit box is not square in pixels.
+                    let Some(n) = app.session.doc().ok().and_then(|d| d.node(*id)).cloned() else { return };
+                    let k = ((nw * n.width).abs() / (ow * n.width).abs().max(1e-9)).max((nh * n.height).abs() / (oh * n.height).abs().max(1e-9));
+                    nw = ow * k;
+                    nh = oh * k;
+                }
+                if nw.abs() < 1e-3 || nh.abs() < 1e-3 || nw.signum() != ow.signum() || nh.signum() != oh.signum() {
+                    return;
+                }
+                (ax.min(ax + nw), ay.min(ay + nh), ax.max(ax + nw), ay.max(ay + nh))
+            };
+            let Some(n) = app.session.doc().ok().and_then(|d| d.node(*id)).cloned() else { return };
+            let list = if *fills { &n.fills } else { &n.strokes };
+            let Some(mut paint) = list.get(*index).cloned() else { return };
+            if let PaintKind::Image(img) = &mut paint.kind {
+                img.crop = Some(ImagePaint::crop_from_rect(r.0, r.1, r.2, r.3));
+            }
+            let cmd = if *fills { "fill.set" } else { "stroke.set" };
+            let _ = app.session.execute(cmd, &json!({"ids": [id], "index": index, "paint": paint}));
         }
         Drag::Gap { id, start, value, vertical } => {
             let d = f64::from(if *vertical { pos.y - start.y } else { pos.x - start.x }) / zoom;

@@ -345,6 +345,44 @@ pub struct ImagePaint {
     pub filters: ImageFilters,
 }
 
+impl ImagePaint {
+    /// Size of the image after its 90° rotation.
+    pub fn rotated_size(&self, iw: f64, ih: f64) -> (f64, f64) {
+        if self.rotation.rem_euclid(2) == 1 { (ih, iw) } else { (iw, ih) }
+    }
+
+    /// The crop transform in effect: the stored one, or (when unset) the Fill placement so that
+    /// switching to Crop keeps the picture where it was.
+    pub fn effective_crop(&self, iw: f64, ih: f64, w: f64, h: f64) -> [f64; 6] {
+        if let Some(c) = self.crop
+            && c.iter().all(|v| v.is_finite())
+            && c[0].abs() > 1e-9
+            && c[3].abs() > 1e-9
+        {
+            return c;
+        }
+        let (rw, rh) = self.rotated_size(iw.max(1.0), ih.max(1.0));
+        let (w, h) = (w.max(1e-6), h.max(1e-6));
+        let s = (w / rw).max(h / rh);
+        let (x0, y0) = ((w - rw * s) / 2.0, (h - rh * s) / 2.0);
+        [w / (rw * s), 0.0, 0.0, h / (rh * s), -x0 / (rw * s), -y0 / (rh * s)]
+    }
+
+    /// The image's rectangle in the node's unit box `(x0, y0, x1, y1)` for an axis-aligned crop.
+    pub fn crop_rect(crop: [f64; 6]) -> (f64, f64, f64, f64) {
+        let (a, d, e, f) = (crop[0], crop[3], crop[4], crop[5]);
+        (-e / a, -f / d, (1.0 - e) / a, (1.0 - f) / d)
+    }
+
+    /// The crop transform that places the image at `(x0, y0, x1, y1)` in the unit box.
+    pub fn crop_from_rect(x0: f64, y0: f64, x1: f64, y1: f64) -> [f64; 6] {
+        let a = 1.0 / (x1 - x0).abs().max(1e-6);
+        let d = 1.0 / (y1 - y0).abs().max(1e-6);
+        let (x0, y0) = (x0.min(x1), y0.min(y1));
+        [a, 0.0, 0.0, d, -x0 * a, -y0 * d]
+    }
+}
+
 fn one64() -> f64 {
     1.0
 }

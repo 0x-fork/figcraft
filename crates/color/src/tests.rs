@@ -75,3 +75,17 @@ fn colour_deserializes_from_many_forms() {
     assert_eq!(b, c);
     assert!(serde_json::from_str::<Color>("\"nope\"").is_err());
 }
+
+#[test]
+fn crop_defaults_to_fill_and_roundtrips() {
+    let img =
+        ImagePaint { image: String::new(), scale_mode: ImageScaleMode::Crop, scale: 1.0, rotation: 0, crop: None, filters: ImageFilters::default() };
+    // A 200×100 image in a 100×100 box: Fill scales to 100 tall, 200 wide, centred → x from -0.5 to 1.5.
+    let c = img.effective_crop(200.0, 100.0, 100.0, 100.0);
+    let (x0, y0, x1, y1) = ImagePaint::crop_rect(c);
+    assert!((x0 + 0.5).abs() < 1e-9 && (x1 - 1.5).abs() < 1e-9 && y0.abs() < 1e-9 && (y1 - 1.0).abs() < 1e-9);
+    let back = ImagePaint::crop_from_rect(x0, y0, x1, y1);
+    for (a, b) in back.iter().zip(c.iter()) {
+        assert!((a - b).abs() < 1e-9);
+    }
+}
