@@ -5197,6 +5197,7 @@ dependencies = [
  "figcraft-doc",
  "figcraft-engine",
  "figcraft-render",
+ "figcraft-svg",
  "image",
  "serde_json",
 ]

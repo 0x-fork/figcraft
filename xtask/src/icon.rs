@@ -109,6 +109,17 @@ pub fn generate(root: &std::path::Path) -> bool {
         ico.extend_from_slice(png);
     }
     ok &= std::fs::write(dir.join("figcraft.ico"), ico).is_ok();
+    // Scalable SVG (same artwork, written by FigCraft's SVG exporter).
+    let tops: Vec<_> = doc.node(page).map(|p| p.children.clone()).unwrap_or_default();
+    match figcraft_svg::export_svg(&doc, &tops, &Default::default()) {
+        Some(svg) => {
+            let sd = dir.join("hicolor/scalable/apps");
+            let _ = std::fs::create_dir_all(&sd);
+            ok &= std::fs::write(dir.join("figcraft.svg"), &svg).is_ok();
+            ok &= std::fs::write(sd.join("ai.storyteller.figcraft.svg"), &svg).is_ok();
+        }
+        None => ok = false,
+    }
     eprintln!("icon: wrote {}", dir.display());
     ok
 }
