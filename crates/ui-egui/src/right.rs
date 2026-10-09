@@ -47,22 +47,25 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     let w = ui.available_width();
     // Top bar: avatar, present, share.
     let (top, _) = ui.allocate_exact_size(vec2(w, 48.0), Sense::hover());
-    ui.painter().circle_filled(pos2(top.min.x + 24.0, top.center().y), 12.0, Color32::from_rgb(0x14, 0xAE, 0x5C));
-    ui.painter().text(pos2(top.min.x + 24.0, top.center().y), Align2::CENTER_CENTER, "Y", semibold(11.0), Color32::WHITE);
-    let share = Rect::from_min_size(pos2(top.max.x - 72.0, top.center().y - 12.0), vec2(60.0, 24.0));
+    ui.painter().circle_filled(pos2(top.min.x + 26.0, top.center().y), 13.0, Color32::from_rgb(0x14, 0xAE, 0x5C));
+    ui.painter().text(pos2(top.min.x + 26.0, top.center().y), Align2::CENTER_CENTER, "Y", semibold(12.0), Color32::WHITE);
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(top.min.x + 48.0, top.center().y), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
+    let share = Rect::from_min_size(pos2(top.max.x - 70.0, top.center().y - 16.0), vec2(56.0, 32.0));
     let sresp = ui.interact(share, ui.id().with("share"), Sense::click()).on_hover_text("Export and share");
-    ui.painter().rect_filled(share, CornerRadius::same(5), if sresp.hovered() { t.accent_hover } else { ACCENT });
-    ui.painter().text(share.center(), Align2::CENTER_CENTER, "Share", semibold(11.0), Color32::WHITE);
+    ui.painter().rect_filled(share, CornerRadius::same(6), if sresp.hovered() { t.accent_hover } else { ACCENT });
+    ui.painter().text(share.center(), Align2::CENTER_CENTER, "Share", semibold(11.5), Color32::WHITE);
     if sresp.clicked() {
         app.ui.export_preview = true;
     }
-    let play = Rect::from_min_size(pos2(share.min.x - 44.0, top.center().y - 12.0), vec2(36.0, 24.0));
+    let play = Rect::from_min_size(pos2(share.min.x - 50.0, top.center().y - 14.0), vec2(42.0, 28.0));
     let presp = ui.interact(play, ui.id().with("play"), Sense::click()).on_hover_text("Present  ⌥⌘↵");
     if presp.hovered() {
         ui.painter().rect_filled(play, CornerRadius::same(5), t.hover);
     }
-    icons::paint(ui.painter(), Rect::from_center_size(play.center() - vec2(5.0, 0.0), vec2(12.0, 12.0)), Icon::Play, t.icon);
-    icons::paint(ui.painter(), Rect::from_center_size(play.center() + vec2(9.0, 0.0), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
+    let tri = Rect::from_center_size(play.center() - vec2(7.0, 0.0), vec2(16.0, 16.0));
+    let c = tri.center();
+    ui.painter().add(egui::Shape::closed_line(vec![c + vec2(-5.0, -7.0), c + vec2(7.0, 0.0), c + vec2(-5.0, 7.0)], Stroke::new(1.4, t.icon)));
+    icons::paint(ui.painter(), Rect::from_center_size(play.center() + vec2(12.0, 0.0), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
     if presp.clicked() {
         app.run("proto.present", json!({}));
     }
@@ -269,7 +272,7 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     if resp.hovered() {
         ui.painter().rect_filled(lr, CornerRadius::same(5), t.hover);
     }
-    ui.painter().text(pos2(lr.min.x + 8.0, lr.center().y), Align2::LEFT_CENTER, &label, semibold(11.0), t.text);
+    ui.painter().text(pos2(lr.min.x + 8.0, lr.center().y), Align2::LEFT_CENTER, &label, semibold(13.0), t.text);
     if is_frame {
         icons::paint(ui.painter(), Rect::from_center_size(pos2(lr.min.x + 18.0 + label.len() as f32 * 6.5, lr.center().y), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
         let ids: Vec<NodeId> = sel.to_vec();
@@ -396,6 +399,8 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
 fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     widgets::section_header(ui, "Position", &[], false);
     let ids = sel.to_vec();
+    let col = widgets::col_width(ui.available_width());
+    widgets::sublabels(ui, "Alignment", None);
     row(ui, 32.0, |ui| {
         let items = [
             (Icon::AlignLeft, "Align left  ⌥A"),
@@ -406,48 +411,52 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             (Icon::AlignBottom, "Align bottom  ⌥S"),
         ];
         let cmds = ["align.left", "align.hcenter", "align.right", "align.top", "align.vcenter", "align.bottom"];
-        let w = ((ui.available_width() - 8.0) / 2.0 / 3.0).max(20.0);
+        let w = col / 3.0;
         if let Some(i) = widgets::segmented(ui, &items[..3], None, w) {
             app.run(cmds[i], json!({"ids": ids}));
         }
         if let Some(i) = widgets::segmented(ui, &items[3..], None, w) {
             app.run(cmds[i + 3], json!({"ids": ids}));
         }
+        if sel.len() > 2 {
+            let more = icons::button(ui, Icon::DistributeH, 24.0, false, "Distribute and tidy");
+            egui::Popup::menu(&more).show(|ui| {
+                for (l, c) in [("Distribute horizontal spacing", "distribute.horizontal"), ("Distribute vertical spacing", "distribute.vertical"), ("Tidy up", "arrange.tidy")] {
+                    if menu_item(ui, l, figcraft_engine::catalog::shortcut(c).unwrap_or("")) {
+                        app.run(c, json!({"ids": ids}));
+                        ui.close();
+                    }
+                }
+            });
+        }
     });
     let x = common(doc, sel, |n| (n.transform.as_coeffs()[4] * 100.0).round() / 100.0);
     let y = common(doc, sel, |n| (n.transform.as_coeffs()[5] * 100.0).round() / 100.0);
     let rot = common(doc, sel, |n| (figcraft_geom::rotation_degrees(n.transform) * 100.0).round() / 100.0);
-    let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
+    widgets::sublabels(ui, "Position", None);
     row(ui, 32.0, |ui| {
-        let e = widgets::number_field(ui, Id::new("pos_x"), Lead::Text("X"), x, "", half, 1.0);
+        let e = widgets::number_field(ui, Id::new("pos_x"), Lead::Text("X"), x, "", col, 1.0);
         app.field(&ids, "x", e, |v| json!(v));
-        let e = widgets::number_field(ui, Id::new("pos_y"), Lead::Text("Y"), y, "", half, 1.0);
+        let e = widgets::number_field(ui, Id::new("pos_y"), Lead::Text("Y"), y, "", col, 1.0);
         app.field(&ids, "y", e, |v| json!(v));
     });
+    widgets::sublabels(ui, "Rotation", None);
     row(ui, 32.0, |ui| {
-        let e = widgets::number_field(ui, Id::new("pos_rot"), Lead::Icon(Icon::Rotate), rot, "°", half, 1.0);
+        let e = widgets::number_field(ui, Id::new("pos_rot"), Lead::Icon(Icon::CornerRadius), rot, "°", col, 1.0);
         app.field(&ids, "rotation", e, |v| json!(v));
-        if icons::button(ui, Icon::Rotate, 24.0, false, "Rotate 90° right").clicked() {
-            app.run("object.rotateRight", json!({"ids": ids}));
-        }
-        if icons::button(ui, Icon::FlipH, 24.0, false, "Flip horizontal  ⇧H").clicked() {
-            app.run("object.flipH", json!({"ids": ids}));
-        }
-        if icons::button(ui, Icon::FlipV, 24.0, false, "Flip vertical  ⇧V").clicked() {
-            app.run("object.flipV", json!({"ids": ids}));
+        let items = [(Icon::Rotate, "Rotate 90° right"), (Icon::FlipH, "Flip horizontal  ⇧H"), (Icon::FlipV, "Flip vertical  ⇧V")];
+        if let Some(i) = widgets::segmented(ui, &items, None, col / 3.0) {
+            app.run(["object.rotateRight", "object.flipH", "object.flipV"][i], json!({"ids": ids}));
         }
     });
     // Constraints (children of non-auto-layout frames).
     let in_frame = sel.iter().all(|i| doc.node(*i).and_then(|n| n.parent).and_then(|p| doc.node(p)).is_some_and(|p| p.kind.is_frame_like() && p.layout.is_none()));
     if in_frame {
         let c = common(doc, sel, |n| n.constraints);
-        row(ui, 32.0, |ui| {
-            let t = Tokens::get(ui.ctx());
-            widgets::label(ui, "Constraints", t.text_secondary);
-        });
+        widgets::sublabels(ui, "Constraints", None);
         row(ui, 32.0, |ui| {
             let h = c.map(|c| format!("{:?}", c.horizontal)).unwrap_or_else(|| "Mixed".into());
-            let resp = widgets::dropdown(ui, &pretty(&h), half, None);
+            let resp = widgets::dropdown(ui, &pretty(&h), col, None);
             egui::Popup::menu(&resp).show(|ui| {
                 for (l, v) in [("Left", "left"), ("Right", "right"), ("Left & right", "leftRight"), ("Center", "center"), ("Scale", "scale")] {
                     if menu_item(ui, l, "") {
@@ -457,7 +466,7 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
                 }
             });
             let v = c.map(|c| format!("{:?}", c.vertical)).unwrap_or_else(|| "Mixed".into());
-            let resp = widgets::dropdown(ui, &pretty(&v), half, None);
+            let resp = widgets::dropdown(ui, &pretty(&v), col, None);
             egui::Popup::menu(&resp).show(|ui| {
                 for (l, val) in [("Top", "top"), ("Bottom", "bottom"), ("Top & bottom", "topBottom"), ("Center", "center"), ("Scale", "scale")] {
                     if menu_item(ui, l, "") {
@@ -468,6 +477,7 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             });
         });
     }
+    ui.add_space(8.0);
 }
 
 fn pretty(s: &str) -> String {
@@ -489,7 +499,6 @@ fn layout(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     if let Some(_b) = widgets::section_header(ui, title, &btns, false) {
         app.run(if has_al { "layout.remove" } else { "layout.add" }, json!({"ids": ids}));
     }
-    let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
     if let Some(Some(l)) = &al {
         // Direction.
         row(ui, 32.0, |ui| {
@@ -511,14 +520,21 @@ fn layout(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             }
         });
     }
-    // W / H with sizing.
+    // W / H with the proportion lock.
     let w = common(doc, sel, |n| (n.width * 100.0).round() / 100.0);
     let h = common(doc, sel, |n| (n.height * 100.0).round() / 100.0);
+    let col = widgets::col_width(ui.available_width());
+    let half = col;
+    widgets::sublabels(ui, "Dimensions", None);
     row(ui, 32.0, |ui| {
-        let e = widgets::number_field(ui, Id::new("lay_w"), Lead::Text("W"), w, "", half, 1.0);
+        let e = widgets::number_field(ui, Id::new("lay_w"), Lead::Text("W"), w, "", col, 1.0);
         app.field(&ids, "width", e, |v| json!(v.max(0.0)));
-        let e = widgets::number_field(ui, Id::new("lay_h"), Lead::Text("H"), h, "", half, 1.0);
+        let e = widgets::number_field(ui, Id::new("lay_h"), Lead::Text("H"), h, "", col, 1.0);
         app.field(&ids, "height", e, |v| json!(v.max(0.0)));
+        let locked = common(doc, sel, |n| n.constrain_proportions).unwrap_or(false);
+        if icons::button(ui, if locked { Icon::LinkOn } else { Icon::LinkOff }, 24.0, locked, "Constrain proportions").clicked() {
+            app.set_props(&ids, json!({"constrainProportions": !locked}));
+        }
     });
     let parent_al = sel.iter().all(|i| doc.node(*i).and_then(|n| n.parent).and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some()));
     let is_text = sel.iter().all(|i| matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Text(_))));
@@ -645,23 +661,26 @@ fn layout(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
 fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let ids = sel.to_vec();
     let visible = common(doc, sel, |n| n.visible).unwrap_or(true);
-    if let Some(i) = widgets::section_header(ui, "Appearance", &[(Icon::Blend, "Blend mode"), (if visible { Icon::Eye } else { Icon::EyeOff }, "Show/Hide  ⇧⌘H")], false)
-        && i == 1
-    {
+    let hdr = widgets::section_header(ui, "Appearance", &[(if visible { Icon::Eye } else { Icon::EyeOff }, "Show/Hide  ⇧⌘H"), (Icon::Blend, "Blend mode")], false);
+    if hdr == Some(0) {
         app.run("object.toggleVisible", json!({"ids": ids}));
     }
-    let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
+    if hdr == Some(1) {
+        ui.data_mut(|d| d.insert_temp(Id::new("blend_open"), !d.get_temp::<bool>(Id::new("blend_open")).unwrap_or(false)));
+    }
+    let col = widgets::col_width(ui.available_width());
     let op = common(doc, sel, |n| (f64::from(n.opacity) * 100.0).round());
     let radius_ok = sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.has_corner_radius()));
     let r = common(doc, sel, |n| n.corners.uniform().map(|r| (r * 100.0).round() / 100.0));
+    widgets::sublabels(ui, "Opacity", radius_ok.then_some("Corner radius"));
     row(ui, 32.0, |ui| {
-        let e = widgets::number_field(ui, Id::new("ap_op"), Lead::Icon(Icon::Opacity), op, "%", half, 1.0);
+        let e = widgets::number_field(ui, Id::new("ap_op"), Lead::Icon(Icon::Opacity), op, "%", col, 1.0);
         app.field(&ids, "opacity", e, |v| json!((v / 100.0).clamp(0.0, 1.0)));
         if radius_ok {
-            let e = widgets::number_field(ui, Id::new("ap_rad"), Lead::Icon(Icon::CornerRadius), r.flatten(), "", half - 32.0, 1.0);
+            let e = widgets::number_field(ui, Id::new("ap_rad"), Lead::Icon(Icon::CornerRadius), r.flatten(), "", col, 1.0);
             app.field(&ids, "cornerRadius", e, |v| json!(v.max(0.0)));
             let open = ui.data(|d| d.get_temp::<bool>(Id::new("indep_corners"))).unwrap_or(false);
-            if icons::button(ui, Icon::IndependentCorners, 24.0, open, "Independent corners").clicked() {
+            if icons::button(ui, Icon::IndependentCorners, 24.0, open, "Individual corners").clicked() {
                 ui.data_mut(|d| d.insert_temp(Id::new("indep_corners"), !open));
             }
         }
@@ -671,38 +690,45 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         let keys = ["topLeftRadius", "topRightRadius", "bottomRightRadius", "bottomLeftRadius"];
         row(ui, 32.0, |ui| {
             for (k, key) in keys.iter().enumerate().take(2) {
-                let e = widgets::number_field(ui, Id::new(("corner", k)), Lead::Icon(Icon::CornerRadius), radii.map(|r| r[k]), "", half, 1.0);
+                let e = widgets::number_field(ui, Id::new(("corner", k)), Lead::Icon(Icon::CornerRadius), radii.map(|r| r[k]), "", col, 1.0);
                 app.field(&ids, key, e, |v| json!(v.max(0.0)));
             }
         });
         row(ui, 32.0, |ui| {
             for (k, key) in keys.iter().enumerate().skip(2) {
-                let e = widgets::number_field(ui, Id::new(("corner", k)), Lead::Icon(Icon::CornerRadius), radii.map(|r| r[k]), "", half, 1.0);
+                let e = widgets::number_field(ui, Id::new(("corner", k)), Lead::Icon(Icon::CornerRadius), radii.map(|r| r[k]), "", col, 1.0);
                 app.field(&ids, key, e, |v| json!(v.max(0.0)));
             }
         });
         let sm = common(doc, sel, |n| (n.corners.smoothing * 100.0).round());
+        widgets::sublabels(ui, "Corner smoothing", None);
         row(ui, 32.0, |ui| {
-            let e = widgets::number_field(ui, Id::new("smoothing"), Lead::Text("Smoothing"), sm, "%", half * 2.0 + 8.0, 1.0);
+            let e = widgets::number_field(ui, Id::new("smoothing"), Lead::None, sm, "%", col, 1.0);
             app.field(&ids, "cornerSmoothing", e, |v| json!((v / 100.0).clamp(0.0, 1.0)));
+            widgets::label(ui, "iOS: 60%", Tokens::get(ui.ctx()).text_tertiary);
         });
     }
     let blend = common(doc, sel, |n| n.blend);
-    row(ui, 32.0, |ui| {
-        let label = blend.map(|b| b.label()).unwrap_or("Mixed");
-        let resp = widgets::dropdown(ui, label, half * 2.0 + 8.0, Some(Icon::Blend));
-        egui::Popup::menu(&resp).width(200.0).show(|ui| {
-            for b in BlendMode::ALL {
-                if menu_item(ui, b.label(), "") {
-                    app.set_props(&ids, json!({"blend": b.css()}));
-                    ui.close();
+    let show_blend = ui.data(|d| d.get_temp::<bool>(Id::new("blend_open"))).unwrap_or(false) || blend.is_some_and(|b| !matches!(b, BlendMode::Normal | BlendMode::PassThrough));
+    if show_blend {
+        widgets::sublabels(ui, "Blend mode", None);
+        row(ui, 32.0, |ui| {
+            let label = blend.map(|b| b.label()).unwrap_or("Mixed");
+            let resp = widgets::dropdown(ui, label, col * 2.0 + 8.0, Some(Icon::Blend));
+            egui::Popup::menu(&resp).width(200.0).show(|ui| {
+                for b in BlendMode::ALL {
+                    if menu_item(ui, b.label(), "") {
+                        app.set_props(&ids, json!({"blend": b.css()}));
+                        ui.close();
+                    }
+                    if matches!(b, BlendMode::Normal | BlendMode::ColorBurn | BlendMode::ColorDodge | BlendMode::HardLight | BlendMode::Exclusion) {
+                        ui.separator();
+                    }
                 }
-                if matches!(b, BlendMode::Normal | BlendMode::ColorBurn | BlendMode::ColorDodge | BlendMode::HardLight | BlendMode::Exclusion) {
-                    ui.separator();
-                }
-            }
+            });
         });
-    });
+    }
+    ui.add_space(8.0);
 }
 
 fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: bool) {

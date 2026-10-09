@@ -59,65 +59,81 @@ pub fn node_icon(doc: &Document, id: NodeId) -> Icon {
     }
 }
 
-pub fn left_panel(app: &mut FigApp, ui: &mut Ui) {
+/// The slim icon rail at the far left: main menu, File, Assets, Variables.
+pub fn rail(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    let full = ui.max_rect();
-    // Header: logo (main menu) + file name.
-    let (head, _) = ui.allocate_exact_size(vec2(full.width(), 48.0), Sense::hover());
-    let lr = Rect::from_min_size(pos2(head.min.x + 8.0, head.min.y + 8.0), vec2(48.0, 32.0));
-    let lresp = ui.interact(lr, ui.id().with("mainmenu"), Sense::click()).on_hover_text("Main menu");
+    let r = ui.max_rect();
+    let mut y = r.min.y + 8.0;
+    // Main menu (logo).
+    let lr = Rect::from_center_size(pos2(r.center().x, y + 16.0), vec2(36.0, 32.0));
+    let lresp = ui.interact(lr, ui.id().with("rail_menu"), Sense::click()).on_hover_text("Main menu");
     if lresp.hovered() || app.ui.main_menu {
-        ui.painter().rect_filled(lr, CornerRadius::same(5), t.hover);
+        ui.painter().rect_filled(lr, CornerRadius::same(6), t.hover);
     }
-    icons::paint(ui.painter(), Rect::from_min_size(pos2(lr.min.x + 6.0, lr.center().y - 9.0), vec2(18.0, 18.0)), Icon::Logo, ACCENT);
-    icons::paint(ui.painter(), Rect::from_min_size(pos2(lr.min.x + 28.0, lr.center().y - 6.0), vec2(12.0, 12.0)), Icon::Chevron, t.icon_secondary);
+    icons::paint(ui.painter(), Rect::from_center_size(lr.center(), vec2(18.0, 18.0)), Icon::Logo, t.icon);
     if lresp.clicked() {
         app.ui.main_menu = !app.ui.main_menu;
     }
-    let name = app.session.doc().map(|d| d.name.clone()).unwrap_or_default();
-    let nr = Rect::from_min_max(pos2(lr.max.x + 6.0, head.min.y + 6.0), pos2(head.max.x - 40.0, head.min.y + 26.0));
-    if let Some(new) = crate::widgets::text_field_inline(ui, Id::new("filename"), &name, nr, semibold(12.0)) {
-        app.run("file.rename", json!({"name": new}));
+    y += 44.0;
+    ui.painter().line_segment([pos2(r.min.x + 18.0, y), pos2(r.max.x - 18.0, y)], Stroke::new(1.0, t.border));
+    y += 12.0;
+    let items = [(Icon::Page, "File", Some(LeftTab::File)), (Icon::Assets, "Assets", Some(LeftTab::Assets)), (Icon::Styles, "Variables", None)];
+    for (icon, label, tab) in items {
+        let ir = Rect::from_center_size(pos2(r.center().x, y + 14.0), vec2(36.0, 28.0));
+        let hit = Rect::from_min_max(pos2(r.min.x, y), pos2(r.max.x, y + 48.0));
+        let resp = ui.interact(hit, ui.id().with(("rail", label)), Sense::click()).on_hover_text(label);
+        let active = tab.is_some_and(|tb| tb == app.ui.left_tab && !app.ui.left_collapsed);
+        if active {
+            ui.painter().rect_filled(ir, CornerRadius::same(6), t.selected_row);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(ir, CornerRadius::same(6), t.hover);
+        }
+        icons::paint(ui.painter(), Rect::from_center_size(ir.center(), vec2(16.0, 16.0)), icon, if active { t.accent_text } else { t.icon });
+        ui.painter().text(pos2(r.center().x, y + 38.0), Align2::CENTER_CENTER, label, regular(10.0), t.text);
+        if resp.clicked() {
+            match tab {
+                Some(tb) => {
+                    if app.ui.left_tab == tb && !app.ui.left_collapsed {
+                        app.ui.left_collapsed = true;
+                    } else {
+                        app.ui.left_tab = tb;
+                        app.ui.left_collapsed = false;
+                    }
+                }
+                None => {
+                    ui.data_mut(|d| d.insert_temp(Id::new("variables_open"), true));
+                }
+            }
+        }
+        y += 60.0;
     }
-    ui.painter().text(pos2(nr.min.x + 2.0, head.min.y + 34.0), Align2::LEFT_CENTER, "Drafts", regular(11.0), t.text_secondary);
-    // Hide UI toggle.
-    let hr = Rect::from_center_size(pos2(head.max.x - 22.0, head.center().y), vec2(24.0, 24.0));
-    let hresp = ui.interact(hr, ui.id().with("hideui"), Sense::click()).on_hover_text("Minimize UI  ⇧⌘\\");
+}
+
+pub fn left_panel(app: &mut FigApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    let full = ui.max_rect();
+    // Header: file name (or "Assets") + drafts + collapse.
+    let (head, _) = ui.allocate_exact_size(vec2(full.width(), 64.0), Sense::hover());
+    if app.ui.left_tab == LeftTab::Assets {
+        ui.painter().text(pos2(head.min.x + 16.0, head.min.y + 24.0), Align2::LEFT_CENTER, "Assets", semibold(13.0), t.text);
+    } else {
+        let name = app.session.doc().map(|d| d.name.clone()).unwrap_or_default();
+        let nr = Rect::from_min_max(pos2(head.min.x + 14.0, head.min.y + 14.0), pos2(head.max.x - 48.0, head.min.y + 34.0));
+        if let Some(new) = crate::widgets::text_field_inline(ui, Id::new("filename"), &name, nr, semibold(13.0)) {
+            app.run("file.rename", json!({"name": new}));
+        }
+        ui.painter().text(pos2(head.min.x + 16.0, head.min.y + 46.0), Align2::LEFT_CENTER, "Drafts", regular(11.0), t.text_secondary);
+    }
+    let hr = Rect::from_center_size(pos2(head.max.x - 24.0, head.min.y + 24.0), vec2(24.0, 24.0));
+    let hresp = ui.interact(hr, ui.id().with("hideui"), Sense::click()).on_hover_text("Collapse panel");
     if hresp.hovered() {
         ui.painter().rect_filled(hr, CornerRadius::same(5), t.hover);
     }
     icons::paint(ui.painter(), hr.shrink(5.0), Icon::Panels, t.icon);
     if hresp.clicked() {
-        app.run("view.toggleUi", json!({}));
+        app.ui.left_collapsed = true;
     }
-    // Tabs row.
-    let (tabs, _) = ui.allocate_exact_size(vec2(full.width(), 40.0), Sense::hover());
-    ui.painter().line_segment([tabs.left_top(), tabs.right_top()], Stroke::new(1.0, t.border));
-    let mut x = tabs.min.x + 8.0;
-    for (tab, label) in [(LeftTab::File, "File"), (LeftTab::Assets, "Assets")] {
-        let galley = ui.painter().layout_no_wrap(label.into(), semibold(11.0), t.text);
-        let r = Rect::from_min_size(pos2(x, tabs.center().y - 12.0), vec2(galley.size().x + 16.0, 24.0));
-        let resp = ui.interact(r, ui.id().with(("ltab", label)), Sense::click());
-        let active = app.ui.left_tab == tab;
-        if active {
-            ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
-        }
-        ui.painter().galley(pos2(r.min.x + 8.0, r.center().y - galley.size().y / 2.0), galley, if active { t.text } else { t.text_secondary });
-        if resp.clicked() {
-            app.ui.left_tab = tab;
-        }
-        x = r.max.x + 2.0;
-    }
-    let sr = Rect::from_center_size(pos2(tabs.max.x - 22.0, tabs.center().y), vec2(24.0, 24.0));
-    let sresp = ui.interact(sr, ui.id().with("lsearch"), Sense::click()).on_hover_text("Find layers  ⌘F");
-    if sresp.hovered() {
-        ui.painter().rect_filled(sr, CornerRadius::same(5), t.hover);
-    }
-    icons::paint(ui.painter(), sr.shrink(5.0), Icon::Search, t.icon);
-    if sresp.clicked() {
-        app.ui.find = Some((String::new(), String::new()));
-    }
-    ui.painter().line_segment([tabs.left_bottom(), tabs.right_bottom()], Stroke::new(1.0, t.border));
+    ui.painter().line_segment([head.left_bottom(), head.right_bottom()], Stroke::new(1.0, t.border));
     match app.ui.left_tab {
         LeftTab::File => {
             pages(app, ui);
@@ -135,6 +151,15 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, "Pages", semibold(11.0), t.text);
     if tresp.clicked() {
         app.ui.pages_open = !app.ui.pages_open;
+    }
+    let sr = Rect::from_center_size(pos2(hr.max.x - 50.0, hr.center().y), vec2(24.0, 24.0));
+    let sresp = ui.interact(sr, ui.id().with("lsearch"), Sense::click()).on_hover_text("Find  ⌘F");
+    if sresp.hovered() {
+        ui.painter().rect_filled(sr, CornerRadius::same(5), t.hover);
+    }
+    icons::paint(ui.painter(), sr.shrink(5.0), Icon::Search, t.icon);
+    if sresp.clicked() {
+        app.ui.find = Some((String::new(), String::new()));
     }
     let ar = Rect::from_center_size(pos2(hr.max.x - 22.0, hr.center().y), vec2(24.0, 24.0));
     let aresp = ui.interact(ar, ui.id().with("addpage"), Sense::click()).on_hover_text("Add new page");
@@ -156,19 +181,16 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     for (id, name) in pages {
         let (r, resp) = ui.allocate_exact_size(vec2(w, 32.0), Sense::click());
         let r = r.shrink2(vec2(8.0, 0.0));
-        if resp.hovered() {
+        if resp.hovered() || id == cur {
             ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
         }
-        if id == cur {
-            icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 14.0, r.center().y), vec2(12.0, 12.0)), Icon::Check, t.icon);
-        }
         if app.ui.rename_page.as_ref().is_some_and(|(i, _)| *i == id) {
-            let tr = Rect::from_min_max(pos2(r.min.x + 28.0, r.min.y + 4.0), pos2(r.max.x - 4.0, r.max.y - 4.0));
+            let tr = Rect::from_min_max(pos2(r.min.x + 8.0, r.min.y + 4.0), pos2(r.max.x - 4.0, r.max.y - 4.0));
             if let Some(new) = crate::widgets::text_field_inline(ui, Id::new(("pagename", id)), &name, tr, if id == cur { semibold(11.0) } else { regular(11.0) }) {
                 rename_done = Some((id, new));
             }
         } else {
-            ui.painter().text(pos2(r.min.x + 30.0, r.center().y), Align2::LEFT_CENTER, &name, if id == cur { semibold(11.0) } else { regular(11.0) }, t.text);
+            ui.painter().text(pos2(r.min.x + 10.0, r.center().y), Align2::LEFT_CENTER, &name, if id == cur { semibold(11.0) } else { regular(11.0) }, t.text);
         }
         if resp.clicked() {
             select = Some(id);

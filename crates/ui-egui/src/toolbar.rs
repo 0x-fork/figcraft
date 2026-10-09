@@ -41,8 +41,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let canvas = app.canvas.rect;
     let cell = 32.0;
     let gap = 4.0;
-    let n_cells = GROUPS.len() as f32 + 1.0;
-    let width = n_cells * (cell + 10.0) + 16.0 + 64.0;
+    let width = GROUPS.len() as f32 * (cell + 4.0) + 4.0 * 10.0 + 2.0 * (cell + 4.0) + 16.0 + 4.0 * 34.0 + 24.0;
     let height = 48.0;
     let rect = Rect::from_center_size(pos2(canvas.center().x, canvas.max.y - 12.0 - height / 2.0), vec2(width, height));
     let painter = ui.painter();
@@ -88,30 +87,77 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             flyout(app, ui, g, pos2(r.min.x, rect.min.y - 8.0));
         }
     }
-    // Separator and Actions.
-    ui.painter().line_segment([pos2(x + 2.0, cy - 12.0), pos2(x + 2.0, cy + 12.0)], Stroke::new(1.0, t.border));
+    // Resources (components, plugins) opens the Assets panel; Actions palette.
+    for (icon, tip, id) in [(Icon::Assets, "Resources  ⇧I", "resources"), (Icon::Actions, "Actions  ⌘K", "actions")] {
+        let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
+        let resp = ui.interact(r, ui.id().with(id), Sense::click()).on_hover_text(tip);
+        if resp.hovered() {
+            ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
+        }
+        icons::paint(ui.painter(), r.shrink(7.0), icon, t.icon);
+        if resp.clicked() {
+            if id == "actions" {
+                app.ui.palette = Some(String::new());
+            } else {
+                app.ui.left_tab = crate::LeftTab::Assets;
+                app.ui.left_collapsed = false;
+            }
+        }
+        x += cell + 4.0;
+    }
+    ui.painter().line_segment([pos2(x + 2.0, cy - 14.0), pos2(x + 2.0, cy + 14.0)], Stroke::new(1.0, t.border));
     x += 8.0;
-    let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
-    let resp = ui.interact(r, ui.id().with("actions"), Sense::click()).on_hover_text("Actions  ⌘K");
-    if resp.hovered() {
-        ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
+    // Mode switcher: Draw · Design · Prototype · Inspect (code).
+    let modes = [(Icon::Pencil, "Draw"), (Icon::Frame, "Design"), (Icon::Prototype, "Prototype"), (Icon::Code, "Inspect")];
+    let active = match app.ui.right_tab {
+        crate::RightTab::Design if app.session.tool.tool == ToolId::Pencil => 0,
+        crate::RightTab::Design => 1,
+        crate::RightTab::Prototype => 2,
+        crate::RightTab::Inspect => 3,
+    };
+    let seg = Rect::from_min_size(pos2(x, cy - 18.0), vec2(4.0 * 34.0 + 4.0, 36.0));
+    ui.painter().rect_filled(seg, CornerRadius::same(8), t.field);
+    for (i, (icon, tip)) in modes.iter().enumerate() {
+        let r = Rect::from_min_size(pos2(seg.min.x + 2.0 + i as f32 * 34.0, seg.min.y + 2.0), vec2(34.0, 32.0));
+        let resp = ui.interact(r, ui.id().with(("mode", i)), Sense::click()).on_hover_text(*tip);
+        if i == active {
+            ui.painter().rect_filled(r, CornerRadius::same(6), t.panel);
+            ui.painter().rect_stroke(r, CornerRadius::same(6), Stroke::new(1.0, t.border), StrokeKind::Inside);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(r, CornerRadius::same(6), t.hover);
+        }
+        icons::paint(ui.painter(), r.shrink(9.0), *icon, if i == active { t.accent_text } else { t.icon_secondary });
+        if resp.clicked() {
+            match i {
+                0 => {
+                    app.ui.right_tab = crate::RightTab::Design;
+                    app.run("tool.set", json!({"tool": "pencil"}));
+                }
+                1 => {
+                    app.ui.right_tab = crate::RightTab::Design;
+                    if app.session.tool.tool == ToolId::Pencil {
+                        app.run("tool.set", json!({"tool": "move"}));
+                    }
+                }
+                2 => app.ui.right_tab = crate::RightTab::Prototype,
+                _ => app.ui.right_tab = crate::RightTab::Inspect,
+            }
+        }
     }
-    icons::paint(ui.painter(), r.shrink(7.0), Icon::Actions, t.icon);
-    if resp.clicked() {
-        app.ui.palette = Some(String::new());
-    }
-    x += cell + 6.0;
-    // Dev mode toggle look-alike: the Code (inspect) panel.
-    let r = Rect::from_min_size(pos2(x, cy - 14.0), vec2(56.0, 28.0));
-    let resp = ui.interact(r, ui.id().with("devmode"), Sense::click()).on_hover_text("Inspect: code and measurements");
-    let on = app.ui.right_tab == crate::RightTab::Inspect;
-    ui.painter().rect_filled(r, CornerRadius::same(14), if on { Color32::from_rgb(0x0F, 0xA9, 0x58) } else { t.field });
-    let knob = if on { pos2(r.max.x - 14.0, cy) } else { pos2(r.min.x + 14.0, cy) };
-    ui.painter().circle_filled(knob, 11.0, Color32::WHITE);
-    icons::paint(ui.painter(), Rect::from_center_size(knob, vec2(14.0, 14.0)), Icon::Code, if on { Color32::from_rgb(0x0F, 0xA9, 0x58) } else { t.icon });
-    if resp.clicked() {
-        app.ui.right_tab = if on { crate::RightTab::Design } else { crate::RightTab::Inspect };
-    }
+    // Floating help button at the bottom right of the canvas.
+    let hr = Rect::from_center_size(pos2(canvas.max.x - 32.0, canvas.max.y - 32.0), vec2(32.0, 32.0));
+    let hresp = ui.interact(hr, ui.id().with("help"), Sense::click()).on_hover_text("Help and resources");
+    ui.painter().circle_filled(hr.center() + vec2(0.0, 1.0), 17.0, Color32::from_black_alpha(20));
+    ui.painter().circle_filled(hr.center(), 16.0, t.panel);
+    ui.painter().text(hr.center(), Align2::CENTER_CENTER, "?", crate::theme::regular(15.0), t.text);
+    egui::Popup::menu(&hresp).show(|ui| {
+        for (l, c) in [("Keyboard shortcuts", "help.shortcuts"), ("Help page", "help.page"), ("About FigCraft", "help.about")] {
+            if crate::right::menu_item(ui, l, figcraft_engine::catalog::shortcut(c).unwrap_or("")) {
+                app.run(c, json!({}));
+                ui.close();
+            }
+        }
+    });
 }
 
 fn flyout(app: &mut FigApp, ui: &mut Ui, g: &Group, bottom_left: egui::Pos2) {

@@ -436,3 +436,21 @@ pub fn text_field_inline(ui: &mut Ui, id: Id, value: &str, rect: Rect, font: egu
         }
     }
 }
+
+/// A small grey label above a row of fields ("Position", "Dimensions"…). With two labels the
+/// second starts at the second field column.
+pub fn sublabels(ui: &mut Ui, a: &str, b: Option<&str>) {
+    let t = Tokens::get(ui.ctx());
+    let w = ui.available_width();
+    let (r, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
+    ui.painter().text(pos2(r.min.x + PAD, r.max.y - 2.0), Align2::LEFT_BOTTOM, a, regular(10.0), t.text_secondary);
+    if let Some(b) = b {
+        let col = col_width(w);
+        ui.painter().text(pos2(r.min.x + PAD + col + 8.0, r.max.y - 2.0), Align2::LEFT_BOTTOM, b, regular(10.0), t.text_secondary);
+    }
+}
+
+/// Width of one of the two field columns in a panel `w` wide (leaving the icon column).
+pub fn col_width(w: f32) -> f32 {
+    ((w - PAD * 2.0 - 8.0 - 32.0) / 2.0).max(40.0)
+}

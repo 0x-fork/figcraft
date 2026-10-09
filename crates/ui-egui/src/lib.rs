@@ -102,6 +102,7 @@ pub struct UiState {
     pub export_preview: bool,
     pub zoom_menu: bool,
     pub find: Option<(String, String)>,
+    pub left_collapsed: bool,
 }
 
 impl Default for UiState {
@@ -137,6 +138,7 @@ impl Default for UiState {
             export_preview: false,
             zoom_menu: false,
             find: None,
+            left_collapsed: false,
         }
     }
 }
@@ -305,12 +307,21 @@ impl FigApp {
         let hidden = self.session.ds().map(|d| d.view.ui_hidden).unwrap_or(false);
         tabs::tab_bar(self, ui);
         if !hidden {
+            egui::Panel::left("left_rail")
+                .exact_size(56.0)
+                .resizable(false)
+                .frame(egui::Frame::NONE.fill(t.panel).stroke(egui::Stroke::new(1.0, t.border)))
+                .show(ui, |ui| layers::rail(self, ui));
+        }
+        if !hidden && !self.ui.left_collapsed {
             egui::Panel::left("left_panel")
                 .resizable(true)
                 .default_size(self.ui.left_width)
                 .size_range(200.0..=480.0)
                 .frame(egui::Frame::NONE.fill(t.panel).stroke(egui::Stroke::new(1.0, t.border)))
                 .show(ui, |ui| layers::left_panel(self, ui));
+        }
+        if !hidden {
             egui::Panel::right("right_panel")
                 .resizable(true)
                 .default_size(self.ui.right_width)

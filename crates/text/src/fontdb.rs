@@ -423,7 +423,10 @@ fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (Str
         if !matches!(ext.as_str(), "ttf" | "otf" | "ttc" | "otc") {
             continue;
         }
-        // Skip very large files (emoji, CJK collections) unless asked for by name later.
+        // Skip very large files (colour emoji); they are not outline fonts we can draw anyway.
+        if std::fs::metadata(&path).map(|m| m.len() > 64 * 1024 * 1024).unwrap_or(true) {
+            continue;
+        }
         let Ok(bytes) = std::fs::read(&path) else { continue };
         let count = match FileRef::new(bytes.as_slice()) {
             Ok(FileRef::Collection(c)) => c.len(),
@@ -462,8 +465,27 @@ pub fn family_styles(family: &str) -> Vec<String> {
     db().write().unwrap_or_else(std::sync::PoisonError::into_inner).styles(family)
 }
 
-/// Scan system fonts into the global db (desktop; a no-op on the web).
+/// Scan system fonts into the global db (desktop; a no-op on the web). The directory walk runs
+/// without holding the database lock; results are merged in one short write.
 pub fn scan_system_fonts() {
     #[cfg(not(target_arch = "wasm32"))]
-    db().write().unwrap_or_else(std::sync::PoisonError::into_inner).scan_system();
+    {
+        if db().read().unwrap_or_else(std::sync::PoisonError::into_inner).system_scanned {
+            return;
+        }
+        let mut found: BTreeMap<String, (String, Vec<Pending>)> = BTreeMap::new();
+        for dir in system_font_dirs() {
+            scan_dir(&dir, 0, &mut found);
+        }
+        let mut w = db().write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if w.system_scanned {
+            return;
+        }
+        w.system_scanned = true;
+        for (k, v) in found {
+            if !w.families.contains_key(&k) {
+                w.pending.entry(k).or_insert(v);
+            }
+        }
+    }
 }
