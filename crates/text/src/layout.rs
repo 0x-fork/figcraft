@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use figcraft_doc::{LineHeight, ListStyle, TextAlignH, TextAutoResize, TextData, TextDecoration, TextStyle};
+use figcraft_doc::{LineHeight, ListStyle, TextAlignH, TextAutoResize, TextCase, TextData, TextDecoration, TextStyle, valid_feature_tag};
 use figcraft_geom::{Affine, BezPath, Rect};
-use harfrust::{Direction, ShapeOptions, UnicodeBuffer};
+use harfrust::{Direction, Feature, ShapeOptions, Tag, UnicodeBuffer};
 
 use crate::fontdb::{Face, db};
 
@@ -78,6 +78,8 @@ fn natural_ratio(face: &Face) -> f64 {
 
 struct Item {
     face: Arc<Face>,
+    /// Glyph scale relative to the style's size (synthesised small caps).
+    scale: f64,
     gid: u32,
     adv: f64,
     dx: f64,
@@ -126,6 +128,14 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
     }
     drop(dbw);
 
+    // OpenType features the user toggled (global for the node).
+    let features: Vec<Feature> = text
+        .features
+        .iter()
+        .filter(|(k, _)| valid_feature_tag(k))
+        .filter_map(|(k, on)| <[u8; 4]>::try_from(k.as_bytes()).ok().map(|t| Feature::new(Tag::new(&t), u32::from(*on), ..)))
+        .collect();
+
     // Shape each span, split by paragraph, falling back per char.
     let mut items: Vec<Item> = Vec::with_capacity(chars.len());
     for (si, (start, end, _)) in spans.iter().enumerate() {
@@ -152,6 +162,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             if first == '\n' {
                 items.push(Item {
                     face: face.clone(),
+                    scale: 1.0,
                     gid: 0,
                     adv: 0.0,
                     dx: 0.0,
@@ -162,18 +173,17 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                     ch: '\n',
                 });
             } else {
-                shape_segment(&chars, seg_start, seg_end, &face, style, size, spacing, st_idx, &mut items);
+                let seg = Segment { start: seg_start, end: seg_end, style, size, spacing, st_idx };
+                shape_segment(&chars, &seg, &face, &features, &mut items);
             }
             seg_start = seg_end;
         }
     }
 
-    // List markers.
-    let marker_width = match text.list {
-        ListStyle::None => 0.0,
-        _ => styles.first().map(|s| sanitize_size(s.font_size) * 1.5).unwrap_or(18.0),
-    };
-    let indent = text.paragraph_indent.max(0.0);
+    // List markers sit in a gutter and wrapped lines hang at the text start; paragraph indent
+    // applies to plain paragraphs only.
+    let marker_width = list_gutter(text.list, &chars, styles.first(), faces.first().cloned().flatten().as_ref());
+    let indent = if text.list == ListStyle::None && text.paragraph_indent.is_finite() { text.paragraph_indent.clamp(0.0, 10_000.0) } else { 0.0 };
 
     // Line breaking.
     let wrap = match text.auto_resize {
@@ -282,11 +292,43 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             (TextAlignH::Justified, Some(maxw)) if !para_end && gaps > 0 => ((maxw - line_indent - width) / gaps as f64).max(0.0),
             _ => 0.0,
         };
+        // List marker (before the line's text; zero-length char range so carets skip it).
+        if para_start_line && text.list != ListStyle::None {
+            let marker = match text.list {
+                ListStyle::Bulleted => "•".to_string(),
+                _ => format!("{}.", count_paragraphs_before(&chars, items.get(*s).map(|it| it.char_start).unwrap_or(0)) + 1),
+            };
+            let st_idx = items.get(*s).map(|it| it.style).unwrap_or(0);
+            let at = items.get(*s).map(|it| it.char_start).unwrap_or(chars.len());
+            if let (Some(st), Some(face)) = (styles.get(st_idx), items.get(*s).map(|it| it.face.clone()).or_else(|| default_face.clone())) {
+                let size = sanitize_size(st.font_size);
+                let k = size / face.upem;
+                // Numbers end at the same x; bullets start at the gutter's left edge.
+                let mut mx =
+                    if text.list == ListStyle::Numbered { (marker_width - size * 0.5 - marker_advance(&face, &marker, size)).max(0.0) } else { 0.0 };
+                for c in marker.chars() {
+                    let gid = face.glyph_for(c);
+                    let adv = face.advance(gid) * k;
+                    out.glyphs.push(Glyph {
+                        face: face.clone(),
+                        gid,
+                        x: mx,
+                        y: baseline,
+                        size,
+                        advance: adv,
+                        char_start: at,
+                        char_end: at,
+                        style: st_idx,
+                    });
+                    mx += adv;
+                }
+            }
+        }
         for it in items.get(*s..*e).unwrap_or(&[]) {
             if it.ch == '\n' {
                 continue;
             }
-            let size = styles.get(it.style).map(|st| sanitize_size(st.font_size)).unwrap_or(12.0);
+            let size = styles.get(it.style).map(|st| sanitize_size(st.font_size)).unwrap_or(12.0) * it.scale;
             if it.gid != 0 || !it.is_space() {
                 out.glyphs.push(Glyph {
                     face: it.face.clone(),
@@ -303,35 +345,6 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             pen += it.adv;
             if it.is_space() {
                 pen += justify_extra;
-            }
-        }
-        // List marker.
-        if para_start_line && text.list != ListStyle::None {
-            let marker = match text.list {
-                ListStyle::Bulleted => "•".to_string(),
-                _ => format!("{}.", count_paragraphs_before(&chars, items.get(*s).map(|it| it.char_start).unwrap_or(0)) + 1),
-            };
-            let st_idx = items.get(*s).map(|it| it.style).unwrap_or(0);
-            if let (Some(st), Some(face)) = (styles.get(st_idx), items.get(*s).map(|it| it.face.clone()).or_else(|| default_face.clone())) {
-                let size = sanitize_size(st.font_size);
-                let k = size / face.upem;
-                let mut mx = indent;
-                for c in marker.chars() {
-                    let gid = face.glyph_for(c);
-                    let adv = face.advance(gid) * k;
-                    out.glyphs.push(Glyph {
-                        face: face.clone(),
-                        gid,
-                        x: mx,
-                        y: baseline,
-                        size,
-                        advance: adv,
-                        char_start: 0,
-                        char_end: 0,
-                        style: st_idx,
-                    });
-                    mx += adv;
-                }
             }
         }
         let char_start = items.get(*s).map(|it| it.char_start).unwrap_or_else(|| chars.len());
@@ -402,9 +415,14 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         let mut j = 0;
         while j < gl.len() {
             let Some(g0) = gl.get(j) else { break };
+            // List markers and the ellipsis are not decorated.
+            if g0.char_end == g0.char_start {
+                j += 1;
+                continue;
+            }
             let st = out.styles.get(g0.style).cloned().unwrap_or_default();
             let mut k = j + 1;
-            while gl.get(k).is_some_and(|g| g.style == g0.style) {
+            while gl.get(k).is_some_and(|g| g.style == g0.style && g.char_end > g.char_start) {
                 k += 1;
             }
             if st.decoration != TextDecoration::None
@@ -429,6 +447,25 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
     out
 }
 
+/// Width of the list marker gutter: room for the widest marker plus a gap.
+fn list_gutter(list: ListStyle, chars: &[char], style: Option<&TextStyle>, face: Option<&Arc<Face>>) -> f64 {
+    let size = style.map(|s| sanitize_size(s.font_size)).unwrap_or(12.0);
+    match list {
+        ListStyle::None => 0.0,
+        ListStyle::Bulleted => size * 1.5,
+        ListStyle::Numbered => {
+            let paras = chars.iter().filter(|c| **c == '\n').count() + 1;
+            let widest = face.map(|f| marker_advance(f, &format!("{paras}."), size)).unwrap_or(size * 0.6 * (paras.to_string().len() + 1) as f64);
+            (widest + size * 0.5).max(size * 1.5)
+        }
+    }
+}
+
+fn marker_advance(face: &Face, s: &str, size: f64) -> f64 {
+    let k = size / face.upem;
+    s.chars().map(|c| face.advance(face.glyph_for(c)) * k).sum()
+}
+
 fn count_paragraphs_before(chars: &[char], pos: usize) -> usize {
     chars.iter().take(pos).filter(|c| **c == '\n').count()
 }
@@ -442,8 +479,11 @@ fn add_ellipsis(out: &mut TextLayout, wrap: Option<f64>) {
     let k = last.size / face.upem;
     let adv = face.advance(gid) * k;
     let limit = wrap.unwrap_or(f64::INFINITY);
-    // Drop glyphs until the ellipsis fits.
+    // Drop glyphs until the ellipsis fits, then any trailing spaces ("word…", not "word …").
     while out.glyphs.len() > line.glyph_start && out.glyphs.last().is_some_and(|g| g.x + g.advance + adv > limit) {
+        out.glyphs.pop();
+    }
+    while out.glyphs.len() > line.glyph_start && out.glyphs.last().is_some_and(|g| g.char_end > g.char_start && g.gid == g.face.glyph_for(' ')) {
         out.glyphs.pop();
     }
     let x = out.glyphs.last().filter(|_| out.glyphs.len() > line.glyph_start).map(|g| g.x + g.advance).unwrap_or(0.0);
@@ -468,48 +508,70 @@ fn sanitize_size(s: f64) -> f64 {
     if s.is_finite() { s.clamp(0.5, 5000.0) } else { 12.0 }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn shape_segment(
-    chars: &[char],
+/// One run of chars shaped with a single face and style.
+struct Segment<'a> {
     start: usize,
     end: usize,
-    face: &Arc<Face>,
-    style: &TextStyle,
+    style: &'a TextStyle,
     size: f64,
     spacing: f64,
     st_idx: usize,
-    items: &mut Vec<Item>,
-) {
-    let k = size / face.upem;
-    let seg: String = chars.get(start..end).unwrap_or(&[]).iter().collect();
-    let cased = style.case.apply(&seg);
+}
+
+/// Synthesised small caps: lower-case letters drawn as capitals at this fraction of the size.
+const SMALL_CAP_SCALE: f64 = 0.72;
+
+fn shape_segment(chars: &[char], seg: &Segment, face: &Arc<Face>, features: &[Feature], items: &mut Vec<Item>) {
+    let (start, end, style) = (seg.start, seg.end, seg.style);
+    let k = seg.size / face.upem;
+    let small_caps = style.case == TextCase::SmallCaps;
+    let native_smcp = small_caps && face.has_feature(b"smcp");
+    // Map each source char through the case (title case looks at the char before the segment, so
+    // a word split across styled runs is capitalised once) and remember synthesised small caps.
+    let mut mapped: Vec<(char, usize, bool)> = Vec::with_capacity(end.saturating_sub(start));
+    let mut prev = start.checked_sub(1).and_then(|i| chars.get(i)).copied();
+    for (i, c) in chars.get(start..end).unwrap_or(&[]).iter().enumerate() {
+        let src = start + i;
+        if small_caps && !native_smcp && c.is_lowercase() {
+            for u in c.to_uppercase() {
+                mapped.push((u, src, true));
+            }
+        } else {
+            let mut buf = [0u8; 4];
+            for u in style.case.apply_after(c.encode_utf8(&mut buf), prev).chars() {
+                mapped.push((u, src, false));
+            }
+        }
+        prev = Some(*c);
+    }
+    let mut small = vec![false; end.saturating_sub(start)];
+    for (_, src, sm) in &mapped {
+        if *sm && let Some(f) = small.get_mut(src - start) {
+            *f = true;
+        }
+    }
+    let small_at = |src: usize| src.checked_sub(start).and_then(|i| small.get(i)).copied().unwrap_or(false);
+    let mut feats: Vec<Feature> = features.to_vec();
+    if native_smcp {
+        feats.push(Feature::new(Tag::new(b"smcp"), 1, ..));
+    }
     let mut raw: Vec<(u32, u32, i32, i32, i32)> = Vec::new();
     if let Some(hb) = face.hb() {
         let shaper = face.shaper.shaper(&hb).build();
         let mut buf = UnicodeBuffer::new();
-        if cased.chars().count() == seg.chars().count() {
-            for (i, c) in cased.chars().enumerate() {
-                buf.add(c, (start + i) as u32);
-            }
-        } else {
-            // Case mapping changed the length: map every produced char to its source char.
-            for (i, c) in seg.chars().enumerate() {
-                let mapped = style.case.apply(&c.to_string());
-                for u in mapped.chars() {
-                    buf.add(u, (start + i) as u32);
-                }
-            }
+        for (u, src, _) in &mapped {
+            buf.add(*u, *src as u32);
         }
         buf.set_direction(Direction::LeftToRight);
         buf.guess_segment_properties();
-        let gb = shaper.shape(buf, ShapeOptions::new());
+        let gb = shaper.shape(buf, ShapeOptions::new().features(&feats));
         for (info, pos) in gb.glyph_infos().iter().zip(gb.glyph_positions()) {
             raw.push((info.glyph_id, info.cluster, pos.x_advance, pos.x_offset, pos.y_offset));
         }
     } else {
-        for (i, c) in seg.chars().enumerate() {
-            let gid = face.glyph_for(c);
-            raw.push((gid, (start + i) as u32, face.advance(gid) as i32, 0, 0));
+        for (u, src, _) in &mapped {
+            let gid = face.glyph_for(*u);
+            raw.push((gid, *src as u32, face.advance(gid) as i32, 0, 0));
         }
     }
     let n = raw.len();
@@ -520,16 +582,18 @@ fn shape_segment(
         let cend = raw.iter().skip(gi + 1).map(|r| r.1 as usize).find(|c| *c > cl).unwrap_or(end).max(cl + 1);
         let last_in_cluster = raw.get(gi + 1).is_none_or(|r| r.1 as usize != cl);
         let ch = chars.get(cl).copied().unwrap_or(' ');
-        let adv = f64::from(xa) * k + if last_in_cluster { spacing * (cend - cl) as f64 } else { 0.0 };
+        let scale = if small_at(cl) { SMALL_CAP_SCALE } else { 1.0 };
+        let adv = f64::from(xa) * k * scale + if last_in_cluster { seg.spacing * (cend - cl) as f64 } else { 0.0 };
         items.push(Item {
             face: face.clone(),
+            scale,
             gid,
             adv,
-            dx: f64::from(xo) * k,
-            dy: f64::from(yo) * k,
+            dx: f64::from(xo) * k * scale,
+            dy: f64::from(yo) * k * scale,
             char_start: cl,
             char_end: cend,
-            style: st_idx,
+            style: seg.st_idx,
             ch,
         });
     }

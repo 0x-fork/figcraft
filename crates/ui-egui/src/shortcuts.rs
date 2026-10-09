@@ -193,27 +193,28 @@ fn enter_text(app: &mut FigApp) -> bool {
     }
 }
 
-fn text_keys(app: &mut FigApp, _ctx: &Context, events: &[Event]) {
+fn text_keys(app: &mut FigApp, ctx: &Context, events: &[Event]) {
+    // A key that ran a shortcut swallows the text it also produced (Alt+. types "≥" on macOS).
+    let mut skip_text = false;
     for ev in events {
         match ev {
-            Event::Text(t) => {
+            Event::Text(t) | Event::Ime(egui::ImeEvent::Commit(t)) => {
+                if skip_text && matches!(ev, Event::Text(_)) {
+                    skip_text = false;
+                    continue;
+                }
                 if let Err(e) = figcraft_engine::textedit::insert(&mut app.session, t) {
                     app.toast(e.to_string());
                 }
             }
             Event::Paste(t) => {
-                let _ = figcraft_engine::textedit::insert(&mut app.session, t);
+                // Plain text only: the engine normalises line endings and drops control chars.
+                if let Err(e) = figcraft_engine::textedit::insert(&mut app.session, t) {
+                    app.toast(e.to_string());
+                }
             }
             Event::Copy | Event::Cut => {
-                if let Some((id, a, b)) = figcraft_engine::textedit::selected_range(&app.session)
-                    && let Some(text) = app
-                        .session
-                        .doc()
-                        .ok()
-                        .and_then(|d| d.node(id))
-                        .and_then(|n| n.kind.text())
-                        .map(|t| t.characters.chars().skip(a).take(b - a).collect::<String>())
-                {
+                if let Some(text) = figcraft_engine::textedit::selected_text(&app.session).filter(|t| !t.is_empty()) {
                     app.services.clipboard_set_text(&text);
                     if matches!(ev, Event::Cut) {
                         let _ = figcraft_engine::textedit::key(&mut app.session, "Delete", false, false, false);
@@ -221,6 +222,10 @@ fn text_keys(app: &mut FigApp, _ctx: &Context, events: &[Event]) {
                 }
             }
             Event::Key { key, pressed: true, modifiers: m, .. } => {
+                if (m.command || m.alt) && text_shortcut(app, *key, *m) {
+                    skip_text = true;
+                    continue;
+                }
                 let name = match key {
                     Key::Backspace => "Backspace",
                     Key::Delete => "Delete",
@@ -234,18 +239,6 @@ fn text_keys(app: &mut FigApp, _ctx: &Context, events: &[Event]) {
                     Key::Escape => "Escape",
                     Key::Tab => "Tab",
                     Key::A if m.command => "SelectAll",
-                    Key::B if m.command => {
-                        app.run("text.bold", json!({}));
-                        continue;
-                    }
-                    Key::I if m.command => {
-                        app.run("text.italic", json!({}));
-                        continue;
-                    }
-                    Key::U if m.command => {
-                        app.run("text.underline", json!({}));
-                        continue;
-                    }
                     Key::Z if m.command => {
                         let _ = figcraft_engine::textedit::end(&mut app.session);
                         app.run(if m.shift { "edit.redo" } else { "edit.undo" }, json!({}));
@@ -264,6 +257,59 @@ fn text_keys(app: &mut FigApp, _ctx: &Context, events: &[Event]) {
             _ => {}
         }
     }
+    // Triple-click on the edited text selects its line (double-click is handled by the engine).
+    if ctx.input(|i| i.pointer.button_triple_clicked(egui::PointerButton::Primary))
+        && let Some(pos) = ctx.input(|i| i.pointer.interact_pos())
+        && app.canvas.rect.contains(pos)
+        && let Some(te) = app.session.ds().ok().and_then(|d| d.text_edit.clone())
+    {
+        let p = app.to_page(pos);
+        let inside = app.session.doc().ok().and_then(|d| d.world_bounds(te.id)).is_some_and(|b| b.contains(p));
+        if inside && let Ok(idx) = app.session.text_index_at(te.id, p) {
+            app.run("text.edit.selectLine", json!({"index": idx}));
+        }
+    }
+    ime_output(app, ctx);
+}
+
+/// Text-menu shortcuts (Bold, lists, alignment, size/weight/spacing steps…) while editing text.
+fn text_shortcut(app: &mut FigApp, key: Key, m: Modifiers) -> bool {
+    for item in MENU.iter().filter(|i| i.id.starts_with("text.") && !i.shortcut.is_empty()) {
+        if let Some((want, k)) = parse(item.shortcut)
+            && k == key
+            && mods_match(want, m)
+        {
+            crate::menus::invoke(app, item.id);
+            return true;
+        }
+    }
+    false
+}
+
+/// Tell the platform where the caret is so IME candidate windows open next to it.
+fn ime_output(app: &FigApp, ctx: &Context) {
+    let Some(te) = app.session.ds().ok().and_then(|d| d.text_edit.clone()) else { return };
+    let Some(doc) = app.session.doc().ok() else { return };
+    let Some(node) = doc.node(te.id) else { return };
+    let Some((layout, dy)) = figcraft_text::layout_node(node) else { return };
+    let w = doc.world_transform(te.id);
+    let (cx, li) = layout.caret(te.caret);
+    let (top, h) = layout.lines.get(li).map(|l| (l.top, l.height)).unwrap_or((0.0, 14.0));
+    let p0 = w * figcraft_geom::Point::new(cx, top + dy);
+    let p1 = w * figcraft_geom::Point::new(cx, top + h + dy);
+    let (a, b) = (app.to_screen(p0.x, p0.y), app.to_screen(p1.x, p1.y));
+    if !(a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite()) {
+        return;
+    }
+    let cursor_rect = egui::Rect::from_two_pos(a, b + egui::vec2(1.0, 0.0));
+    ctx.output_mut(|o| {
+        o.ime = Some(egui::output::IMEOutput {
+            purpose: egui::IMEPurpose::Normal,
+            rect: app.canvas.rect,
+            cursor_rect,
+            should_interrupt_composition: false,
+        })
+    });
 }
 
 #[cfg(test)]

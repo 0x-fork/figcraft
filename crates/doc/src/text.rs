@@ -86,28 +86,42 @@ pub enum TextCase {
 
 impl TextCase {
     pub fn apply(self, s: &str) -> String {
+        self.apply_after(s, None)
+    }
+
+    /// Apply the case to `s`, which follows `prev` in the text (so title case only capitalises
+    /// the first letter of each word even when a word spans several styled runs).
+    pub fn apply_after(self, s: &str, prev: Option<char>) -> String {
         match self {
             TextCase::Original | TextCase::SmallCaps => s.to_string(),
             TextCase::Upper => s.to_uppercase(),
             TextCase::Lower => s.to_lowercase(),
             TextCase::Title => {
                 let mut out = String::with_capacity(s.len());
-                let mut start = true;
+                let mut start = prev.is_none_or(|c| !is_word_char(c));
                 for ch in s.chars() {
-                    if start && ch.is_alphabetic() {
+                    if start && ch.is_alphanumeric() {
                         out.extend(ch.to_uppercase());
                         start = false;
                     } else {
                         out.push(ch);
-                        if ch.is_whitespace() {
-                            start = true;
-                        }
+                        start = !is_word_char(ch);
                     }
                 }
                 out
             }
         }
     }
+
+    /// Whether the char at a position preceded by `prev` starts a word (for title case).
+    pub fn starts_word(prev: Option<char>) -> bool {
+        prev.is_none_or(|c| !is_word_char(c))
+    }
+}
+
+/// Letters, digits and apostrophes continue a word (so "don't" stays "Don't").
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '\'' | '\u{2019}')
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -254,6 +268,11 @@ pub struct TextData {
     pub features: std::collections::BTreeMap<String, bool>,
 }
 
+/// Whether `tag` is a valid OpenType feature tag (four printable ASCII chars).
+pub fn valid_feature_tag(tag: &str) -> bool {
+    tag.len() == 4 && tag.bytes().all(|b| (0x20..0x7f).contains(&b))
+}
+
 impl TextData {
     pub fn new(characters: impl Into<String>) -> Self {
         Self { characters: characters.into(), ..Default::default() }
@@ -375,5 +394,21 @@ impl TextData {
     /// Whether every char shares one style (the panel shows "Mixed" otherwise).
     pub fn is_uniform(&self) -> bool {
         self.runs.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod case_tests {
+    use super::*;
+
+    #[test]
+    fn title_case_respects_context() {
+        assert_eq!(TextCase::Title.apply("hello wORLD don't 3d x-ray"), "Hello WORLD Don't 3d X-Ray");
+        // Continuing a word from a previous run: no capital.
+        assert_eq!(TextCase::Title.apply_after("lo world", Some('l')), "lo World");
+        assert_eq!(TextCase::Title.apply_after("lo", Some(' ')), "Lo");
+        assert_eq!(TextCase::Upper.apply_after("ß", Some('a')), "SS");
+        assert!(valid_feature_tag("liga") && valid_feature_tag("ss01"));
+        assert!(!valid_feature_tag("lig") && !valid_feature_tag("ligatures") && !valid_feature_tag("li\u{e9}"));
     }
 }

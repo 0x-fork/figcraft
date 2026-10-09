@@ -102,3 +102,158 @@ fn glyph_paths_have_area() {
     let p = l.to_path();
     assert!(p.area().abs() > 1.0);
 }
+
+fn inter() -> Option<std::sync::Arc<Face>> {
+    if !have_fonts() {
+        return None;
+    }
+    db().write().unwrap().find("Inter", "Regular").filter(|f| f.family == "Inter")
+}
+
+#[test]
+fn opentype_features_change_shaping() {
+    let Some(face) = inter() else {
+        eprintln!("Inter not embedded; skipping");
+        return;
+    };
+    let mut t = TextData::new("1111 0");
+    t.style.font_size = 20.0;
+    let base = layout(&t, None, None);
+    if face.has_feature(b"tnum") {
+        t.features.insert("tnum".into(), true);
+        let tab = layout(&t, None, None);
+        assert!((tab.width - base.width).abs() > 0.01, "tnum should change digit widths");
+        t.features.clear();
+    }
+    if face.has_feature(b"zero") {
+        t.features.insert("zero".into(), true);
+        let z = layout(&t, None, None);
+        let zero_gid = |l: &TextLayout| l.glyphs.iter().find(|g| g.char_start == 5).map(|g| g.gid);
+        assert_ne!(zero_gid(&z), zero_gid(&base), "zero should pick the slashed zero");
+    }
+    // Invalid tags are ignored, never a crash.
+    t.features.insert("bogus-tag".into(), true);
+    t.features.insert("".into(), false);
+    let _ = layout(&t, None, None);
+}
+
+#[test]
+fn small_caps_native_or_synthesised() {
+    let Some(face) = inter() else { return };
+    let mut t = TextData::new("Ab");
+    t.style.font_size = 20.0;
+    let orig = layout(&t, None, None);
+    t.style.case = figcraft_doc::TextCase::SmallCaps;
+    let sc = layout(&t, None, None);
+    let b = |l: &TextLayout| l.glyphs.iter().find(|g| g.char_start == 1).cloned().unwrap();
+    let (ob, sb) = (b(&orig), b(&sc));
+    assert_ne!(ob.gid, sb.gid, "the lower-case b becomes a small capital");
+    if !face.has_feature(b"smcp") {
+        // Synthesised: a capital B drawn smaller than the A.
+        assert_eq!(sb.gid, face.glyph_for('B'));
+        assert!(sb.size < 20.0);
+    }
+    // Upper-case letters are untouched.
+    assert_eq!(sc.glyphs.iter().find(|g| g.char_start == 0).unwrap().gid, face.glyph_for('A'));
+}
+
+#[test]
+fn title_case_across_runs() {
+    let Some(face) = inter() else { return };
+    let mut t = TextData::new("hello world");
+    t.style.case = figcraft_doc::TextCase::Title;
+    // "hel" bold, "lo world" regular: the word continues across the run boundary.
+    t.restyle(0, 3, |s| s.font_style = "Bold".into());
+    let l = layout(&t, None, None);
+    let gid_at = |i: usize| l.glyphs.iter().find(|g| g.char_start == i).map(|g| g.gid);
+    assert_eq!(gid_at(3), Some(face.glyph_for('l')), "mid-word char after a run boundary stays lower-case");
+    assert_eq!(gid_at(6), Some(face.glyph_for('W')));
+}
+
+#[test]
+fn lists_hang_and_number() {
+    if !have_fonts() {
+        return;
+    }
+    let mut t = TextData::new("one two three four five six seven\nb");
+    t.auto_resize = figcraft_doc::TextAutoResize::Height;
+    t.list = figcraft_doc::ListStyle::Bulleted;
+    t.paragraph_indent = 30.0;
+    let l = layout(&t, Some(90.0), None);
+    assert!(l.lines.len() >= 3);
+    let first_text = |li: usize| {
+        let ln = &l.lines[li];
+        l.glyphs[ln.glyph_start..ln.glyph_end].iter().find(|g| g.char_end > g.char_start).map(|g| g.x).unwrap()
+    };
+    // Wrapped lines hang at the same x as the first line's text (paragraph indent is ignored in lists).
+    assert!((first_text(0) - first_text(1)).abs() < 0.01);
+    assert!(first_text(0) > 0.0);
+    // The bullet sits left of the text, and carets never land on it.
+    let ln = &l.lines[0];
+    let marker = l.glyphs[ln.glyph_start..ln.glyph_end].iter().find(|g| g.char_end == g.char_start).unwrap();
+    assert!(marker.x < first_text(0));
+    assert!(l.caret(0).0 >= first_text(0) - 0.01);
+
+    // Numbered: ten paragraphs, the text column clears "10.".
+    let mut n = TextData::new((1..=10).map(|i| format!("p{i}")).collect::<Vec<_>>().join("\n"));
+    n.list = figcraft_doc::ListStyle::Numbered;
+    let l = layout(&n, None, None);
+    assert_eq!(l.lines.len(), 10);
+    let last = &l.lines[9];
+    let gl = &l.glyphs[last.glyph_start..last.glyph_end];
+    let marker_end = gl.iter().filter(|g| g.char_end == g.char_start).map(|g| g.x + g.advance).fold(0.0, f64::max);
+    let text_x = gl.iter().find(|g| g.char_end > g.char_start).unwrap().x;
+    assert!(marker_end < text_x, "{marker_end} < {text_x}");
+}
+
+#[test]
+fn paragraph_indent_first_line_only() {
+    if !have_fonts() {
+        return;
+    }
+    let mut t = TextData::new("aaa bbb ccc ddd eee fff ggg");
+    t.auto_resize = figcraft_doc::TextAutoResize::Height;
+    t.paragraph_indent = 20.0;
+    let l = layout(&t, Some(70.0), None);
+    assert!(l.lines.len() >= 2);
+    let x0 = |li: usize| l.glyphs[l.lines[li].glyph_start].x;
+    assert!((x0(0) - 20.0).abs() < 0.5, "{}", x0(0));
+    assert!(x0(1) < 1.0);
+}
+
+#[test]
+fn truncate_max_lines_with_ellipsis() {
+    let Some(face) = inter() else { return };
+    let mut t = TextData::new("first line\nsecond line\nthird line");
+    t.auto_resize = figcraft_doc::TextAutoResize::Truncate;
+    t.max_lines = 2;
+    let l = layout(&t, Some(300.0), Some(1000.0));
+    assert!(l.truncated);
+    assert_eq!(l.lines.len(), 2);
+    let last = l.glyphs.last().unwrap();
+    assert_eq!(last.gid, face.glyph_for('…'));
+    // max_lines is ignored unless truncating.
+    t.auto_resize = figcraft_doc::TextAutoResize::None;
+    assert_eq!(layout(&t, Some(300.0), Some(1000.0)).lines.len(), 3);
+}
+
+#[test]
+fn vertical_alignment_in_fixed_box() {
+    if !have_fonts() {
+        return;
+    }
+    let mut t = TextData::new("Hi");
+    t.auto_resize = figcraft_doc::TextAutoResize::None;
+    t.align_v = figcraft_doc::TextAlignV::Bottom;
+    let mut n = figcraft_doc::Node::new(figcraft_doc::NodeId(1), figcraft_doc::NodeKind::Text(t.clone()), "t", 100.0, 100.0);
+    let (l, dy) = layout_node(&n).unwrap();
+    assert!((dy + l.height - 100.0).abs() < 1e-6);
+    t.align_v = figcraft_doc::TextAlignV::Middle;
+    n.kind = figcraft_doc::NodeKind::Text(t.clone());
+    let (l, dy) = layout_node(&n).unwrap();
+    assert!((dy - (100.0 - l.height) / 2.0).abs() < 1e-6);
+    // Auto height ignores vertical alignment.
+    t.auto_resize = figcraft_doc::TextAutoResize::Height;
+    n.kind = figcraft_doc::NodeKind::Text(t);
+    assert_eq!(layout_node(&n).unwrap().1, 0.0);
+}

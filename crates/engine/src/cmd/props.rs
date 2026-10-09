@@ -16,7 +16,8 @@ clip, isMask, layout (null|horizontal|vertical|grid|{...}), gap, crossGap, paddi
 mainAlign (min|center|max|spaceBetween), crossAlign (min|center|max|baseline), wrap, gridColumns, gridRows, sizingH / sizingV (fixed|hug|fill), \
 absolute, minWidth, maxWidth, minHeight, maxHeight, constraints {horizontal, vertical}, grids, exports, characters, fontFamily, fontStyle, \
 fontSize, lineHeight (auto|px|\"150%\"), letterSpacing (px|\"2%\"), textAlign (left|center|right|justified), textAlignVertical, textAutoResize \
-(widthAndHeight|height|none|truncate), textDecoration, textCase, paragraphSpacing, listStyle, pointCount, innerRadius, arcStart, arcSweep, \
+(widthAndHeight|height|none|truncate), textDecoration, textCase (original|upper|lower|title|smallCaps), paragraphSpacing, paragraphIndent, \
+listStyle (none|bulleted|numbered), maxLines, features ({tag: bool}, e.g. {\"liga\": false, \"tnum\": true}), pointCount, innerRadius, arcStart, arcSweep, \
 arcInner, constrainProportions, description, interactions, overflow, pluginData {k: v}";
 
 /// camelCase object keys → snake_case (accept the inspect/camel forms for serde-backed values).
@@ -45,7 +46,7 @@ pub fn snake(v: &Value) -> Value {
     }
 }
 
-fn enum_of<T: serde::de::DeserializeOwned>(v: &Value) -> Option<T> {
+pub(crate) fn enum_of<T: serde::de::DeserializeOwned>(v: &Value) -> Option<T> {
     let s = v.as_str()?;
     // Accept camelCase, snake/upper-case and spaced variants.
     let norm: String = {
@@ -358,6 +359,16 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             "paragraphIndent" => text_mut(cmd, doc.get_mut(id)?)?.paragraph_indent = f64_of(v).unwrap_or(0.0).max(0.0),
             "listStyle" => text_mut(cmd, doc.get_mut(id)?)?.list = enum_of(v).ok_or_else(|| bad(cmd, "listStyle: none|bulleted|numbered"))?,
             "maxLines" => text_mut(cmd, doc.get_mut(id)?)?.max_lines = f64_of(v).unwrap_or(0.0).clamp(0.0, 10_000.0) as u32,
+            "features" | "textFeatures" | "fontFeatures" | "openTypeFeatures" => {
+                let f = features_of(cmd, v)?;
+                let t = text_mut(cmd, doc.get_mut(id)?)?;
+                t.features.clear();
+                for (k, on) in f {
+                    if let Some(on) = on {
+                        t.features.insert(k, on);
+                    }
+                }
+            }
             "start" | "end" => {}
             "pointCount" => {
                 let c = f64_of(v).unwrap_or(5.0).clamp(3.0, 120.0) as u32;
@@ -488,6 +499,7 @@ pub fn override_group(k: &str) -> &'static str {
         "visible" => "visible",
         "name" => "name",
         "characters" | "text" => "characters",
+        "features" | "fontFeatures" | "openTypeFeatures" | "listStyle" | "maxLines" => "textStyle",
         "cornerRadius" | "cornerSmoothing" | "topLeftRadius" | "topRightRadius" | "bottomRightRadius" | "bottomLeftRadius" => "corners",
         "width" | "height" | "w" | "h" | "sizingH" | "sizingV" => "size",
         k if k.starts_with("font") || k.starts_with("text") || k.starts_with("letter") || k.starts_with("line") || k.starts_with("paragraph") => {
@@ -556,7 +568,7 @@ pub fn apply_text_style(cmd: &str, t: &mut TextData, start: usize, end: usize, k
             t.restyle(start, end, |s| s.decoration = d);
         }
         "textCase" => {
-            let c: TextCase = enum_of(v).ok_or_else(|| bad(cmd, "textCase: original|upper|lower|title"))?;
+            let c: TextCase = enum_of(v).ok_or_else(|| bad(cmd, "textCase: original|upper|lower|title|smallCaps"))?;
             t.restyle(start, end, |s| s.case = c);
         }
         "hyperlink" => {
@@ -570,6 +582,24 @@ pub fn apply_text_style(cmd: &str, t: &mut TextData, start: usize, end: usize, k
         _ => {}
     }
     Ok(())
+}
+
+/// OpenType feature toggles from `{tag: bool | null}` (null = back to the font's default).
+pub fn features_of(cmd: &str, v: &Value) -> Result<Vec<(String, Option<bool>)>> {
+    let Value::Object(m) = v else { return Err(bad(cmd, "features: {tag: bool}, e.g. {\"liga\": false}")) };
+    let mut out = Vec::with_capacity(m.len());
+    for (k, on) in m {
+        if !valid_feature_tag(k) {
+            return Err(bad(cmd, format!("`{k}` is not a 4-character OpenType feature tag")));
+        }
+        let on = match on {
+            Value::Null => None,
+            Value::Bool(b) => Some(*b),
+            other => Some(f64_of(other).ok_or_else(|| bad(cmd, format!("feature `{k}` must be true, false or null")))? != 0.0),
+        };
+        out.push((k.clone(), on));
+    }
+    Ok(out)
 }
 
 pub fn weight_name(w: u16) -> &'static str {

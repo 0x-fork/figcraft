@@ -57,6 +57,8 @@ pub struct Face {
     pub underline_thickness: f64,
     pub strike_pos: f64,
     pub shaper: harfrust::ShaperData,
+    /// OpenType GSUB feature tags the face provides (e.g. `smcp`).
+    gsub_features: Vec<[u8; 4]>,
     charmap: HashMap<u32, u32>,
     outlines: Mutex<HashMap<u32, Arc<BezPath>>>,
     advances: Mutex<HashMap<u32, f64>>,
@@ -82,6 +84,14 @@ impl Face {
         let upem = f64::from(m.units_per_em.max(1));
         let ascent = f64::from(m.ascent);
         let descent = -f64::from(m.descent);
+        let mut gsub_features: Vec<[u8; 4]> = f
+            .gsub()
+            .ok()
+            .and_then(|g| g.feature_list().ok())
+            .map(|l| l.feature_records().iter().map(|r| r.feature_tag().to_be_bytes()).collect())
+            .unwrap_or_default();
+        gsub_features.sort_unstable();
+        gsub_features.dedup();
         let charmap: HashMap<u32, u32> = f.charmap().mappings().map(|(c, g)| (c, g.to_u32())).collect();
         let under = m.underline.map(|d| (f64::from(d.offset), f64::from(d.thickness))).unwrap_or((-upem * 0.1, upem * 0.06));
         let strike = m.strikeout.map(|d| f64::from(d.offset)).unwrap_or(ascent * 0.3);
@@ -106,11 +116,22 @@ impl Face {
             underline_thickness: under.1.max(upem * 0.02),
             strike_pos: strike,
             shaper,
+            gsub_features,
             charmap,
             bytes,
             outlines: Mutex::new(HashMap::new()),
             advances: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Whether the face's GSUB table has feature `tag` (e.g. `b"smcp"`).
+    pub fn has_feature(&self, tag: &[u8; 4]) -> bool {
+        self.gsub_features.binary_search(tag).is_ok()
+    }
+
+    /// The face's GSUB feature tags.
+    pub fn feature_tags(&self) -> Vec<String> {
+        self.gsub_features.iter().map(|t| String::from_utf8_lossy(t).into_owned()).collect()
     }
 
     pub fn has_char(&self, c: char) -> bool {

@@ -7,6 +7,10 @@ use super::{CommandSpec, ok};
 use crate::params::*;
 use crate::{Result, Session, bad, spec, textedit};
 
+fn finite(v: f64) -> f64 {
+    if v.is_finite() { v } else { 0.0 }
+}
+
 /// Apply a style change to the edited range, or to whole text layers in the selection.
 fn style(s: &mut Session, p: &Value, f: impl Fn(&mut TextStyle)) -> Result<Value> {
     if let Some((id, a, b)) = textedit::selected_range(s) {
@@ -154,6 +158,67 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("text.caseUpper", "Uppercase", "{ids?}", true, |s, p| style(s, p, |st| st.case = TextCase::Upper)),
         spec!("text.caseLower", "Lowercase", "{ids?}", true, |s, p| style(s, p, |st| st.case = TextCase::Lower)),
         spec!("text.caseTitle", "Title case", "{ids?}", true, |s, p| style(s, p, |st| st.case = TextCase::Title)),
+        spec!("text.caseSmallCaps", "Small caps", "{ids?}", true, |s, p| style(s, p, |st| st.case = TextCase::SmallCaps)),
+        spec!("text.case", "Letter case", "{case: original|upper|lower|title|smallCaps, ids?}", true, |s, p| {
+            let c: TextCase =
+                get(p, "case").and_then(super::props::enum_of).ok_or_else(|| bad("text.case", "`case`: original|upper|lower|title|smallCaps"))?;
+            style(s, p, |st| st.case = c)
+        }),
+        spec!("text.decoration", "Decoration", "{decoration: none|underline|strikethrough, ids?}", true, |s, p| {
+            let d: TextDecoration = get(p, "decoration")
+                .and_then(super::props::enum_of)
+                .ok_or_else(|| bad("text.decoration", "`decoration`: none|underline|strikethrough"))?;
+            style(s, p, |st| st.decoration = d)
+        }),
+        spec!("text.listStyle", "List style", "{style: none|bulleted|numbered, ids?}", true, |s, p| {
+            let l: ListStyle = get(p, "style")
+                .or_else(|| get(p, "list"))
+                .and_then(super::props::enum_of)
+                .ok_or_else(|| bad("text.listStyle", "`style`: none|bulleted|numbered"))?;
+            para(s, p, |t| t.list = l)
+        }),
+        spec!("text.paragraphIndent", "Paragraph indent", "{indent (px), ids?}", true, |s, p| {
+            let v = finite(req_num("text.paragraphIndent", p, "indent")?).clamp(0.0, 10_000.0);
+            para(s, p, |t| t.paragraph_indent = v)
+        }),
+        spec!("text.paragraphSpacing", "Paragraph spacing", "{spacing (px), ids?}", true, |s, p| {
+            let v = finite(req_num("text.paragraphSpacing", p, "spacing")?).clamp(0.0, 10_000.0);
+            para(s, p, |t| t.paragraph_spacing = v)
+        }),
+        spec!("text.maxLines", "Max lines", "{lines (0 = no limit; truncates), ids?}", true, |s, p| {
+            let v = finite(req_num("text.maxLines", p, "lines")?).clamp(0.0, 10_000.0) as u32;
+            para(s, p, |t| {
+                t.max_lines = v;
+                if v > 0 {
+                    t.auto_resize = TextAutoResize::Truncate;
+                }
+            })
+        }),
+        spec!(
+            "text.setFeatures",
+            "OpenType features",
+            "{features: {tag: bool | null (font default)}, replace? (clear others first), id?/ids?}",
+            true,
+            |s, p| {
+                let f = super::props::features_of("text.setFeatures", get(p, "features").unwrap_or(&Value::Null))?;
+                let replace = boolean(p, "replace").unwrap_or(false);
+                para(s, p, |t| {
+                    if replace {
+                        t.features.clear();
+                    }
+                    for (k, on) in &f {
+                        match on {
+                            Some(on) => {
+                                t.features.insert(k.clone(), *on);
+                            }
+                            None => {
+                                t.features.remove(k);
+                            }
+                        }
+                    }
+                })
+            }
+        ),
         spec!("text.set", "Set text", "{id?, characters}", true, |s, p| {
             let c = string(p, "characters").or_else(|| string(p, "text")).ok_or_else(|| bad("text.set", "`characters` required"))?;
             let ids = req_targets("text.set", s, p)?;
@@ -217,15 +282,41 @@ pub fn specs() -> Vec<CommandSpec> {
             textedit::set_caret(s, i, boolean(p, "extend").unwrap_or(false))?;
             ok()
         }),
+        spec!("text.edit.selectWord", "Select word", "{index}", false, |s, p| {
+            let i = finite(req_num("text.edit.selectWord", p, "index")?).max(0.0) as usize;
+            textedit::select_word(s, i)?;
+            ok()
+        }),
+        spec!("text.edit.selectLine", "Select line", "{index}", false, |s, p| {
+            let i = finite(req_num("text.edit.selectLine", p, "index")?).max(0.0) as usize;
+            textedit::select_line(s, i)?;
+            ok()
+        }),
+        spec!("text.edit.selection", "Text selection", "{}", false, |s, _| {
+            Ok(match s.ds()?.text_edit.clone() {
+                Some(te) => json!({"id": te.id, "caret": te.caret, "anchor": te.anchor, "text": textedit::selected_text(s)}),
+                None => Value::Null,
+            })
+        }),
         spec!("text.edit.end", "Stop editing text", "{}", false, |s, _| {
             textedit::end(s)?;
             ok()
         }),
-        spec!("text.fonts", "List fonts", "{family? (list its styles)}", false, |_, p| {
-            Ok(match string(p, "family") {
-                Some(f) => json!(figcraft_text::family_styles(&f)),
-                None => json!(figcraft_text::family_names()),
-            })
-        }),
+        spec!(
+            "text.fonts",
+            "List fonts",
+            "{family? (list its styles), features? (with family+style: the face's OpenType features)}",
+            false,
+            |_, p| {
+                Ok(match string(p, "family") {
+                    Some(f) if boolean(p, "features").unwrap_or(false) => {
+                        let st = string(p, "style").unwrap_or_else(|| "Regular".into());
+                        json!(figcraft_text::find_face(&f, &st).map(|face| face.feature_tags()).unwrap_or_default())
+                    }
+                    Some(f) => json!(figcraft_text::family_styles(&f)),
+                    None => json!(figcraft_text::family_names()),
+                })
+            }
+        ),
     ]
 }
