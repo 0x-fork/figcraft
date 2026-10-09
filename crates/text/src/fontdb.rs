@@ -378,6 +378,7 @@ impl FontDb {
 }
 
 fn system_font_dirs() -> Vec<std::path::PathBuf> {
+    #[allow(unused_mut)]
     let mut v: Vec<std::path::PathBuf> = Vec::new();
     #[cfg(target_os = "macos")]
     {

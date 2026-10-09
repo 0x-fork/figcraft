@@ -184,7 +184,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
         let pt = hover_pos.map(|h| app.to_page(h)).unwrap_or_default();
         if path.exists() {
             app.run("file.import", json!({"path": path.to_string_lossy(), "x": pt.x, "y": pt.y}));
-        } else if let Ok(bytes) = f.bytes() {
+        } else if let Some(bytes) = dropped_bytes(&f) {
             use base64::Engine as _;
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
             let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped.png".into());
@@ -287,6 +287,17 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
         }
         app.handle_ui_requests();
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dropped_bytes(f: &std::sync::Arc<dyn egui::DroppedFile + Send + Sync>) -> Option<Vec<u8>> {
+    f.bytes().ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn dropped_bytes(_f: &std::sync::Arc<dyn egui::DroppedFile + Send + Sync>) -> Option<Vec<u8>> {
+    // Browser drops arrive asynchronously; not supported yet.
+    None
 }
 
 fn stroke(c: Color32, w: f32) -> Stroke {

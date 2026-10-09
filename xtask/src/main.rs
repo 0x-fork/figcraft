@@ -70,7 +70,17 @@ fn assets() -> bool {
             if name.starts_with('.') || name.ends_with(".md") || name.ends_with(".txt") {
                 return;
             }
-            if !attribution.contains(&rel) && !attribution.contains(&format!("{}/", rel.rsplit_once('/').map(|x| x.0).unwrap_or(""))) {
+            // Listed by path, or by any ancestor directory written as `dir/`.
+            let mut listed = attribution.contains(&format!("`{rel}`"));
+            let mut cur = rel.as_str();
+            while let Some((parent, _)) = cur.rsplit_once('/') {
+                if attribution.contains(&format!("`{parent}/`")) {
+                    listed = true;
+                    break;
+                }
+                cur = parent;
+            }
+            if !listed {
                 missing.push(rel);
             }
         });
