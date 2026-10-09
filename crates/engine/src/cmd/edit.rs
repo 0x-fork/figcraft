@@ -250,7 +250,12 @@ pub fn specs() -> Vec<CommandSpec> {
             let label = string(p, "label").unwrap_or_else(|| "Batch".into());
             let cmds: Vec<(String, Value)> = match get(p, "commands") {
                 Some(Value::Array(a)) => {
-                    a.iter().filter_map(|c| Some((c.get("command")?.as_str()?.to_string(), c.get("params").cloned().unwrap_or(json!({}))))).collect()
+                    let mut out = Vec::new();
+                    for (i, c) in a.iter().enumerate() {
+                        let cmd = c.get("command").and_then(Value::as_str).ok_or_else(|| bad("command.batch", format!("step {i} has no `command`")))?;
+                        out.push((cmd.to_string(), c.get("params").cloned().unwrap_or(json!({}))));
+                    }
+                    out
                 }
                 _ => return Err(bad("command.batch", "`commands` must be an array")),
             };

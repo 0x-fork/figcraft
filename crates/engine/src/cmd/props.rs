@@ -19,6 +19,32 @@ fontSize, lineHeight (auto|px|\"150%\"), letterSpacing (px|\"2%\"), textAlign (l
 (widthAndHeight|height|none|truncate), textDecoration, textCase, paragraphSpacing, listStyle, pointCount, innerRadius, arcStart, arcSweep, \
 arcInner, constrainProportions, description, interactions, overflow, pluginData {k: v}";
 
+/// camelCase object keys → snake_case (accept the inspect/camel forms for serde-backed values).
+pub fn snake(v: &Value) -> Value {
+    match v {
+        Value::Object(m) => Value::Object(
+            m.iter()
+                .map(|(k, v)| {
+                    let mut out = String::new();
+                    for c in k.chars() {
+                        if c.is_ascii_uppercase() {
+                            out.push('_');
+                            out.push(c.to_ascii_lowercase());
+                        } else {
+                            out.push(c);
+                        }
+                    }
+                    // Paint/effect type tags stay as they are.
+                    let key = if matches!(k.as_str(), "type" | "kind") { k.clone() } else { out };
+                    (key, if matches!(k.as_str(), "type" | "kind") { v.clone() } else { snake(v) })
+                })
+                .collect(),
+        ),
+        Value::Array(a) => Value::Array(a.iter().map(snake).collect()),
+        other => other.clone(),
+    }
+}
+
 fn enum_of<T: serde::de::DeserializeOwned>(v: &Value) -> Option<T> {
     let s = v.as_str()?;
     // Accept camelCase, snake/upper-case and spaced variants.
@@ -209,7 +235,7 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 }
             }
             "cornerSmoothing" => doc.get_mut(id)?.corners.smoothing = f64_of(v).unwrap_or(0.0).clamp(0.0, 1.0),
-            "effects" => doc.get_mut(id)?.effects = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("effects: {e}")))?,
+            "effects" => doc.get_mut(id)?.effects = serde_json::from_value(snake(v)).map_err(|e| bad(cmd, format!("effects: {e}")))?,
             "clip" | "clipsContent" => doc.get_mut(id)?.clip = v.as_bool().ok_or_else(|| bad(cmd, "`clip` must be a boolean"))?,
             "isMask" => doc.get_mut(id)?.is_mask = v.as_bool().unwrap_or(false),
             "layout" | "layoutMode" => {
@@ -229,7 +255,7 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                         };
                         ensure_layout(n).mode = mode;
                     }
-                    Value::Object(_) => n.layout = Some(serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("layout: {e}")))?),
+                    Value::Object(_) => n.layout = Some(serde_json::from_value(snake(v)).map_err(|e| bad(cmd, format!("layout: {e}")))?),
                     _ => return Err(bad(cmd, "layout: none|horizontal|vertical|grid|{...}")),
                 }
             }
@@ -293,9 +319,9 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                     n.constraints.vertical = enum_of(vv).ok_or_else(|| bad(cmd, "vertical: top|bottom|topBottom|center|scale"))?;
                 }
             }
-            "grids" | "layoutGrids" => doc.get_mut(id)?.grids = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("grids: {e}")))?,
+            "grids" | "layoutGrids" => doc.get_mut(id)?.grids = serde_json::from_value(snake(v)).map_err(|e| bad(cmd, format!("grids: {e}")))?,
             "exports" | "exportSettings" => {
-                doc.get_mut(id)?.exports = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("exports: {e}")))?
+                doc.get_mut(id)?.exports = serde_json::from_value(snake(v)).map_err(|e| bad(cmd, format!("exports: {e}")))?
             }
             "interactions" => {
                 doc.get_mut(id)?.interactions = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("interactions: {e}")))?

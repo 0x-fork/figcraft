@@ -109,3 +109,25 @@ pub fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     let reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?;
     reader.into_dimensions().ok()
 }
+
+fn padded_cache() -> &'static Mutex<HashMap<Key, Arc<Pixmap>>> {
+    static C: OnceLock<Mutex<HashMap<Key, Arc<Pixmap>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// `pm` with a transparent 1-pixel border (cached).
+pub fn padded(hash: &str, filters: &ImageFilters, pm: &Pixmap) -> Option<Arc<Pixmap>> {
+    let key = (hash.to_string(), fkey(filters));
+    if let Some(p) = padded_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
+        return Some(p.clone());
+    }
+    let mut out = Pixmap::new(pm.width() + 2, pm.height() + 2)?;
+    out.draw_pixmap(1, 1, pm.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
+    let out = Arc::new(out);
+    let mut c = padded_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if c.len() > 256 {
+        c.clear();
+    }
+    c.insert(key, out.clone());
+    Some(out)
+}

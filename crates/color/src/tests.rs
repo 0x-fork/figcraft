@@ -65,3 +65,13 @@ fn nan_inputs_are_sanitized() {
     let c = Color::new(f32::NAN, 2.0, -1.0, f32::INFINITY);
     assert_eq!(c.to_rgba8(), [0, 255, 0, 0]);
 }
+
+#[test]
+fn colour_deserializes_from_many_forms() {
+    let a: Color = serde_json::from_str("\"#FF0000\"").unwrap();
+    let b: Color = serde_json::from_str("{\"r\":1,\"g\":0,\"b\":0}").unwrap();
+    let c: Color = serde_json::from_str("[1,0,0,1]").unwrap();
+    assert_eq!(a, b);
+    assert_eq!(b, c);
+    assert!(serde_json::from_str::<Color>("\"nope\"").is_err());
+}

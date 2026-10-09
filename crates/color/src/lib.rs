@@ -12,8 +12,9 @@ mod hsx;
 pub use blend::BlendMode;
 pub use hsx::*;
 
-/// A non-premultiplied sRGB colour with alpha, components in `0..=1`.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// A non-premultiplied sRGB colour with alpha, components in `0..=1`. Deserializes from
+/// `{r, g, b, a}`, `[r, g, b(, a)]`, or a CSS/hex string (`"#0D99FF"`, `"rgba(…)"`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Color {
     pub r: f32,
     pub g: f32,
@@ -24,6 +25,34 @@ pub struct Color {
 
 fn one() -> f32 {
     1.0
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ColorRepr {
+    Obj {
+        r: f32,
+        g: f32,
+        b: f32,
+        #[serde(default = "one")]
+        a: f32,
+    },
+    Arr(Vec<f32>),
+    Text(String),
+}
+
+impl<'de> Deserialize<'de> for Color {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        match ColorRepr::deserialize(d)? {
+            ColorRepr::Obj { r, g, b, a } => Ok(Color::new(r, g, b, a)),
+            ColorRepr::Arr(v) => match v.as_slice() {
+                [r, g, b] => Ok(Color::new(*r, *g, *b, 1.0)),
+                [r, g, b, a] => Ok(Color::new(*r, *g, *b, *a)),
+                _ => Err(serde::de::Error::custom("colour arrays have 3 or 4 components")),
+            },
+            ColorRepr::Text(t) => Color::parse_css(&t).ok_or_else(|| serde::de::Error::custom(format!("not a colour: {t}"))),
+        }
+    }
 }
 
 fn clamp01(v: f32) -> f32 {

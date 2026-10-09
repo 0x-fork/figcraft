@@ -134,8 +134,8 @@ pub fn export_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
 pub fn render_node(doc: &Document, id: NodeId, scale: f64) -> Option<Pixmap> {
     let b = export_bounds(doc, id)?;
     let scale = if scale.is_finite() && scale > 0.0 { scale.min(64.0) } else { 1.0 };
-    let w = (b.width() * scale).ceil().max(1.0);
-    let h = (b.height() * scale).ceil().max(1.0);
+    let w = (b.width() * scale - 1e-6).ceil().max(1.0);
+    let h = (b.height() * scale - 1e-6).ceil().max(1.0);
     if w > 16_384.0 || h > 16_384.0 {
         return None;
     }

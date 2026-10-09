@@ -190,3 +190,16 @@ fn hostile_sizes() {
     let _ = render_node(&d, r, f64::NAN);
     let _ = render_view(&d, p, &View { origin: (f64::NAN, 0.0), scale: 0.0, width: 0, height: 0 }, &Options::default());
 }
+
+#[test]
+fn inner_shadow_reaches_every_edge() {
+    let (mut d, p, r) = doc_with_rect(Color::WHITE);
+    d.get_mut(r).unwrap().effects.push(Effect {
+        kind: EffectKind::InnerShadow(Shadow { color: Color::BLACK, offset: (0.0, 4.0), radius: 8.0, ..Default::default() }),
+        visible: true,
+    });
+    let pix = render_view(&d, p, &view(100, 100), &Options { background: Some(Color::WHITE), ..Default::default() }).unwrap();
+    // Left edge (no offset that way) is still shaded; the centre is not.
+    assert!(px(&pix, 11, 25)[0] < 235, "{:?}", px(&pix, 11, 25));
+    assert!(px(&pix, 35, 30)[0] > 245);
+}

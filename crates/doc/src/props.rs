@@ -106,6 +106,7 @@ pub struct Shadow {
     pub spread: f64,
     pub blend: BlendMode,
     /// Drop shadows only: show behind transparent areas of the layer.
+    #[serde(alias = "showBehind")]
     pub show_behind: bool,
 }
 

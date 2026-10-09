@@ -137,10 +137,10 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                 return Ok(json!({"ok": true}));
             }
             match crate::shortcuts::parse(&spec) {
-                Some(_) => {
+                Some(want) => {
                     let id = figcraft_engine::catalog::MENU
                         .iter()
-                        .find(|m| !m.shortcut.is_empty() && m.shortcut.eq_ignore_ascii_case(&spec))
+                        .find(|m| !m.shortcut.is_empty() && crate::shortcuts::parse(m.shortcut) == Some(want))
                         .map(|m| m.id);
                     match id {
                         Some(id) => {

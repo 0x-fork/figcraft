@@ -72,7 +72,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("variable.createCollection", "Create variable collection", "{name, modes? [names]}", true, |s, p| {
             let name = req_string("variable.createCollection", p, "name")?;
             let doc = s.doc_mut()?;
-            let id = format!("VariableCollectionId:{}", doc.variables.collections.len() + 1);
+            let id = unique_id("VariableCollectionId", doc.variables.collections.iter().map(|c| c.id.as_str()));
             let modes: Vec<String> = match get(p, "modes") {
                 Some(Value::Array(a)) => a.iter().filter_map(|m| m.as_str().map(str::to_string)).collect(),
                 _ => vec!["Mode 1".into()],
@@ -396,7 +396,7 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
     for m in &coll.modes {
         values.entry(m.id.clone()).or_insert_with(|| default.clone());
     }
-    let id = format!("VariableID:{}", doc.variables.variables.len() + 1);
+    let id = unique_id("VariableID", doc.variables.variables.iter().map(|v| v.id.as_str()));
     doc.variables.variables.push(Variable {
         id: id.clone(),
         name,
@@ -454,4 +454,10 @@ pub fn apply_bindings(doc: &mut Document) {
         }
         let _ = super::props::apply("variables", doc, id, &sets);
     }
+}
+
+/// `prefix:N` with N one more than the largest existing.
+fn unique_id<'a>(prefix: &str, existing: impl Iterator<Item = &'a str>) -> String {
+    let max = existing.filter_map(|e| e.strip_prefix(prefix)?.strip_prefix(':')?.parse::<u64>().ok()).max().unwrap_or(0);
+    format!("{prefix}:{}", max + 1)
 }

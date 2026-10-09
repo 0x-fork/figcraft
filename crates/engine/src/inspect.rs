@@ -54,7 +54,7 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             }
         }
         if !n.effects.is_empty() {
-            o.insert("effects".into(), serde_json::to_value(&n.effects).unwrap_or(Value::Null));
+            o.insert("effects".into(), camel(serde_json::to_value(&n.effects).unwrap_or(Value::Null)));
         }
         if n.corners.radii.iter().any(|r| *r > 0.0) {
             o.insert(
@@ -69,7 +69,7 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             }
         }
         if let Some(l) = &n.layout {
-            o.insert("layout".into(), serde_json::to_value(l).unwrap_or(Value::Null));
+            o.insert("layout".into(), camel(serde_json::to_value(l).unwrap_or(Value::Null)));
         }
         let parent_al = n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some());
         if n.layout.is_some() || parent_al || matches!(n.kind, NodeKind::Text(_)) {
@@ -88,7 +88,7 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             o.insert("isMask".into(), json!(true));
         }
         if !n.grids.is_empty() {
-            o.insert("grids".into(), serde_json::to_value(&n.grids).unwrap_or(Value::Null));
+            o.insert("grids".into(), camel(serde_json::to_value(&n.grids).unwrap_or(Value::Null)));
         }
         if !n.exports.is_empty() {
             o.insert("exports".into(), serde_json::to_value(&n.exports).unwrap_or(Value::Null));
@@ -216,4 +216,31 @@ pub fn document(s: &Session, depth: usize, all_pages: bool) -> Value {
         "textEdit": ds.text_edit,
         "history": {"undo": ds.history.undo.iter().rev().take(20).map(|h| h.label.clone()).collect::<Vec<_>>(), "redo": ds.history.redo.len()},
     })
+}
+
+/// snake_case object keys → camelCase (inspect output matches the keys `node.set` accepts).
+pub fn camel(v: Value) -> Value {
+    match v {
+        Value::Object(m) => Value::Object(
+            m.into_iter()
+                .map(|(k, v)| {
+                    let mut out = String::new();
+                    let mut up = false;
+                    for c in k.chars() {
+                        if c == '_' {
+                            up = true;
+                        } else if up {
+                            out.extend(c.to_uppercase());
+                            up = false;
+                        } else {
+                            out.push(c);
+                        }
+                    }
+                    (out, camel(v))
+                })
+                .collect(),
+        ),
+        Value::Array(a) => Value::Array(a.into_iter().map(camel).collect()),
+        other => other,
+    }
 }
