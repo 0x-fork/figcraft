@@ -1,0 +1,189 @@
+use super::*;
+use figcraft_color::{Color, ColorStop, Gradient, GradientKind, Paint};
+use figcraft_doc::{Effect, EffectKind, NodeKind, Shadow, StrokeAlign, TextData};
+
+fn px(p: &Pixmap, x: u32, y: u32) -> [u8; 4] {
+    let i = ((y * p.width() + x) * 4) as usize;
+    let d = &p.data()[i..i + 4];
+    [d[0], d[1], d[2], d[3]]
+}
+
+fn doc_with_rect(fill: Color) -> (figcraft_doc::Document, figcraft_doc::NodeId, figcraft_doc::NodeId) {
+    let mut d = figcraft_doc::Document::new("t");
+    let p = d.first_page().unwrap();
+    let r = d.create(p, NodeKind::Rectangle, "R", 10.0, 10.0, 50.0, 30.0).unwrap();
+    d.get_mut(r).unwrap().fills = vec![Paint::solid(fill)];
+    (d, p, r)
+}
+
+fn view(w: u32, h: u32) -> View {
+    View { origin: (0.0, 0.0), scale: 1.0, width: w, height: h }
+}
+
+#[test]
+fn solid_rect_and_page_background() {
+    let (d, p, _) = doc_with_rect(Color::from_hex("FF0000").unwrap());
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 30, 20), [255, 0, 0, 255]);
+    assert_eq!(px(&pix, 5, 5), [0xF5, 0xF5, 0xF5, 255]);
+}
+
+#[test]
+fn zoom_scales() {
+    let (d, p, _) = doc_with_rect(Color::BLACK);
+    let v = View { origin: (0.0, 0.0), scale: 2.0, width: 200, height: 200 };
+    let pix = render_view(&d, p, &v, &Options::default()).unwrap();
+    assert_eq!(px(&pix, 100, 60)[3], 255);
+    assert_eq!(px(&pix, 118, 78), [0, 0, 0, 255]);
+    assert_eq!(px(&pix, 125, 60)[0], 0xF5);
+}
+
+#[test]
+fn opacity_and_layer() {
+    let (mut d, p, r) = doc_with_rect(Color::BLACK);
+    d.get_mut(r).unwrap().opacity = 0.5;
+    let pix = render_view(&d, p, &view(100, 100), &Options { background: Some(Color::WHITE), ..Default::default() }).unwrap();
+    let v = px(&pix, 30, 20)[0];
+    assert!((120..=135).contains(&v), "{v}");
+}
+
+#[test]
+fn drop_shadow_paints_outside() {
+    let (mut d, p, r) = doc_with_rect(Color::WHITE);
+    d.get_mut(r).unwrap().effects.push(Effect {
+        kind: EffectKind::DropShadow(Shadow { color: Color::BLACK, offset: (0.0, 10.0), radius: 0.0, ..Default::default() }),
+        visible: true,
+    });
+    let pix = render_view(&d, p, &view(100, 100), &Options { background: Some(Color::WHITE), ..Default::default() }).unwrap();
+    // Below the rect (y 40..50) is shadow.
+    assert!(px(&pix, 30, 45)[0] < 30, "{:?}", px(&pix, 30, 45));
+    // The rect itself stays white.
+    assert_eq!(px(&pix, 30, 20)[0], 255);
+}
+
+#[test]
+fn inner_shadow_and_blur_dont_crash() {
+    let (mut d, p, r) = doc_with_rect(Color::WHITE);
+    let n = d.get_mut(r).unwrap();
+    n.effects.push(Effect::inner_shadow());
+    n.effects.push(Effect::layer_blur());
+    n.effects.push(Effect::background_blur());
+    n.effects.push(Effect { kind: EffectKind::Noise { size: 1.0, density: 0.5, color: Color::BLACK }, visible: true });
+    let _ = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+}
+
+#[test]
+fn gradients_render() {
+    for kind in [GradientKind::Linear, GradientKind::Radial, GradientKind::Angular, GradientKind::Diamond] {
+        let (mut d, p, r) = doc_with_rect(Color::BLACK);
+        let g = Gradient {
+            kind,
+            stops: vec![ColorStop { position: 0.0, color: Color::from_hex("FF0000").unwrap() }, ColorStop { position: 1.0, color: Color::from_hex("0000FF").unwrap() }],
+            from: (0.0, 0.5),
+            to: (1.0, 0.5),
+            width: (0.0, 1.0),
+        };
+        let g = if kind == GradientKind::Linear { g } else { Gradient { from: (0.5, 0.5), to: (1.0, 0.5), width: (0.5, 1.0), ..g } };
+        d.get_mut(r).unwrap().fills = vec![Paint::gradient(g)];
+        let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+        let left = px(&pix, if kind == GradientKind::Linear { 11 } else { 35 }, 25);
+        let right = px(&pix, 58, 25);
+        assert_ne!(left, right, "{kind:?}");
+    }
+}
+
+#[test]
+fn frame_clips_children() {
+    let mut d = figcraft_doc::Document::new("t");
+    let p = d.first_page().unwrap();
+    let f = d.create(p, NodeKind::Frame, "F", 0.0, 0.0, 50.0, 50.0).unwrap();
+    let r = d.create(f, NodeKind::Rectangle, "R", 25.0, 25.0, 50.0, 50.0).unwrap();
+    d.get_mut(r).unwrap().fills = vec![Paint::solid(Color::BLACK)];
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 40, 40), [0, 0, 0, 255]);
+    assert_eq!(px(&pix, 60, 60)[0], 0xF5);
+    d.get_mut(f).unwrap().clip = false;
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 60, 60), [0, 0, 0, 255]);
+}
+
+#[test]
+fn strokes_align() {
+    let (mut d, p, r) = doc_with_rect(Color::WHITE);
+    let n = d.get_mut(r).unwrap();
+    n.strokes = vec![Paint::solid(Color::BLACK)];
+    n.stroke.weight = 4.0;
+    n.stroke.align = StrokeAlign::Outside;
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 30, 8), [0, 0, 0, 255]);
+    assert_eq!(px(&pix, 30, 12), [255, 255, 255, 255]);
+    d.get_mut(r).unwrap().stroke.align = StrokeAlign::Inside;
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 30, 12), [0, 0, 0, 255]);
+    assert_eq!(px(&pix, 30, 8)[0], 0xF5);
+}
+
+#[test]
+fn mask_clips_siblings() {
+    let mut d = figcraft_doc::Document::new("t");
+    let p = d.first_page().unwrap();
+    let g = d.create(p, NodeKind::Group, "G", 0.0, 0.0, 100.0, 100.0).unwrap();
+    let m = d.create(g, NodeKind::Ellipse { start: 0.0, sweep: std::f64::consts::TAU, inner: 0.0 }, "M", 0.0, 0.0, 50.0, 50.0).unwrap();
+    d.get_mut(m).unwrap().is_mask = true;
+    let r = d.create(g, NodeKind::Rectangle, "R", 0.0, 0.0, 100.0, 100.0).unwrap();
+    d.get_mut(r).unwrap().fills = vec![Paint::solid(Color::BLACK)];
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 25, 25), [0, 0, 0, 255]);
+    assert_eq!(px(&pix, 2, 2)[0], 0xF5);
+    assert_eq!(px(&pix, 80, 80)[0], 0xF5);
+}
+
+#[test]
+fn boolean_subtract_renders_hole() {
+    let mut d = figcraft_doc::Document::new("t");
+    let p = d.first_page().unwrap();
+    let b = d.create(p, NodeKind::BooleanOp { op: figcraft_doc::BoolOp::Subtract }, "B", 0.0, 0.0, 100.0, 100.0).unwrap();
+    d.get_mut(b).unwrap().fills = vec![Paint::solid(Color::BLACK)];
+    d.create(b, NodeKind::Rectangle, "A", 0.0, 0.0, 100.0, 100.0).unwrap();
+    d.create(b, NodeKind::Rectangle, "Hole", 25.0, 25.0, 50.0, 50.0).unwrap();
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 10, 10), [0, 0, 0, 255]);
+    assert_eq!(px(&pix, 50, 50)[0], 0xF5);
+}
+
+#[test]
+fn text_renders_something() {
+    let mut d = figcraft_doc::Document::new("t");
+    let p = d.first_page().unwrap();
+    let mut td = TextData::new("Hello");
+    td.style.font_size = 32.0;
+    d.create(p, NodeKind::Text(td), "T", 0.0, 0.0, 200.0, 50.0).unwrap();
+    let pix = render_view(&d, p, &view(200, 60), &Options { background: Some(Color::WHITE), ..Default::default() }).unwrap();
+    let dark = pix.data().chunks_exact(4).filter(|c| c[0] < 100).count();
+    if figcraft_text::find_face("Inter", "Regular").is_some() {
+        assert!(dark > 50, "{dark}");
+    }
+}
+
+#[test]
+fn export_png_roundtrip() {
+    let (d, _, r) = doc_with_rect(Color::from_hex("00FF00").unwrap());
+    let pix = render_node(&d, r, 2.0).unwrap();
+    assert_eq!((pix.width(), pix.height()), (100, 60));
+    let png = encode_png(&pix).unwrap();
+    let back = image::load_from_memory(&png).unwrap().to_rgba8();
+    assert_eq!(back.get_pixel(50, 30).0, [0, 255, 0, 255]);
+    let _ = encode_jpeg(&pix, Color::WHITE, 90).unwrap();
+}
+
+#[test]
+fn hostile_sizes() {
+    let (mut d, p, r) = doc_with_rect(Color::BLACK);
+    let n = d.get_mut(r).unwrap();
+    n.width = f64::NAN;
+    n.height = 1e12;
+    n.effects.push(Effect { kind: EffectKind::LayerBlur { radius: 1e9 }, visible: true });
+    let _ = render_view(&d, p, &view(64, 64), &Options::default());
+    let _ = render_node(&d, r, f64::NAN);
+    let _ = render_view(&d, p, &View { origin: (f64::NAN, 0.0), scale: 0.0, width: 0, height: 0 }, &Options::default());
+}
