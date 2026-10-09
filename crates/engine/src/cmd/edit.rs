@@ -252,7 +252,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 Some(Value::Array(a)) => {
                     let mut out = Vec::new();
                     for (i, c) in a.iter().enumerate() {
-                        let cmd = c.get("command").and_then(Value::as_str).ok_or_else(|| bad("command.batch", format!("step {i} has no `command`")))?;
+                        let cmd =
+                            c.get("command").and_then(Value::as_str).ok_or_else(|| bad("command.batch", format!("step {i} has no `command`")))?;
                         out.push((cmd.to_string(), c.get("params").cloned().unwrap_or(json!({}))));
                     }
                     out

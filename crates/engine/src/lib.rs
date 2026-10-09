@@ -620,8 +620,9 @@ pub fn changed_nodes(doc: &Document, before: &Document) -> Vec<NodeId> {
 /// Keep derived state consistent after edits: text boxes resize to their content, groups wrap
 /// their children, instances follow their main components, auto layout re-flows.
 pub fn normalize(doc: &mut Document, before: &Document) {
-    let changed = changed_nodes(doc, before);
-    if changed.is_empty() && doc.node_count() == before.node_count() {
+    // Only what was touched since the last normalisation (edited, added or removed).
+    let mut touched: BTreeSet<NodeId> = doc.take_dirty();
+    if touched.is_empty() {
         return;
     }
     let m = measure::TextMeasure;
@@ -633,21 +634,28 @@ pub fn normalize(doc: &mut Document, before: &Document) {
             cmd::styles::propagate_style(doc, &sid);
         }
     }
-    let changed = changed_nodes(doc, before);
+    touched.extend(doc.take_dirty());
+    let live = |doc: &Document, t: &BTreeSet<NodeId>| -> Vec<NodeId> { t.iter().copied().filter(|i| doc.contains(*i)).collect() };
     // 1. Text auto-size.
-    for id in &changed {
-        let Some(n) = doc.node(*id) else { continue };
+    for id in live(doc, &touched) {
+        let Some(n) = doc.node(id) else { continue };
         if let Some((w, h)) = figcraft_text::auto_size(n)
             && ((w - n.width).abs() > 1e-6 || (h - n.height).abs() > 1e-6)
         {
-            figcraft_layout::set_size(doc, *id, w, h);
+            figcraft_layout::set_size(doc, id, w, h);
         }
     }
+    touched.extend(doc.take_dirty());
     // 2. Instances follow edited main components (and record overrides inside instances).
-    components::sync_after_edit(doc, before, &changed);
+    let changed = live(doc, &touched);
+    components::sync_after_edit(doc, before, &changed, &touched);
+    touched.extend(doc.take_dirty());
+    // Parents of removed nodes (as they were before) count as touched.
+    let removed_parents: Vec<NodeId> =
+        touched.iter().filter(|i| !doc.contains(**i)).filter_map(|i| before.node(*i).and_then(|n| n.parent)).filter(|p| doc.contains(*p)).collect();
     // 3. Groups / booleans wrap their children.
     let mut fit: BTreeSet<NodeId> = BTreeSet::new();
-    for id in changed_nodes(doc, before) {
+    for id in live(doc, &touched).into_iter().chain(removed_parents.iter().copied()) {
         if doc.node(id).is_some_and(|n| n.kind.bounds_follow_children()) {
             fit.insert(id);
         }
@@ -659,48 +667,28 @@ pub fn normalize(doc: &mut Document, before: &Document) {
             }
         }
     }
-    // Removed children change their parents too.
-    for id in before.ids() {
-        if !doc.contains(id)
-            && let Some(p) = before.node(id).and_then(|n| n.parent)
-            && doc.node(p).is_some_and(|n| n.kind.bounds_follow_children())
-        {
-            fit.insert(p);
-        }
-    }
-    // Deepest first.
     let mut fit: Vec<NodeId> = fit.into_iter().collect();
     fit.sort_by_key(|id| std::cmp::Reverse(doc.ancestors(*id).len()));
     for id in fit {
         if doc.node(id).is_some_and(|n| n.children.is_empty()) {
-            // Empty groups disappear, like Figma.
+            // Empty groups disappear, like the incumbent.
             let _ = doc.remove(id);
         } else {
             let _ = doc.fit_to_children(id);
         }
     }
+    touched.extend(doc.take_dirty());
     // 4. Auto layout for affected frames.
     let mut frames: BTreeSet<NodeId> = BTreeSet::new();
-    let changed = changed_nodes(doc, before);
-    for id in &changed {
-        let mut chain = vec![*id];
-        chain.extend(doc.ancestors(*id));
+    for id in live(doc, &touched).into_iter().chain(removed_parents) {
+        if !doc.contains(id) {
+            continue;
+        }
+        let mut chain = vec![id];
+        chain.extend(doc.ancestors(id));
         for c in chain {
             if doc.node(c).is_some_and(|n| n.layout.is_some()) {
                 frames.insert(c);
-            }
-        }
-    }
-    for id in before.ids() {
-        if !doc.contains(id)
-            && let Some(p) = before.node(id).and_then(|n| n.parent)
-        {
-            let mut chain = vec![p];
-            chain.extend(doc.ancestors(p));
-            for c in chain {
-                if doc.node(c).is_some_and(|n| n.layout.is_some()) {
-                    frames.insert(c);
-                }
             }
         }
     }
@@ -709,6 +697,7 @@ pub fn normalize(doc: &mut Document, before: &Document) {
     for f in frames {
         figcraft_layout::layout_frame(doc, f, &m);
     }
+    doc.take_dirty();
 }
 
 #[cfg(test)]

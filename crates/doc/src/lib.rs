@@ -65,6 +65,16 @@ pub enum DocError {
 
 pub type DocResult<T> = Result<T, DocError>;
 
+/// The set of touched node ids. Never part of equality or serialisation.
+#[derive(Clone, Debug, Default)]
+pub struct Dirty(pub std::collections::BTreeSet<NodeId>);
+
+impl PartialEq for Dirty {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
 /// Raw image bytes (encoded PNG/JPEG/…) kept by content hash.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageData {
@@ -79,7 +89,10 @@ pub struct Document {
     pub name: String,
     /// Page ids in order.
     pub pages: Vec<NodeId>,
-    nodes: BTreeMap<NodeId, Arc<Node>>,
+    nodes: imbl::OrdMap<NodeId, Arc<Node>>,
+    /// Nodes touched since the last [`take_dirty`](Self::take_dirty) (edited, added or removed).
+    #[serde(skip)]
+    dirty: Dirty,
     next_id: u64,
     #[serde(default)]
     pub styles: Vec<Style>,
@@ -108,7 +121,8 @@ impl Document {
         let mut doc = Self {
             name: name.into(),
             pages: Vec::new(),
-            nodes: BTreeMap::new(),
+            nodes: imbl::OrdMap::new(),
+            dirty: Dirty::default(),
             next_id: 1,
             styles: Vec::new(),
             variables: Variables::default(),
@@ -119,6 +133,16 @@ impl Document {
         let p = doc.add_page("Page 1");
         doc.current_page = Some(p);
         doc
+    }
+
+    /// Node ids touched since the last call (edited, added or removed), clearing the record.
+    pub fn take_dirty(&mut self) -> std::collections::BTreeSet<NodeId> {
+        std::mem::take(&mut self.dirty.0)
+    }
+
+    /// Node ids touched so far (without clearing).
+    pub fn dirty(&self) -> &std::collections::BTreeSet<NodeId> {
+        &self.dirty.0
     }
 
     /// A fresh unused id.
@@ -138,7 +162,11 @@ impl Document {
 
     /// Mutable access (copy-on-write when a snapshot shares the node).
     pub fn node_mut(&mut self, id: NodeId) -> Option<&mut Node> {
-        self.nodes.get_mut(&id).map(Arc::make_mut)
+        let n = self.nodes.get_mut(&id).map(Arc::make_mut);
+        if n.is_some() {
+            self.dirty.0.insert(id);
+        }
+        n
     }
 
     pub fn get(&self, id: NodeId) -> DocResult<&Node> {
@@ -177,6 +205,7 @@ impl Document {
             0.0,
         );
         self.nodes.insert(id, Arc::new(node));
+        self.dirty.0.insert(id);
         self.pages.push(id);
         id
     }
@@ -214,6 +243,7 @@ impl Document {
         }
         node.parent = Some(parent);
         self.nodes.insert(id, Arc::new(node));
+        self.dirty.0.insert(id);
         let p = self.get_mut(parent)?;
         let at = index.unwrap_or(p.children.len()).min(p.children.len());
         p.children.insert(at, id);
@@ -294,6 +324,7 @@ impl Document {
         }
         for d in self.subtree(id) {
             self.nodes.remove(&d);
+            self.dirty.0.insert(d);
         }
         Ok(())
     }
@@ -511,6 +542,7 @@ impl Document {
                 self.next_id = new_id.0.saturating_add(1);
             }
             self.nodes.insert(*new_id, Arc::new(c));
+            self.dirty.0.insert(*new_id);
         }
         let p = self.get_mut(parent)?;
         let at = index.unwrap_or(p.children.len()).min(p.children.len());
@@ -593,7 +625,7 @@ impl Document {
     /// Check structural invariants (used by tests and after loading untrusted files).
     pub fn validate(&self) -> Vec<String> {
         let mut issues = Vec::new();
-        for (id, n) in &self.nodes {
+        for (id, n) in self.nodes.iter() {
             if n.id != *id {
                 issues.push(format!("node key {id} has id {}", n.id));
             }
@@ -653,7 +685,7 @@ impl Document {
             }
         }
         self.pages.retain(|p| self.nodes.get(p).is_some_and(|n| n.is_page()));
-        for (k, n) in &self.nodes {
+        for (k, n) in self.nodes.iter() {
             if n.is_page() && !self.pages.contains(k) {
                 self.pages.push(*k);
             }

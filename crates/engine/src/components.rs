@@ -344,7 +344,7 @@ fn diff_groups(a: &Node, b: &Node) -> Vec<&'static str> {
 }
 
 /// After an edit: record overrides inside instances, then rebuild instances of edited components.
-pub fn sync_after_edit(doc: &mut Document, before: &Document, changed: &[NodeId]) {
+pub fn sync_after_edit(doc: &mut Document, before: &Document, changed: &[NodeId], touched: &BTreeSet<NodeId>) {
     // 1. Overrides for layers edited inside instances.
     for id in changed {
         let Some(n) = doc.node(*id) else { continue };
@@ -389,7 +389,7 @@ pub fn sync_after_edit(doc: &mut Document, before: &Document, changed: &[NodeId]
             comps.insert(c);
         }
     }
-    for id in before.ids() {
+    for &id in touched {
         if !doc.contains(id)
             && let Some(c) = owning_component(before, id)
             && doc.contains(c)

@@ -370,7 +370,8 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
                 // Work in a padded buffer: everything beyond the layer is "outside the shape", so
                 // the blur pulls shadow in from every edge, not just the offset side.
                 let (dx, dy) = (s.offset.0 * ctx.scale, s.offset.1 * ctx.scale);
-                let pad = ((s.radius / 2.0 * ctx.scale * 3.0) + s.spread.abs() * ctx.scale + dx.abs().max(dy.abs())).ceil().clamp(0.0, 2048.0) as u32 + 2;
+                let pad =
+                    ((s.radius / 2.0 * ctx.scale * 3.0) + s.spread.abs() * ctx.scale + dx.abs().max(dy.abs())).ceil().clamp(0.0, 2048.0) as u32 + 2;
                 let Some(mut big) = Pixmap::new(lw.max(1) + pad * 2, lh.max(1) + pad * 2) else { continue };
                 big.fill(tiny_skia::Color::WHITE);
                 let ox = pad as f32 + dx as f32;
@@ -387,7 +388,14 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
                 fx::morph(&mut big, (s.spread * ctx.scale).round() as i32);
                 fx::blur(&mut big, s.radius / 2.0 * ctx.scale);
                 let Some(mut cropped) = Pixmap::new(lw.max(1), lh.max(1)) else { continue };
-                cropped.draw_pixmap(-(pad as i32), -(pad as i32), big.as_ref(), &PixmapPaint { blend_mode: tiny_skia::BlendMode::Source, ..Default::default() }, Transform::identity(), None);
+                cropped.draw_pixmap(
+                    -(pad as i32),
+                    -(pad as i32),
+                    big.as_ref(),
+                    &PixmapPaint { blend_mode: tiny_skia::BlendMode::Source, ..Default::default() },
+                    Transform::identity(),
+                    None,
+                );
                 let shifted = &mut cropped;
                 fx::mask_by(shifted, &sa, false);
                 fx::tint(shifted, [s.color.r, s.color.g, s.color.b, s.color.a]);
