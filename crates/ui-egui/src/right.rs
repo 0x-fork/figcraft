@@ -511,7 +511,7 @@ fn layout(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
                 let label = cur.map(|s| s.label()).unwrap_or("Mixed");
                 let resp = widgets::dropdown(
                     ui,
-                    &format!("{label} {}", if axis == "W" { "width" } else { "height" }),
+                    label,
                     half,
                     Some(match cur {
                         Some(Sizing::Hug) => Icon::Hug,

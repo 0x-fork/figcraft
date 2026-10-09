@@ -72,7 +72,10 @@ fn screen_to_unit(app: &FigApp, id: NodeId, s: Pos2) -> Option<(f64, f64)> {
 }
 
 /// Auto layout zones of a single selected AL frame, in screen space: padding bands and gaps.
-fn al_zones(app: &FigApp) -> Option<(NodeId, Vec<(usize, Rect, f64)>, Vec<Rect>, f64, bool)> {
+/// (frame, padding bands (side, rect, value), gap rects, gap, vertical)
+type Zones = (NodeId, Vec<(usize, Rect, f64)>, Vec<Rect>, f64, bool);
+
+fn al_zones(app: &FigApp) -> Option<Zones> {
     let ds = app.session.ds().ok()?;
     if ds.selection.len() != 1 || ds.text_edit.is_some() || ds.vector_edit.is_some() {
         return None;
