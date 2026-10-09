@@ -1,0 +1,28 @@
+[package]
+name = "figcraft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "FigCraft desktop app"
+default-run = "figcraft"
+
+[lints]
+workspace = true
+
+[dependencies]
+figcraft-engine = { workspace = true }
+figcraft-ui-egui = { workspace = true }
+figcraft-text = { workspace = true }
+egui = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
+serde_json = { workspace = true }
+log = { workspace = true }
+rfd = { workspace = true }
+arboard = { workspace = true, features = ["image-data"] }
+webbrowser = { workspace = true }
+image = { workspace = true }
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+
+[build-dependencies]
+winresource = "0.1"

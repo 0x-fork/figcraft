@@ -1,0 +1,438 @@
+//! Figma-style compact controls: number fields with scrub labels, text fields, dropdowns,
+//! segmented buttons, colour swatches and section headers.
+
+use egui::{Align2, Color32, CornerRadius, Id, Rect, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+
+use crate::icons::{self, Icon};
+use crate::theme::{Tokens, regular, semibold};
+
+pub const ROW_H: f32 = 32.0;
+pub const FIELD_H: f32 = 24.0;
+pub const PAD: f32 = 16.0;
+
+/// What a numeric field's label shows: text ("X") or an icon.
+#[derive(Clone, Copy)]
+pub enum Lead<'a> {
+    Text(&'a str),
+    Icon(Icon),
+    None,
+}
+
+/// Result of a field edit.
+pub enum FieldEdit {
+    /// Committed a new value (Enter / focus loss).
+    Set(f64),
+    /// Scrubbed by dragging the label (live; `.1` is true when the drag ended).
+    Scrub(f64, bool),
+}
+
+fn fmt_num(v: f64) -> String {
+    if !v.is_finite() {
+        return String::new();
+    }
+    let r = (v * 100.0).round() / 100.0;
+    if (r - r.round()).abs() < 1e-9 { format!("{}", r.round() as i64) } else { format!("{r}") }
+}
+
+/// A number field `width` wide. `value` None shows "Mixed". `suffix` (e.g. "%" or "°") is shown
+/// after the number. Typing supports simple math (`10+5`, `*2`).
+pub fn number_field(ui: &mut Ui, id: Id, lead: Lead, value: Option<f64>, suffix: &str, width: f32, step: f64) -> Option<FieldEdit> {
+    let t = Tokens::get(ui.ctx());
+    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
+    let lead_w = match lead {
+        Lead::None => 6.0,
+        Lead::Text(s) => (12.0 + s.chars().count() as f32 * 7.0).max(24.0),
+        Lead::Icon(_) => 24.0,
+    };
+    let lead_rect = Rect::from_min_size(rect.min, vec2(lead_w, FIELD_H));
+    let edit_rect = Rect::from_min_max(pos2(rect.min.x + lead_w, rect.min.y), rect.max);
+    let editing_id = id.with("editing");
+    let mut editing: Option<String> = ui.data(|d| d.get_temp(editing_id));
+    let field_resp = ui.interact(edit_rect, id.with("field"), Sense::click());
+    let lead_resp = ui.interact(lead_rect, id.with("lead"), Sense::click_and_drag());
+    let hovered = field_resp.hovered() || lead_resp.hovered() || editing.is_some();
+    ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
+    if editing.is_some() {
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.accent), StrokeKind::Inside);
+    } else if hovered {
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
+    }
+    match lead {
+        Lead::Text(s) => {
+            ui.painter().text(pos2(lead_rect.min.x + 8.0, rect.center().y), Align2::LEFT_CENTER, s, regular(11.0), t.text_secondary);
+        }
+        Lead::Icon(i) => icons::paint(ui.painter(), Rect::from_center_size(lead_rect.center() + vec2(1.0, 0.0), vec2(14.0, 14.0)), i, t.icon_secondary),
+        Lead::None => {}
+    }
+    if lead_resp.hovered() || lead_resp.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    let mut out = None;
+    // Scrub by dragging the label.
+    if let Some(v) = value {
+        if lead_resp.drag_started() {
+            ui.data_mut(|d| d.insert_temp(id.with("scrub0"), v));
+        }
+        if lead_resp.dragged() || lead_resp.drag_stopped() {
+            let v0: f64 = ui.data(|d| d.get_temp(id.with("scrub0"))).unwrap_or(v);
+            let total = lead_resp.total_drag_delta().map(|d| d.x).unwrap_or(0.0) as f64;
+            let shift = ui.input(|i| i.modifiers.shift);
+            let k = if shift { step * 10.0 } else { step };
+            let nv = v0 + (total * k).round();
+            out = Some(FieldEdit::Scrub(nv, lead_resp.drag_stopped()));
+        }
+    }
+    if editing.is_none() && field_resp.clicked() {
+        editing = Some(value.map(fmt_num).unwrap_or_default());
+        ui.data_mut(|d| d.insert_temp(editing_id, editing.clone().unwrap_or_default()));
+        ui.memory_mut(|m| m.request_focus(id.with("te")));
+        ui.data_mut(|d| d.insert_temp(id.with("selectall"), true));
+    }
+    match editing {
+        Some(mut text) => {
+            let te = egui::TextEdit::singleline(&mut text)
+                .id(id.with("te"))
+                .frame(egui::Frame::NONE)
+                .font(regular(11.0))
+                .desired_width(edit_rect.width() - 6.0)
+                .vertical_align(egui::Align::Center);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(edit_rect.shrink2(vec2(0.0, 4.0))));
+            let r = child.add(te);
+            if ui.data(|d| d.get_temp::<bool>(id.with("selectall"))).unwrap_or(false)
+                && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id.with("te"))
+            {
+                let ccursor = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
+                state.cursor.set_char_range(Some(ccursor));
+                state.store(ui.ctx(), id.with("te"));
+                ui.data_mut(|d| d.remove::<bool>(id.with("selectall")));
+            }
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            let arrow = ui.input(|i| {
+                if i.key_pressed(egui::Key::ArrowUp) {
+                    Some(1.0)
+                } else if i.key_pressed(egui::Key::ArrowDown) {
+                    Some(-1.0)
+                } else {
+                    None
+                }
+            });
+            if r.has_focus()
+                && let Some(dir) = arrow
+                && let Some(v) = eval(&text, value)
+            {
+                let shift = ui.input(|i| i.modifiers.shift);
+                let nv = v + dir * if shift { 10.0 } else { step };
+                text = fmt_num(nv);
+                out = Some(FieldEdit::Set(nv));
+            }
+            if esc {
+                ui.data_mut(|d| d.remove::<String>(editing_id));
+                ui.memory_mut(|m| m.surrender_focus(id.with("te")));
+            } else if r.lost_focus() || enter {
+                if let Some(v) = eval(&text, value) {
+                    out = Some(FieldEdit::Set(v));
+                }
+                ui.data_mut(|d| d.remove::<String>(editing_id));
+            } else {
+                ui.data_mut(|d| d.insert_temp(editing_id, text));
+            }
+            let _ = suffix;
+        }
+        None => {
+            let s = match value {
+                Some(v) => format!("{}{}", fmt_num(v), suffix),
+                None => "Mixed".into(),
+            };
+            let col = if value.is_some() { t.text } else { t.text_secondary };
+            ui.painter().text(pos2(edit_rect.min.x, rect.center().y), Align2::LEFT_CENTER, s, regular(11.0), col);
+        }
+    }
+    out
+}
+
+/// Evaluate a typed number: plain, or simple arithmetic relative to `cur` ("+10", "*2", "50%").
+pub fn eval(s: &str, cur: Option<f64>) -> Option<f64> {
+    let s = s.trim().trim_end_matches(['%', '°']).trim().replace(',', ".");
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(v) = s.parse::<f64>() {
+        return v.is_finite().then_some(v);
+    }
+    // a OP b, or OP b relative to cur.
+    for op in ['+', '-', '*', '/'] {
+        if let Some(idx) = s.get(1..).and_then(|r| r.find(op)).map(|i| i + 1).or_else(|| s.starts_with(op).then_some(0)) {
+            let (a, b) = (s.get(..idx).unwrap_or("").trim(), s.get(idx + 1..).unwrap_or("").trim());
+            let a = if a.is_empty() { cur? } else { a.parse::<f64>().ok()? };
+            let b = b.parse::<f64>().ok()?;
+            let v = match op {
+                '+' => a + b,
+                '-' => a - b,
+                '*' => a * b,
+                _ => {
+                    if b == 0.0 {
+                        return None;
+                    }
+                    a / b
+                }
+            };
+            return v.is_finite().then_some(v);
+        }
+    }
+    None
+}
+
+/// A text field that commits on Enter / focus loss. Returns the new text when committed.
+pub fn text_field(ui: &mut Ui, id: Id, value: &str, width: f32, placeholder: &str) -> Option<String> {
+    let t = Tokens::get(ui.ctx());
+    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
+    let editing_id = id.with("editing");
+    let mut editing: Option<String> = ui.data(|d| d.get_temp(editing_id));
+    let resp = ui.interact(rect, id.with("click"), Sense::click());
+    ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
+    if editing.is_some() {
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.accent), StrokeKind::Inside);
+    } else if resp.hovered() {
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
+    }
+    if editing.is_none() && resp.clicked() {
+        editing = Some(value.to_string());
+        ui.memory_mut(|m| m.request_focus(id.with("te")));
+    }
+    let mut out = None;
+    match editing {
+        Some(mut text) => {
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(8.0, 4.0))));
+            let r = child.add(egui::TextEdit::singleline(&mut text).id(id.with("te")).frame(egui::Frame::NONE).font(regular(11.0)).desired_width(rect.width() - 16.0));
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if esc {
+                ui.data_mut(|d| d.remove::<String>(editing_id));
+            } else if r.lost_focus() || enter {
+                out = Some(text);
+                ui.data_mut(|d| d.remove::<String>(editing_id));
+            } else {
+                ui.data_mut(|d| d.insert_temp(editing_id, text));
+            }
+        }
+        None => {
+            let (s, col) = if value.is_empty() { (placeholder, t.text_tertiary) } else { (value, t.text) };
+            ui.painter().text(pos2(rect.min.x + 8.0, rect.center().y), Align2::LEFT_CENTER, s, regular(11.0), col);
+        }
+    }
+    out
+}
+
+/// A dropdown-looking button showing `label`; returns the response (open a menu on click).
+pub fn dropdown(ui: &mut Ui, label: &str, width: f32, lead: Option<Icon>) -> Response {
+    let t = Tokens::get(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::click());
+    let bg = if resp.hovered() { t.field } else { t.field };
+    ui.painter().rect_filled(rect, CornerRadius::same(5), bg);
+    if resp.hovered() {
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
+    }
+    let mut x = rect.min.x + 8.0;
+    if let Some(i) = lead {
+        icons::paint(ui.painter(), Rect::from_center_size(pos2(x + 6.0, rect.center().y), vec2(14.0, 14.0)), i, t.icon_secondary);
+        x += 18.0;
+    }
+    let galley = ui.painter().layout(label.to_string(), regular(11.0), t.text, rect.width() - (x - rect.min.x) - 20.0);
+    ui.painter().galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, t.text);
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.max.x - 10.0, rect.center().y), vec2(12.0, 12.0)), Icon::Chevron, t.icon_secondary);
+    resp
+}
+
+/// A row of icon buttons; returns the index clicked.
+pub fn segmented(ui: &mut Ui, items: &[(Icon, &str)], active: Option<usize>, cell: f32) -> Option<usize> {
+    let t = Tokens::get(ui.ctx());
+    let w = cell * items.len() as f32;
+    let (rect, _) = ui.allocate_exact_size(vec2(w, FIELD_H), Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
+    let mut out = None;
+    for (i, (icon, tip)) in items.iter().enumerate() {
+        let r = Rect::from_min_size(pos2(rect.min.x + i as f32 * cell, rect.min.y), vec2(cell, FIELD_H));
+        let resp = ui.interact(r, ui.id().with(("seg", i, *tip)), Sense::click()).on_hover_text(*tip);
+        if active == Some(i) {
+            ui.painter().rect_filled(r.shrink(2.0), CornerRadius::same(4), t.panel);
+            ui.painter().rect_stroke(r.shrink(2.0), CornerRadius::same(4), Stroke::new(1.0, t.border), StrokeKind::Inside);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(r.shrink(2.0), CornerRadius::same(4), t.hover);
+        }
+        icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(14.0, 14.0)), *icon, if active == Some(i) { t.icon } else { t.icon_secondary });
+        if resp.clicked() {
+            out = Some(i);
+        }
+    }
+    out
+}
+
+/// A section header ("Fill", "Stroke"…) with optional right-side icon buttons; returns which
+/// button was clicked. `dim` greys the title (empty sections).
+pub fn section_header(ui: &mut Ui, title: &str, buttons: &[(Icon, &str)], dim: bool) -> Option<usize> {
+    let t = Tokens::get(ui.ctx());
+    let w = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
+    ui.painter().text(pos2(rect.min.x + PAD, rect.center().y), Align2::LEFT_CENTER, title, semibold(11.0), if dim { t.text_secondary } else { t.text });
+    let mut out = None;
+    let mut x = rect.max.x - 8.0;
+    for (i, (icon, tip)) in buttons.iter().enumerate().rev() {
+        let r = Rect::from_min_size(pos2(x - 24.0, rect.center().y - 12.0), vec2(24.0, 24.0));
+        let resp = ui.interact(r, ui.id().with(("hdr", title, i)), Sense::click()).on_hover_text(*tip);
+        if resp.hovered() {
+            ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
+        }
+        icons::paint(ui.painter(), r.shrink(5.0), *icon, t.icon);
+        if resp.clicked() {
+            out = Some(i);
+        }
+        x -= 24.0;
+    }
+    out
+}
+
+pub fn separator(ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    let w = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(vec2(w, 1.0), Sense::hover());
+    ui.painter().line_segment([rect.left_center(), rect.right_center()], Stroke::new(1.0, t.border));
+}
+
+/// Paint a checkerboard (transparency) in `rect`.
+pub fn checker(painter: &egui::Painter, rect: Rect, cell: f32) {
+    painter.rect_filled(rect, CornerRadius::ZERO, Color32::WHITE);
+    let nx = (rect.width() / cell).ceil() as i32;
+    let ny = (rect.height() / cell).ceil() as i32;
+    for y in 0..ny {
+        for x in 0..nx {
+            if (x + y) % 2 == 0 {
+                continue;
+            }
+            let r = Rect::from_min_size(pos2(rect.min.x + x as f32 * cell, rect.min.y + y as f32 * cell), vec2(cell, cell)).intersect(rect);
+            painter.rect_filled(r, CornerRadius::ZERO, Color32::from_gray(0xE6));
+        }
+    }
+}
+
+/// A paint swatch (with checkerboard under transparent colours).
+pub fn swatch(ui: &mut Ui, paint: &figcraft_color::Paint, size: f32) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    paint_swatch(ui.painter(), rect, paint);
+    resp
+}
+
+pub fn paint_swatch(painter: &egui::Painter, rect: Rect, paint: &figcraft_color::Paint) {
+    let t = Tokens::get(painter.ctx());
+    use figcraft_color::PaintKind;
+    let clip = painter.with_clip_rect(rect);
+    checker(&clip, rect, rect.width() / 4.0);
+    match &paint.kind {
+        PaintKind::Solid { color } => {
+            // Left half opaque, right half with alpha (like Figma's swatches).
+            let c = crate::theme::c32(color.with_alpha(color.a * paint.opacity));
+            let opaque = crate::theme::c32(color.with_alpha(1.0));
+            clip.rect_filled(Rect::from_min_max(rect.min, pos2(rect.center().x, rect.max.y)), CornerRadius::ZERO, opaque);
+            clip.rect_filled(Rect::from_min_max(pos2(rect.center().x, rect.min.y), rect.max), CornerRadius::ZERO, c);
+            if paint.opacity >= 0.999 && color.a >= 0.999 {
+                clip.rect_filled(rect, CornerRadius::ZERO, opaque);
+            }
+        }
+        PaintKind::Gradient(g) => {
+            let n = 16;
+            for i in 0..n {
+                let c = crate::theme::c32(g.sample(i as f32 / (n - 1) as f32));
+                let x0 = rect.min.x + rect.width() * i as f32 / n as f32;
+                let x1 = rect.min.x + rect.width() * (i + 1) as f32 / n as f32;
+                clip.rect_filled(Rect::from_min_max(pos2(x0, rect.min.y), pos2(x1, rect.max.y)), CornerRadius::ZERO, c);
+            }
+        }
+        PaintKind::Image(_) => {
+            clip.rect_filled(rect, CornerRadius::ZERO, Color32::from_gray(0xB3));
+            icons::paint(&clip, rect.shrink(2.0), Icon::Image, Color32::WHITE);
+        }
+    }
+    painter.rect_stroke(rect, CornerRadius::same(2), Stroke::new(1.0, t.border), StrokeKind::Inside);
+}
+
+/// A small checkbox with label.
+pub fn checkbox(ui: &mut Ui, on: bool, label: &str) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width().min(200.0), FIELD_H), Sense::click());
+    let b = Rect::from_min_size(pos2(rect.min.x, rect.center().y - 7.0), vec2(14.0, 14.0));
+    if on {
+        ui.painter().rect_filled(b, CornerRadius::same(3), t.accent);
+        icons::paint(ui.painter(), b.shrink(1.5), Icon::Check, Color32::WHITE);
+    } else {
+        ui.painter().rect_stroke(b, CornerRadius::same(3), Stroke::new(1.0, t.border_strong), StrokeKind::Inside);
+    }
+    ui.painter().text(pos2(b.max.x + 8.0, rect.center().y), Align2::LEFT_CENTER, label, regular(11.0), t.text);
+    resp.clicked()
+}
+
+/// Text in a row.
+pub fn label(ui: &mut Ui, text: &str, color: Color32) {
+    ui.label(egui::RichText::new(text).font(regular(11.0)).color(color));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::eval;
+
+    #[test]
+    fn math_in_fields() {
+        assert_eq!(eval("12", None), Some(12.0));
+        assert_eq!(eval("10+5", None), Some(15.0));
+        assert_eq!(eval("*2", Some(8.0)), Some(16.0));
+        assert_eq!(eval("+4", Some(8.0)), Some(12.0));
+        assert_eq!(eval("-3", None), Some(-3.0));
+        assert_eq!(eval("50%", None), Some(50.0));
+        assert_eq!(eval("1/0", None), None);
+        assert_eq!(eval("abc", None), None);
+    }
+}
+
+/// Text shown in `rect` that turns into an editor on click (or when its editor has focus, e.g.
+/// after a double-click rename). Returns the new text on Enter / focus loss.
+pub fn text_field_inline(ui: &mut Ui, id: Id, value: &str, rect: Rect, font: egui::FontId) -> Option<String> {
+    let t = Tokens::get(ui.ctx());
+    let te_id = id.with("te");
+    let buf_id = id.with("buf");
+    let focused = ui.memory(|m| m.has_focus(te_id));
+    let mut buf: Option<String> = ui.data(|d| d.get_temp(buf_id));
+    let resp = ui.interact(rect, id.with("click"), Sense::click());
+    if buf.is_none() && (focused || resp.clicked()) {
+        buf = Some(value.to_string());
+        ui.memory_mut(|m| m.request_focus(te_id));
+    }
+    match buf {
+        Some(mut text) => {
+            ui.painter().rect_filled(rect.expand(2.0), CornerRadius::same(4), t.panel);
+            ui.painter().rect_stroke(rect.expand(2.0), CornerRadius::same(4), Stroke::new(1.0, t.accent), StrokeKind::Inside);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+            let r = child.add(egui::TextEdit::singleline(&mut text).id(te_id).frame(egui::Frame::NONE).font(font).desired_width(rect.width()));
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if esc {
+                ui.data_mut(|d| d.remove::<String>(buf_id));
+                ui.memory_mut(|m| m.surrender_focus(te_id));
+                None
+            } else if r.lost_focus() || enter {
+                ui.data_mut(|d| d.remove::<String>(buf_id));
+                ui.memory_mut(|m| m.surrender_focus(te_id));
+                (text != value && !text.trim().is_empty()).then_some(text)
+            } else {
+                ui.data_mut(|d| d.insert_temp(buf_id, text));
+                None
+            }
+        }
+        None => {
+            if resp.hovered() {
+                ui.painter().rect_filled(rect.expand(2.0), CornerRadius::same(4), t.hover);
+            }
+            let galley = ui.painter().layout(value.to_string(), font, t.text, rect.width());
+            ui.painter().with_clip_rect(rect).galley(pos2(rect.min.x, rect.center().y - galley.size().y / 2.0), galley, t.text);
+            None
+        }
+    }
+}

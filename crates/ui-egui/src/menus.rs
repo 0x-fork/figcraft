@@ -1,0 +1,385 @@
+//! The main menu (from the engine's menu catalog), the canvas/layer context menu and the
+//! Actions palette (⌘K / ⌘/).
+
+use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use figcraft_engine::catalog::{MENU, SEP};
+use serde_json::json;
+
+use crate::FigApp;
+use crate::icons::{self, Icon};
+use crate::theme::{ACCENT, Tokens, regular};
+use crate::toolbar::pretty_shortcut;
+
+/// Commands the UI layer implements itself (dialogs and platform actions).
+pub const UI_COMMANDS: &[&str] = &["file.open", "file.import", "file.placeImage", "file.save", "file.saveAs", "file.export", "file.exportSvg", "edit.copyAsText", "edit.copyAsCss", "edit.copyAsSvg", "edit.copyAsPng", "edit.copyLink"];
+
+/// Run a menu item: some open dialogs or use platform services, the rest go to the engine.
+pub fn invoke(app: &mut FigApp, id: &str) {
+    match id {
+        "file.open" => app.open_dialog(),
+        "file.import" => app.import_dialog(false),
+        "file.placeImage" => app.import_dialog(true),
+        "file.save" => app.save(),
+        "file.saveAs" => app.save_as_dialog(),
+        "file.export" | "file.exportSvg" => app.ui.export_preview = true,
+        "edit.copyAsCss" => {
+            let ids = app.session.selection();
+            if let (Some(first), Ok(doc)) = (ids.first(), app.session.doc()) {
+                let css = crate::right::css_for(doc, *first);
+                app.services.clipboard_set_text(&css);
+                app.toast("Copied as CSS");
+            }
+        }
+        "edit.copyAsSvg" => {
+            let ids = app.session.selection();
+            if let Some(svg) = app.session.doc().ok().and_then(|d| figcraft_svg_export(d, &ids)) {
+                app.services.clipboard_set_text(&svg);
+                app.toast("Copied as SVG");
+            }
+        }
+        "edit.copyAsPng" => {
+            let ids = app.session.selection();
+            if let Some(first) = ids.first()
+                && let Some(pix) = app.session.doc().ok().and_then(|d| figcraft_render::render_node(d, *first, 2.0))
+            {
+                let rgba = figcraft_render::to_rgba8(&pix);
+                app.services.clipboard_set_png(pix.width(), pix.height(), &rgba);
+                app.toast("Copied as PNG");
+            }
+        }
+        "edit.copyAsText" => {
+            let doc = app.session.doc().ok();
+            let text: Vec<String> = app.session.selection().iter().filter_map(|i| doc.and_then(|d| d.node(*i)).and_then(|n| n.kind.text().map(|t| t.characters.clone()))).collect();
+            app.services.clipboard_set_text(&text.join("\n"));
+            app.toast("Copied as text");
+        }
+        "edit.copyLink" => {
+            let ids = app.session.selection();
+            app.services.clipboard_set_text(&format!("figcraft://node/{}", ids.first().map(|i| i.0).unwrap_or(0)));
+        }
+        "edit.findReplace" => app.ui.find = Some((String::new(), String::new())),
+        "edit.copy" | "edit.cut" => {
+            app.run(id, json!({}));
+            // Mirror to the system clipboard as SVG text so other apps can paste.
+            let ids: Vec<_> = app.session.clipboard.nodes.iter().map(|(r, _)| *r).collect();
+            if id == "edit.copy"
+                && let Some(svg) = app.session.doc().ok().and_then(|d| figcraft_svg_export(d, &ids))
+            {
+                app.services.clipboard_set_text(&svg);
+            }
+        }
+        "edit.paste" => {
+            // Paste SVG / text from the system clipboard when our clipboard is empty.
+            if app.session.clipboard.nodes.is_empty()
+                && let Some(text) = app.services.clipboard_get_text()
+            {
+                if text.trim_start().starts_with("<svg") || text.trim_start().starts_with("<?xml") {
+                    use base64::Engine as _;
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+                    let (cx, cy) = app.session.ds().map(|d| (d.view.cx, d.view.cy)).unwrap_or((0.0, 0.0));
+                    app.run("file.import", json!({"data": b64, "name": "pasted.svg", "x": cx, "y": cy}));
+                } else if !text.is_empty() {
+                    let (cx, cy) = app.session.ds().map(|d| (d.view.cx, d.view.cy)).unwrap_or((0.0, 0.0));
+                    app.run("text.create", json!({"text": text, "x": cx, "y": cy}));
+                }
+                return;
+            }
+            app.run(id, json!({}));
+        }
+        "file.close" => {
+            if app.session.ds().map(|d| d.is_dirty()).unwrap_or(false) {
+                app.toast("Unsaved changes: save first (⌘S), or close the tab with ⌥-click to discard");
+            } else {
+                app.run(id, json!({}));
+            }
+        }
+        _ => {
+            app.run(id, json!({}));
+        }
+    }
+}
+
+fn figcraft_svg_export(doc: &figcraft_doc::Document, ids: &[figcraft_doc::NodeId]) -> Option<String> {
+    let bytes = figcraft_engine::cmd::file::export_bytes(doc, ids, figcraft_doc::ExportFormat::Svg, 1.0).ok()?;
+    String::from_utf8(bytes).ok()
+}
+
+/// Whether a menu id is available (registered in the engine or handled by the UI).
+pub fn available(id: &str) -> bool {
+    !id.is_empty() && (figcraft_engine::find_command(id).is_some() || UI_COMMANDS.contains(&id))
+}
+
+/// Draw one level of the main menu: `prefix` is the menu path ("File", "Edit/Copy as").
+fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let mut clicked = None;
+    let mut subs: Vec<String> = Vec::new();
+    let mut last_sep = true;
+    for m in MENU.iter() {
+        if m.menu == prefix {
+            if m.label == SEP {
+                if !last_sep {
+                    ui.add_space(4.0);
+                    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+                    ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, Color32::from_white_alpha(30)));
+                    ui.add_space(4.0);
+                    last_sep = true;
+                }
+                continue;
+            }
+            last_sep = false;
+            let enabled = available(m.id);
+            if item(ui, m.label, m.shortcut, enabled, false, &t) && enabled {
+                clicked = Some(m.id);
+            }
+        } else if let Some(rest) = m.menu.strip_prefix(prefix).and_then(|r| r.strip_prefix('/')) {
+            let sub = rest.split('/').next().unwrap_or(rest).to_string();
+            if !subs.contains(&sub) {
+                subs.push(sub.clone());
+                last_sep = false;
+                let full = format!("{prefix}/{sub}");
+                let resp = submenu_item(ui, &sub, &t);
+                if resp.hovered() {
+                    ui.data_mut(|d| d.insert_temp(Id::new(("submenu_open", prefix)), full.clone()));
+                }
+                let open: Option<String> = ui.data(|d| d.get_temp(Id::new(("submenu_open", prefix))));
+                if open.as_deref() == Some(full.as_str()) {
+                    let pos = pos2(resp.rect.max.x + 4.0, resp.rect.min.y - 8.0);
+                    let mut child_clicked = false;
+                    egui::Area::new(Id::new(("submenu", full.as_str()))).fixed_pos(pos).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+                        menu_frame(ui, &t, |ui| {
+                            child_clicked = menu_level(app, ui, &full);
+                        });
+                    });
+                    if child_clicked {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    if let Some(id) = clicked {
+        invoke(app, id);
+        return true;
+    }
+    false
+}
+
+fn menu_frame(ui: &mut Ui, t: &Tokens, add: impl FnOnce(&mut Ui)) {
+    egui::Frame::NONE.fill(t.menu).corner_radius(CornerRadius::same(13)).inner_margin(egui::Margin::same(8)).shadow(egui::Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(60) }).show(ui, |ui| {
+        ui.set_width(240.0);
+        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+        add(ui);
+    });
+}
+
+fn item(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool, checked: bool, t: &Tokens) -> bool {
+    let w = ui.available_width();
+    let (r, resp) = ui.allocate_exact_size(vec2(w, 28.0), Sense::click());
+    let hov = resp.hovered() && enabled;
+    if hov {
+        ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
+    }
+    let col = if enabled { t.menu_text } else { t.menu_dim };
+    if checked {
+        icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(12.0, 12.0)), Icon::Check, col);
+    }
+    ui.painter().text(pos2(r.min.x + 28.0, r.center().y), Align2::LEFT_CENTER, label, regular(12.0), col);
+    if !shortcut.is_empty() {
+        ui.painter().text(pos2(r.max.x - 10.0, r.center().y), Align2::RIGHT_CENTER, pretty_shortcut(shortcut), regular(12.0), if hov { t.menu_text } else { t.menu_dim });
+    }
+    resp.clicked()
+}
+
+fn submenu_item(ui: &mut Ui, label: &str, t: &Tokens) -> egui::Response {
+    let w = ui.available_width();
+    let (r, resp) = ui.allocate_exact_size(vec2(w, 28.0), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
+    }
+    ui.painter().text(pos2(r.min.x + 28.0, r.center().y), Align2::LEFT_CENTER, label, regular(12.0), t.menu_text);
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(r.max.x - 12.0, r.center().y), vec2(12.0, 12.0)), Icon::ChevronRight, t.menu_text);
+    resp
+}
+
+/// Whether the pointer is over a menu (any foreground area).
+fn over_menu(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.pointer.interact_pos()).and_then(|p| ctx.layer_id_at(p)).is_some_and(|l| l.order == egui::Order::Foreground)
+}
+
+const TOP_MENUS: &[&str] = &["File", "Edit", "View", "Object", "Text", "Arrange", "Vector", "Plugins", "Preferences", "Libraries", "Help"];
+
+pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
+    let t = Tokens::get(ctx);
+    // Main menu.
+    if app.ui.main_menu {
+        let mut close = false;
+        let area = egui::Area::new(Id::new("main_menu")).fixed_pos(pos2(8.0, crate::tabs::HEIGHT + 48.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+            menu_frame(ui, &t, |ui| {
+                // Quick actions search row.
+                let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+                ui.painter().rect_filled(r.shrink(2.0), CornerRadius::same(5), Color32::from_white_alpha(18));
+                icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 16.0, r.center().y), vec2(14.0, 14.0)), Icon::Search, t.menu_dim);
+                ui.painter().text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, "Actions…", regular(12.0), t.menu_dim);
+                ui.painter().text(pos2(r.max.x - 10.0, r.center().y), Align2::RIGHT_CENTER, pretty_shortcut("Cmd+K"), regular(12.0), t.menu_dim);
+                if resp.clicked() {
+                    app.ui.palette = Some(String::new());
+                    close = true;
+                }
+                ui.add_space(6.0);
+                for top in TOP_MENUS {
+                    let resp = submenu_item(ui, top, &t);
+                    if resp.hovered() {
+                        ui.data_mut(|d| d.insert_temp(Id::new("main_open"), top.to_string()));
+                    }
+                    let open: Option<String> = ui.data(|d| d.get_temp(Id::new("main_open")));
+                    if open.as_deref() == Some(*top) {
+                        let pos = pos2(resp.rect.max.x + 12.0, resp.rect.min.y - 8.0);
+                        egui::Area::new(Id::new(("menu", *top))).fixed_pos(pos).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+                            menu_frame(ui, &t, |ui| {
+                                if menu_level(app, ui, top) {
+                                    close = true;
+                                }
+                            });
+                        });
+                    }
+                }
+            });
+        });
+        let clicked_outside = ctx.input(|i| i.pointer.any_pressed()) && !over_menu(ctx) || ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        if close || (clicked_outside && !area.response.hovered()) {
+            app.ui.main_menu = false;
+        }
+    }
+    // Context menu.
+    if let Some((pos, ids)) = app.ui.context_menu.clone() {
+        let mut close = false;
+        let area = egui::Area::new(Id::new("ctx_menu")).fixed_pos(pos).order(egui::Order::Foreground).constrain(true).show(ctx, |ui| {
+            menu_frame(ui, &t, |ui| {
+                let has_sel = !ids.is_empty();
+                let entries: &[(&str, &str)] = if has_sel {
+                    &[
+                        ("Copy", "edit.copy"),
+                        ("Paste here", "edit.paste"),
+                        ("Paste to replace", "edit.pasteReplace"),
+                        ("-", ""),
+                        ("Bring to front", "arrange.front"),
+                        ("Bring forward", "arrange.forward"),
+                        ("Send backward", "arrange.backward"),
+                        ("Send to back", "arrange.back"),
+                        ("-", ""),
+                        ("Group selection", "object.group"),
+                        ("Frame selection", "object.frameSelection"),
+                        ("Ungroup", "object.ungroup"),
+                        ("Flatten", "vector.flatten"),
+                        ("Outline stroke", "vector.outlineStroke"),
+                        ("Use as mask", "object.mask"),
+                        ("-", ""),
+                        ("Add auto layout", "layout.add"),
+                        ("Create component", "component.create"),
+                        ("Detach instance", "component.detach"),
+                        ("-", ""),
+                        ("Show/Hide", "object.toggleVisible"),
+                        ("Lock/Unlock", "object.toggleLock"),
+                        ("-", ""),
+                        ("Flip horizontal", "object.flipH"),
+                        ("Flip vertical", "object.flipV"),
+                        ("-", ""),
+                        ("Copy as CSS", "edit.copyAsCss"),
+                        ("Copy as SVG", "edit.copyAsSvg"),
+                        ("Copy as PNG", "edit.copyAsPng"),
+                        ("-", ""),
+                        ("Delete", "edit.delete"),
+                    ]
+                } else {
+                    &[("Paste here", "edit.paste"), ("-", ""), ("Select all", "select.all"), ("-", ""), ("Show/Hide UI", "view.toggleUi"), ("Zoom to fit", "view.zoomFit"), ("Rulers", "view.rulers"), ("Pixel grid", "view.pixelGrid")]
+                };
+                for (label, id) in entries {
+                    if *label == "-" {
+                        ui.add_space(4.0);
+                        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+                        ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, Color32::from_white_alpha(30)));
+                        ui.add_space(4.0);
+                        continue;
+                    }
+                    let sc = figcraft_engine::catalog::shortcut(id).unwrap_or("");
+                    if item(ui, label, sc, available(id), false, &t) {
+                        if *id == "edit.paste" {
+                            let p = app.to_page(pos);
+                            if app.session.clipboard.nodes.is_empty() {
+                                invoke(app, id);
+                            } else {
+                                app.run("edit.paste", json!({"x": p.x, "y": p.y}));
+                            }
+                        } else {
+                            invoke(app, id);
+                        }
+                        close = true;
+                    }
+                }
+            });
+        });
+        let clicked_outside = ctx.input(|i| i.pointer.any_pressed()) && !area.response.hovered() && !over_menu(ctx);
+        if close || clicked_outside || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            app.ui.context_menu = None;
+        }
+    }
+    crate::colorpicker::show(app, ctx);
+    palette(app, ctx);
+}
+
+/// The Actions palette: fuzzy search over every command.
+fn palette(app: &mut FigApp, ctx: &egui::Context) {
+    let Some(mut q) = app.ui.palette.clone() else { return };
+    let t = Tokens::get(ctx);
+    let screen = ctx.content_rect();
+    let mut run: Option<String> = None;
+    let mut close = false;
+    egui::Area::new(Id::new("palette")).fixed_pos(pos2(screen.center().x - 260.0, screen.min.y + 120.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+        egui::Frame::NONE.fill(t.panel).corner_radius(CornerRadius::same(13)).stroke(Stroke::new(1.0, t.border)).shadow(egui::Shadow { offset: [0, 8], blur: 32, spread: 0, color: t.shadow }).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
+            ui.set_width(520.0);
+            let r = ui.add(egui::TextEdit::singleline(&mut q).hint_text("Search actions, layers and tools").desired_width(500.0).font(regular(14.0)).frame(egui::Frame::NONE.inner_margin(egui::Margin::same(8))));
+            r.request_focus();
+            ui.add_space(4.0);
+            let ql = q.to_lowercase();
+            let mut hits: Vec<(&str, &str, &str)> = figcraft_engine::all_commands()
+                .iter()
+                .filter(|c| ql.is_empty() || c.label.to_lowercase().contains(&ql) || c.id.to_lowercase().contains(&ql))
+                .map(|c| (c.id, c.label, c.shortcut().unwrap_or("")))
+                .collect();
+            for m in MENU.iter().filter(|m| UI_COMMANDS.contains(&m.id)) {
+                if ql.is_empty() || m.label.to_lowercase().contains(&ql) {
+                    hits.push((m.id, m.label, m.shortcut));
+                }
+            }
+            hits.sort_by_key(|h| (!h.1.to_lowercase().starts_with(&ql), h.1.len()));
+            hits.dedup_by(|a, b| a.0 == b.0);
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                for (i, (id, label, sc)) in hits.iter().take(60).enumerate() {
+                    let w = ui.available_width();
+                    let (r, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click());
+                    if resp.hovered() || i == 0 {
+                        ui.painter().rect_filled(r, CornerRadius::same(5), if resp.hovered() { ACCENT } else { t.hover });
+                    }
+                    let col = if resp.hovered() { Color32::WHITE } else { t.text };
+                    ui.painter().text(pos2(r.min.x + 10.0, r.center().y), Align2::LEFT_CENTER, *label, regular(12.0), col);
+                    ui.painter().text(pos2(r.max.x - 10.0, r.center().y), Align2::RIGHT_CENTER, pretty_shortcut(sc), regular(11.0), if resp.hovered() { Color32::WHITE } else { t.text_secondary });
+                    if resp.clicked() || (enter && i == 0) {
+                        run = Some(id.to_string());
+                    }
+                }
+            });
+        });
+    });
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        close = true;
+    }
+    if let Some(id) = run {
+        app.ui.palette = None;
+        invoke(app, &id);
+        return;
+    }
+    app.ui.palette = if close { None } else { Some(q) };
+    let _ = StrokeKind::Inside;
+}

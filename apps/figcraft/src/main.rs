@@ -1,0 +1,111 @@
+//! FigCraft desktop app.
+//!
+//! Usage: `figcraft [--control <port>] [files…]`
+//!
+//! `--control <port>` (or `FIGCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
+//! `{"id":1,"method":"engine.execute","params":{"command":"shape.rectangle","params":{"x":0,"y":0,"width":100,"height":100}}}`
+//! → `{"id":1,"ok":true,"result":{…}}`. Methods: `figcraft_ui_egui::control`.
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+
+mod control_server;
+mod services;
+
+use std::sync::{Arc, Mutex};
+
+use figcraft_engine::Session;
+use figcraft_ui_egui::{ControlRequest, FigApp};
+use serde_json::json;
+
+struct App {
+    fig: FigApp,
+    queue: Arc<Mutex<Vec<ControlRequest>>>,
+    ctx_slot: Arc<Mutex<Option<egui::Context>>>,
+}
+
+impl eframe::App for App {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        {
+            let mut slot = self.ctx_slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if slot.is_none() {
+                *slot = Some(ctx.clone());
+            }
+        }
+        let mut q = self.queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.fig.control_queue.extend(q.drain(..));
+        drop(q);
+        // Window title follows the document.
+        let title = match self.fig.session.ds() {
+            Ok(ds) => format!("{}{} – FigCraft", ds.doc.name, if ds.is_dirty() { " •" } else { "" }),
+            Err(_) => "FigCraft".into(),
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Last-resort guard: a panic in the UI frame becomes a message, not a lost document.
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.fig.ui(ui)));
+        if let Err(e) = res {
+            let msg = e.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| e.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into());
+            log::error!("UI panic: {msg}");
+            self.fig.toast(format!("Internal error (please report): {msg}"));
+            services::emergency_save(&self.fig.session);
+        }
+    }
+
+    fn on_exit(&mut self) {
+        services::save_state(&self.fig);
+    }
+}
+
+fn main() -> eframe::Result {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("FigCraft {}{}", env!("CARGO_PKG_VERSION"), option_env!("FIGCRAFT_BUILD_SHA").filter(|s| !s.is_empty()).map(|s| format!(" ({s})")).unwrap_or_default());
+        return Ok(());
+    }
+    let mut port: Option<u16> = std::env::var("FIGCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
+    let mut files = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args.get(i).map(String::as_str) {
+            Some("--control") => {
+                port = args.get(i + 1).and_then(|p| p.parse().ok());
+                i += 1;
+            }
+            Some(f) if !f.starts_with("--") => files.push(f.to_string()),
+            _ => {}
+        }
+        i += 1;
+    }
+    // System fonts: index them in the background.
+    std::thread::spawn(figcraft_text::scan_system_fonts);
+    let mut session = Session::empty();
+    for f in &files {
+        if let Err(e) = session.execute("file.open", &json!({"path": f})) {
+            log::error!("{f}: {e}");
+        }
+    }
+    let svc = services::Desktop::load();
+    if let Some(prefs) = svc.prefs.clone() {
+        session.prefs = prefs;
+    }
+    if session.docs.is_empty() {
+        let _ = session.execute("file.new", &json!({}));
+    }
+    let mut fig = FigApp::new(session, Box::new(svc));
+    fig.ui.home = false;
+    let queue: Arc<Mutex<Vec<ControlRequest>>> = Arc::new(Mutex::new(Vec::new()));
+    let ctx_slot: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
+    if let Some(p) = port {
+        control_server::start(p, queue.clone(), ctx_slot.clone());
+    }
+    let icon = services::window_icon();
+    let mut viewport = egui::ViewportBuilder::default().with_title("FigCraft").with_inner_size([1440.0, 900.0]).with_min_inner_size([800.0, 500.0]).with_drag_and_drop(true);
+    if let Some(icon) = icon {
+        viewport = viewport.with_icon(icon);
+    }
+    let options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, ..Default::default() };
+    eframe::run_native("FigCraft", options, Box::new(move |_cc| Ok(Box::new(App { fig, queue, ctx_slot }))))
+}
