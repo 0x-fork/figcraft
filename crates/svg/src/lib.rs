@@ -10,7 +10,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod import;
-pub use import::{import_svg, ImportError};
+pub use import::{ImportError, import_svg};
 
 use std::fmt::Write as _;
 

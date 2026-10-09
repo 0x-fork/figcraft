@@ -46,7 +46,8 @@ impl eframe::App for App {
         // Last-resort guard: a panic in the UI frame becomes a message, not a lost document.
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.fig.ui(ui)));
         if let Err(e) = res {
-            let msg = e.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| e.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into());
+            let msg =
+                e.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| e.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into());
             log::error!("UI panic: {msg}");
             self.fig.toast(format!("Internal error (please report): {msg}"));
             services::emergency_save(&self.fig.session);
@@ -62,7 +63,11 @@ fn main() -> eframe::Result {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("FigCraft {}{}", env!("CARGO_PKG_VERSION"), option_env!("FIGCRAFT_BUILD_SHA").filter(|s| !s.is_empty()).map(|s| format!(" ({s})")).unwrap_or_default());
+        println!(
+            "FigCraft {}{}",
+            env!("CARGO_PKG_VERSION"),
+            option_env!("FIGCRAFT_BUILD_SHA").filter(|s| !s.is_empty()).map(|s| format!(" ({s})")).unwrap_or_default()
+        );
         return Ok(());
     }
     let mut port: Option<u16> = std::env::var("FIGCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
@@ -102,7 +107,11 @@ fn main() -> eframe::Result {
         control_server::start(p, queue.clone(), ctx_slot.clone());
     }
     let icon = services::window_icon();
-    let mut viewport = egui::ViewportBuilder::default().with_title("FigCraft").with_inner_size([1440.0, 900.0]).with_min_inner_size([800.0, 500.0]).with_drag_and_drop(true);
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("FigCraft")
+        .with_inner_size([1440.0, 900.0])
+        .with_min_inner_size([800.0, 500.0])
+        .with_drag_and_drop(true);
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }

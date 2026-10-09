@@ -112,7 +112,14 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
             }
         }
         ui.separator();
-        for (label, cmd) in [("Pixel preview", "view.pixelPreview"), ("Pixel grid", "view.pixelGrid"), ("Snap to pixel grid", "view.snapPixel"), ("Layout grids", "view.layoutGrids"), ("Rulers", "view.rulers"), ("Outlines", "view.outlines")] {
+        for (label, cmd) in [
+            ("Pixel preview", "view.pixelPreview"),
+            ("Pixel grid", "view.pixelGrid"),
+            ("Snap to pixel grid", "view.snapPixel"),
+            ("Layout grids", "view.layoutGrids"),
+            ("Rulers", "view.rulers"),
+            ("Outlines", "view.outlines"),
+        ] {
             if menu_item(ui, label, figcraft_engine::catalog::shortcut(cmd).unwrap_or("")) {
                 app.run(cmd, json!({}));
                 ui.close();
@@ -141,7 +148,13 @@ pub fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
     let col = if resp.hovered() { Color32::WHITE } else { t.text };
     ui.painter().text(pos2(r.min.x + 8.0, r.center().y), Align2::LEFT_CENTER, label, regular(11.5), col);
     if !shortcut.is_empty() {
-        ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, crate::toolbar::pretty_shortcut(shortcut), regular(11.0), if resp.hovered() { Color32::WHITE } else { t.text_secondary });
+        ui.painter().text(
+            pos2(r.max.x - 8.0, r.center().y),
+            Align2::RIGHT_CENTER,
+            crate::toolbar::pretty_shortcut(shortcut),
+            regular(11.0),
+            if resp.hovered() { Color32::WHITE } else { t.text_secondary },
+        );
     }
     resp.clicked()
 }
@@ -149,7 +162,9 @@ pub fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
 fn row(ui: &mut Ui, h: f32, add: impl FnOnce(&mut Ui)) {
     let w = ui.available_width();
     let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r.shrink2(vec2(PAD, (h - FIELD_H) / 2.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    let mut child = ui.new_child(
+        egui::UiBuilder::new().max_rect(r.shrink2(vec2(PAD, (h - FIELD_H) / 2.0))).layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
     child.spacing_mut().item_spacing = vec2(8.0, 0.0);
     add(&mut child);
 }
@@ -274,7 +289,12 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     }
     ui.painter().text(pos2(lr.min.x + 8.0, lr.center().y), Align2::LEFT_CENTER, &label, semibold(13.0), t.text);
     if is_frame {
-        icons::paint(ui.painter(), Rect::from_center_size(pos2(lr.min.x + 18.0 + label.len() as f32 * 6.5, lr.center().y), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
+        icons::paint(
+            ui.painter(),
+            Rect::from_center_size(pos2(lr.min.x + 18.0 + label.len() as f32 * 6.5, lr.center().y), vec2(10.0, 10.0)),
+            Icon::Chevron,
+            t.icon_secondary,
+        );
         let ids: Vec<NodeId> = sel.to_vec();
         egui::Popup::menu(&resp).width(260.0).show(|ui| {
             egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
@@ -294,7 +314,11 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     }
     // Quick actions on the right.
     let mut x = r.max.x - 8.0;
-    let actions: Vec<(Icon, &str, &str)> = vec![(Icon::Component, "Create component  ⌥⌘K", "component.create"), (Icon::Mask, "Use as mask", "object.mask"), (Icon::Union, "Boolean groups", "bool.union")];
+    let actions: Vec<(Icon, &str, &str)> = vec![
+        (Icon::Component, "Create component  ⌥⌘K", "component.create"),
+        (Icon::Mask, "Use as mask", "object.mask"),
+        (Icon::Union, "Boolean groups", "bool.union"),
+    ];
     for (icon, tip, cmd) in actions.into_iter().rev() {
         let br = Rect::from_min_size(pos2(x - 24.0, r.center().y - 12.0), vec2(24.0, 24.0));
         let bresp = ui.interact(br, ui.id().with(("qa", cmd)), Sense::click()).on_hover_text(tip);
@@ -304,7 +328,13 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         icons::paint(ui.painter(), br.shrink(5.0), icon, t.icon);
         if cmd == "bool.union" {
             egui::Popup::menu(&bresp).width(180.0).show(|ui| {
-                for (l, c) in [("Union", "bool.union"), ("Subtract", "bool.subtract"), ("Intersect", "bool.intersect"), ("Exclude", "bool.exclude"), ("Flatten", "vector.flatten")] {
+                for (l, c) in [
+                    ("Union", "bool.union"),
+                    ("Subtract", "bool.subtract"),
+                    ("Intersect", "bool.intersect"),
+                    ("Exclude", "bool.exclude"),
+                    ("Flatten", "vector.flatten"),
+                ] {
                     if menu_item(ui, l, figcraft_engine::catalog::shortcut(c).unwrap_or("")) {
                         app.run(c, json!({}));
                         ui.close();
@@ -322,7 +352,8 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         && let NodeKind::Instance { component, props } = &n.kind
     {
         let comp_name = doc.node(*component).map(|c| c.name.clone()).unwrap_or_else(|| "Missing component".into());
-        let set = doc.node(*component).and_then(|c| c.parent).filter(|p| doc.node(*p).is_some_and(|pn| matches!(pn.kind, NodeKind::ComponentSet { .. })));
+        let set =
+            doc.node(*component).and_then(|c| c.parent).filter(|p| doc.node(*p).is_some_and(|pn| matches!(pn.kind, NodeKind::ComponentSet { .. })));
         row(ui, 32.0, |ui| {
             let (ir, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
             icons::paint(ui.painter(), ir, Icon::Instance, crate::theme::COMPONENT);
@@ -421,7 +452,11 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         if sel.len() > 2 {
             let more = icons::button(ui, Icon::DistributeH, 24.0, false, "Distribute and tidy");
             egui::Popup::menu(&more).show(|ui| {
-                for (l, c) in [("Distribute horizontal spacing", "distribute.horizontal"), ("Distribute vertical spacing", "distribute.vertical"), ("Tidy up", "arrange.tidy")] {
+                for (l, c) in [
+                    ("Distribute horizontal spacing", "distribute.horizontal"),
+                    ("Distribute vertical spacing", "distribute.vertical"),
+                    ("Tidy up", "arrange.tidy"),
+                ] {
                     if menu_item(ui, l, figcraft_engine::catalog::shortcut(c).unwrap_or("")) {
                         app.run(c, json!({"ids": ids}));
                         ui.close();
@@ -450,7 +485,9 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         }
     });
     // Constraints (children of non-auto-layout frames).
-    let in_frame = sel.iter().all(|i| doc.node(*i).and_then(|n| n.parent).and_then(|p| doc.node(p)).is_some_and(|p| p.kind.is_frame_like() && p.layout.is_none()));
+    let in_frame = sel
+        .iter()
+        .all(|i| doc.node(*i).and_then(|n| n.parent).and_then(|p| doc.node(p)).is_some_and(|p| p.kind.is_frame_like() && p.layout.is_none()));
     if in_frame {
         let c = common(doc, sel, |n| n.constraints);
         widgets::sublabels(ui, "Constraints", None);
@@ -495,7 +532,13 @@ fn layout(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let al = common(doc, sel, |n| n.layout.clone());
     let has_al = matches!(al, Some(Some(_)));
     let title = if has_al { "Auto layout" } else { "Layout" };
-    let btns: Vec<(Icon, &str)> = if frames && !has_al { vec![(Icon::Plus, "Add auto layout  ⇧A")] } else if has_al { vec![(Icon::Minus, "Remove auto layout  ⌥⇧A")] } else { vec![] };
+    let btns: Vec<(Icon, &str)> = if frames && !has_al {
+        vec![(Icon::Plus, "Add auto layout  ⇧A")]
+    } else if has_al {
+        vec![(Icon::Minus, "Remove auto layout  ⌥⇧A")]
+    } else {
+        vec![]
+    };
     if let Some(_b) = widgets::section_header(ui, title, &btns, false) {
         app.run(if has_al { "layout.remove" } else { "layout.add" }, json!({"ids": ids}));
     }
@@ -544,11 +587,16 @@ fn layout(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         row(ui, 32.0, |ui| {
             for (axis, cur, key) in [("W", sh, "sizingH"), ("H", sv, "sizingV")] {
                 let label = cur.map(|s| s.label()).unwrap_or("Mixed");
-                let resp = widgets::dropdown(ui, &format!("{label} {}", if axis == "W" { "width" } else { "height" }), half, Some(match cur {
-                    Some(Sizing::Hug) => Icon::Hug,
-                    Some(Sizing::Fill) => Icon::FillContainer,
-                    _ => Icon::Fixed,
-                }));
+                let resp = widgets::dropdown(
+                    ui,
+                    &format!("{label} {}", if axis == "W" { "width" } else { "height" }),
+                    half,
+                    Some(match cur {
+                        Some(Sizing::Hug) => Icon::Hug,
+                        Some(Sizing::Fill) => Icon::FillContainer,
+                        _ => Icon::Fixed,
+                    }),
+                );
                 let ids2 = ids.clone();
                 egui::Popup::menu(&resp).show(|ui| {
                     let mut opts = vec![("Fixed", "fixed")];
@@ -593,7 +641,11 @@ fn layout(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
                     };
                     let on = (cur_main == main_i || cur_main == 9) && cur_cross == cross_i;
                     if on {
-                        ui.painter().rect_filled(Rect::from_center_size(c, vec2(if horizontal { 4.0 } else { 12.0 }, if horizontal { 12.0 } else { 4.0 })), CornerRadius::same(1), ACCENT);
+                        ui.painter().rect_filled(
+                            Rect::from_center_size(c, vec2(if horizontal { 4.0 } else { 12.0 }, if horizontal { 12.0 } else { 4.0 })),
+                            CornerRadius::same(1),
+                            ACCENT,
+                        );
                     } else {
                         ui.painter().circle_filled(c, if resp.hovered() { 2.5 } else { 1.5 }, if resp.hovered() { ACCENT } else { t.text_tertiary });
                     }
@@ -661,7 +713,12 @@ fn layout(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
 fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let ids = sel.to_vec();
     let visible = common(doc, sel, |n| n.visible).unwrap_or(true);
-    let hdr = widgets::section_header(ui, "Appearance", &[(if visible { Icon::Eye } else { Icon::EyeOff }, "Show/Hide  ⇧⌘H"), (Icon::Blend, "Blend mode")], false);
+    let hdr = widgets::section_header(
+        ui,
+        "Appearance",
+        &[(if visible { Icon::Eye } else { Icon::EyeOff }, "Show/Hide  ⇧⌘H"), (Icon::Blend, "Blend mode")],
+        false,
+    );
     if hdr == Some(0) {
         app.run("object.toggleVisible", json!({"ids": ids}));
     }
@@ -709,7 +766,8 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         });
     }
     let blend = common(doc, sel, |n| n.blend);
-    let show_blend = ui.data(|d| d.get_temp::<bool>(Id::new("blend_open"))).unwrap_or(false) || blend.is_some_and(|b| !matches!(b, BlendMode::Normal | BlendMode::PassThrough));
+    let show_blend = ui.data(|d| d.get_temp::<bool>(Id::new("blend_open"))).unwrap_or(false)
+        || blend.is_some_and(|b| !matches!(b, BlendMode::Normal | BlendMode::PassThrough));
     if show_blend {
         widgets::sublabels(ui, "Blend mode", None);
         row(ui, 32.0, |ui| {
@@ -737,8 +795,12 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
     let list = common(doc, sel, |n| if fills { n.fills.clone() } else { n.strokes.clone() });
     let title = if fills { "Fill" } else { "Stroke" };
     let empty = list.as_ref().is_none_or(|l| l.is_empty());
-    let style_name = common(doc, sel, |n| if fills { n.styles.fill.clone() } else { n.styles.stroke.clone() }).flatten().and_then(|s| doc.style(&s).map(|st| st.name.clone()));
-    if let Some(i) = widgets::section_header(ui, title, &[(Icon::Styles, "Styles"), (Icon::Plus, if fills { "Add fill" } else { "Add stroke" })], empty) {
+    let style_name = common(doc, sel, |n| if fills { n.styles.fill.clone() } else { n.styles.stroke.clone() })
+        .flatten()
+        .and_then(|s| doc.style(&s).map(|st| st.name.clone()));
+    if let Some(i) =
+        widgets::section_header(ui, title, &[(Icon::Styles, "Styles"), (Icon::Plus, if fills { "Add fill" } else { "Add stroke" })], empty)
+    {
         if i == 1 {
             app.run(if fills { "fill.add" } else { "stroke.add" }, json!({"ids": ids}));
         } else {
@@ -770,12 +832,17 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
         let align = common(doc, sel, |n| n.stroke.align);
         let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
         row(ui, 32.0, |ui| {
-            let resp = widgets::dropdown(ui, match align {
-                Some(StrokeAlign::Inside) => "Inside",
-                Some(StrokeAlign::Center) => "Center",
-                Some(StrokeAlign::Outside) => "Outside",
-                None => "Mixed",
-            }, half, None);
+            let resp = widgets::dropdown(
+                ui,
+                match align {
+                    Some(StrokeAlign::Inside) => "Inside",
+                    Some(StrokeAlign::Center) => "Center",
+                    Some(StrokeAlign::Outside) => "Outside",
+                    None => "Mixed",
+                },
+                half,
+                None,
+            );
             egui::Popup::menu(&resp).show(|ui| {
                 for (l, v) in [("Inside", "inside"), ("Center", "center"), ("Outside", "outside")] {
                     if menu_item(ui, l, "") {
@@ -838,7 +905,8 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text_r));
         match &p.kind {
             PaintKind::Solid { color } => {
-                if let Some(h) = widgets::text_field_inline(&mut child, Id::new(("hex", fills, i)), &color.to_hex(), text_r.shrink2(vec2(0.0, 4.0)), regular(11.0))
+                if let Some(h) =
+                    widgets::text_field_inline(&mut child, Id::new(("hex", fills, i)), &color.to_hex(), text_r.shrink2(vec2(0.0, 4.0)), regular(11.0))
                     && let Some(c) = figcraft_color::Color::from_hex(&h)
                 {
                     app.run(cmd, json!({"ids": ids, "index": i, "color": c.to_css_hex()}));
@@ -855,7 +923,8 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
         let op_r = Rect::from_min_max(pos2(r.max.x - 48.0, r.min.y), r.max);
         ui.painter().line_segment([pos2(op_r.min.x, r.min.y + 4.0), pos2(op_r.min.x, r.max.y - 4.0)], Stroke::new(1.0, t.panel));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(op_r));
-        let e = widgets::number_field(&mut child, Id::new(("pop", fills, i)), Lead::None, Some((f64::from(p.opacity) * 100.0).round()), "%", 48.0, 1.0);
+        let e =
+            widgets::number_field(&mut child, Id::new(("pop", fills, i)), Lead::None, Some((f64::from(p.opacity) * 100.0).round()), "%", 48.0, 1.0);
         match e {
             Some(FieldEdit::Set(v)) => {
                 app.run(cmd, json!({"ids": ids, "index": i, "opacity": (v / 100.0).clamp(0.0, 1.0)}));
@@ -941,14 +1010,24 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             let w = ui.available_width() - 56.0;
             let resp = widgets::dropdown(ui, e.label(), w, None);
             egui::Popup::menu(&resp).show(|ui| {
-                for (l, ty) in [("Drop shadow", "dropShadow"), ("Inner shadow", "innerShadow"), ("Layer blur", "layerBlur"), ("Background blur", "backgroundBlur"), ("Noise", "noise"), ("Texture", "texture")] {
+                for (l, ty) in [
+                    ("Drop shadow", "dropShadow"),
+                    ("Inner shadow", "innerShadow"),
+                    ("Layer blur", "layerBlur"),
+                    ("Background blur", "backgroundBlur"),
+                    ("Noise", "noise"),
+                    ("Texture", "texture"),
+                ] {
                     if menu_item(ui, l, "") {
                         let ne = match ty {
                             "dropShadow" => Effect::drop_shadow(),
                             "innerShadow" => Effect::inner_shadow(),
                             "layerBlur" => Effect::layer_blur(),
                             "backgroundBlur" => Effect::background_blur(),
-                            "noise" => Effect { kind: EffectKind::Noise { size: 0.5, density: 0.5, color: figcraft_color::Color::new(0.0, 0.0, 0.0, 0.25) }, visible: true },
+                            "noise" => Effect {
+                                kind: EffectKind::Noise { size: 0.5, density: 0.5, color: figcraft_color::Color::new(0.0, 0.0, 0.0, 0.25) },
+                                visible: true,
+                            },
                             _ => Effect { kind: EffectKind::Texture { size: 0.5, radius: 4.0 }, visible: true },
                         };
                         app.run("effect.set", json!({"ids": ids, "index": i, "effect": ne}));
@@ -1035,7 +1114,10 @@ fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &
             let bg = matches!(e.kind, EffectKind::BackgroundBlur { .. });
             row(ui, 32.0, |ui| {
                 let ed = widgets::number_field(ui, Id::new(("fx_r", i)), Lead::Text("Blur"), Some(*radius), "", half * 2.0 + 8.0, 1.0);
-                edit(app, ed, &|v| Effect { kind: if bg { EffectKind::BackgroundBlur { radius: v.max(0.0) } } else { EffectKind::LayerBlur { radius: v.max(0.0) } }, visible: e.visible });
+                edit(app, ed, &|v| Effect {
+                    kind: if bg { EffectKind::BackgroundBlur { radius: v.max(0.0) } } else { EffectKind::LayerBlur { radius: v.max(0.0) } },
+                    visible: e.visible,
+                });
             });
         }
         EffectKind::Noise { size, density, color } => {
@@ -1043,7 +1125,10 @@ fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &
                 let ed = widgets::number_field(ui, Id::new(("fx_ns", i)), Lead::Text("Size"), Some(*size), "", half, 0.1);
                 edit(app, ed, &|v| Effect { kind: EffectKind::Noise { size: v.max(0.1), density: *density, color: *color }, visible: e.visible });
                 let ed = widgets::number_field(ui, Id::new(("fx_nd", i)), Lead::Text("Density"), Some((density * 100.0).round()), "%", half, 1.0);
-                edit(app, ed, &|v| Effect { kind: EffectKind::Noise { size: *size, density: (v / 100.0).clamp(0.0, 1.0), color: *color }, visible: e.visible });
+                edit(app, ed, &|v| Effect {
+                    kind: EffectKind::Noise { size: *size, density: (v / 100.0).clamp(0.0, 1.0), color: *color },
+                    visible: e.visible,
+                });
             });
         }
         EffectKind::Texture { size, radius } => {
@@ -1121,7 +1206,9 @@ fn export(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let list = common(doc, sel, |n| n.exports.clone()).unwrap_or_default();
     if widgets::section_header(ui, "Export", &[(Icon::Plus, "Add export setting")], list.is_empty()).is_some() {
         let next = match list.last().map(|e| e.size) {
-            Some(ExportSize::Scale { value }) => ExportSetting { size: ExportSize::Scale { value: value + 1.0 }, suffix: format!("@{}x", value + 1.0), format: ExportFormat::Png },
+            Some(ExportSize::Scale { value }) => {
+                ExportSetting { size: ExportSize::Scale { value: value + 1.0 }, suffix: format!("@{}x", value + 1.0), format: ExportFormat::Png }
+            }
             _ => ExportSetting::default(),
         };
         app.run("export.add", json!({"ids": ids, "setting": next}));
@@ -1171,7 +1258,11 @@ fn export(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             }
         });
     }
-    let name = if sel.len() == 1 { sel.first().and_then(|i| doc.node(*i)).map(|n| n.name.clone()).unwrap_or_default() } else { format!("{} layers", sel.len()) };
+    let name = if sel.len() == 1 {
+        sel.first().and_then(|i| doc.node(*i)).map(|n| n.name.clone()).unwrap_or_default()
+    } else {
+        format!("{} layers", sel.len())
+    };
     row(ui, 32.0, |ui| {
         let w = ui.available_width();
         let (r, resp) = ui.allocate_exact_size(vec2(w, FIELD_H), Sense::click());
@@ -1227,7 +1318,8 @@ fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             ui.add(egui::TextEdit::singleline(&mut q).hint_text("Search fonts").desired_width(240.0));
             ui.data_mut(|d| d.insert_temp(q_id, q.clone()));
             egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                for f in figcraft_text::family_names().into_iter().filter(|f| q.is_empty() || f.to_lowercase().contains(&q.to_lowercase())).take(400) {
+                for f in figcraft_text::family_names().into_iter().filter(|f| q.is_empty() || f.to_lowercase().contains(&q.to_lowercase())).take(400)
+                {
                     if menu_item(ui, &f, "") {
                         apply_style(app, "fontFamily", json!(f));
                         ui.close();
@@ -1274,7 +1366,12 @@ fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         }
     });
     row(ui, 32.0, |ui| {
-        let items = [(Icon::TextAlignLeft, "Align left"), (Icon::TextAlignCenter, "Align center"), (Icon::TextAlignRight, "Align right"), (Icon::TextAlignJustify, "Justify")];
+        let items = [
+            (Icon::TextAlignLeft, "Align left"),
+            (Icon::TextAlignCenter, "Align center"),
+            (Icon::TextAlignRight, "Align right"),
+            (Icon::TextAlignJustify, "Justify"),
+        ];
         let active = td.map(|(h, _, _)| match h {
             TextAlignH::Left => 0,
             TextAlignH::Center => 1,
@@ -1483,7 +1580,13 @@ pub fn css_for(doc: &Document, id: NodeId) -> String {
         }
         out.push_str(&format!("gap: {}px;\n", crate::canvas::fmt(l.gap)));
         let [pt, pr, pb, pl] = l.padding;
-        out.push_str(&format!("padding: {}px {}px {}px {}px;\n", crate::canvas::fmt(pt), crate::canvas::fmt(pr), crate::canvas::fmt(pb), crate::canvas::fmt(pl)));
+        out.push_str(&format!(
+            "padding: {}px {}px {}px {}px;\n",
+            crate::canvas::fmt(pt),
+            crate::canvas::fmt(pr),
+            crate::canvas::fmt(pb),
+            crate::canvas::fmt(pl)
+        ));
         out.push_str(&format!(
             "justify-content: {};\nalign-items: {};\n",
             match l.main_align {
@@ -1548,7 +1651,12 @@ pub fn css_for(doc: &Document, id: NodeId) -> String {
         }
     }
     if let NodeKind::Text(t) = &n.kind {
-        out.push_str(&format!("font-family: \"{}\";\nfont-size: {}px;\nfont-weight: {};\n", t.style.font_family, t.style.font_size, t.style.weight()));
+        out.push_str(&format!(
+            "font-family: \"{}\";\nfont-size: {}px;\nfont-weight: {};\n",
+            t.style.font_family,
+            t.style.font_size,
+            t.style.weight()
+        ));
         if t.style.italic() {
             out.push_str("font-style: italic;\n");
         }
@@ -1583,15 +1691,30 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
     };
     if let Some(b) = doc.world_bounds(first) {
         row(ui, 32.0, |ui| {
-            widgets::label(ui, &format!("{} × {}   at {}, {}", crate::canvas::fmt(b.width()), crate::canvas::fmt(b.height()), crate::canvas::fmt(b.x0), crate::canvas::fmt(b.y0)), t.text);
+            widgets::label(
+                ui,
+                &format!(
+                    "{} × {}   at {}, {}",
+                    crate::canvas::fmt(b.width()),
+                    crate::canvas::fmt(b.height()),
+                    crate::canvas::fmt(b.x0),
+                    crate::canvas::fmt(b.y0)
+                ),
+                t.text,
+            );
         });
     }
     widgets::separator(ui);
     widgets::section_header(ui, "CSS", &[(Icon::Export, "Copy")], false);
     let css = css_for(&doc, first);
-    egui::Frame::NONE.fill(t.field).corner_radius(CornerRadius::same(6)).inner_margin(egui::Margin::same(10)).outer_margin(egui::Margin::symmetric(16, 0)).show(ui, |ui| {
-        ui.label(egui::RichText::new(&css).monospace().color(t.text));
-    });
+    egui::Frame::NONE
+        .fill(t.field)
+        .corner_radius(CornerRadius::same(6))
+        .inner_margin(egui::Margin::same(10))
+        .outer_margin(egui::Margin::symmetric(16, 0))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(&css).monospace().color(t.text));
+        });
     ui.add_space(8.0);
     row(ui, 32.0, |ui| {
         if ui.button("Copy CSS").clicked() {

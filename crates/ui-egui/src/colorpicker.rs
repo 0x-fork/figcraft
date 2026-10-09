@@ -47,7 +47,9 @@ fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
             let c = paint.solid_color().unwrap_or(Color::DEFAULT_PAGE);
             app.session.execute("page.setBackground", &json!({"color": c.to_css_hex()}))
         }
-        PickerTarget::Paint { fills, index, ids } => app.session.execute(if *fills { "fill.set" } else { "stroke.set" }, &json!({"ids": ids, "index": index, "paint": paint})),
+        PickerTarget::Paint { fills, index, ids } => {
+            app.session.execute(if *fills { "fill.set" } else { "stroke.set" }, &json!({"ids": ids, "index": index, "paint": paint}))
+        }
         PickerTarget::Effect { ids, index } => {
             let Some(e) = ids.first().and_then(|i| app.session.doc().ok()?.node(*i)?.effects.get(*index).cloned()) else { return };
             let c = paint.solid_color().unwrap_or(Color::BLACK);
@@ -90,7 +92,12 @@ fn sv_square(ui: &mut Ui, rect: Rect, hsb: &mut Hsb) -> (bool, bool) {
     m.add_triangle(0, 2, 3);
     ui.painter().add(m);
     let mut m2 = Mesh::default();
-    for (p, c) in [(rect.left_top(), Color32::TRANSPARENT), (rect.right_top(), Color32::TRANSPARENT), (rect.right_bottom(), Color32::BLACK), (rect.left_bottom(), Color32::BLACK)] {
+    for (p, c) in [
+        (rect.left_top(), Color32::TRANSPARENT),
+        (rect.right_top(), Color32::TRANSPARENT),
+        (rect.right_bottom(), Color32::BLACK),
+        (rect.left_bottom(), Color32::BLACK),
+    ] {
         m2.colored_vertex(p, c);
     }
     m2.add_triangle(0, 1, 2);
@@ -127,10 +134,12 @@ fn hue_slider(ui: &mut Ui, rect: Rect, hsb: &mut Hsb) -> (bool, bool) {
         }
     }
     ui.painter().add(m);
-    slider_knob(ui, rect, hsb.h / 360.0, Id::new("cp_hue")).map(|(t, done)| {
-        hsb.h = (t * 360.0).clamp(0.0, 359.9);
-        (true, done)
-    }).unwrap_or((false, false))
+    slider_knob(ui, rect, hsb.h / 360.0, Id::new("cp_hue"))
+        .map(|(t, done)| {
+            hsb.h = (t * 360.0).clamp(0.0, 359.9);
+            (true, done)
+        })
+        .unwrap_or((false, false))
 }
 
 fn slider_knob(ui: &mut Ui, rect: Rect, t: f32, id: Id) -> Option<(f32, bool)> {
@@ -153,7 +162,12 @@ fn alpha_slider(ui: &mut Ui, rect: Rect, color: Color) -> Option<(f32, bool)> {
     widgets::checker(&ui.painter().with_clip_rect(rect), rect, rect.height() / 2.0);
     let mut m = Mesh::default();
     let opaque = c32(color.with_alpha(1.0));
-    for (p, c) in [(rect.left_top(), Color32::TRANSPARENT), (rect.right_top(), opaque), (rect.right_bottom(), opaque), (rect.left_bottom(), Color32::TRANSPARENT)] {
+    for (p, c) in [
+        (rect.left_top(), Color32::TRANSPARENT),
+        (rect.right_top(), opaque),
+        (rect.right_bottom(), opaque),
+        (rect.left_bottom(), Color32::TRANSPARENT),
+    ] {
         m.colored_vertex(p, c);
     }
     m.add_triangle(0, 1, 2);
@@ -192,7 +206,14 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
             }
             // Paint type.
             if !matches!(target, PickerTarget::Effect { .. } | PickerTarget::PageBackground) {
-                let kinds = [(Icon::Fill, "Solid"), (Icon::LayoutH, "Linear"), (Icon::Ellipse, "Radial"), (Icon::Rotate, "Angular"), (Icon::Instance, "Diamond"), (Icon::Image, "Image")];
+                let kinds = [
+                    (Icon::Fill, "Solid"),
+                    (Icon::LayoutH, "Linear"),
+                    (Icon::Ellipse, "Radial"),
+                    (Icon::Rotate, "Angular"),
+                    (Icon::Instance, "Diamond"),
+                    (Icon::Image, "Image"),
+                ];
                 let active = match &paint.kind {
                     PaintKind::Solid { .. } => 0,
                     PaintKind::Gradient(g) => match g.kind {
@@ -228,7 +249,9 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                             k => {
                                 let kind = [GradientKind::Linear, GradientKind::Radial, GradientKind::Angular, GradientKind::Diamond][k - 1];
                                 match &paint.kind {
-                                    PaintKind::Gradient(g) => PaintKind::Gradient(Gradient { kind, ..Gradient::default_for(kind, base).with_stops(g.stops.clone()) }),
+                                    PaintKind::Gradient(g) => {
+                                        PaintKind::Gradient(Gradient { kind, ..Gradient::default_for(kind, base).with_stops(g.stops.clone()) })
+                                    }
                                     _ => PaintKind::Gradient(Gradient::default_for(kind, base)),
                                 }
                             }
@@ -263,7 +286,12 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     let r = Rect::from_center_size(pos2(x, bar.center().y), vec2(12.0, 18.0));
                     let resp = ui.interact(r, Id::new(("cp_stopk", i)), Sense::click_and_drag());
                     ui.painter().rect_filled(r, CornerRadius::same(3), c32(s.color.with_alpha(1.0)));
-                    ui.painter().rect_stroke(r, CornerRadius::same(3), Stroke::new(if i == sel { 2.0 } else { 1.0 }, if i == sel { crate::theme::ACCENT } else { Color32::WHITE }), StrokeKind::Outside);
+                    ui.painter().rect_stroke(
+                        r,
+                        CornerRadius::same(3),
+                        Stroke::new(if i == sel { 2.0 } else { 1.0 }, if i == sel { crate::theme::ACCENT } else { Color32::WHITE }),
+                        StrokeKind::Outside,
+                    );
                     if resp.clicked() || resp.drag_started() {
                         sel = i;
                     }
@@ -329,7 +357,12 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     ui.add_space(16.0);
                     let resp = widgets::dropdown(ui, &format!("{:?}", img.scale_mode), 100.0, None);
                     egui::Popup::menu(&resp).show(|ui| {
-                        for (l, m) in [("Fill", ImageScaleMode::Fill), ("Fit", ImageScaleMode::Fit), ("Crop", ImageScaleMode::Crop), ("Tile", ImageScaleMode::Tile)] {
+                        for (l, m) in [
+                            ("Fill", ImageScaleMode::Fill),
+                            ("Fit", ImageScaleMode::Fit),
+                            ("Crop", ImageScaleMode::Crop),
+                            ("Tile", ImageScaleMode::Tile),
+                        ] {
                             if crate::right::menu_item(ui, l, "") {
                                 img.scale_mode = m;
                                 paint.kind = PaintKind::Image(img.clone());
@@ -344,7 +377,15 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                         write(app, &target, &paint, false);
                     }
                 });
-                for (label, val) in [("Exposure", img.filters.exposure), ("Contrast", img.filters.contrast), ("Saturation", img.filters.saturation), ("Temperature", img.filters.temperature), ("Tint", img.filters.tint), ("Highlights", img.filters.highlights), ("Shadows", img.filters.shadows)] {
+                for (label, val) in [
+                    ("Exposure", img.filters.exposure),
+                    ("Contrast", img.filters.contrast),
+                    ("Saturation", img.filters.saturation),
+                    ("Temperature", img.filters.temperature),
+                    ("Tint", img.filters.tint),
+                    ("Highlights", img.filters.highlights),
+                    ("Shadows", img.filters.shadows),
+                ] {
                     ui.horizontal(|ui| {
                         ui.add_space(16.0);
                         ui.label(egui::RichText::new(label).font(regular(11.0)));
@@ -371,12 +412,26 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 }
             }
             if let Some(color) = edit_color {
-                let mut hsb = ui.data(|d| d.get_temp::<(f32, f32, f32, [u8; 4])>(Id::new("cp_hsb"))).filter(|(_, _, _, rgba)| *rgba == color.to_rgba8()).map(|(h, s, b, _)| Hsb { h, s, b }).unwrap_or_else(|| Hsb::from_color(color));
+                let mut hsb = ui
+                    .data(|d| d.get_temp::<(f32, f32, f32, [u8; 4])>(Id::new("cp_hsb")))
+                    .filter(|(_, _, _, rgba)| *rgba == color.to_rgba8())
+                    .map(|(h, s, b, _)| Hsb { h, s, b })
+                    .unwrap_or_else(|| Hsb::from_color(color));
                 let (sq, _) = ui.allocate_exact_size(vec2(240.0, 240.0), Sense::hover());
                 let (c1, d1) = sv_square(ui, sq, &mut hsb);
                 let (hr, _) = ui.allocate_exact_size(vec2(240.0, 28.0), Sense::hover());
                 let hr = Rect::from_min_max(pos2(hr.min.x + 48.0, hr.min.y + 8.0), pos2(hr.max.x - 16.0, hr.max.y - 8.0));
-                if icons::button(&mut ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(pos2(hr.min.x - 36.0, hr.center().y - 12.0), vec2(24.0, 24.0)))), Icon::Eyedropper, 24.0, false, "Pick color (I)").clicked() {
+                if icons::button(
+                    &mut ui.new_child(
+                        egui::UiBuilder::new().max_rect(Rect::from_min_size(pos2(hr.min.x - 36.0, hr.center().y - 12.0), vec2(24.0, 24.0))),
+                    ),
+                    Icon::Eyedropper,
+                    24.0,
+                    false,
+                    "Pick color (I)",
+                )
+                .clicked()
+                {
                     app.ui.picker = None;
                     app.run("edit.pickColor", json!({}));
                     return;
@@ -405,7 +460,9 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     if let Some(h) = widgets::text_field(ui, Id::new("cp_hex"), &nc.to_hex(), 96.0, "") {
                         hex_set = Color::from_hex(&h);
                     }
-                    if let Some(widgets::FieldEdit::Set(v)) = widgets::number_field(ui, Id::new("cp_a"), widgets::Lead::None, Some((f64::from(nc.a) * 100.0).round()), "%", 56.0, 1.0) {
+                    if let Some(widgets::FieldEdit::Set(v)) =
+                        widgets::number_field(ui, Id::new("cp_a"), widgets::Lead::None, Some((f64::from(nc.a) * 100.0).round()), "%", 56.0, 1.0)
+                    {
                         alpha_set = Some((v / 100.0).clamp(0.0, 1.0) as f32);
                     }
                 });

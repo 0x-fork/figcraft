@@ -103,7 +103,7 @@ pub fn morph(p: &mut Pixmap, r: i32) {
     let grow = r > 0;
     let r = r.unsigned_abs().min(400) as usize;
     let (w, h) = (p.width() as usize, p.height() as usize);
-    let alpha: Vec<u8> = p.data().chunks_exact(4).map(|c| c.get(3).copied().unwrap_or(0)).collect();
+    let alpha: Vec<u8> = p.data().as_chunks::<4>().0.iter().map(|c| c.get(3).copied().unwrap_or(0)).collect();
     let pass = |src: &[u8], w: usize, h: usize, horizontal: bool| -> Vec<u8> {
         let mut out = vec![0u8; src.len()];
         for y in 0..h {
@@ -146,7 +146,7 @@ pub fn morph(p: &mut Pixmap, r: i32) {
             }
         }
     }
-    for (px, a) in p.data_mut().chunks_exact_mut(4).zip(a2) {
+    for (px, a) in p.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(a2) {
         px.copy_from_slice(&[a, a, a, a]);
     }
 }
@@ -154,7 +154,7 @@ pub fn morph(p: &mut Pixmap, r: i32) {
 /// Replace every pixel with `color` (non-premultiplied RGBA 0..1) at the pixel's alpha × color alpha.
 pub fn tint(p: &mut Pixmap, color: [f32; 4]) {
     let [r, g, b, a] = color;
-    for px in p.data_mut().chunks_exact_mut(4) {
+    for px in p.data_mut().as_chunks_mut::<4>().0 {
         let alpha = f32::from(px.get(3).copied().unwrap_or(0)) / 255.0 * a;
         let q = |c: f32| (c * alpha * 255.0).round().clamp(0.0, 255.0) as u8;
         px.copy_from_slice(&[q(r), q(g), q(b), (alpha * 255.0).round().clamp(0.0, 255.0) as u8]);
@@ -163,7 +163,7 @@ pub fn tint(p: &mut Pixmap, color: [f32; 4]) {
 
 /// Invert the alpha (premultiplied white with alpha 1-a): used for inner shadows.
 pub fn invert_alpha(p: &mut Pixmap) {
-    for px in p.data_mut().chunks_exact_mut(4) {
+    for px in p.data_mut().as_chunks_mut::<4>().0 {
         let a = 255 - px.get(3).copied().unwrap_or(0);
         px.copy_from_slice(&[a, a, a, a]);
     }
@@ -171,7 +171,7 @@ pub fn invert_alpha(p: &mut Pixmap) {
 
 /// Multiply every pixel of `p` by the alpha of `m` (same size); `invert` uses 1-alpha.
 pub fn mask_by(p: &mut Pixmap, m: &Pixmap, invert: bool) {
-    for (px, mp) in p.data_mut().chunks_exact_mut(4).zip(m.data().chunks_exact(4)) {
+    for (px, mp) in p.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(m.data().chunks_exact(4)) {
         let ma = u32::from(mp.get(3).copied().unwrap_or(0));
         let ma = if invert { 255 - ma } else { ma };
         for c in px.iter_mut() {
@@ -185,7 +185,7 @@ pub fn noise(p: &mut Pixmap, shape: &Pixmap, density: f64, color: [f32; 4], seed
     let w = p.width() as usize;
     let cell = scale.max(0.5);
     let density = density.clamp(0.0, 1.0);
-    for (i, (px, sp)) in p.data_mut().chunks_exact_mut(4).zip(shape.data().chunks_exact(4)).enumerate() {
+    for (i, (px, sp)) in p.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(shape.data().chunks_exact(4)).enumerate() {
         let sa = f32::from(sp.get(3).copied().unwrap_or(0)) / 255.0;
         if sa <= 0.0 {
             continue;
@@ -230,10 +230,10 @@ mod tests {
         let i = (10 * 20 + 10) * 4;
         p.data_mut()[i..i + 4].copy_from_slice(&[255, 255, 255, 255]);
         morph(&mut p, 2);
-        let count = p.data().chunks_exact(4).filter(|c| c[3] == 255).count();
+        let count = p.data().as_chunks::<4>().0.iter().filter(|c| c[3] == 255).count();
         assert_eq!(count, 25);
         morph(&mut p, -2);
-        let count = p.data().chunks_exact(4).filter(|c| c[3] == 255).count();
+        let count = p.data().as_chunks::<4>().0.iter().filter(|c| c[3] == 255).count();
         assert_eq!(count, 1);
     }
 

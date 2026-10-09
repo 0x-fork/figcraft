@@ -24,8 +24,15 @@ fn config_dir() -> Option<PathBuf> {
 
 impl Desktop {
     pub fn load() -> Self {
-        let state: Value = config_dir().and_then(|d| std::fs::read_to_string(d.join("state.json")).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(json!({}));
-        let recents = state.get("recents").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+        let state: Value = config_dir()
+            .and_then(|d| std::fs::read_to_string(d.join("state.json")).ok())
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(json!({}));
+        let recents = state
+            .get("recents")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
         let prefs = state.get("prefs").and_then(|p| serde_json::from_value(p.clone()).ok());
         Self { clipboard: arboard::Clipboard::new().ok(), recents, prefs }
     }

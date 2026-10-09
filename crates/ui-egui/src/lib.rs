@@ -359,11 +359,19 @@ impl FigApp {
         self.ui.toast = Some((msg.clone(), age));
         ctx.request_repaint();
         let screen = ctx.content_rect();
-        egui::Area::new(egui::Id::new("toast")).fixed_pos(egui::pos2(screen.center().x, screen.max.y - 96.0)).pivot(egui::Align2::CENTER_BOTTOM).order(egui::Order::Tooltip).show(ctx, |ui| {
-            egui::Frame::NONE.fill(egui::Color32::from_rgb(0x1E, 0x1E, 0x1E)).corner_radius(egui::CornerRadius::same(8)).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
-                ui.label(egui::RichText::new(msg).color(egui::Color32::WHITE).font(theme::regular(12.0)));
+        egui::Area::new(egui::Id::new("toast"))
+            .fixed_pos(egui::pos2(screen.center().x, screen.max.y - 96.0))
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .order(egui::Order::Tooltip)
+            .show(ctx, |ui| {
+                egui::Frame::NONE
+                    .fill(egui::Color32::from_rgb(0x1E, 0x1E, 0x1E))
+                    .corner_radius(egui::CornerRadius::same(8))
+                    .inner_margin(egui::Margin::symmetric(14, 10))
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new(msg).color(egui::Color32::WHITE).font(theme::regular(12.0)));
+                    });
             });
-        });
     }
 
     /// UI state as JSON (control channel `ui.inspect`).

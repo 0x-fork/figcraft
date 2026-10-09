@@ -1,0 +1,324 @@
+//! The file subcommands: info, export, convert, render and run.
+
+use std::path::Path;
+use std::process::ExitCode;
+
+use figcraft_doc::{Document, ExportFormat, NodeId, NodeKind};
+use figcraft_engine::Session;
+use serde_json::{Value, json};
+
+use crate::{CliError, CliResult};
+
+pub fn load(path: &str) -> CliResult<Document> {
+    figcraft_engine::cmd::file::load(path).map(|(d, _)| d).map_err(|e| CliError::Failed(format!("can't open {path}: {e}")))
+}
+
+fn ext(path: &str) -> String {
+    Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
+}
+
+fn image_format(e: &str) -> Option<ExportFormat> {
+    match e {
+        "png" | "jpg" | "jpeg" | "svg" | "webp" | "pdf" => ExportFormat::from_ext(e),
+        _ => None,
+    }
+}
+
+fn write(path: &str, bytes: &[u8]) -> CliResult<()> {
+    if let Some(dir) = Path::new(path).parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| CliError::Failed(format!("{}: {e}", dir.display())))?;
+    }
+    std::fs::write(path, bytes).map_err(|e| CliError::Failed(format!("{path}: {e}")))
+}
+
+fn page_named(doc: &Document, name: Option<&str>) -> CliResult<NodeId> {
+    match name {
+        None => doc.first_page().ok_or_else(|| CliError::Failed("the document has no pages".into())),
+        Some(n) => doc
+            .pages
+            .iter()
+            .copied()
+            .find(|p| doc.node(*p).is_some_and(|pn| pn.name == n))
+            .or_else(|| doc.pages.iter().copied().find(|p| doc.node(*p).is_some_and(|pn| pn.name.eq_ignore_ascii_case(n))))
+            .ok_or_else(|| {
+                let names: Vec<String> = doc.pages.iter().filter_map(|p| doc.node(*p).map(|n| n.name.clone())).collect();
+                CliError::Failed(format!("no page named `{n}` (pages: {})", names.join(", ")))
+            }),
+    }
+}
+
+fn find_node(doc: &Document, page: NodeId, q: &str) -> CliResult<NodeId> {
+    if let Ok(id) = q.parse::<NodeId>()
+        && doc.contains(id)
+    {
+        return Ok(id);
+    }
+    doc.find_by_name(q, Some(page))
+        .into_iter()
+        .find(|i| doc.node(*i).is_some_and(|n| n.name == q))
+        .or_else(|| doc.find_by_name(q, None).into_iter().find(|i| doc.node(*i).is_some_and(|n| n.name == q)))
+        .or_else(|| doc.find_by_name(q, Some(page)).into_iter().next())
+        .ok_or_else(|| CliError::Failed(format!("no layer with id or name `{q}`")))
+}
+
+fn children(doc: &Document, page: NodeId) -> Vec<NodeId> {
+    doc.node(page).map(|p| p.children.clone()).unwrap_or_default()
+}
+
+/// Render a page's content (with the page background) at `scale`, shrinking to fit 16384 px.
+pub fn render_page(doc: &Document, page: NodeId, scale: f64) -> CliResult<figcraft_render::Pixmap> {
+    let b = doc.page_content_bounds(page).ok_or_else(|| CliError::Failed("the page is empty: nothing to render".into()))?;
+    let side = b.width().max(b.height()).max(1e-6);
+    let scale = scale.min(16_384.0 / side);
+    let view = figcraft_render::View {
+        origin: (b.x0, b.y0),
+        scale,
+        width: (b.width() * scale).ceil().max(1.0) as u32,
+        height: (b.height() * scale).ceil().max(1.0) as u32,
+    };
+    figcraft_render::render_view(doc, page, &view, &Default::default()).ok_or_else(|| CliError::Failed("render failed".into()))
+}
+
+fn encode(pix: &figcraft_render::Pixmap, e: &str) -> CliResult<Vec<u8>> {
+    match e {
+        "jpg" | "jpeg" => figcraft_render::encode_jpeg(pix, figcraft_doc::color::Color::WHITE, 90),
+        "webp" => figcraft_render::encode_webp(pix),
+        _ => figcraft_render::encode_png(pix),
+    }
+    .map_err(CliError::Failed)
+}
+
+/// Write `doc` to `out`, choosing the format by extension.
+pub fn write_doc(doc: &Document, page: NodeId, out: &str) -> CliResult<()> {
+    let e = ext(out);
+    let bytes = match e.as_str() {
+        "figcraft" => {
+            let thumb = figcraft_engine::cmd::file::thumbnail(doc);
+            figcraft_format::save_bytes(doc, thumb.as_deref()).map_err(|e| CliError::Failed(e.to_string()))?
+        }
+        "json" => {
+            let v = figcraft_format::to_json(doc).map_err(|e| CliError::Failed(e.to_string()))?;
+            serde_json::to_vec_pretty(&v).map_err(|e| CliError::Failed(e.to_string()))?
+        }
+        "svg" => figcraft_svg::export_svg(doc, &children(doc, page), &Default::default())
+            .ok_or_else(|| CliError::Failed("the page is empty: nothing to export".into()))?
+            .into_bytes(),
+        "png" | "jpg" | "jpeg" | "webp" => encode(&render_page(doc, page, 1.0)?, &e)?,
+        "pdf" => figcraft_engine::cmd::file::export_bytes(doc, &children(doc, page), ExportFormat::Pdf, 1.0)
+            .map_err(|e| CliError::Failed(e.to_string()))?,
+        other => return Err(CliError::Usage(format!("unknown output format `.{other}` (figcraft, json, svg, png, jpg, webp, pdf)"))),
+    };
+    write(out, &bytes)
+}
+
+pub fn info(path: &str, as_json: bool) -> CliResult<ExitCode> {
+    let doc = load(path)?;
+    let pages: Vec<Value> = doc
+        .pages
+        .iter()
+        .filter_map(|p| {
+            let pn = doc.node(*p)?;
+            let nodes = doc.subtree(*p).len().saturating_sub(1);
+            let frames: Vec<Value> = pn
+                .children
+                .iter()
+                .filter_map(|c| doc.node(*c))
+                .filter(|n| n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. }))
+                .map(|n| json!({"id": n.id, "name": n.name, "type": n.kind.type_name(), "width": n.width, "height": n.height}))
+                .collect();
+            Some(json!({"id": p, "name": pn.name, "nodes": nodes, "topLevel": pn.children.len(), "frames": frames}))
+        })
+        .collect();
+    let v = json!({
+        "file": path,
+        "name": doc.name,
+        "nodes": doc.node_count(),
+        "pages": pages,
+        "styles": doc.styles.len(),
+        "variables": doc.variables.variables.len(),
+        "images": doc.images.len(),
+    });
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+        return Ok(ExitCode::SUCCESS);
+    }
+    println!(
+        "{} — {} ({} nodes, {} styles, {} variables, {} images)",
+        path,
+        doc.name,
+        doc.node_count(),
+        doc.styles.len(),
+        doc.variables.variables.len(),
+        doc.images.len()
+    );
+    for p in &pages {
+        println!("page {} \"{}\": {} nodes, {} top-level", p["id"], p["name"].as_str().unwrap_or(""), p["nodes"], p["topLevel"]);
+        for f in p["frames"].as_array().into_iter().flatten() {
+            println!("  {} {} \"{}\" {}×{}", f["id"], f["type"].as_str().unwrap_or(""), f["name"].as_str().unwrap_or(""), f["width"], f["height"]);
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn sanitize(name: &str) -> String {
+    let s: String = name.chars().map(|c| if c.is_alphanumeric() || matches!(c, '-' | '_' | ' ' | '.') { c } else { '_' }).collect();
+    let s = s.trim().trim_matches('.').to_string();
+    if s.is_empty() { "layer".into() } else { s.chars().take(100).collect() }
+}
+
+pub fn export(file: &str, out: &str, format: Option<&str>, scale: f64, page: Option<&str>, node: Option<&str>) -> CliResult<ExitCode> {
+    let doc = load(file)?;
+    let page = page_named(&doc, page)?;
+    let fmt = match format {
+        Some(f) => image_format(&f.to_ascii_lowercase()).ok_or_else(|| CliError::Usage(format!("unknown --format `{f}` (png|jpg|svg|webp|pdf)")))?,
+        None => image_format(&ext(out)).unwrap_or(ExportFormat::Png),
+    };
+    let target = node.map(|q| find_node(&doc, page, q)).transpose()?;
+    let single = image_format(&ext(out)).is_some();
+    let bytes_of = |ids: &[NodeId]| figcraft_engine::cmd::file::export_bytes(&doc, ids, fmt, scale).map_err(|e| CliError::Failed(e.to_string()));
+    if single {
+        let ids = match target {
+            Some(t) => vec![t],
+            None => children(&doc, page),
+        };
+        write(out, &bytes_of(&ids)?)?;
+        println!("{out}");
+        return Ok(ExitCode::SUCCESS);
+    }
+    std::fs::create_dir_all(out).map_err(|e| CliError::Failed(format!("{out}: {e}")))?;
+    let ids = match target {
+        Some(t) => vec![t],
+        None => {
+            let kids = children(&doc, page);
+            let frames: Vec<NodeId> = kids.iter().copied().filter(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like())).collect();
+            if frames.is_empty() { kids } else { frames }
+        }
+    };
+    if ids.is_empty() {
+        return Err(CliError::Failed("the page is empty: nothing to export".into()));
+    }
+    let mut used = std::collections::BTreeSet::new();
+    for id in ids {
+        let base = sanitize(doc.node(id).map(|n| n.name.as_str()).unwrap_or("layer"));
+        let mut name = base.clone();
+        let mut k = 2;
+        while !used.insert(name.to_lowercase()) {
+            name = format!("{base} {k}");
+            k += 1;
+        }
+        let path = Path::new(out).join(format!("{name}.{}", fmt.ext())).to_string_lossy().into_owned();
+        write(&path, &bytes_of(&[id])?)?;
+        println!("{path}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+pub fn convert(input: &str, out: &str) -> CliResult<ExitCode> {
+    let doc = load(input)?;
+    let page = doc
+        .current_page
+        .filter(|p| doc.pages.contains(p))
+        .or_else(|| doc.first_page())
+        .ok_or_else(|| CliError::Failed("the document has no pages".into()))?;
+    write_doc(&doc, page, out)?;
+    println!("{out}");
+    Ok(ExitCode::SUCCESS)
+}
+
+pub fn render(file: &str, out: &str, scale: f64, page: Option<&str>) -> CliResult<ExitCode> {
+    let doc = load(file)?;
+    let page = page_named(&doc, page)?;
+    let e = ext(out);
+    if !matches!(e.as_str(), "png" | "jpg" | "jpeg" | "webp") {
+        return Err(CliError::Usage(format!("render writes .png, .jpg or .webp, not `{out}`")));
+    }
+    let pix = render_page(&doc, page, scale)?;
+    write(out, &encode(&pix, &e)?)?;
+    println!("{out} ({}×{})", pix.width(), pix.height());
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Parse a script: a JSON array of steps, `{"commands": [...]}`, or JSON lines.
+pub fn parse_script(text: &str) -> Result<Vec<(String, Value)>, String> {
+    let steps: Vec<Value> = match serde_json::from_str::<Value>(text) {
+        Ok(Value::Array(a)) => a,
+        Ok(Value::Object(o)) if o.contains_key("commands") => {
+            o.get("commands").and_then(Value::as_array).cloned().ok_or("`commands` must be an array")?
+        }
+        Ok(v @ Value::Object(_)) => vec![v],
+        Ok(_) => return Err("a script is an array of {\"command\", \"params\"} objects".into()),
+        Err(_) => text
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| !l.trim().is_empty() && !l.trim_start().starts_with("//"))
+            .map(|(i, l)| serde_json::from_str::<Value>(l).map_err(|e| format!("line {}: {e}", i + 1)))
+            .collect::<Result<_, _>>()?,
+    };
+    steps
+        .into_iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let cmd = s.get("command").and_then(Value::as_str).ok_or_else(|| format!("step {i}: `command` (a string) is required"))?;
+            let params = match s.get("params") {
+                None | Some(Value::Null) => json!({}),
+                Some(p @ Value::Object(_)) => p.clone(),
+                Some(_) => return Err(format!("step {i} ({cmd}): `params` must be an object")),
+            };
+            Ok((cmd.to_string(), params))
+        })
+        .collect()
+}
+
+pub fn run_script(script: &str, input: Option<&str>, out: Option<&str>) -> CliResult<ExitCode> {
+    let text = std::fs::read_to_string(script).map_err(|e| CliError::Failed(format!("{script}: {e}")))?;
+    let steps = parse_script(&text).map_err(|e| CliError::Failed(format!("{script}: {e}")))?;
+    let mut s = match input {
+        Some(path) => {
+            let mut s = Session::empty();
+            s.execute("file.open", &json!({"path": path})).map_err(|e| CliError::Failed(format!("can't open {path}: {e}")))?;
+            s
+        }
+        None => Session::new(),
+    };
+    for (i, (cmd, params)) in steps.iter().enumerate() {
+        let r = s.execute(cmd, params);
+        s.ui_requests.clear();
+        match r {
+            Ok(v) => println!("{}", json!({"step": i, "command": cmd, "ok": true, "result": v})),
+            Err(e) => {
+                println!("{}", json!({"step": i, "command": cmd, "ok": false, "error": e.to_string()}));
+                eprintln!("error: step {i} ({cmd}) failed: {e}");
+                return Ok(ExitCode::from(1));
+            }
+        }
+    }
+    if let Some(out) = out {
+        let ds = s.ds().map_err(|e| CliError::Failed(e.to_string()))?;
+        write_doc(&ds.doc, ds.page, out)?;
+        eprintln!("wrote {out}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn script_formats() {
+        assert_eq!(parse_script(r#"[{"command":"a"},{"command":"b","params":{"x":1}}]"#).unwrap().len(), 2);
+        assert_eq!(parse_script(r#"{"commands":[{"command":"a"}]}"#).unwrap().len(), 1);
+        assert_eq!(parse_script("{\"command\":\"a\"}\n\n// note\n{\"command\":\"b\"}\n").unwrap().len(), 2);
+        assert!(parse_script("[{\"params\":{}}]").is_err());
+        assert!(parse_script("[{\"command\":\"a\",\"params\":3}]").is_err());
+        assert!(parse_script("not json\n").is_err());
+        assert!(parse_script("42").is_err());
+    }
+
+    #[test]
+    fn sanitizes_names() {
+        assert_eq!(sanitize("Home / Hero"), "Home _ Hero");
+        assert_eq!(sanitize("../.."), "_");
+        assert_eq!(sanitize(""), "layer");
+    }
+}

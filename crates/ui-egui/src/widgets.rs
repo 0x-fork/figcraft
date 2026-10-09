@@ -61,7 +61,9 @@ pub fn number_field(ui: &mut Ui, id: Id, lead: Lead, value: Option<f64>, suffix:
         Lead::Text(s) => {
             ui.painter().text(pos2(lead_rect.min.x + 8.0, rect.center().y), Align2::LEFT_CENTER, s, regular(11.0), t.text_secondary);
         }
-        Lead::Icon(i) => icons::paint(ui.painter(), Rect::from_center_size(lead_rect.center() + vec2(1.0, 0.0), vec2(14.0, 14.0)), i, t.icon_secondary),
+        Lead::Icon(i) => {
+            icons::paint(ui.painter(), Rect::from_center_size(lead_rect.center() + vec2(1.0, 0.0), vec2(14.0, 14.0)), i, t.icon_secondary)
+        }
         Lead::None => {}
     }
     if lead_resp.hovered() || lead_resp.dragged() {
@@ -157,6 +159,12 @@ pub fn eval(s: &str, cur: Option<f64>) -> Option<f64> {
     if s.is_empty() {
         return None;
     }
+    // "+4" adds to the current value ("-4" stays a plain negative number).
+    if let (Some(rest), Some(c)) = (s.strip_prefix('+'), cur)
+        && let Ok(v) = rest.trim().parse::<f64>()
+    {
+        return (c + v).is_finite().then_some(c + v);
+    }
     if let Ok(v) = s.parse::<f64>() {
         return v.is_finite().then_some(v);
     }
@@ -204,7 +212,13 @@ pub fn text_field(ui: &mut Ui, id: Id, value: &str, width: f32, placeholder: &st
     match editing {
         Some(mut text) => {
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(8.0, 4.0))));
-            let r = child.add(egui::TextEdit::singleline(&mut text).id(id.with("te")).frame(egui::Frame::NONE).font(regular(11.0)).desired_width(rect.width() - 16.0));
+            let r = child.add(
+                egui::TextEdit::singleline(&mut text)
+                    .id(id.with("te"))
+                    .frame(egui::Frame::NONE)
+                    .font(regular(11.0))
+                    .desired_width(rect.width() - 16.0),
+            );
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
             if esc {
@@ -228,7 +242,7 @@ pub fn text_field(ui: &mut Ui, id: Id, value: &str, width: f32, placeholder: &st
 pub fn dropdown(ui: &mut Ui, label: &str, width: f32, lead: Option<Icon>) -> Response {
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::click());
-    let bg = if resp.hovered() { t.field } else { t.field };
+    let bg = t.field;
     ui.painter().rect_filled(rect, CornerRadius::same(5), bg);
     if resp.hovered() {
         ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
@@ -260,7 +274,12 @@ pub fn segmented(ui: &mut Ui, items: &[(Icon, &str)], active: Option<usize>, cel
         } else if resp.hovered() {
             ui.painter().rect_filled(r.shrink(2.0), CornerRadius::same(4), t.hover);
         }
-        icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(14.0, 14.0)), *icon, if active == Some(i) { t.icon } else { t.icon_secondary });
+        icons::paint(
+            ui.painter(),
+            Rect::from_center_size(r.center(), vec2(14.0, 14.0)),
+            *icon,
+            if active == Some(i) { t.icon } else { t.icon_secondary },
+        );
         if resp.clicked() {
             out = Some(i);
         }
@@ -274,7 +293,13 @@ pub fn section_header(ui: &mut Ui, title: &str, buttons: &[(Icon, &str)], dim: b
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
-    ui.painter().text(pos2(rect.min.x + PAD, rect.center().y), Align2::LEFT_CENTER, title, semibold(11.0), if dim { t.text_secondary } else { t.text });
+    ui.painter().text(
+        pos2(rect.min.x + PAD, rect.center().y),
+        Align2::LEFT_CENTER,
+        title,
+        semibold(11.0),
+        if dim { t.text_secondary } else { t.text },
+    );
     let mut out = None;
     let mut x = rect.max.x - 8.0;
     for (i, (icon, tip)) in buttons.iter().enumerate().rev() {
@@ -375,23 +400,6 @@ pub fn label(ui: &mut Ui, text: &str, color: Color32) {
     ui.label(egui::RichText::new(text).font(regular(11.0)).color(color));
 }
 
-#[cfg(test)]
-mod tests {
-    use super::eval;
-
-    #[test]
-    fn math_in_fields() {
-        assert_eq!(eval("12", None), Some(12.0));
-        assert_eq!(eval("10+5", None), Some(15.0));
-        assert_eq!(eval("*2", Some(8.0)), Some(16.0));
-        assert_eq!(eval("+4", Some(8.0)), Some(12.0));
-        assert_eq!(eval("-3", None), Some(-3.0));
-        assert_eq!(eval("50%", None), Some(50.0));
-        assert_eq!(eval("1/0", None), None);
-        assert_eq!(eval("abc", None), None);
-    }
-}
-
 /// Text shown in `rect` that turns into an editor on click (or when its editor has focus, e.g.
 /// after a double-click rename). Returns the new text on Enter / focus loss.
 pub fn text_field_inline(ui: &mut Ui, id: Id, value: &str, rect: Rect, font: egui::FontId) -> Option<String> {
@@ -453,4 +461,21 @@ pub fn sublabels(ui: &mut Ui, a: &str, b: Option<&str>) {
 /// Width of one of the two field columns in a panel `w` wide (leaving the icon column).
 pub fn col_width(w: f32) -> f32 {
     ((w - PAD * 2.0 - 8.0 - 32.0) / 2.0).max(40.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::eval;
+
+    #[test]
+    fn math_in_fields() {
+        assert_eq!(eval("12", None), Some(12.0));
+        assert_eq!(eval("10+5", None), Some(15.0));
+        assert_eq!(eval("*2", Some(8.0)), Some(16.0));
+        assert_eq!(eval("+4", Some(8.0)), Some(12.0));
+        assert_eq!(eval("-3", None), Some(-3.0));
+        assert_eq!(eval("50%", None), Some(50.0));
+        assert_eq!(eval("1/0", None), None);
+        assert_eq!(eval("abc", None), None);
+    }
 }

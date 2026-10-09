@@ -438,7 +438,7 @@ impl Document {
         let nw = world * shift;
         {
             let g = self.get_mut(id)?;
-            g.transform = g.transform * shift;
+            g.transform *= shift;
             g.width = local.width();
             g.height = local.height();
         }
@@ -478,7 +478,14 @@ impl Document {
     /// Insert copies of `nodes` (a subtree rooted at `root`, from this or another document) with ids
     /// remapped by `map`. Interactions and instance references pointing inside the subtree are
     /// remapped too.
-    pub fn paste_nodes(&mut self, nodes: &[Node], map: &BTreeMap<NodeId, NodeId>, root: NodeId, parent: NodeId, index: Option<usize>) -> DocResult<NodeId> {
+    pub fn paste_nodes(
+        &mut self,
+        nodes: &[Node],
+        map: &BTreeMap<NodeId, NodeId>,
+        root: NodeId,
+        parent: NodeId,
+        index: Option<usize>,
+    ) -> DocResult<NodeId> {
         let p = self.get(parent)?;
         if !p.kind.is_container() {
             return Err(DocError::NotContainer(parent));

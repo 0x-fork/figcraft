@@ -42,7 +42,12 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
             } else if resp.hovered() {
                 ui.painter().rect_filled(r, CornerRadius::ZERO, t.hover);
             }
-            icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 18.0, r.center().y), vec2(14.0, 14.0)), Icon::Logo, crate::theme::ACCENT);
+            icons::paint(
+                ui.painter(),
+                Rect::from_center_size(pos2(r.min.x + 18.0, r.center().y), vec2(14.0, 14.0)),
+                Icon::Logo,
+                crate::theme::ACCENT,
+            );
             let label = if d.is_dirty() { format!("{name} •") } else { name };
             let galley = ui.painter().layout(label, regular(12.0), t.text, w - 60.0);
             ui.painter().galley(pos2(r.min.x + 32.0, r.center().y - galley.size().y / 2.0), galley, t.text);

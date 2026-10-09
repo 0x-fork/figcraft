@@ -26,7 +26,17 @@ pub struct CanvasState {
 
 impl Default for CanvasState {
     fn default() -> Self {
-        Self { rect: Rect::NOTHING, texture: None, tex_view: None, submitted: None, generation: 0, dragging: false, space_pan: false, middle_pan: None, last_pointer: None }
+        Self {
+            rect: Rect::NOTHING,
+            texture: None,
+            tex_view: None,
+            submitted: None,
+            generation: 0,
+            dragging: false,
+            space_pan: false,
+            middle_pan: None,
+            last_pointer: None,
+        }
     }
 }
 
@@ -67,15 +77,15 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
-    if let Ok(ds) = app.session.ds_mut() {
-        if (ds.view.vw - f64::from(rect.width())).abs() > 0.5 || (ds.view.vh - f64::from(rect.height())).abs() > 0.5 {
-            // Keep the centre; the first sizing after opening re-fits.
-            let first = ds.view.vw == 1200.0 && ds.view.vh == 800.0;
-            ds.view.vw = f64::from(rect.width());
-            ds.view.vh = f64::from(rect.height());
-            if first {
-                ds.zoom_to_fit();
-            }
+    if let Ok(ds) = app.session.ds_mut()
+        && ((ds.view.vw - f64::from(rect.width())).abs() > 0.5 || (ds.view.vh - f64::from(rect.height())).abs() > 0.5)
+    {
+        // Keep the centre; the first sizing after opening re-fits.
+        let first = ds.view.vw == 1200.0 && ds.view.vh == 800.0;
+        ds.view.vw = f64::from(rect.width());
+        ds.view.vh = f64::from(rect.height());
+        if first {
+            ds.zoom_to_fit();
         }
     }
     input(app, ui, &resp);
@@ -166,14 +176,22 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
         return;
     }
     app.canvas.generation += 1;
-    let job = Job { doc: ds.doc.clone(), page: ds.page, view: figcraft_render::View { origin: (ox, oy), scale, width: w.min(16384), height: h.min(16384) }, outline: ds.view.outlines, skip: vec![], generation: app.canvas.generation };
+    let job = Job {
+        doc: ds.doc.clone(),
+        page: ds.page,
+        view: figcraft_render::View { origin: (ox, oy), scale, width: w.min(16384), height: h.min(16384) },
+        outline: ds.view.outlines,
+        skip: vec![],
+        generation: app.canvas.generation,
+    };
     worker.submit(job);
     app.canvas.submitted = Some(key);
 }
 
 fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
     let ctx = ui.ctx().clone();
-    let (mods, scroll, zoom_delta, hover_pos, space) = ctx.input(|i| (i.modifiers, i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos(), i.key_down(egui::Key::Space)));
+    let (mods, scroll, zoom_delta, hover_pos, space) =
+        ctx.input(|i| (i.modifiers, i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos(), i.key_down(egui::Key::Space)));
     let editing_text = app.session.ds().map(|d| d.text_edit.is_some()).unwrap_or(false);
     let typing_elsewhere = ctx.memory(|m| m.focused().is_some());
     app.canvas.space_pan = space && !editing_text && !typing_elsewhere;
@@ -322,7 +340,10 @@ fn quad(painter: &egui::Painter, q: [Pos2; 4], s: Stroke) {
 /// The outline path of shapes (ellipses, vectors) for hover/selection outlines.
 fn outline_shape(app: &FigApp, doc: &Document, id: NodeId) -> Option<Vec<Vec<Pos2>>> {
     let n = doc.node(id)?;
-    if !matches!(n.kind, NodeKind::Ellipse { .. } | NodeKind::Vector { .. } | NodeKind::Polygon { .. } | NodeKind::Star { .. } | NodeKind::BooleanOp { .. }) {
+    if !matches!(
+        n.kind,
+        NodeKind::Ellipse { .. } | NodeKind::Vector { .. } | NodeKind::Polygon { .. } | NodeKind::Star { .. } | NodeKind::BooleanOp { .. }
+    ) {
         return None;
     }
     let (path, _) = figcraft_render::node_outline(doc, n)?;
@@ -471,7 +492,12 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
         && app.session.tool.tool == ToolId::Move
         && app.session.prefs.highlight_on_hover
     {
-        let col = if matches!(doc.node(h).map(|n| &n.kind), Some(NodeKind::Component { .. } | NodeKind::Instance { .. } | NodeKind::ComponentSet { .. })) { COMPONENT } else { ACCENT };
+        let col =
+            if matches!(doc.node(h).map(|n| &n.kind), Some(NodeKind::Component { .. } | NodeKind::Instance { .. } | NodeKind::ComponentSet { .. })) {
+                COMPONENT
+            } else {
+                ACCENT
+            };
         match outline_shape(app, &doc, h) {
             Some(lines) => {
                 for l in lines {
@@ -495,10 +521,40 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
     if let Some([x0, y0, x1, y1]) = ov.insert_line {
         painter.line_segment([app.to_screen(x0, y0), app.to_screen(x1, y1)], stroke(ACCENT, 2.0));
     }
+    // Vector edit mode.
+    if let Some((vid, vsel)) = ds.vector_edit.clone()
+        && let Some(o) = figcraft_engine::vectoredit::overlay(&doc, vid, &vsel)
+    {
+        let pt = |v: &serde_json::Value| -> Option<Pos2> { Some(app.to_screen(v.get(0)?.as_f64()?, v.get(1)?.as_f64()?)) };
+        for seg in o["segments"].as_array().cloned().unwrap_or_default() {
+            let pts: Vec<Pos2> = seg.as_array().map(|a| a.iter().filter_map(pt).collect()).unwrap_or_default();
+            if let [a, b, c, d] = pts.as_slice() {
+                painter.add(egui::epaint::CubicBezierShape::from_points_stroke([*a, *b, *c, *d], false, Color32::TRANSPARENT, stroke(ACCENT, 1.5)));
+            }
+        }
+        for h in o["handles"].as_array().cloned().unwrap_or_default() {
+            let pts: Vec<Pos2> = h.as_array().map(|a| a.iter().filter_map(pt).collect()).unwrap_or_default();
+            if let [a, b] = pts.as_slice() {
+                painter.line_segment([*a, *b], stroke(ACCENT, 1.0));
+                painter.circle_filled(*b, 3.5, Color32::WHITE);
+                painter.circle_stroke(*b, 3.5, stroke(ACCENT, 1.0));
+            }
+        }
+        for (i, v) in o["vertices"].as_array().cloned().unwrap_or_default().iter().enumerate() {
+            if let Some(p) = pt(v) {
+                let r = Rect::from_center_size(p, vec2(7.0, 7.0));
+                let on = vsel.contains(&i);
+                painter.rect_filled(r, CornerRadius::same(4), if on { ACCENT } else { Color32::WHITE });
+                painter.rect_stroke(r, CornerRadius::same(4), stroke(ACCENT, 1.0), StrokeKind::Inside);
+            }
+        }
+    }
     // Selection.
     let editing = ds.text_edit.clone();
-    if !sel.is_empty() && editing.is_none() {
-        let any_component = sel.iter().any(|i| matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Component { .. } | NodeKind::Instance { .. } | NodeKind::ComponentSet { .. })));
+    if !sel.is_empty() && editing.is_none() && ds.vector_edit.is_none() {
+        let any_component = sel.iter().any(|i| {
+            matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Component { .. } | NodeKind::Instance { .. } | NodeKind::ComponentSet { .. }))
+        });
         let col = if any_component { COMPONENT } else { ACCENT };
         for id in &sel {
             match outline_shape(app, &doc, *id) {
@@ -532,7 +588,11 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
             if app.session.prefs.show_dimensions
                 && let Some(bb) = doc.bounds_of(&sel)
             {
-                let (w, h) = if sel.len() == 1 { sel.first().and_then(|i| doc.node(*i)).map(|n| (n.width, n.height)).unwrap_or((bb.width(), bb.height())) } else { (bb.width(), bb.height()) };
+                let (w, h) = if sel.len() == 1 {
+                    sel.first().and_then(|i| doc.node(*i)).map(|n| (n.width, n.height)).unwrap_or((bb.width(), bb.height()))
+                } else {
+                    (bb.width(), bb.height())
+                };
                 let label = if is_line { fmt(w) } else { format!("{} × {}", fmt(w), fmt(h)) };
                 let bottom = q.iter().map(|p| p.y).fold(f32::MIN, f32::max);
                 let cx = q.iter().map(|p| p.x).sum::<f32>() / 4.0;
@@ -552,7 +612,9 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
             let w = doc.world_transform(*id);
             let [pt, pr, pb, pl] = al.padding;
             let pink = Color32::from_rgba_unmultiplied(0xF2, 0x48, 0x8C, 30);
-            for (x0, y0, x1, y1) in [(0.0, 0.0, n.width, pt), (n.width - pr, 0.0, n.width, n.height), (0.0, n.height - pb, n.width, n.height), (0.0, 0.0, pl, n.height)] {
+            for (x0, y0, x1, y1) in
+                [(0.0, 0.0, n.width, pt), (n.width - pr, 0.0, n.width, n.height), (0.0, n.height - pb, n.width, n.height), (0.0, 0.0, pl, n.height)]
+            {
                 if x1 - x0 <= 0.0 || y1 - y0 <= 0.0 {
                     continue;
                 }
@@ -639,7 +701,8 @@ fn rulers(app: &FigApp, painter: &egui::Painter, t: &Tokens, doc: &Document, sel
     painter.rect_filled(Rect::from_min_size(r.min, vec2(r.width(), size)), CornerRadius::ZERO, t.panel);
     painter.rect_filled(Rect::from_min_size(r.min, vec2(size, r.height())), CornerRadius::ZERO, t.panel);
     let zoom = app.session.ds().map(|d| d.view.zoom).unwrap_or(1.0);
-    let step = [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0].into_iter().find(|s| s * zoom >= 50.0).unwrap_or(10000.0);
+    let step =
+        [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0].into_iter().find(|s| s * zoom >= 50.0).unwrap_or(10000.0);
     let p0 = app.to_page(r.min);
     let p1 = app.to_page(r.max);
     // Highlight the selection's span.

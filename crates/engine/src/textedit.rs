@@ -129,10 +129,22 @@ pub fn key(s: &mut Session, key: &str, shift: bool, word: bool, line: bool) -> R
                 let (a, b) = if a != b {
                     (a, b)
                 } else if key == "Backspace" {
-                    let from = if line { line_start(&chars, a) } else if word { word_left(&chars, a) } else { a.saturating_sub(1) };
+                    let from = if line {
+                        line_start(&chars, a)
+                    } else if word {
+                        word_left(&chars, a)
+                    } else {
+                        a.saturating_sub(1)
+                    };
                     (from, a)
                 } else {
-                    let to = if line { line_end(&chars, a) } else if word { word_right(&chars, a) } else { (a + 1).min(n) };
+                    let to = if line {
+                        line_end(&chars, a)
+                    } else if word {
+                        word_right(&chars, a)
+                    } else {
+                        (a + 1).min(n)
+                    };
                     (a, to)
                 };
                 t.replace_range(a, b, "");

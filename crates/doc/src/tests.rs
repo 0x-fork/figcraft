@@ -187,7 +187,11 @@ fn vector_network_paths() {
     let rr = figcraft_geom::rounded_rect(40.0, 20.0, [5.0; 4], 0.0);
     let n2 = VectorNetwork::from_path(&rr);
     assert!((n2.fill_path().area() - rr.area()).abs() < 1e-6);
-    let mut bad = VectorNetwork { vertices: vec![Vertex::new(0.0, 0.0)], segments: vec![Segment::line(0, 5)], regions: vec![Region { loops: vec![vec![0, 9]], winding: WindingRule::EvenOdd }] };
+    let mut bad = VectorNetwork {
+        vertices: vec![Vertex::new(0.0, 0.0)],
+        segments: vec![Segment::line(0, 5)],
+        regions: vec![Region { loops: vec![vec![0, 9]], winding: WindingRule::EvenOdd }],
+    };
     bad.sanitize();
     assert!(bad.segments.is_empty());
     let _ = bad.fill_path();
@@ -196,14 +200,32 @@ fn vector_network_paths() {
 #[test]
 fn variables_resolve_modes_and_aliases() {
     let mut v = Variables::default();
-    v.collections.push(Collection { id: "c1".into(), name: "Theme".into(), modes: vec![Mode { id: "light".into(), name: "Light".into() }, Mode { id: "dark".into(), name: "Dark".into() }] });
+    v.collections.push(Collection {
+        id: "c1".into(),
+        name: "Theme".into(),
+        modes: vec![Mode { id: "light".into(), name: "Light".into() }, Mode { id: "dark".into(), name: "Dark".into() }],
+    });
     let mut vals = std::collections::BTreeMap::new();
     vals.insert("light".to_string(), VariableValue::Color(Color::WHITE));
     vals.insert("dark".to_string(), VariableValue::Color(Color::BLACK));
-    v.variables.push(Variable { id: "bg".into(), name: "bg".into(), collection: "c1".into(), kind: VariableType::Color, values: vals, description: String::new() });
+    v.variables.push(Variable {
+        id: "bg".into(),
+        name: "bg".into(),
+        collection: "c1".into(),
+        kind: VariableType::Color,
+        values: vals,
+        description: String::new(),
+    });
     let mut alias = std::collections::BTreeMap::new();
     alias.insert("light".to_string(), VariableValue::Alias("bg".into()));
-    v.variables.push(Variable { id: "surface".into(), name: "surface".into(), collection: "c1".into(), kind: VariableType::Color, values: alias, description: String::new() });
+    v.variables.push(Variable {
+        id: "surface".into(),
+        name: "surface".into(),
+        collection: "c1".into(),
+        kind: VariableType::Color,
+        values: alias,
+        description: String::new(),
+    });
     let mut modes = std::collections::BTreeMap::new();
     assert_eq!(v.resolve("surface", &modes), Some(VariableValue::Color(Color::WHITE)));
     modes.insert("c1".to_string(), "dark".to_string());
@@ -211,7 +233,14 @@ fn variables_resolve_modes_and_aliases() {
     // Cycle.
     let mut cyc = std::collections::BTreeMap::new();
     cyc.insert("light".to_string(), VariableValue::Alias("loop".into()));
-    v.variables.push(Variable { id: "loop".into(), name: "loop".into(), collection: "c1".into(), kind: VariableType::Color, values: cyc, description: String::new() });
+    v.variables.push(Variable {
+        id: "loop".into(),
+        name: "loop".into(),
+        collection: "c1".into(),
+        kind: VariableType::Color,
+        values: cyc,
+        description: String::new(),
+    });
     assert_eq!(v.resolve("loop", &std::collections::BTreeMap::new()), None);
 }
 

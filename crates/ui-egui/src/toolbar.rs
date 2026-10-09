@@ -51,6 +51,21 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     }
     painter.rect_filled(rect, CornerRadius::same(13), t.panel);
     painter.rect_stroke(rect, CornerRadius::same(13), Stroke::new(1.0, t.border), StrokeKind::Inside);
+    // Vector edit mode: a contextual strip above the toolbar.
+    if app.session.ds().map(|d| d.vector_edit.is_some()).unwrap_or(false) {
+        let strip = Rect::from_center_size(pos2(rect.center().x, rect.min.y - 30.0), vec2(360.0, 40.0));
+        ui.painter().rect_filled(strip, CornerRadius::same(10), t.panel);
+        ui.painter().rect_stroke(strip, CornerRadius::same(10), Stroke::new(1.0, t.border), StrokeKind::Inside);
+        let hints = "Drag points · ⌘-drag bends · ⌥-click adds a point · ⌫ deletes";
+        ui.painter().text(pos2(strip.min.x + 12.0, strip.center().y), Align2::LEFT_CENTER, hints, regular(10.5), t.text_secondary);
+        let done = Rect::from_min_size(pos2(strip.max.x - 56.0, strip.center().y - 13.0), vec2(48.0, 26.0));
+        let dresp = ui.interact(done, ui.id().with("vdone"), Sense::click());
+        ui.painter().rect_filled(done, CornerRadius::same(6), if dresp.hovered() { t.accent_hover } else { ACCENT });
+        ui.painter().text(done.center(), Align2::CENTER_CENTER, "Done", crate::theme::semibold(11.0), Color32::WHITE);
+        if dresp.clicked() {
+            app.run("vector.edit.end", json!({}));
+        }
+    }
     let current = app.session.tool.tool;
     let mut x = rect.min.x + 8.0;
     let cy = rect.center().y;
@@ -61,7 +76,13 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
         let resp = ui.interact(r, ui.id().with(("tool", g.key)), Sense::click());
         let active = in_group;
-        let bg = if active { ACCENT } else if resp.hovered() { t.hover } else { Color32::TRANSPARENT };
+        let bg = if active {
+            ACCENT
+        } else if resp.hovered() {
+            t.hover
+        } else {
+            Color32::TRANSPARENT
+        };
         ui.painter().rect_filled(r, CornerRadius::same(5), bg);
         icons::paint(ui.painter(), r.shrink(7.0), icon, if active { Color32::WHITE } else { t.icon });
         let resp = resp.on_hover_text(format!("{}  {}", shown.label(), shown.shortcut()));
@@ -166,28 +187,42 @@ fn flyout(app: &mut FigApp, ui: &mut Ui, g: &Group, bottom_left: egui::Pos2) {
     let w = 220.0;
     let h = item_h * g.tools.len() as f32 + 16.0;
     let mut chosen = None;
-    egui::Area::new(egui::Id::new(("flyout_area", g.key))).fixed_pos(pos2(bottom_left.x, bottom_left.y - h)).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
-        let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
-        ui.painter().rect_filled(rect, CornerRadius::same(13), t.menu);
-        let mut y = rect.min.y + 8.0;
-        for (tid, icon) in g.tools {
-            let r = Rect::from_min_size(pos2(rect.min.x + 8.0, y), vec2(w - 16.0, item_h));
-            let resp = ui.interact(r, ui.id().with(("fly", tid.id())), Sense::click());
-            if resp.hovered() {
-                ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
+    egui::Area::new(egui::Id::new(("flyout_area", g.key))).fixed_pos(pos2(bottom_left.x, bottom_left.y - h)).order(egui::Order::Foreground).show(
+        ui.ctx(),
+        |ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+            ui.painter().rect_filled(rect, CornerRadius::same(13), t.menu);
+            let mut y = rect.min.y + 8.0;
+            for (tid, icon) in g.tools {
+                let r = Rect::from_min_size(pos2(rect.min.x + 8.0, y), vec2(w - 16.0, item_h));
+                let resp = ui.interact(r, ui.id().with(("fly", tid.id())), Sense::click());
+                if resp.hovered() {
+                    ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
+                }
+                if *tid == app.session.tool.tool {
+                    icons::paint(
+                        ui.painter(),
+                        Rect::from_center_size(pos2(r.min.x + 10.0, r.center().y), vec2(12.0, 12.0)),
+                        Icon::Check,
+                        t.menu_text,
+                    );
+                }
+                icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 32.0, r.center().y), vec2(16.0, 16.0)), *icon, t.menu_text);
+                ui.painter().text(pos2(r.min.x + 48.0, r.center().y), Align2::LEFT_CENTER, tid.label(), regular(12.0), t.menu_text);
+                ui.painter().text(
+                    pos2(r.max.x - 8.0, r.center().y),
+                    Align2::RIGHT_CENTER,
+                    pretty_shortcut(tid.shortcut()),
+                    regular(12.0),
+                    t.menu_dim,
+                );
+                if resp.clicked() {
+                    chosen = Some(*tid);
+                }
+                y += item_h;
             }
-            if *tid == app.session.tool.tool {
-                icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 10.0, r.center().y), vec2(12.0, 12.0)), Icon::Check, t.menu_text);
-            }
-            icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 32.0, r.center().y), vec2(16.0, 16.0)), *icon, t.menu_text);
-            ui.painter().text(pos2(r.min.x + 48.0, r.center().y), Align2::LEFT_CENTER, tid.label(), regular(12.0), t.menu_text);
-            ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, pretty_shortcut(tid.shortcut()), regular(12.0), t.menu_dim);
-            if resp.clicked() {
-                chosen = Some(*tid);
-            }
-            y += item_h;
-        }
-    });
+        },
+    );
     if let Some(tid) = chosen {
         if let Some(i) = ToolId::ALL.iter().position(|x| *x == tid) {
             ui.data_mut(|d| d.insert_temp(egui::Id::new(("tb_last", g.key)), i as u8));
@@ -204,7 +239,7 @@ pub fn pretty_shortcut(s: &str) -> String {
     }
     let mac = cfg!(target_os = "macos");
     if !mac {
-        return s.replace("Cmd", "Ctrl").replace("Alt", "Alt");
+        return s.replace("Cmd", "Ctrl");
     }
     let mut out = String::new();
     for part in s.split('+') {

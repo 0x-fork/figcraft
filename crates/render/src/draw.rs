@@ -43,7 +43,17 @@ pub fn ts_path(p: &BezPath) -> Option<tiny_skia::Path> {
     b.finish()
 }
 
-fn fill_with(pix: &mut Pixmap, path: &tiny_skia::Path, paints: &[Paint], w: f64, h: f64, xf: Affine, rule: FillRule, doc: &Document, mask: Option<&Mask>) {
+fn fill_with(
+    pix: &mut Pixmap,
+    path: &tiny_skia::Path,
+    paints: &[Paint],
+    w: f64,
+    h: f64,
+    xf: Affine,
+    rule: FillRule,
+    doc: &Document,
+    mask: Option<&Mask>,
+) {
     for p in paints {
         let Some(prep) = prepare(p, w, h, doc) else { continue };
         let paint = tiny_skia::Paint { shader: prep.shader(), anti_alias: true, blend_mode: ts_blend(p.blend), ..Default::default() };
@@ -88,7 +98,12 @@ pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
                 return None;
             }
             match n.kind {
-                NodeKind::Rectangle | NodeKind::Frame | NodeKind::Component { .. } | NodeKind::ComponentSet { .. } | NodeKind::Instance { .. } | NodeKind::Section { .. }
+                NodeKind::Rectangle
+                | NodeKind::Frame
+                | NodeKind::Component { .. }
+                | NodeKind::ComponentSet { .. }
+                | NodeKind::Instance { .. }
+                | NodeKind::Section { .. }
                     if n.corners.smoothing == 0.0 =>
                 {
                     let radii = n.corners.radii.map(|r| if r > 0.0 { (r - inset).max(0.0) } else { 0.0 });
@@ -115,7 +130,8 @@ pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
     }
     let mut h = std::collections::hash_map::DefaultHasher::new();
     hash_path(path, &mut h);
-    (props.weight.to_bits(), props.align as u8, props.cap_start as u8, props.cap_end as u8, props.join as u8, props.miter_limit.to_bits(), closed).hash(&mut h);
+    (props.weight.to_bits(), props.align as u8, props.cap_start as u8, props.cap_end as u8, props.join as u8, props.miter_limit.to_bits(), closed)
+        .hash(&mut h);
     for d in &props.dashes {
         d.to_bits().hash(&mut h);
     }
@@ -134,7 +150,11 @@ pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
 
 /// Even-odd ring paths need the even-odd rule; everything else non-zero.
 fn stroke_rule(n: &Node, closed: bool) -> FillRule {
-    if n.stroke.sides.is_some() || (n.stroke.dashes.is_empty() && closed && n.stroke.align != StrokeAlign::Center) { FillRule::EvenOdd } else { FillRule::Winding }
+    if n.stroke.sides.is_some() || (n.stroke.dashes.is_empty() && closed && n.stroke.align != StrokeAlign::Center) {
+        FillRule::EvenOdd
+    } else {
+        FillRule::Winding
+    }
 }
 
 /// The geometry a node fills, in local space: shapes, booleans (computed from children) and text
@@ -163,7 +183,8 @@ pub fn node_outline(doc: &Document, n: &Node) -> Option<(BezPath, FillRule)> {
             Some((p, FillRule::Winding))
         }
         NodeKind::Vector { network } => {
-            let rule = if network.regions.iter().any(|r| r.winding == figcraft_doc::WindingRule::EvenOdd) { FillRule::EvenOdd } else { FillRule::Winding };
+            let rule =
+                if network.regions.iter().any(|r| r.winding == figcraft_doc::WindingRule::EvenOdd) { FillRule::EvenOdd } else { FillRule::Winding };
             Some((network.fill_path(), rule))
         }
         _ => figcraft_doc::geometry::shape_path(n).map(|p| (p, FillRule::Winding)),
@@ -353,7 +374,11 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
                 let (dx, dy) = (s.offset.0 * ctx.scale, s.offset.1 * ctx.scale);
                 let rect = tiny_skia::Rect::from_xywh(dx as f32, dy as f32, lw as f32, lh as f32);
                 if let Some(rect) = rect {
-                    let clear = tiny_skia::Paint { shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::TRANSPARENT), blend_mode: tiny_skia::BlendMode::Source, ..Default::default() };
+                    let clear = tiny_skia::Paint {
+                        shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::TRANSPARENT),
+                        blend_mode: tiny_skia::BlendMode::Source,
+                        ..Default::default()
+                    };
                     shifted.fill_rect(rect, &clear, Transform::identity(), None);
                 }
                 shifted.draw_pixmap(dx.round() as i32, dy.round() as i32, sh.as_ref(), &PixmapPaint::default(), Transform::identity(), None);

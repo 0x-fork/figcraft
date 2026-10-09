@@ -64,7 +64,13 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             ok()
         }),
-        spec!("transform.scale", "Scale", "{ids?, factor, cx?, cy? (pivot; default top-left)} — scales size, strokes, effects, text (the K tool)", true, scale_cmd),
+        spec!(
+            "transform.scale",
+            "Scale",
+            "{ids?, factor, cx?, cy? (pivot; default top-left)} — scales size, strokes, effects, text (the K tool)",
+            true,
+            scale_cmd
+        ),
         spec!("transform.resize", "Resize", "{ids?, width?, height?, anchor? (tl|t|tr|l|c|r|bl|b|br)}", true, resize_cmd),
     ]
 }
@@ -171,12 +177,26 @@ fn tidy(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     let all: Vec<Rect> = rows.iter().flatten().map(|(_, b)| *b).collect();
-    let (Some(origin), maxw, maxh) = (all.iter().copied().reduce(|a, b| a.union(b)), all.iter().map(Rect::width).fold(0.0, f64::max), all.iter().map(Rect::height).fold(0.0, f64::max)) else {
+    let (Some(origin), maxw, maxh) = (
+        all.iter().copied().reduce(|a, b| a.union(b)),
+        all.iter().map(Rect::width).fold(0.0, f64::max),
+        all.iter().map(Rect::height).fold(0.0, f64::max),
+    ) else {
         return ok();
     };
     let gap = num(p, "spacing").unwrap_or_else(|| {
         // Keep the average existing horizontal gap (min 10).
-        10f64.max(rows.iter().filter(|r| r.len() > 1).map(|r| (r.iter().map(|(_, b)| b.x1).fold(f64::MIN, f64::max) - r.iter().map(|(_, b)| b.x0).fold(f64::MAX, f64::min) - r.iter().map(|(_, b)| b.width()).sum::<f64>()) / (r.len() - 1) as f64).fold(0.0, f64::max))
+        10f64.max(
+            rows.iter()
+                .filter(|r| r.len() > 1)
+                .map(|r| {
+                    (r.iter().map(|(_, b)| b.x1).fold(f64::MIN, f64::max)
+                        - r.iter().map(|(_, b)| b.x0).fold(f64::MAX, f64::min)
+                        - r.iter().map(|(_, b)| b.width()).sum::<f64>())
+                        / (r.len() - 1) as f64
+                })
+                .fold(0.0, f64::max),
+        )
     });
     for (ri, row) in rows.iter_mut().enumerate() {
         row.sort_by(|a, b| a.1.x0.total_cmp(&b.1.x0));

@@ -25,7 +25,9 @@ fn to_bez(p: &usvg::tiny_skia_path::Path) -> BezPath {
             MoveTo(a) => b.move_to((f64::from(a.x), f64::from(a.y))),
             LineTo(a) => b.line_to((f64::from(a.x), f64::from(a.y))),
             QuadTo(c, a) => b.quad_to((f64::from(c.x), f64::from(c.y)), (f64::from(a.x), f64::from(a.y))),
-            CubicTo(c1, c2, a) => b.curve_to((f64::from(c1.x), f64::from(c1.y)), (f64::from(c2.x), f64::from(c2.y)), (f64::from(a.x), f64::from(a.y))),
+            CubicTo(c1, c2, a) => {
+                b.curve_to((f64::from(c1.x), f64::from(c1.y)), (f64::from(c2.x), f64::from(c2.y)), (f64::from(a.x), f64::from(a.y)))
+            }
             Close => b.close_path(),
         }
     }
@@ -53,7 +55,16 @@ fn paint(p: &usvg::Paint, opacity: f32, bbox: Rect, abs: Affine) -> Option<Paint
             let stops = g.stops().iter().map(|s| ColorStop { position: s.offset().get(), color: color(s.color(), s.opacity().get()) }).collect();
             let from = to_unit(a);
             let to = to_unit(b);
-            Some(Paint::gradient(Gradient { kind: GradientKind::Linear, stops, from, to, width: (from.0 - (to.1 - from.1), from.1 + (to.0 - from.0)) }).with_opacity(opacity))
+            Some(
+                Paint::gradient(Gradient {
+                    kind: GradientKind::Linear,
+                    stops,
+                    from,
+                    to,
+                    width: (from.0 - (to.1 - from.1), from.1 + (to.0 - from.0)),
+                })
+                .with_opacity(opacity),
+            )
         }
         usvg::Paint::RadialGradient(g) => {
             let gt = abs * xf(g.transform());
@@ -62,7 +73,10 @@ fn paint(p: &usvg::Paint, opacity: f32, bbox: Rect, abs: Affine) -> Option<Paint
             let ex = gt * Point::new(f64::from(g.cx()) + r, f64::from(g.cy()));
             let ey = gt * Point::new(f64::from(g.cx()), f64::from(g.cy()) + r);
             let stops = g.stops().iter().map(|s| ColorStop { position: s.offset().get(), color: color(s.color(), s.opacity().get()) }).collect();
-            Some(Paint::gradient(Gradient { kind: GradientKind::Radial, stops, from: to_unit(c), to: to_unit(ex), width: to_unit(ey) }).with_opacity(opacity))
+            Some(
+                Paint::gradient(Gradient { kind: GradientKind::Radial, stops, from: to_unit(c), to: to_unit(ex), width: to_unit(ey) })
+                    .with_opacity(opacity),
+            )
         }
         usvg::Paint::Pattern(_) => None,
     }
@@ -213,9 +227,8 @@ pub fn import_svg(doc: &mut Document, data: &[u8], parent: NodeId, x: f64, y: f6
     let opts = usvg::Options::default();
     let tree = usvg::Tree::from_data(data, &opts).map_err(|e| ImportError(e.to_string()))?;
     let size = tree.size();
-    let frame = doc
-        .create(parent, NodeKind::Frame, name, x, y, f64::from(size.width()), f64::from(size.height()))
-        .map_err(|e| ImportError(e.to_string()))?;
+    let frame =
+        doc.create(parent, NodeKind::Frame, name, x, y, f64::from(size.width()), f64::from(size.height())).map_err(|e| ImportError(e.to_string()))?;
     if let Some(f) = doc.node_mut(frame) {
         f.fills.clear();
     }

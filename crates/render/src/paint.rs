@@ -58,7 +58,9 @@ impl Prepared {
     pub fn shader(&self) -> Shader<'_> {
         match self {
             Prepared::Shader(s) => s.clone(),
-            Prepared::Pattern { pixmap, mode, quality, opacity, transform } => tiny_skia::Pattern::new(pixmap.as_ref().as_ref(), *mode, *quality, *opacity, *transform),
+            Prepared::Pattern { pixmap, mode, quality, opacity, transform } => {
+                tiny_skia::Pattern::new(pixmap.as_ref().as_ref(), *mode, *quality, *opacity, *transform)
+            }
         }
     }
 }
@@ -67,7 +69,7 @@ fn diamond_pixmap(g: &Gradient, opacity: f32) -> Option<Arc<Pixmap>> {
     const N: u32 = 256;
     let mut p = Pixmap::new(N, N)?;
     let half = f64::from(N) / 2.0;
-    for (i, px) in p.data_mut().chunks_exact_mut(4).enumerate() {
+    for (i, px) in p.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let x = ((i as u32 % N) as f64 + 0.5 - half) / half;
         let y = ((i as u32 / N) as f64 + 0.5 - half) / half;
         let t = (x.abs() + y.abs()) as f32;
@@ -95,14 +97,24 @@ pub fn prepare(paint: &Paint, w: f64, h: f64, doc: &Document) -> Option<Prepared
             let frame = handle_frame(g, w.max(1e-6), h.max(1e-6));
             let st = stops(g, op);
             let shader = match g.kind {
-                GradientKind::Linear => tiny_skia::LinearGradient::new(Point::from_xy(0.0, 0.0), Point::from_xy(1.0, 0.0), st, SpreadMode::Pad, frame),
-                GradientKind::Radial => tiny_skia::RadialGradient::new(Point::from_xy(0.0, 0.0), 0.0, Point::from_xy(0.0, 0.0), 1.0, st, SpreadMode::Pad, frame),
+                GradientKind::Linear => {
+                    tiny_skia::LinearGradient::new(Point::from_xy(0.0, 0.0), Point::from_xy(1.0, 0.0), st, SpreadMode::Pad, frame)
+                }
+                GradientKind::Radial => {
+                    tiny_skia::RadialGradient::new(Point::from_xy(0.0, 0.0), 0.0, Point::from_xy(0.0, 0.0), 1.0, st, SpreadMode::Pad, frame)
+                }
                 GradientKind::Angular => tiny_skia::SweepGradient::new(Point::from_xy(0.0, 0.0), 0.0, 360.0, st, SpreadMode::Pad, frame),
                 GradientKind::Diamond => {
                     let pm = diamond_pixmap(g, op)?;
                     // Pattern pixel space (0..256) → unit square (-1..1) → handle frame.
                     let to_unit = Transform::from_row(2.0 / 256.0, 0.0, 0.0, 2.0 / 256.0, -1.0, -1.0);
-                    return Some(Prepared::Pattern { pixmap: pm, mode: SpreadMode::Pad, quality: FilterQuality::Bilinear, opacity: 1.0, transform: to_unit.post_concat(frame) });
+                    return Some(Prepared::Pattern {
+                        pixmap: pm,
+                        mode: SpreadMode::Pad,
+                        quality: FilterQuality::Bilinear,
+                        opacity: 1.0,
+                        transform: to_unit.post_concat(frame),
+                    });
                 }
             };
             shader.map(Prepared::Shader)
@@ -143,7 +155,8 @@ pub fn image_transform(img: &ImagePaint, iw: f64, ih: f64, w: f64, h: f64) -> Tr
         ImageScaleMode::Crop => {
             // crop = unit box → image uv (a, b, c, d, e, f). Inverse maps uv → unit box.
             let m = img.crop.unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
-            let uv_to_unit = Transform::from_row(m[0] as f32, m[1] as f32, m[2] as f32, m[3] as f32, m[4] as f32, m[5] as f32).invert().unwrap_or_default();
+            let uv_to_unit =
+                Transform::from_row(m[0] as f32, m[1] as f32, m[2] as f32, m[3] as f32, m[4] as f32, m[5] as f32).invert().unwrap_or_default();
             Transform::from_scale((1.0 / rw) as f32, (1.0 / rh) as f32).post_concat(uv_to_unit).post_scale(w as f32, h as f32)
         }
     };

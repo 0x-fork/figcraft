@@ -29,7 +29,8 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         spec!("proto.interaction.set", "Edit interaction", "{id?, index, interaction {..}}", true, |s, p| {
             let k = req_num("proto.interaction.set", p, "index")? as usize;
-            let it: Interaction = parse("proto.interaction.set", p, "interaction")?.ok_or_else(|| bad("proto.interaction.set", "`interaction` required"))?;
+            let it: Interaction =
+                parse("proto.interaction.set", p, "interaction")?.ok_or_else(|| bad("proto.interaction.set", "`interaction` required"))?;
             for i in req_targets("proto.interaction.set", s, p)? {
                 let n = s.doc_mut()?.get_mut(i)?;
                 if let Some(slot) = n.interactions.get_mut(k) {
@@ -78,10 +79,14 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("proto.present", "Present", "{start? (frame id)}", false, |s, p| {
             let start = id(p, "start").or_else(|| {
                 let ds = s.ds().ok()?;
-                ds.selection.first().and_then(|i| ds.doc.top_level_frame(*i)).or_else(|| match &ds.doc.node(ds.page)?.kind {
-                    NodeKind::Page { flows, .. } => flows.first().map(|f| f.start),
-                    _ => None,
-                }).or_else(|| ds.doc.top_frames(ds.page).first().copied())
+                ds.selection
+                    .first()
+                    .and_then(|i| ds.doc.top_level_frame(*i))
+                    .or_else(|| match &ds.doc.node(ds.page)?.kind {
+                        NodeKind::Page { flows, .. } => flows.first().map(|f| f.start),
+                        _ => None,
+                    })
+                    .or_else(|| ds.doc.top_frames(ds.page).first().copied())
             });
             let start = start.ok_or_else(|| bad("proto.present", "no frame to present"))?;
             s.request_ui("present", json!({"start": start}));
@@ -93,7 +98,13 @@ pub fn specs() -> Vec<CommandSpec> {
 fn add(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "proto.interaction.add";
     let it = if let Some(d) = id(p, "dest") {
-        Interaction { trigger: Trigger::OnClick, actions: vec![Action::Navigate { dest: d }], transition: Transition::Instant, duration_ms: 300, easing: Easing::EaseOut }
+        Interaction {
+            trigger: Trigger::OnClick,
+            actions: vec![Action::Navigate { dest: d }],
+            transition: Transition::Instant,
+            duration_ms: 300,
+            easing: Easing::EaseOut,
+        }
     } else {
         let trigger: Trigger = parse(cmd, p, "trigger")?.unwrap_or_default();
         let action: Action = parse(cmd, p, "action")?.ok_or_else(|| bad(cmd, "`action` required"))?;

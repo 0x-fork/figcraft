@@ -57,10 +57,13 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             o.insert("effects".into(), serde_json::to_value(&n.effects).unwrap_or(Value::Null));
         }
         if n.corners.radii.iter().any(|r| *r > 0.0) {
-            o.insert("cornerRadius".into(), match n.corners.uniform() {
-                Some(r) => json!(r),
-                None => json!(n.corners.radii),
-            });
+            o.insert(
+                "cornerRadius".into(),
+                match n.corners.uniform() {
+                    Some(r) => json!(r),
+                    None => json!(n.corners.radii),
+                },
+            );
             if n.corners.smoothing > 0.0 {
                 o.insert("cornerSmoothing".into(), json!(n.corners.smoothing));
             }
@@ -198,11 +201,8 @@ fn paints(p: &[figcraft_color::Paint]) -> Value {
 pub fn document(s: &Session, depth: usize, all_pages: bool) -> Value {
     let Ok(ds) = s.ds() else { return json!({"documents": 0}) };
     let doc = &ds.doc;
-    let pages: Vec<Value> = doc
-        .pages
-        .iter()
-        .map(|p| if all_pages || *p == ds.page { node_json(doc, *p, depth) } else { node_json(doc, *p, 0) })
-        .collect();
+    let pages: Vec<Value> =
+        doc.pages.iter().map(|p| if all_pages || *p == ds.page { node_json(doc, *p, depth) } else { node_json(doc, *p, 0) }).collect();
     json!({
         "name": doc.name,
         "path": ds.path,

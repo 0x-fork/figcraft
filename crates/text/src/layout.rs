@@ -150,7 +150,17 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                 seg_end += 1;
             }
             if first == '\n' {
-                items.push(Item { face: face.clone(), gid: 0, adv: 0.0, dx: 0.0, dy: 0.0, char_start: seg_start, char_end: seg_start + 1, style: st_idx, ch: '\n' });
+                items.push(Item {
+                    face: face.clone(),
+                    gid: 0,
+                    adv: 0.0,
+                    dx: 0.0,
+                    dy: 0.0,
+                    char_start: seg_start,
+                    char_end: seg_start + 1,
+                    style: st_idx,
+                    ch: '\n',
+                });
             } else {
                 shape_segment(&chars, seg_start, seg_end, &face, style, size, spacing, st_idx, &mut items);
             }
@@ -309,7 +319,17 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                 for c in marker.chars() {
                     let gid = face.glyph_for(c);
                     let adv = face.advance(gid) * k;
-                    out.glyphs.push(Glyph { face: face.clone(), gid, x: mx, y: baseline, size, advance: adv, char_start: 0, char_end: 0, style: st_idx });
+                    out.glyphs.push(Glyph {
+                        face: face.clone(),
+                        gid,
+                        x: mx,
+                        y: baseline,
+                        size,
+                        advance: adv,
+                        char_start: 0,
+                        char_end: 0,
+                        style: st_idx,
+                    });
                     mx += adv;
                 }
             }
@@ -427,7 +447,17 @@ fn add_ellipsis(out: &mut TextLayout, wrap: Option<f64>) {
         out.glyphs.pop();
     }
     let x = out.glyphs.last().filter(|_| out.glyphs.len() > line.glyph_start).map(|g| g.x + g.advance).unwrap_or(0.0);
-    out.glyphs.push(Glyph { face, gid, x, y: line.baseline, size: last.size, advance: adv, char_start: last.char_end, char_end: last.char_end, style: last.style });
+    out.glyphs.push(Glyph {
+        face,
+        gid,
+        x,
+        y: line.baseline,
+        size: last.size,
+        advance: adv,
+        char_start: last.char_end,
+        char_end: last.char_end,
+        style: last.style,
+    });
     if let Some(l) = out.lines.last_mut() {
         l.glyph_end = out.glyphs.len();
         l.width = x + adv;
@@ -439,7 +469,17 @@ fn sanitize_size(s: f64) -> f64 {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn shape_segment(chars: &[char], start: usize, end: usize, face: &Arc<Face>, style: &TextStyle, size: f64, spacing: f64, st_idx: usize, items: &mut Vec<Item>) {
+fn shape_segment(
+    chars: &[char],
+    start: usize,
+    end: usize,
+    face: &Arc<Face>,
+    style: &TextStyle,
+    size: f64,
+    spacing: f64,
+    st_idx: usize,
+    items: &mut Vec<Item>,
+) {
     let k = size / face.upem;
     let seg: String = chars.get(start..end).unwrap_or(&[]).iter().collect();
     let cased = style.case.apply(&seg);
@@ -481,7 +521,17 @@ fn shape_segment(chars: &[char], start: usize, end: usize, face: &Arc<Face>, sty
         let last_in_cluster = raw.get(gi + 1).is_none_or(|r| r.1 as usize != cl);
         let ch = chars.get(cl).copied().unwrap_or(' ');
         let adv = f64::from(xa) * k + if last_in_cluster { spacing * (cend - cl) as f64 } else { 0.0 };
-        items.push(Item { face: face.clone(), gid, adv, dx: f64::from(xo) * k, dy: f64::from(yo) * k, char_start: cl, char_end: cend, style: st_idx, ch });
+        items.push(Item {
+            face: face.clone(),
+            gid,
+            adv,
+            dx: f64::from(xo) * k,
+            dy: f64::from(yo) * k,
+            char_start: cl,
+            char_end: cend,
+            style: st_idx,
+            ch,
+        });
     }
 }
 
@@ -523,12 +573,14 @@ impl TextLayout {
             .iter()
             .filter(|g| g.char_end > g.char_start)
             .map(|g| g.x + g.advance)
-            .fold(line.x + if line.glyph_end > line.glyph_start { 0.0 } else { 0.0 }, f64::max)
+            .fold(line.x, f64::max)
     }
 
     /// The char index nearest to `(x, y)` (layout coordinates).
     pub fn hit(&self, x: f64, y: f64) -> usize {
-        let Some((li, line)) = self.lines.iter().enumerate().find(|(_, l)| y < l.top + l.height).or_else(|| self.lines.iter().enumerate().last()) else {
+        let Some((li, line)) =
+            self.lines.iter().enumerate().find(|(_, l)| y < l.top + l.height).or_else(|| self.lines.iter().enumerate().next_back())
+        else {
             return 0;
         };
         let gl = self.glyphs.get(line.glyph_start..line.glyph_end).unwrap_or(&[]);
@@ -553,7 +605,11 @@ impl TextLayout {
                 continue;
             }
             let (x0, _) = self.caret(a.max(line.char_start));
-            let x1 = if b >= line.char_end { self.line_end_x(line) + if line.para_end && b > line.char_end.saturating_sub(1) { 4.0 } else { 0.0 } } else { self.caret(b).0 };
+            let x1 = if b >= line.char_end {
+                self.line_end_x(line) + if line.para_end && b > line.char_end.saturating_sub(1) { 4.0 } else { 0.0 }
+            } else {
+                self.caret(b).0
+            };
             out.push(Rect::new(x0, line.top, x1.max(x0 + 1.0), line.top + line.height));
         }
         out

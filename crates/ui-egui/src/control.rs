@@ -105,7 +105,10 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             r
         }
         "engine.commands" => Ok(Value::Array(
-            figcraft_engine::all_commands().iter().map(|c| json!({"id": c.id, "label": c.label, "params": c.params, "menu": c.menu(), "shortcut": c.shortcut(), "undoable": c.history})).collect(),
+            figcraft_engine::all_commands()
+                .iter()
+                .map(|c| json!({"id": c.id, "label": c.label, "params": c.params, "menu": c.menu(), "shortcut": c.shortcut(), "undoable": c.history}))
+                .collect(),
         )),
         "document.inspect" => {
             let depth = p.get("depth").and_then(Value::as_u64).unwrap_or(8) as usize;
@@ -135,7 +138,10 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             }
             match crate::shortcuts::parse(&spec) {
                 Some(_) => {
-                    let id = figcraft_engine::catalog::MENU.iter().find(|m| !m.shortcut.is_empty() && m.shortcut.eq_ignore_ascii_case(&spec)).map(|m| m.id);
+                    let id = figcraft_engine::catalog::MENU
+                        .iter()
+                        .find(|m| !m.shortcut.is_empty() && m.shortcut.eq_ignore_ascii_case(&spec))
+                        .map(|m| m.id);
                     match id {
                         Some(id) => {
                             if id == "select.none" {
@@ -206,7 +212,8 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
         "ui.render" => {
             let path = p.get("path").and_then(Value::as_str).ok_or("`path` required")?;
             let scale = p.get("scale").and_then(Value::as_f64).unwrap_or(1.0);
-            let ids: Vec<figcraft_doc::NodeId> = p.get("ids").and_then(Value::as_array).map(|a| a.iter().filter_map(figcraft_engine::params::id_of).collect()).unwrap_or_default();
+            let ids: Vec<figcraft_doc::NodeId> =
+                p.get("ids").and_then(Value::as_array).map(|a| a.iter().filter_map(figcraft_engine::params::id_of).collect()).unwrap_or_default();
             let mut params = json!({"format": "png", "scale": scale, "path": path});
             if !ids.is_empty() {
                 params["ids"] = json!(ids);
@@ -236,7 +243,18 @@ fn pointer(app: &mut FigApp, p: &Value) -> Result<Value, String> {
     };
     let f = |k: &str| p.get(k).and_then(Value::as_f64);
     let (x, y) = at(f("x"), f("y"), f("sx"), f("sy")).ok_or("pass x, y (page) or sx, sy (screen)")?;
-    let mk = |kind: PointerKind, x: f64, y: f64| PointerEvent { kind, x, y, sx: x * zoom, sy: y * zoom, shift: b(p, "shift"), alt: b(p, "alt"), cmd: b(p, "cmd"), ctrl: b(p, "ctrl"), zoom };
+    let mk = |kind: PointerKind, x: f64, y: f64| PointerEvent {
+        kind,
+        x,
+        y,
+        sx: x * zoom,
+        sy: y * zoom,
+        shift: b(p, "shift"),
+        alt: b(p, "alt"),
+        cmd: b(p, "cmd"),
+        ctrl: b(p, "ctrl"),
+        zoom,
+    };
     let kind = p.get("kind").and_then(Value::as_str).unwrap_or("click");
     let run = |app: &mut FigApp, ev: PointerEvent| app.session.pointer(&ev).map_err(|e| e.to_string());
     match kind {

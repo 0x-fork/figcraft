@@ -99,7 +99,13 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("page.list", "List pages", "{}", false, |s, _| {
             let doc = s.doc()?;
             let cur = s.page()?;
-            Ok(Value::Array(doc.pages.iter().filter_map(|p| doc.node(*p)).map(|n| json!({"id": n.id, "name": n.name, "current": n.id == cur, "children": n.children.len()})).collect()))
+            Ok(Value::Array(
+                doc.pages
+                    .iter()
+                    .filter_map(|p| doc.node(*p))
+                    .map(|n| json!({"id": n.id, "name": n.name, "current": n.id == cur, "children": n.children.len()}))
+                    .collect(),
+            ))
         }),
         spec!("guide.add", "Add guide", "{vertical (bool), offset, page?}", true, |s, p| {
             let id = id(p, "page").unwrap_or(s.page()?);

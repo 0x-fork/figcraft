@@ -17,6 +17,7 @@ pub mod params;
 pub mod snap;
 pub mod textedit;
 pub mod tools;
+pub mod vectoredit;
 
 pub use cmd::{CommandSpec, all_commands, find_command};
 pub use figcraft_doc as doc;

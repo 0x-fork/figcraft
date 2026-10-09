@@ -130,8 +130,18 @@ fn components_and_instances_sync() {
 #[test]
 fn variants_switch() {
     let mut s = sess();
-    let a = id(&s.execute("node.create", &json!({"type": "component", "x": 0, "y": 0, "width": 40, "height": 40, "name": "State=Default", "props": {"fill": "#ff0000"}})).unwrap());
-    let b = id(&s.execute("node.create", &json!({"type": "component", "x": 60, "y": 0, "width": 40, "height": 40, "name": "State=Hover", "props": {"fill": "#0000ff"}})).unwrap());
+    let a = id(&s
+        .execute(
+            "node.create",
+            &json!({"type": "component", "x": 0, "y": 0, "width": 40, "height": 40, "name": "State=Default", "props": {"fill": "#ff0000"}}),
+        )
+        .unwrap());
+    let b = id(&s
+        .execute(
+            "node.create",
+            &json!({"type": "component", "x": 60, "y": 0, "width": 40, "height": 40, "name": "State=Hover", "props": {"fill": "#0000ff"}}),
+        )
+        .unwrap());
     s.execute("component.combineVariants", &json!({"ids": [a, b]})).unwrap();
     let i = id(&s.execute("instance.create", &json!({"component": a, "x": 0, "y": 200})).unwrap());
     s.execute("instance.setProperties", &json!({"ids": [i], "properties": {"State": "Hover"}})).unwrap();
@@ -153,7 +163,8 @@ fn styles_and_variables() {
     assert_eq!(s.doc().unwrap().node(r2).unwrap().fills[0].solid_color().unwrap().to_hex(), "FF00FF");
     // Variables with modes.
     s.execute("variable.createCollection", &json!({"name": "Theme", "modes": ["Light", "Dark"]})).unwrap();
-    s.execute("variable.create", &json!({"collection": "Theme", "name": "bg", "type": "color", "values": {"Light": "#ffffff", "Dark": "#000000"}})).unwrap();
+    s.execute("variable.create", &json!({"collection": "Theme", "name": "bg", "type": "color", "values": {"Light": "#ffffff", "Dark": "#000000"}}))
+        .unwrap();
     s.execute("variable.bind", &json!({"ids": [r], "field": "fill", "variable": "bg"})).unwrap();
     assert_eq!(s.doc().unwrap().node(r).unwrap().fills[0].solid_color().unwrap().to_hex(), "FFFFFF");
     let page = s.page().unwrap();
@@ -240,7 +251,18 @@ fn every_command_survives_junk_params() {
     // which would fail this test).
     let junk = [json!({}), json!(null), json!({"ids": ["x", -1, 99999]}), json!({"id": "nope", "x": "NaN", "props": 5}), json!([1, 2, 3])];
     for spec in all_commands() {
-        if matches!(spec.id, "file.open" | "file.save" | "file.saveAs" | "file.import" | "file.export" | "file.exportSvg" | "file.placeImage" | "image.place" | "file.revert") {
+        if matches!(
+            spec.id,
+            "file.open"
+                | "file.save"
+                | "file.saveAs"
+                | "file.import"
+                | "file.export"
+                | "file.exportSvg"
+                | "file.placeImage"
+                | "image.place"
+                | "file.revert"
+        ) {
             continue;
         }
         for j in &junk {
@@ -259,4 +281,65 @@ fn parity_catalog_mostly_covered() {
     let (done, total, missing) = catalog::parity(&[]);
     assert!(total > 150);
     assert!(done as f64 / total as f64 > 0.8, "{done}/{total} missing: {missing:?}");
+}
+
+#[test]
+fn export_frames_to_pdf() {
+    let mut s = sess();
+    let a = id(&s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 200, "height": 100})).unwrap());
+    let b = id(&s.execute("frame.create", &json!({"x": 300, "y": 0, "width": 120, "height": 80})).unwrap());
+    s.execute("shape.rectangle", &json!({"x": 10, "y": 10, "width": 50, "height": 50})).unwrap();
+    let r = s.execute("file.exportFramesPdf", &json!({})).unwrap();
+    assert_eq!(r["pages"], 2);
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(r["data"].as_str().unwrap()).unwrap();
+    assert!(bytes.starts_with(b"%PDF"));
+    let text = String::from_utf8_lossy(&bytes);
+    assert_eq!(text.matches("/Type/Page").count() - text.matches("/Type/Pages").count(), 2);
+    assert!(text.contains("/MediaBox[0 0 200 100]") && text.contains("/MediaBox[0 0 120 80]"));
+    // file.export with format pdf: frames get a page each, other nodes share one.
+    let r = s.execute("file.export", &json!({"ids": [a, b], "format": "pdf"})).unwrap();
+    let bytes = base64::engine::general_purpose::STANDARD.decode(r["data"].as_str().unwrap()).unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert_eq!(text.matches("/Type/Page").count() - text.matches("/Type/Pages").count(), 2);
+    // A page without frames is refused, not panicking.
+    s.execute("page.add", &json!({})).ok();
+    let empty = s.doc().unwrap().pages.last().copied().unwrap();
+    assert!(s.execute("file.exportFramesPdf", &json!({"page": empty})).is_err());
+    assert!(s.execute("file.exportFramesPdf", &json!({"page": a})).is_err());
+}
+
+#[test]
+fn vector_edit_mode() {
+    let mut s = sess();
+    let r = id(&s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 100, "height": 100})).unwrap());
+    s.execute("vector.edit.begin", &json!({"id": r})).unwrap();
+    assert_eq!(s.doc().unwrap().node(r).unwrap().kind.type_name(), "VECTOR");
+    // Move one corner out: the box grows.
+    s.execute("vector.edit.select", &json!({"vertices": [2]})).unwrap();
+    s.execute("vector.edit.moveVertices", &json!({"dx": 50, "dy": 50})).unwrap();
+    let b = s.doc().unwrap().world_bounds(r).unwrap();
+    assert_eq!((b.width(), b.height()), (150.0, 150.0));
+    // Add a point on segment 0 and delete-heal it.
+    let v = s.execute("vector.edit.addVertex", &json!({"segment": 0, "t": 0.5})).unwrap();
+    assert!(v["vertex"].as_u64().is_some());
+    let n0 = match &s.doc().unwrap().node(r).unwrap().kind {
+        NodeKind::Vector { network } => network.vertices.len(),
+        _ => 0,
+    };
+    s.execute("vector.deleteHeal", &json!({})).unwrap();
+    let n1 = match &s.doc().unwrap().node(r).unwrap().kind {
+        NodeKind::Vector { network } => (network.vertices.len(), network.regions.len()),
+        _ => (0, 0),
+    };
+    assert_eq!(n1, (n0 - 1, 1), "healed and still closed");
+    // Pointer: drag a vertex in edit mode.
+    let before = s.doc().unwrap().world_bounds(r).unwrap();
+    s.pointer(&PointerEvent::at(PointerKind::Down, 0.0, 0.0, 1.0)).unwrap();
+    s.pointer(&PointerEvent::at(PointerKind::Move, -20.0, 0.0, 1.0)).unwrap();
+    s.pointer(&PointerEvent::at(PointerKind::Up, -20.0, 0.0, 1.0)).unwrap();
+    let after = s.doc().unwrap().world_bounds(r).unwrap();
+    assert_eq!(after.x0, before.x0 - 20.0);
+    s.execute("vector.edit.end", &json!({})).unwrap();
+    assert!(s.ds().unwrap().vector_edit.is_none());
 }

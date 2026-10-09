@@ -29,7 +29,9 @@ fn build() -> Option<Document> {
         n.stroke.align = figcraft_doc::StrokeAlign::Inside;
         if i == 2 {
             // Front card: a frame grid "#".
-            for (gx, gy, gw, gh) in [(150.0, 228.0, 14.0, 152.0), (250.0, 228.0, 14.0, 152.0), (118.0, 260.0, 178.0, 14.0), (118.0, 330.0, 178.0, 14.0)] {
+            for (gx, gy, gw, gh) in
+                [(150.0, 228.0, 14.0, 152.0), (250.0, 228.0, 14.0, 152.0), (118.0, 260.0, 178.0, 14.0), (118.0, 330.0, 178.0, 14.0)]
+            {
                 let g = d.create(p, NodeKind::Rectangle, "grid", gx, gy, gw, gh).ok()?;
                 let gn = d.get_mut(g).ok()?;
                 gn.fills = vec![Paint::solid(Color::from_hex(INK)?)];
@@ -38,7 +40,18 @@ fn build() -> Option<Document> {
         }
     }
     // Cursor.
-    let cur = figcraft_doc::VectorNetwork::from_points(&[(0.0, 0.0).into(), (0.0, 120.0).into(), (32.0, 92.0).into(), (52.0, 136.0).into(), (72.0, 128.0).into(), (52.0, 84.0).into(), (92.0, 82.0).into()], true);
+    let cur = figcraft_doc::VectorNetwork::from_points(
+        &[
+            (0.0, 0.0).into(),
+            (0.0, 120.0).into(),
+            (32.0, 92.0).into(),
+            (52.0, 136.0).into(),
+            (72.0, 128.0).into(),
+            (52.0, 84.0).into(),
+            (92.0, 82.0).into(),
+        ],
+        true,
+    );
     let c = d.create(p, NodeKind::Vector { network: cur }, "cursor", 318.0, 300.0, 92.0, 136.0).ok()?;
     let n = d.get_mut(c).ok()?;
     n.fills = vec![Paint::solid(Color::from_hex(INK)?)];

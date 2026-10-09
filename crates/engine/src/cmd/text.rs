@@ -81,7 +81,13 @@ fn toggle_italic(s: &mut Session, p: &Value) -> Result<Value> {
     let italic = all_have(s, p, TextStyle::italic);
     style(s, p, |st| {
         let w = super::props::weight_name(st.weight());
-        st.font_style = if italic { w.to_string() } else if w == "Regular" { "Italic".into() } else { format!("{w} Italic") };
+        st.font_style = if italic {
+            w.to_string()
+        } else if w == "Regular" {
+            "Italic".into()
+        } else {
+            format!("{w} Italic")
+        };
     })
 }
 
@@ -110,8 +116,10 @@ pub fn specs() -> Vec<CommandSpec> {
             let url = req_string("text.link", p, "url")?;
             style(s, p, |st| st.link = Some(url.clone()))
         }),
-        spec!("text.bulletList", "Bulleted list", "{ids?}", true, |s, p| para(s, p, |t| t.list = if t.list == ListStyle::Bulleted { ListStyle::None } else { ListStyle::Bulleted })),
-        spec!("text.numberList", "Numbered list", "{ids?}", true, |s, p| para(s, p, |t| t.list = if t.list == ListStyle::Numbered { ListStyle::None } else { ListStyle::Numbered })),
+        spec!("text.bulletList", "Bulleted list", "{ids?}", true, |s, p| para(s, p, |t| t.list =
+            if t.list == ListStyle::Bulleted { ListStyle::None } else { ListStyle::Bulleted })),
+        spec!("text.numberList", "Numbered list", "{ids?}", true, |s, p| para(s, p, |t| t.list =
+            if t.list == ListStyle::Numbered { ListStyle::None } else { ListStyle::Numbered })),
         spec!("text.alignLeft", "Align left", "{ids?}", true, |s, p| para(s, p, |t| t.align_h = TextAlignH::Left)),
         spec!("text.alignCenter", "Align center", "{ids?}", true, |s, p| para(s, p, |t| t.align_h = TextAlignH::Center)),
         spec!("text.alignRight", "Align right", "{ids?}", true, |s, p| para(s, p, |t| t.align_h = TextAlignH::Right)),
@@ -127,16 +135,20 @@ pub fn specs() -> Vec<CommandSpec> {
             style(s, p, |st| st.line_height = LineHeight::Pixels((st.line_height.resolve(st.font_size, 1.21).round() - 1.0).max(0.0)))
         }),
         spec!("text.trackingUp", "Increase letter spacing", "{ids?}", true, |s, p| {
-            style(s, p, |st| st.letter_spacing = LetterSpacing::Percent(match st.letter_spacing {
-                LetterSpacing::Percent(v) => v + 1.0,
-                LetterSpacing::Pixels(v) => v / st.font_size.max(1.0) * 100.0 + 1.0,
-            }))
+            style(s, p, |st| {
+                st.letter_spacing = LetterSpacing::Percent(match st.letter_spacing {
+                    LetterSpacing::Percent(v) => v + 1.0,
+                    LetterSpacing::Pixels(v) => v / st.font_size.max(1.0) * 100.0 + 1.0,
+                })
+            })
         }),
         spec!("text.trackingDown", "Decrease letter spacing", "{ids?}", true, |s, p| {
-            style(s, p, |st| st.letter_spacing = LetterSpacing::Percent(match st.letter_spacing {
-                LetterSpacing::Percent(v) => v - 1.0,
-                LetterSpacing::Pixels(v) => v / st.font_size.max(1.0) * 100.0 - 1.0,
-            }))
+            style(s, p, |st| {
+                st.letter_spacing = LetterSpacing::Percent(match st.letter_spacing {
+                    LetterSpacing::Percent(v) => v - 1.0,
+                    LetterSpacing::Pixels(v) => v / st.font_size.max(1.0) * 100.0 - 1.0,
+                })
+            })
         }),
         spec!("text.caseOriginal", "Original case", "{ids?}", true, |s, p| style(s, p, |st| st.case = TextCase::Original)),
         spec!("text.caseUpper", "Uppercase", "{ids?}", true, |s, p| style(s, p, |st| st.case = TextCase::Upper)),
@@ -153,25 +165,31 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             ok()
         }),
-        spec!("text.style", "Style text range", "{id?, start?, end?, fontFamily?, fontStyle?, fontWeight?, fontSize?, lineHeight?, letterSpacing?, textDecoration?, textCase?, hyperlink?, textFills?}", true, |s, p| {
-            let ids = req_targets("text.style", s, p)?;
-            let m = p.as_object().cloned().unwrap_or_default();
-            let doc = s.doc_mut()?;
-            for i in ids {
-                let n = doc.get_mut(i)?;
-                let NodeKind::Text(t) = &mut n.kind else { return Err(bad("text.style", format!("{i} is not text"))) };
-                let len = t.char_count();
-                let a = num(p, "start").map(|v| v.max(0.0) as usize).unwrap_or(0).min(len);
-                let b = num(p, "end").map(|v| v.max(0.0) as usize).unwrap_or(len).min(len);
-                for (k, v) in &m {
-                    if matches!(k.as_str(), "id" | "ids" | "start" | "end") {
-                        continue;
+        spec!(
+            "text.style",
+            "Style text range",
+            "{id?, start?, end?, fontFamily?, fontStyle?, fontWeight?, fontSize?, lineHeight?, letterSpacing?, textDecoration?, textCase?, hyperlink?, textFills?}",
+            true,
+            |s, p| {
+                let ids = req_targets("text.style", s, p)?;
+                let m = p.as_object().cloned().unwrap_or_default();
+                let doc = s.doc_mut()?;
+                for i in ids {
+                    let n = doc.get_mut(i)?;
+                    let NodeKind::Text(t) = &mut n.kind else { return Err(bad("text.style", format!("{i} is not text"))) };
+                    let len = t.char_count();
+                    let a = num(p, "start").map(|v| v.max(0.0) as usize).unwrap_or(0).min(len);
+                    let b = num(p, "end").map(|v| v.max(0.0) as usize).unwrap_or(len).min(len);
+                    for (k, v) in &m {
+                        if matches!(k.as_str(), "id" | "ids" | "start" | "end") {
+                            continue;
+                        }
+                        super::props::apply_text_style("text.style", t, a, b, k, v)?;
                     }
-                    super::props::apply_text_style("text.style", t, a, b, k, v)?;
                 }
+                ok()
             }
-            ok()
-        }),
+        ),
         spec!("text.edit.begin", "Edit text", "{id, caret? (char index; default select all)}", false, |s, p| {
             let id = req_id("text.edit.begin", p, "id")?;
             let caret = num(p, "caret").map(|c| c.max(0.0) as usize);
@@ -183,11 +201,17 @@ pub fn specs() -> Vec<CommandSpec> {
             textedit::insert(s, &t)?;
             ok()
         }),
-        spec!("text.edit.key", "Text key", "{key: Backspace|Delete|Left|Right|Up|Down|Home|End|Enter|Escape|SelectAll, shift?, alt?, cmd?}", true, |s, p| {
-            let k = req_string("text.edit.key", p, "key")?;
-            textedit::key(s, &k, boolean(p, "shift").unwrap_or(false), boolean(p, "alt").unwrap_or(false), boolean(p, "cmd").unwrap_or(false))?;
-            ok()
-        }),
+        spec!(
+            "text.edit.key",
+            "Text key",
+            "{key: Backspace|Delete|Left|Right|Up|Down|Home|End|Enter|Escape|SelectAll, shift?, alt?, cmd?}",
+            true,
+            |s, p| {
+                let k = req_string("text.edit.key", p, "key")?;
+                textedit::key(s, &k, boolean(p, "shift").unwrap_or(false), boolean(p, "alt").unwrap_or(false), boolean(p, "cmd").unwrap_or(false))?;
+                ok()
+            }
+        ),
         spec!("text.edit.caret", "Set caret", "{index, extend?}", false, |s, p| {
             let i = req_num("text.edit.caret", p, "index")?.max(0.0) as usize;
             textedit::set_caret(s, i, boolean(p, "extend").unwrap_or(false))?;

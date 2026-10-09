@@ -15,7 +15,13 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("edit.undo", "Undo", "{}", false, |s, _| Ok(json!({"undone": s.undo()?}))),
         spec!("edit.redo", "Redo", "{}", false, |s, _| Ok(json!({"redone": s.redo()?}))),
         spec!("edit.delete", "Delete", "{ids?}", true, delete),
-        spec!("edit.duplicate", "Duplicate", "{ids?, dx?, dy? (offset; default 0 for frames-in-place... Figma offsets top-level frames to the right)}", true, duplicate),
+        spec!(
+            "edit.duplicate",
+            "Duplicate",
+            "{ids?, dx?, dy? (offset; default 0 for frames-in-place... Figma offsets top-level frames to the right)}",
+            true,
+            duplicate
+        ),
         spec!("edit.copy", "Copy", "{ids?}", false, copy),
         spec!("edit.cut", "Cut", "{ids?}", true, cut),
         spec!("edit.paste", "Paste", "{parent?, x?, y? (page coordinates of the pasted top-left)}", true, paste),
@@ -23,7 +29,13 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("edit.pasteReplace", "Paste to replace", "{ids?}", true, paste_replace),
         spec!("edit.copyProperties", "Copy properties", "{id?}", false, copy_props),
         spec!("edit.pasteProperties", "Paste properties", "{ids?}", true, paste_props),
-        spec!("edit.findReplace", "Find and replace", "{find, replace? (text layers), layerNames? (bool), select? (default true)}", true, find_replace),
+        spec!(
+            "edit.findReplace",
+            "Find and replace",
+            "{find, replace? (text layers), layerNames? (bool), select? (default true)}",
+            true,
+            find_replace
+        ),
         spec!("edit.setDefaultProperties", "Set default properties", "{id?}", false, |s, p| {
             let id = targets(s, p).first().copied().ok_or_else(|| bad("edit.setDefaultProperties", "select a layer"))?;
             let v = copy_props_of(s.doc()?, id);
@@ -70,19 +82,33 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("select.previous", "Select previous sibling", "{}", false, |s, _| select_sibling(s, -1)),
         spec!("select.matching", "Select matching layers", "{}", false, select_matching),
         spec!("select.sameFill", "Select same fill", "{}", false, |s, _| select_same(s, |a, b| a.fills == b.fills && !a.fills.is_empty())),
-        spec!("select.sameStroke", "Select same stroke", "{}", false, |s, _| select_same(s, |a, b| a.strokes == b.strokes && a.stroke == b.stroke && !a.strokes.is_empty())),
+        spec!("select.sameStroke", "Select same stroke", "{}", false, |s, _| select_same(s, |a, b| a.strokes == b.strokes
+            && a.stroke == b.stroke
+            && !a.strokes.is_empty())),
         spec!("select.sameEffect", "Select same effect", "{}", false, |s, _| select_same(s, |a, b| a.effects == b.effects && !a.effects.is_empty())),
         spec!("select.sameText", "Select same text properties", "{}", false, |s, _| {
             select_same(s, |a, b| matches!((&a.kind, &b.kind), (NodeKind::Text(x), NodeKind::Text(y)) if x.style == y.style))
         }),
         spec!("select.sameFont", "Select same font", "{}", false, |s, _| {
-            select_same(s, |a, b| matches!((&a.kind, &b.kind), (NodeKind::Text(x), NodeKind::Text(y)) if x.style.font_family == y.style.font_family && x.style.font_style == y.style.font_style))
+            select_same(
+                s,
+                |a, b| matches!((&a.kind, &b.kind), (NodeKind::Text(x), NodeKind::Text(y)) if x.style.font_family == y.style.font_family && x.style.font_style == y.style.font_style),
+            )
         }),
         spec!("select.sameInstance", "Select same instance", "{}", false, |s, _| {
-            select_same(s, |a, b| matches!((&a.kind, &b.kind), (NodeKind::Instance { component: x, .. }, NodeKind::Instance { component: y, .. }) if x == y))
+            select_same(
+                s,
+                |a, b| matches!((&a.kind, &b.kind), (NodeKind::Instance { component: x, .. }, NodeKind::Instance { component: y, .. }) if x == y),
+            )
         }),
         spec!("select.sameProperties", "Select same properties", "{}", false, |s, _| {
-            select_same(s, |a, b| a.kind.type_name() == b.kind.type_name() && a.fills == b.fills && a.strokes == b.strokes && a.effects == b.effects && a.corners == b.corners)
+            select_same(s, |a, b| {
+                a.kind.type_name() == b.kind.type_name()
+                    && a.fills == b.fills
+                    && a.strokes == b.strokes
+                    && a.effects == b.effects
+                    && a.corners == b.corners
+            })
         }),
         spec!("select.byName", "Select layers by name", "{query, page? (default current; \"all\" for every page)}", false, |s, p| {
             let q = req_string("select.byName", p, "query")?;
@@ -101,7 +127,13 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             ok()
         }),
-        spec!("object.batchRename", "Batch rename", "{ids?, find?, replace?, name? (pattern: $& = current name, $N or $n = number asc/desc)}", true, batch_rename),
+        spec!(
+            "object.batchRename",
+            "Batch rename",
+            "{ids?, find?, replace?, name? (pattern: $& = current name, $N or $n = number asc/desc)}",
+            true,
+            batch_rename
+        ),
         spec!("object.toggleVisible", "Show/Hide selection", "{ids?, visible?}", true, |s, p| toggle(s, p, "visible")),
         spec!("object.toggleLock", "Lock/Unlock selection", "{ids?, locked?}", true, |s, p| toggle(s, p, "locked")),
         spec!("object.hideOthers", "Hide other layers", "{}", true, hide_others),
@@ -146,7 +178,13 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("stroke.remove", "Remove stroke", "{ids?, index}", true, |s, p| paint_list(s, p, false, false)),
         spec!("fill.set", "Set fill", "{ids?, index?, paint | color, opacity?, visible?, blend?}", true, |s, p| paint_set(s, p, true)),
         spec!("stroke.set", "Set stroke", "{ids?, index?, paint | color, opacity?, visible?, blend?}", true, |s, p| paint_set(s, p, false)),
-        spec!("effect.add", "Add effect", "{ids?, type? (dropShadow|innerShadow|layerBlur|backgroundBlur|noise|texture), effect? {..}}", true, effect_add),
+        spec!(
+            "effect.add",
+            "Add effect",
+            "{ids?, type? (dropShadow|innerShadow|layerBlur|backgroundBlur|noise|texture), effect? {..}}",
+            true,
+            effect_add
+        ),
         spec!("effect.remove", "Remove effect", "{ids?, index}", true, |s, p| {
             let i = req_num("effect.remove", p, "index")? as usize;
             for id in req_targets("effect.remove", s, p)? {
@@ -185,13 +223,19 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             ok()
         }),
-        spec!("export.add", "Add export setting", "{ids?, setting? {size:{by:scale,value:2}, suffix, format: png|jpg|svg|pdf|webp}}", true, |s, p| {
-            let e: ExportSetting = parse("export.add", p, "setting")?.unwrap_or_default();
-            for id in req_targets("export.add", s, p)? {
-                s.doc_mut()?.get_mut(id)?.exports.push(e.clone());
+        spec!(
+            "export.add",
+            "Add export setting",
+            "{ids?, setting? {size:{by:scale,value:2}, suffix, format: png|jpg|svg|pdf|webp}}",
+            true,
+            |s, p| {
+                let e: ExportSetting = parse("export.add", p, "setting")?.unwrap_or_default();
+                for id in req_targets("export.add", s, p)? {
+                    s.doc_mut()?.get_mut(id)?.exports.push(e.clone());
+                }
+                ok()
             }
-            ok()
-        }),
+        ),
         spec!("export.remove", "Remove export setting", "{ids?, index}", true, |s, p| {
             let i = req_num("export.remove", p, "index")? as usize;
             for id in req_targets("export.remove", s, p)? {
@@ -205,7 +249,9 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("command.batch", "Run several commands", "{label?, commands: [{command, params}]} (one undo step)", false, |s, p| {
             let label = string(p, "label").unwrap_or_else(|| "Batch".into());
             let cmds: Vec<(String, Value)> = match get(p, "commands") {
-                Some(Value::Array(a)) => a.iter().filter_map(|c| Some((c.get("command")?.as_str()?.to_string(), c.get("params").cloned().unwrap_or(json!({}))))).collect(),
+                Some(Value::Array(a)) => {
+                    a.iter().filter_map(|c| Some((c.get("command")?.as_str()?.to_string(), c.get("params").cloned().unwrap_or(json!({}))))).collect()
+                }
                 _ => return Err(bad("command.batch", "`commands` must be an array")),
             };
             Ok(Value::Array(s.batch(&label, &cmds)?))
@@ -401,7 +447,9 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     let sel = s.selection();
     let doc = s.doc()?;
     let target = id(p, "parent").or_else(|| {
-        sel.first().copied().filter(|i| sel.len() == 1 && doc.node(*i).is_some_and(|n| n.kind.is_frame_like() && !matches!(n.kind, NodeKind::Instance { .. })))
+        sel.first()
+            .copied()
+            .filter(|i| sel.len() == 1 && doc.node(*i).is_some_and(|n| n.kind.is_frame_like() && !matches!(n.kind, NodeKind::Instance { .. })))
     });
     let parent = target.unwrap_or(page);
     let at = match (num(p, "x"), num(p, "y")) {
@@ -529,7 +577,8 @@ fn select_inverse(s: &mut Session, _p: &Value) -> Result<Value> {
     let doc = s.doc()?;
     let sel = s.selection();
     let parent = sel.first().and_then(|i| doc.node(*i)).and_then(|n| n.parent).unwrap_or(s.page()?);
-    let ids: Vec<NodeId> = doc.get(parent)?.children.iter().copied().filter(|c| !sel.contains(c) && doc.node(*c).is_some_and(|n| !n.locked)).collect();
+    let ids: Vec<NodeId> =
+        doc.get(parent)?.children.iter().copied().filter(|c| !sel.contains(c) && doc.node(*c).is_some_and(|n| !n.locked)).collect();
     s.set_selection(ids.clone());
     Ok(json!({"selection": ids}))
 }
@@ -592,7 +641,8 @@ fn select_matching(s: &mut Session, _p: &Value) -> Result<Value> {
     let Some(first) = sel.first().and_then(|i| doc.node(*i)) else { return Ok(json!({"selection": []})) };
     let (name, ty) = (first.name.clone(), first.kind.type_name());
     let page = s.page()?;
-    let ids: Vec<NodeId> = doc.subtree(page).into_iter().filter(|i| doc.node(*i).is_some_and(|n| n.name == name && n.kind.type_name() == ty)).collect();
+    let ids: Vec<NodeId> =
+        doc.subtree(page).into_iter().filter(|i| doc.node(*i).is_some_and(|n| n.name == name && n.kind.type_name() == ty)).collect();
     s.set_selection(ids.clone());
     Ok(json!({"selection": ids}))
 }
@@ -648,11 +698,14 @@ fn hide_others(s: &mut Session, _p: &Value) -> Result<Value> {
     let sel = s.selection();
     let page = s.page()?;
     let doc = s.doc_mut()?;
-    let keep: BTreeSet<NodeId> = sel.iter().flat_map(|i| {
-        let mut v = doc.ancestors(*i);
-        v.push(*i);
-        v
-    }).collect();
+    let keep: BTreeSet<NodeId> = sel
+        .iter()
+        .flat_map(|i| {
+            let mut v = doc.ancestors(*i);
+            v.push(*i);
+            v
+        })
+        .collect();
     let tops: Vec<NodeId> = doc.get(page)?.children.clone();
     for t in tops {
         if !keep.contains(&t) {
@@ -844,7 +897,9 @@ fn effect_add(s: &mut Session, p: &Value) -> Result<Value> {
             "innershadow" => Effect::inner_shadow(),
             "layerblur" | "blur" => Effect::layer_blur(),
             "backgroundblur" => Effect::background_blur(),
-            "noise" => Effect { kind: EffectKind::Noise { size: 0.5, density: 0.5, color: figcraft_color::Color::new(0.0, 0.0, 0.0, 0.25) }, visible: true },
+            "noise" => {
+                Effect { kind: EffectKind::Noise { size: 0.5, density: 0.5, color: figcraft_color::Color::new(0.0, 0.0, 0.0, 0.25) }, visible: true }
+            }
             "texture" => Effect { kind: EffectKind::Texture { size: 0.5, radius: 4.0 }, visible: true },
             other => return Err(bad("effect.add", format!("unknown effect type `{other}`"))),
         },

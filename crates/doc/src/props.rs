@@ -121,8 +121,12 @@ impl Default for Shadow {
 pub enum EffectKind {
     DropShadow(Shadow),
     InnerShadow(Shadow),
-    LayerBlur { radius: f64 },
-    BackgroundBlur { radius: f64 },
+    LayerBlur {
+        radius: f64,
+    },
+    BackgroundBlur {
+        radius: f64,
+    },
     /// Monotone grain over the layer.
     Noise {
         #[serde(default = "noise_size")]
@@ -392,7 +396,16 @@ pub struct LayoutGrid {
 
 impl Default for LayoutGrid {
     fn default() -> Self {
-        Self { kind: GridKind::Grid, size: 10.0, count: 5, gutter: 20.0, offset: 0.0, align: GridAlign::Stretch, color: Color::new(1.0, 0.0, 0.0, 0.1), visible: true }
+        Self {
+            kind: GridKind::Grid,
+            size: 10.0,
+            count: 5,
+            gutter: 20.0,
+            offset: 0.0,
+            align: GridAlign::Stretch,
+            color: Color::new(1.0, 0.0, 0.0, 0.1),
+            visible: true,
+        }
     }
 }
 

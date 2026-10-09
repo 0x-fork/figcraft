@@ -58,7 +58,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let mut exit = false;
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| {
         let rect = ui.max_rect();
-        let Ok(doc) = app.session.doc().map(|d| d.clone()) else { return };
+        let Ok(doc) = app.session.doc().cloned() else { return };
         let Some(frame) = doc.node(pres.current).cloned() else {
             exit = true;
             return;
@@ -68,15 +68,13 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         let scale = (f64::from(avail.width()) / frame.width.max(1.0)).min(f64::from(avail.height()) / frame.height.max(1.0)).min(1.0);
         let ppp = f64::from(ctx.pixels_per_point());
         let need = pres.texture.as_ref().is_none_or(|(id, _, s)| *id != pres.current || (*s - scale * ppp).abs() > 1e-6);
-        if need {
-            if let Some(tex) = frame_texture(app, &ctx, pres.current, scale * ppp) {
-                pres.texture = Some((pres.current, tex, scale * ppp));
-            }
+        if need && let Some(tex) = frame_texture(app, &ctx, pres.current, scale * ppp) {
+            pres.texture = Some((pres.current, tex, scale * ppp));
         }
         let size = vec2((frame.width * scale) as f32, (frame.height * scale) as f32);
         let target = Rect::from_center_size(rect.center(), size);
         let mut t_anim = 1.0;
-        if let Some((_, tr, start, dur, easing)) = pres.anim.clone() {
+        if let Some((_, tr, start, dur, easing)) = pres.anim {
             let raw = ((now - start) / dur).clamp(0.0, 1.0);
             t_anim = easing.eval(raw) as f32;
             if raw >= 1.0 {
@@ -149,7 +147,9 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
                 let trigger_hit = match it.trigger {
                     Trigger::OnClick | Trigger::MouseUp | Trigger::MouseDown | Trigger::OnPress => over && click.clicked(),
                     Trigger::OnHover | Trigger::MouseEnter => over,
-                    Trigger::AfterDelay { ms } => *id == pres.current && pres.anim.is_none() && pres.delay_started >= 0.0 && now - pres.delay_started > f64::from(ms) / 1000.0,
+                    Trigger::AfterDelay { ms } => {
+                        *id == pres.current && pres.anim.is_none() && pres.delay_started >= 0.0 && now - pres.delay_started > f64::from(ms) / 1000.0
+                    }
                     _ => false,
                 };
                 if !trigger_hit || fired {
@@ -190,7 +190,12 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         if !fired && click.clicked() {
             // Clicking empty space flashes hotspots (Figma behaviour): outline them briefly.
             for (_, r) in &hot {
-                ui.painter().rect_stroke(*r, CornerRadius::same(2), egui::Stroke::new(2.0, crate::theme::ACCENT.gamma_multiply(0.6)), egui::StrokeKind::Outside);
+                ui.painter().rect_stroke(
+                    *r,
+                    CornerRadius::same(2),
+                    egui::Stroke::new(2.0, crate::theme::ACCENT.gamma_multiply(0.6)),
+                    egui::StrokeKind::Outside,
+                );
             }
         }
         // Overlay frame on top.
@@ -210,7 +215,13 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         let bar = Rect::from_min_size(rect.min, vec2(rect.width(), 40.0));
         ui.painter().rect_filled(bar, CornerRadius::ZERO, Color32::from_black_alpha(140));
         ui.painter().text(pos2(bar.min.x + 16.0, bar.center().y), Align2::LEFT_CENTER, &frame.name, semibold(12.0), Color32::WHITE);
-        ui.painter().text(pos2(bar.max.x - 16.0, bar.center().y), Align2::RIGHT_CENTER, "Esc to close · ← → for frames", regular(11.0), Color32::from_gray(200));
+        ui.painter().text(
+            pos2(bar.max.x - 16.0, bar.center().y),
+            Align2::RIGHT_CENTER,
+            "Esc to close · ← → for frames",
+            regular(11.0),
+            Color32::from_gray(200),
+        );
         if pres.delay_started < 0.0 {
             pres.delay_started = now;
         }
@@ -223,7 +234,10 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             if right && let Some(n) = frames.get(i + 1) {
                 navigate(&mut pres, *n, Transition::Instant, 0.0, Default::default(), now);
             }
-            if left && i > 0 && let Some(n) = frames.get(i - 1) {
+            if left
+                && i > 0
+                && let Some(n) = frames.get(i - 1)
+            {
                 navigate(&mut pres, *n, Transition::Instant, 0.0, Default::default(), now);
             }
         }

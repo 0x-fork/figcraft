@@ -194,7 +194,12 @@ impl NodeKind {
     pub fn is_shape(&self) -> bool {
         matches!(
             self,
-            NodeKind::Rectangle | NodeKind::Ellipse { .. } | NodeKind::Polygon { .. } | NodeKind::Star { .. } | NodeKind::Line | NodeKind::Vector { .. }
+            NodeKind::Rectangle
+                | NodeKind::Ellipse { .. }
+                | NodeKind::Polygon { .. }
+                | NodeKind::Star { .. }
+                | NodeKind::Line
+                | NodeKind::Vector { .. }
         )
     }
 
@@ -419,7 +424,7 @@ impl Node {
                 StrokeAlign::Outside => w,
             };
             let caps = if self.stroke.cap_start.is_arrow() || self.stroke.cap_end.is_arrow() { w * 3.0 } else { w };
-            base.max(if matches!(self.kind, NodeKind::Line | NodeKind::Vector { .. }) { caps } else { 0.0 }) * (self.stroke.miter_limit.max(1.0)).min(4.0)
+            base.max(if matches!(self.kind, NodeKind::Line | NodeKind::Vector { .. }) { caps } else { 0.0 }) * self.stroke.miter_limit.clamp(1.0, 4.0)
         } else {
             0.0
         };

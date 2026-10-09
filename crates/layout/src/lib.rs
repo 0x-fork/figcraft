@@ -11,7 +11,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use figcraft_doc::{
-    AutoLayout, CrossAlign, Document, GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, NodeId, NodeKind, Sizing, TextAutoResize, VConstraint,
+    AutoLayout, CrossAlign, Document, GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, NodeId, NodeKind, Sizing, TextAutoResize,
+    VConstraint,
 };
 use figcraft_geom::{Affine, Point, Rect};
 
@@ -158,7 +159,8 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
         let (w, h) = outer_size(doc, *c);
         let cl = &n.child_layout;
         let (sm, sc) = if horizontal { (cl.sizing_h, cl.sizing_v) } else { (cl.sizing_v, cl.sizing_h) };
-        let (min_main, max_main, min_cross, max_cross) = if horizontal { (cl.min_w, cl.max_w, cl.min_h, cl.max_h) } else { (cl.min_h, cl.max_h, cl.min_w, cl.max_w) };
+        let (min_main, max_main, min_cross, max_cross) =
+            if horizontal { (cl.min_w, cl.max_w, cl.min_h, cl.max_h) } else { (cl.min_h, cl.max_h, cl.min_w, cl.max_w) };
         items.push(Item {
             id: *c,
             main: if horizontal { w } else { h },
@@ -308,7 +310,9 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
 }
 
 fn resize_child(doc: &mut Document, id: NodeId, w: f64, h: f64, m: &dyn Measure) {
-    let is_text_height = doc.node(id).is_some_and(|n| matches!(&n.kind, NodeKind::Text(t) if t.auto_resize != TextAutoResize::None && t.auto_resize != TextAutoResize::Truncate));
+    let is_text_height = doc
+        .node(id)
+        .is_some_and(|n| matches!(&n.kind, NodeKind::Text(t) if t.auto_resize != TextAutoResize::None && t.auto_resize != TextAutoResize::Truncate));
     if is_text_height {
         if let Some(n) = doc.node_mut(id)
             && let NodeKind::Text(t) = &mut n.kind

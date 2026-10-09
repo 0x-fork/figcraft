@@ -221,7 +221,11 @@ fn flatten(s: &mut Session, p: &Value) -> Result<Value> {
     let mut v = Node::new(vid, NodeKind::Vector { network: net }, name, bb.width(), bb.height());
     v.transform = Affine::translate((bb.x0, bb.y0));
     if let Some(f) = first {
-        v.fills = if matches!(f.kind, NodeKind::Group | NodeKind::Line) && f.fills.is_empty() { vec![Paint::solid(Color::DEFAULT_SHAPE)] } else { f.fills.clone() };
+        v.fills = if matches!(f.kind, NodeKind::Group | NodeKind::Line) && f.fills.is_empty() {
+            vec![Paint::solid(Color::DEFAULT_SHAPE)]
+        } else {
+            f.fills.clone()
+        };
         v.strokes = f.strokes.clone();
         v.stroke = StrokeProps { align: StrokeAlign::Center, ..f.stroke.clone() };
         v.effects = f.effects.clone();
@@ -296,7 +300,8 @@ fn outline_stroke(s: &mut Session, p: &Value) -> Result<Value> {
 /// Infer direction, gap and padding from where children are (Figma's "Add auto layout").
 fn infer_layout(doc: &Document, frame: NodeId) -> AutoLayout {
     let Some(f) = doc.node(frame) else { return AutoLayout::default() };
-    let boxes: Vec<Rect> = f.children.iter().filter_map(|c| doc.node(*c)).map(|c| figcraft_geom::transform_rect_bbox(c.transform, c.local_rect())).collect();
+    let boxes: Vec<Rect> =
+        f.children.iter().filter_map(|c| doc.node(*c)).map(|c| figcraft_geom::transform_rect_bbox(c.transform, c.local_rect())).collect();
     if boxes.is_empty() {
         return AutoLayout { padding: [10.0; 4], gap: 10.0, ..Default::default() };
     }
@@ -305,7 +310,8 @@ fn infer_layout(doc: &Document, frame: NodeId) -> AutoLayout {
     let vertical = span_y > span_x;
     let mut sorted = boxes.clone();
     sorted.sort_by(|a, b| if vertical { a.y0.total_cmp(&b.y0) } else { a.x0.total_cmp(&b.x0) });
-    let gaps: Vec<f64> = sorted.windows(2).filter_map(|w| Some(if vertical { w.get(1)?.y0 - w.first()?.y1 } else { w.get(1)?.x0 - w.first()?.x1 })).collect();
+    let gaps: Vec<f64> =
+        sorted.windows(2).filter_map(|w| Some(if vertical { w.get(1)?.y0 - w.first()?.y1 } else { w.get(1)?.x0 - w.first()?.x1 })).collect();
     let gap = if gaps.is_empty() { 10.0 } else { (gaps.iter().sum::<f64>() / gaps.len() as f64).max(0.0).round() };
     let all = boxes.iter().copied().reduce(|a, b| a.union(b)).unwrap_or_default();
     let pad = [all.y0.max(0.0), (f.width - all.x1).max(0.0), (f.height - all.y1).max(0.0), all.x0.max(0.0)].map(f64::round);
@@ -425,7 +431,11 @@ fn offset_path(s: &mut Session, p: &Value) -> Result<Value> {
         let Some((path, _)) = figcraft_render::node_outline(doc, &n) else { continue };
         let props = StrokeProps { weight: d.abs() * 2.0, join: StrokeJoin::Round, align: StrokeAlign::Center, ..Default::default() };
         let ring = figcraft_pathops::stroke_center(&path, d.abs() * 2.0, &props);
-        let res = if d >= 0.0 { figcraft_pathops::boolean(&[path, ring], BoolOp::Union) } else { figcraft_pathops::boolean(&[path, ring], BoolOp::Subtract) };
+        let res = if d >= 0.0 {
+            figcraft_pathops::boolean(&[path, ring], BoolOp::Union)
+        } else {
+            figcraft_pathops::boolean(&[path, ring], BoolOp::Subtract)
+        };
         let Ok(mut res) = res else { continue };
         let bb = res.bounding_box();
         res.apply_affine(Affine::translate((-bb.x0, -bb.y0)));
@@ -435,7 +445,7 @@ fn offset_path(s: &mut Session, p: &Value) -> Result<Value> {
             r.winding = WindingRule::EvenOdd;
         }
         nm.kind = NodeKind::Vector { network: net };
-        nm.transform = nm.transform * Affine::translate((bb.x0, bb.y0));
+        nm.transform *= Affine::translate((bb.x0, bb.y0));
         nm.width = bb.width();
         nm.height = bb.height();
     }

@@ -130,7 +130,8 @@ pub fn load_bytes(bytes: &[u8]) -> Result<(Document, Vec<String>), FormatError> 
             continue;
         }
         let hash = name.trim_start_matches("images/").to_string();
-        let (w, h) = image::ImageReader::new(std::io::Cursor::new(&data)).with_guessed_format().ok().and_then(|r| r.into_dimensions().ok()).unwrap_or((0, 0));
+        let (w, h) =
+            image::ImageReader::new(std::io::Cursor::new(&data)).with_guessed_format().ok().and_then(|r| r.into_dimensions().ok()).unwrap_or((0, 0));
         doc.images.insert(hash, ImageData { bytes: Arc::new(data), width: w, height: h });
     }
     Ok((doc, issues))

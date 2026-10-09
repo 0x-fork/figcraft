@@ -95,7 +95,15 @@ fn grid_mode() {
     let mut d = Document::new("t");
     let p = d.first_page().unwrap();
     let f = d.create(p, NodeKind::Frame, "F", 0.0, 0.0, 210.0, 110.0).unwrap();
-    d.get_mut(f).unwrap().layout = Some(AutoLayout { mode: LayoutMode::Grid, grid_columns: 2, grid_rows: 2, gap: 10.0, cross_gap: 10.0, padding: [0.0; 4], ..Default::default() });
+    d.get_mut(f).unwrap().layout = Some(AutoLayout {
+        mode: LayoutMode::Grid,
+        grid_columns: 2,
+        grid_rows: 2,
+        gap: 10.0,
+        cross_gap: 10.0,
+        padding: [0.0; 4],
+        ..Default::default()
+    });
     let ids: Vec<NodeId> = (0..4).map(|i| d.create(f, NodeKind::Rectangle, &format!("R{i}"), 0.0, 0.0, 10.0, 10.0).unwrap()).collect();
     layout_frame(&mut d, f, &NoMeasure);
     assert_eq!(pos(&d, ids[3]).0, 110.0);

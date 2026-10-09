@@ -238,7 +238,8 @@ pub fn arrowhead(path: &BezPath, cap: StrokeCap, weight: f64, at_end: bool) -> O
             l.move_to(tip - dir * s + n * (s * 0.7));
             l.line_to(tip);
             l.line_to(tip - dir * s - n * (s * 0.7));
-            let props = StrokeProps { weight, cap_start: StrokeCap::Round, cap_end: StrokeCap::Round, join: StrokeJoin::Round, ..StrokeProps::default() };
+            let props =
+                StrokeProps { weight, cap_start: StrokeCap::Round, cap_end: StrokeCap::Round, join: StrokeJoin::Round, ..StrokeProps::default() };
             return Some(stroke_center(&l, weight, &props));
         }
         StrokeCap::CircleFilled => {

@@ -34,7 +34,9 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         let cy = main.min.y + 48.0;
         let mut new_file = false;
         let mut open = false;
-        for (icon, title, sub) in [(Icon::Plus, "New design file", "Start from a blank canvas"), (Icon::Page, "Open file", "Open .figcraft, .svg or images")] {
+        for (icon, title, sub) in
+            [(Icon::Plus, "New design file", "Start from a blank canvas"), (Icon::Page, "Open file", "Open .figcraft, .svg or images")]
+        {
             let r = Rect::from_min_size(pos2(x, cy), vec2(260.0, 72.0));
             let resp = ui.interact(r, ui.id().with(("card", title)), Sense::click());
             ui.painter().rect_filled(r, CornerRadius::same(8), if resp.hovered() { t.hover } else { t.panel });

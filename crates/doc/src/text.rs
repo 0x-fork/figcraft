@@ -5,16 +5,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "unit", content = "value", rename_all = "camelCase")]
+#[derive(Default)]
 pub enum LineHeight {
+    #[default]
     Auto,
     Pixels(f64),
     Percent(f64),
-}
-
-impl Default for LineHeight {
-    fn default() -> Self {
-        LineHeight::Auto
-    }
 }
 
 impl LineHeight {

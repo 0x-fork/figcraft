@@ -30,7 +30,11 @@ fn zoom_to(s: &mut Session, z: f64) -> Result<Value> {
 const STEPS: &[f64] = &[0.02, 0.03, 0.06, 0.13, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0];
 
 fn step(z: f64, up: bool) -> f64 {
-    if up { STEPS.iter().copied().find(|s| *s > z * 1.001).unwrap_or(256.0) } else { STEPS.iter().rev().copied().find(|s| *s < z * 0.999).unwrap_or(0.02) }
+    if up {
+        STEPS.iter().copied().find(|s| *s > z * 1.001).unwrap_or(256.0)
+    } else {
+        STEPS.iter().rev().copied().find(|s| *s < z * 0.999).unwrap_or(0.02)
+    }
 }
 
 fn zoom_frame(s: &mut Session, dir: i64) -> Result<Value> {
@@ -174,11 +178,17 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("help.about", "About FigCraft", "{}", false, |s, _| ui(s, "dialog.about")),
         spec!("help.page", "Help page", "{}", false, |s, _| ui(s, "open.help")),
         spec!("libraries.open", "Libraries", "{}", false, |s, _| ui(s, "dialog.libraries")),
-        spec!("tool.set", "Choose tool", "{tool: move|scale|hand|frame|section|slice|rectangle|line|arrow|ellipse|polygon|star|pen|pencil|text|comment}", false, |s, p| {
-            let t = req_string("tool.set", p, "tool")?;
-            let t = ToolId::from_id(&t).ok_or_else(|| bad("tool.set", format!("unknown tool `{t}`")))?;
-            tool(s, t)
-        }),
+        spec!(
+            "tool.set",
+            "Choose tool",
+            "{tool: move|scale|hand|frame|section|slice|rectangle|line|arrow|ellipse|polygon|star|pen|pencil|text|comment}",
+            false,
+            |s, p| {
+                let t = req_string("tool.set", p, "tool")?;
+                let t = ToolId::from_id(&t).ok_or_else(|| bad("tool.set", format!("unknown tool `{t}`")))?;
+                tool(s, t)
+            }
+        ),
         spec!("tool.move", "Move", "{}", false, |s, _| tool(s, ToolId::Move)),
         spec!("tool.scale", "Scale", "{}", false, |s, _| tool(s, ToolId::Scale)),
         spec!("tool.hand", "Hand", "{}", false, |s, _| tool(s, ToolId::Hand)),

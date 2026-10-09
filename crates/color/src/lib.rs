@@ -114,7 +114,11 @@ impl Color {
             let parts = css_args(inner);
             let num = |i: usize| -> Option<f32> {
                 let p = parts.get(i)?;
-                if let Some(pc) = p.strip_suffix('%') { pc.trim().parse::<f32>().ok().map(|v| v / 100.0) } else { p.parse::<f32>().ok().map(|v| v / 255.0) }
+                if let Some(pc) = p.strip_suffix('%') {
+                    pc.trim().parse::<f32>().ok().map(|v| v / 100.0)
+                } else {
+                    p.parse::<f32>().ok().map(|v| v / 255.0)
+                }
             };
             let alpha = parts.get(3).and_then(|a| parse_alpha(a)).unwrap_or(1.0);
             return Some(Self::new(num(0)?, num(1)?, num(2)?, alpha));
@@ -227,8 +231,12 @@ impl Gradient {
 
     /// Stops sorted by position with NaNs removed; at least one stop.
     pub fn sorted_stops(&self) -> Vec<ColorStop> {
-        let mut s: Vec<ColorStop> =
-            self.stops.iter().filter(|s| s.position.is_finite()).map(|s| ColorStop { position: clamp01(s.position), color: s.color.sanitized() }).collect();
+        let mut s: Vec<ColorStop> = self
+            .stops
+            .iter()
+            .filter(|s| s.position.is_finite())
+            .map(|s| ColorStop { position: clamp01(s.position), color: s.color.sanitized() })
+            .collect();
         s.sort_by(|a, b| a.position.total_cmp(&b.position));
         if s.is_empty() {
             s.push(ColorStop { position: 0.0, color: Color::BLACK });
@@ -349,7 +357,14 @@ impl Paint {
 
     pub fn image(hash: impl Into<String>, mode: ImageScaleMode) -> Self {
         Self {
-            kind: PaintKind::Image(ImagePaint { image: hash.into(), scale_mode: mode, scale: 1.0, rotation: 0, crop: None, filters: ImageFilters::default() }),
+            kind: PaintKind::Image(ImagePaint {
+                image: hash.into(),
+                scale_mode: mode,
+                scale: 1.0,
+                rotation: 0,
+                crop: None,
+                filters: ImageFilters::default(),
+            }),
             opacity: 1.0,
             visible: true,
             blend: BlendMode::Normal,

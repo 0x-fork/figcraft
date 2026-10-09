@@ -273,7 +273,8 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
         figcraft_layout::apply_constraints(doc, inst, cw, ch);
     }
     // Nested instances inside the copy.
-    let nested: Vec<NodeId> = doc.subtree(inst).into_iter().filter(|i| *i != inst && doc.node(*i).is_some_and(|n| matches!(n.kind, NodeKind::Instance { .. }))).collect();
+    let nested: Vec<NodeId> =
+        doc.subtree(inst).into_iter().filter(|i| *i != inst && doc.node(*i).is_some_and(|n| matches!(n.kind, NodeKind::Instance { .. }))).collect();
     for n in nested {
         // Only re-sync nested instances whose main was swapped by a property or override.
         let needs = doc.node(n).is_some_and(|nn| nn.overrides.contains("component") || !nn.prop_refs.is_empty());
@@ -347,7 +348,11 @@ pub fn sync_after_edit(doc: &mut Document, before: &Document, changed: &[NodeId]
     // 1. Overrides for layers edited inside instances.
     for id in changed {
         let Some(n) = doc.node(*id) else { continue };
-        if n.source.is_none() || matches!(n.kind, NodeKind::Instance { .. }) && owning_instance(doc, *id) == Some(*id) && n.parent.is_some_and(|p| owning_instance(doc, p).is_none()) {
+        if n.source.is_none()
+            || matches!(n.kind, NodeKind::Instance { .. })
+                && owning_instance(doc, *id) == Some(*id)
+                && n.parent.is_some_and(|p| owning_instance(doc, p).is_none())
+        {
             // Root instances: switching the main is not an override; other edits are.
             if let (Some(b), Some(n)) = (before.node(*id), doc.node(*id))
                 && matches!(n.kind, NodeKind::Instance { .. })

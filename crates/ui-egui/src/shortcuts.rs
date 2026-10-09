@@ -77,10 +77,8 @@ pub fn handle(app: &mut FigApp, ctx: &Context) {
                     crate::menus::invoke(app, "edit.paste");
                 }
             }
-            Event::Key { key, pressed: true, modifiers, repeat, .. } => {
-                if key_event(app, *key, *modifiers, *repeat) {
-                    // handled
-                }
+            Event::Key { key, pressed: true, modifiers, repeat, .. } if key_event(app, *key, *modifiers, *repeat) => {
+                // handled
             }
             _ => {}
         }
@@ -106,6 +104,10 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool) -> bool {
                     app.toast(e.to_string());
                 }
                 app.ui.context_menu = None;
+                return true;
+            }
+            if item.id == "edit.delete" && app.session.ds().map(|d| d.vector_edit.is_some()).unwrap_or(false) {
+                app.run("vector.deleteHeal", json!({}));
                 return true;
             }
             if item.id == "edit.delete" {
@@ -177,12 +179,18 @@ fn enter_text(app: &mut FigApp) -> bool {
         return false;
     }
     let Some(id) = sel.first().copied() else { return false };
-    let is_text = app.session.doc().ok().and_then(|d| d.node(id)).is_some_and(|n| matches!(n.kind, figcraft_doc::NodeKind::Text(_)));
-    if is_text {
-        let _ = figcraft_engine::textedit::begin(&mut app.session, id, None, false);
-        return true;
+    let kind = app.session.doc().ok().and_then(|d| d.node(id)).map(|n| (matches!(n.kind, figcraft_doc::NodeKind::Text(_)), n.kind.is_shape()));
+    match kind {
+        Some((true, _)) => {
+            let _ = figcraft_engine::textedit::begin(&mut app.session, id, None, false);
+            true
+        }
+        Some((_, true)) => {
+            app.run("vector.edit.begin", json!({"id": id}));
+            true
+        }
+        _ => false,
     }
-    false
 }
 
 fn text_keys(app: &mut FigApp, _ctx: &Context, events: &[Event]) {
@@ -198,7 +206,13 @@ fn text_keys(app: &mut FigApp, _ctx: &Context, events: &[Event]) {
             }
             Event::Copy | Event::Cut => {
                 if let Some((id, a, b)) = figcraft_engine::textedit::selected_range(&app.session)
-                    && let Some(text) = app.session.doc().ok().and_then(|d| d.node(id)).and_then(|n| n.kind.text()).map(|t| t.characters.chars().skip(a).take(b - a).collect::<String>())
+                    && let Some(text) = app
+                        .session
+                        .doc()
+                        .ok()
+                        .and_then(|d| d.node(id))
+                        .and_then(|n| n.kind.text())
+                        .map(|t| t.characters.chars().skip(a).take(b - a).collect::<String>())
                 {
                     app.services.clipboard_set_text(&text);
                     if matches!(ev, Event::Cut) {

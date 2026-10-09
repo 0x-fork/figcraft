@@ -11,7 +11,13 @@ use crate::{EngineError, Result, Session, bad, spec};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        spec!("component.create", "Create component", "{ids?}  (one frame/group becomes a component; several layers are wrapped in one)", true, create),
+        spec!(
+            "component.create",
+            "Create component",
+            "{ids?}  (one frame/group becomes a component; several layers are wrapped in one)",
+            true,
+            create
+        ),
         spec!("component.createMultiple", "Create multiple components", "{ids?}", true, |s, p| {
             let ids = req_targets("component.createMultiple", s, p)?;
             let mut out = Vec::new();
@@ -54,7 +60,9 @@ pub fn specs() -> Vec<CommandSpec> {
             let i = targets(s, p).first().copied().ok_or_else(|| bad("component.goToMain", "select an instance"))?;
             let doc = s.doc()?;
             let inst = owning_instance(doc, i).ok_or_else(|| bad("component.goToMain", "not an instance"))?;
-            let Some(NodeKind::Instance { component, .. }) = doc.node(inst).map(|n| n.kind.clone()) else { return Err(bad("component.goToMain", "not an instance")) };
+            let Some(NodeKind::Instance { component, .. }) = doc.node(inst).map(|n| n.kind.clone()) else {
+                return Err(bad("component.goToMain", "not an instance"));
+            };
             if !doc.contains(component) {
                 return Err(EngineError::Other("the main component was deleted".into()));
             }
@@ -78,8 +86,20 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             ok()
         }),
-        spec!("instance.setProperties", "Set instance properties", "{ids?, properties {name: value}} (variant properties switch variants)", true, set_props),
-        spec!("component.addProperty", "Add component property", "{id? (component or set), name, type: boolean|text|instanceSwap|variant, default, layer? (node bound to it)}", true, add_prop),
+        spec!(
+            "instance.setProperties",
+            "Set instance properties",
+            "{ids?, properties {name: value}} (variant properties switch variants)",
+            true,
+            set_props
+        ),
+        spec!(
+            "component.addProperty",
+            "Add component property",
+            "{id? (component or set), name, type: boolean|text|instanceSwap|variant, default, layer? (node bound to it)}",
+            true,
+            add_prop
+        ),
         spec!("component.list", "List components", "{}", false, |s, _| {
             let doc = s.doc()?;
             Ok(Value::Array(
@@ -139,7 +159,11 @@ fn combine(s: &mut Session, p: &Value) -> Result<Value> {
     let bounds = doc.bounds_of(&ids).unwrap_or_default();
     let pw = doc.world_transform(parent);
     let local = figcraft_geom::transform_rect_bbox(pw.inverse(), bounds.inflate(20.0, 20.0));
-    let base = ids.first().and_then(|i| doc.node(*i)).map(|n| n.name.split('/').next().unwrap_or("Component").trim().to_string()).unwrap_or_else(|| "Component".into());
+    let base = ids
+        .first()
+        .and_then(|i| doc.node(*i))
+        .map(|n| n.name.split('/').next().unwrap_or("Component").trim().to_string())
+        .unwrap_or_else(|| "Component".into());
     let set = doc.alloc_id();
     let mut n = Node::new(set, NodeKind::ComponentSet { description: String::new() }, base, local.width(), local.height());
     n.transform = figcraft_geom::Affine::translate((local.x0, local.y0));
@@ -221,12 +245,14 @@ fn push_changes(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn set_props(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = req_targets("instance.setProperties", s, p)?;
-    let props = get(p, "properties").and_then(Value::as_object).cloned().ok_or_else(|| bad("instance.setProperties", "`properties` object required"))?;
+    let props =
+        get(p, "properties").and_then(Value::as_object).cloned().ok_or_else(|| bad("instance.setProperties", "`properties` object required"))?;
     let doc = s.doc_mut()?;
     for i in ids {
         let Some(NodeKind::Instance { component, .. }) = doc.node(i).map(|n| n.kind.clone()) else { continue };
         // Variant properties: switch to the matching sibling variant.
-        let set = doc.node(component).and_then(|c| c.parent).filter(|pp| doc.node(*pp).is_some_and(|n| matches!(n.kind, NodeKind::ComponentSet { .. })));
+        let set =
+            doc.node(component).and_then(|c| c.parent).filter(|pp| doc.node(*pp).is_some_and(|n| matches!(n.kind, NodeKind::ComponentSet { .. })));
         let mut wanted = doc.node(component).map(|c| variant_props(&c.name)).unwrap_or_default();
         let mut variant_change = false;
         for (k, v) in &props {
@@ -261,7 +287,9 @@ fn add_prop(s: &mut Session, p: &Value) -> Result<Value> {
     let def = match t.to_ascii_lowercase().as_str() {
         "boolean" | "bool" => PropDef::Boolean { default: boolean(p, "default").unwrap_or(true) },
         "text" => PropDef::Text { default: string(p, "default").unwrap_or_default() },
-        "instanceswap" | "instance_swap" | "instance" => PropDef::InstanceSwap { default: id(p, "default").ok_or_else(|| bad(cmd, "default: component id"))? },
+        "instanceswap" | "instance_swap" | "instance" => {
+            PropDef::InstanceSwap { default: id(p, "default").ok_or_else(|| bad(cmd, "default: component id"))? }
+        }
         "variant" => PropDef::Variant { options: vec![], default: string(p, "default").unwrap_or_default() },
         _ => return Err(bad(cmd, "type: boolean|text|instanceSwap|variant")),
     };

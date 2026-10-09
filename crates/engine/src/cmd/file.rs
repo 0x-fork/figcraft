@@ -21,7 +21,13 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("file.open", "Open", "{path} (.figcraft, .json, .svg, .png, .jpg …)", false, open),
         spec!("file.save", "Save", "{path?} (programmatic saves need a path the first time)", false, save),
         spec!("file.saveAs", "Save as", "{path}", false, save_as),
-        spec!("file.export", "Export", "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp), scale? (default 1), path? (else returns base64 `data`)}", false, export),
+        spec!(
+            "file.export",
+            "Export",
+            "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp), scale? (default 1), path? (else returns base64 `data`)}",
+            false,
+            export
+        ),
         spec!("file.exportSvg", "Export selection as SVG", "{ids?, path?}", false, |s, p| {
             let mut q = p.clone();
             if let Some(o) = q.as_object_mut() {
@@ -29,7 +35,20 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             export(s, &q)
         }),
-        spec!("file.import", "Import", "{path | data (base64) + name, x?, y?}  SVG becomes vectors, images become image layers, .figcraft pages are appended", true, import),
+        spec!(
+            "file.exportFramesPdf",
+            "Export frames to PDF",
+            "{path?, page? (page id, default the current page)}  every top-level frame in reading order, one PDF page each; returns base64 `data` without a path",
+            false,
+            export_frames_pdf
+        ),
+        spec!(
+            "file.import",
+            "Import",
+            "{path | data (base64) + name, x?, y?}  SVG becomes vectors, images become image layers, .figcraft pages are appended",
+            true,
+            import
+        ),
         spec!("file.placeImage", "Place image", "{path | data, x?, y?}", true, super::create::place_image),
         spec!("file.close", "Close tab", "{index?, force? (discard unsaved changes)}", false, close),
         spec!("file.rename", "Rename file", "{name}", true, |s, p| {
@@ -63,14 +82,17 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         spec!("file.versionHistory", "Show version history", "{}", false, |s, _| {
             let ds = s.ds()?;
-            let v: Vec<Value> = versions(ds).iter().enumerate().map(|(i, v)| json!({"index": i, "name": v.0, "description": v.1, "time": v.2})).collect();
+            let v: Vec<Value> =
+                versions(ds).iter().enumerate().map(|(i, v)| json!({"index": i, "name": v.0, "description": v.1, "time": v.2})).collect();
             s.request_ui("panel.versionHistory", json!({}));
             Ok(Value::Array(v))
         }),
         spec!("version.restore", "Restore version", "{index}", true, |s, p| {
             let i = req_num("version.restore", p, "index")? as usize;
             let ds = s.ds_mut()?;
-            let Some((_, _, _, doc)) = version_list().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&ds.uid).and_then(|v| v.get(i)).cloned() else {
+            let Some((_, _, _, doc)) =
+                version_list().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&ds.uid).and_then(|v| v.get(i)).cloned()
+            else {
                 return Err(bad("version.restore", "no such version"));
             };
             ds.doc = doc;
@@ -88,7 +110,13 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         spec!("doc.list", "List documents", "{}", false, |s, _| {
-            Ok(Value::Array(s.docs.iter().enumerate().map(|(i, d)| json!({"index": i, "name": d.doc.name, "path": d.path, "dirty": d.is_dirty(), "active": i == s.active})).collect()))
+            Ok(Value::Array(
+                s.docs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, d)| json!({"index": i, "name": d.doc.name, "path": d.path, "dirty": d.is_dirty(), "active": i == s.active}))
+                    .collect(),
+            ))
         }),
         spec!("doc.home", "Home", "{}", false, |s, _| {
             s.request_ui("home", json!({}));
@@ -120,7 +148,12 @@ fn push_version(ds: &DocState, name: String, desc: String, doc: Arc<Document>) {
 }
 
 pub fn versions(ds: &DocState) -> Vec<(String, String, u64)> {
-    version_list().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&ds.uid).map(|v| v.iter().map(|(a, b, c, _)| (a.clone(), b.clone(), *c)).collect()).unwrap_or_default()
+    version_list()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&ds.uid)
+        .map(|v| v.iter().map(|(a, b, c, _)| (a.clone(), b.clone(), *c)).collect())
+        .unwrap_or_default()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -204,7 +237,12 @@ pub fn thumbnail(doc: &Document) -> Option<Vec<u8>> {
     let page = doc.first_page()?;
     let b = doc.page_content_bounds(page)?;
     let scale = (400.0 / b.width().max(b.height()).max(1.0)).min(2.0);
-    let view = figcraft_render::View { origin: (b.x0, b.y0), scale, width: (b.width() * scale).ceil().max(1.0) as u32, height: (b.height() * scale).ceil().max(1.0) as u32 };
+    let view = figcraft_render::View {
+        origin: (b.x0, b.y0),
+        scale,
+        width: (b.width() * scale).ceil().max(1.0) as u32,
+        height: (b.height() * scale).ceil().max(1.0) as u32,
+    };
     let pix = figcraft_render::render_view(doc, page, &view, &Default::default())?;
     figcraft_render::encode_png(&pix).ok()
 }
@@ -256,15 +294,31 @@ pub fn export_bytes(doc: &Document, ids: &[NodeId], format: ExportFormat, scale:
         return Err(EngineError::Disabled("file.export".into(), "nothing to export".into()));
     }
     match format {
-        ExportFormat::Svg => figcraft_svg::export_svg(doc, ids, &Default::default()).map(String::into_bytes).ok_or_else(|| EngineError::Other("nothing to export".into())),
-        ExportFormat::Pdf => Err(EngineError::Disabled("file.export".into(), "PDF export is not available yet".into())),
+        ExportFormat::Svg => figcraft_svg::export_svg(doc, ids, &Default::default())
+            .map(String::into_bytes)
+            .ok_or_else(|| EngineError::Other("nothing to export".into())),
+        ExportFormat::Pdf => {
+            // Frames export one page each; anything else shares one page.
+            let all_frames = ids.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like()));
+            let r = if all_frames {
+                figcraft_pdf::export_pdf(doc, ids, &figcraft_pdf::PdfOptions::default())
+            } else {
+                figcraft_pdf::export_nodes_pdf(doc, &super::edit::z_sorted(doc, ids))
+            };
+            r.map_err(|e| EngineError::Other(e.to_string()))
+        }
         _ => {
             let pix = if ids.len() == 1 {
                 ids.first().and_then(|i| figcraft_render::render_node(doc, *i, scale))
             } else {
                 let b = ids.iter().filter_map(|i| figcraft_render::export_bounds(doc, *i)).reduce(|a, b| a.union(b));
                 b.and_then(|b| {
-                    let view = figcraft_render::View { origin: (b.x0, b.y0), scale, width: (b.width() * scale).ceil().max(1.0) as u32, height: (b.height() * scale).ceil().max(1.0) as u32 };
+                    let view = figcraft_render::View {
+                        origin: (b.x0, b.y0),
+                        scale,
+                        width: (b.width() * scale).ceil().max(1.0) as u32,
+                        height: (b.height() * scale).ceil().max(1.0) as u32,
+                    };
                     let mut pix = figcraft_render::Pixmap::new(view.width.clamp(1, 16384), view.height.clamp(1, 16384))?;
                     let ordered = super::edit::z_sorted(doc, ids);
                     figcraft_render::render_nodes_into(doc, &ordered, &view, &mut pix);
@@ -288,7 +342,10 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     if ids.is_empty() {
         ids = doc.get(s.page()?)?.children.clone();
     }
-    let format = string(p, "format").and_then(|f| ExportFormat::from_ext(&f)).or_else(|| string(p, "path").and_then(|pp| ExportFormat::from_ext(&ext(&pp)))).unwrap_or_default();
+    let format = string(p, "format")
+        .and_then(|f| ExportFormat::from_ext(&f))
+        .or_else(|| string(p, "path").and_then(|pp| ExportFormat::from_ext(&ext(&pp))))
+        .unwrap_or_default();
     let scale = num_or(p, "scale", 1.0).clamp(0.01, 64.0);
     let bytes = export_bytes(doc, &ids, format, scale)?;
     match string(p, "path") {
@@ -300,12 +357,39 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     }
 }
 
+/// Every top-level frame of a page (reading order), one PDF page each.
+fn export_frames_pdf(s: &mut Session, p: &Value) -> Result<Value> {
+    let doc = s.doc()?;
+    let page = match id(p, "page") {
+        Some(pg) if doc.node(pg).is_some_and(Node::is_page) => pg,
+        Some(_) => return Err(bad("file.exportFramesPdf", "`page` is not a page")),
+        None => s.page()?,
+    };
+    let frames = doc.top_frames(page);
+    if frames.is_empty() {
+        return Err(EngineError::Disabled("file.exportFramesPdf".into(), "the page has no frames".into()));
+    }
+    let title = Some(doc.name.clone());
+    let bytes = figcraft_pdf::export_pdf(doc, &frames, &figcraft_pdf::PdfOptions { title, ..Default::default() })
+        .map_err(|e| EngineError::Other(e.to_string()))?;
+    match string(p, "path") {
+        Some(path) => {
+            write(&path, &bytes)?;
+            Ok(json!({"path": path, "bytes": bytes.len(), "pages": frames.len()}))
+        }
+        None => Ok(json!({"format": "pdf", "pages": frames.len(), "data": base64::engine::general_purpose::STANDARD.encode(&bytes)})),
+    }
+}
+
 fn import(s: &mut Session, p: &Value) -> Result<Value> {
     let (bytes, name) = if let Some(path) = string(p, "path") {
         (read(&path)?, path)
     } else if let Some(d) = string(p, "data") {
         let d = d.split_once(',').map(|(_, b)| b.to_string()).unwrap_or(d);
-        (base64::engine::general_purpose::STANDARD.decode(d.trim()).map_err(|e| bad("file.import", e.to_string()))?, string(p, "name").unwrap_or_else(|| "import.png".into()))
+        (
+            base64::engine::general_purpose::STANDARD.decode(d.trim()).map_err(|e| bad("file.import", e.to_string()))?,
+            string(p, "name").unwrap_or_else(|| "import.png".into()),
+        )
     } else {
         return Err(bad("file.import", "pass `path` or `data`"));
     };
@@ -315,7 +399,8 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     match ext(&name).as_str() {
         "svg" => {
             let doc = s.doc_mut()?;
-            let id = figcraft_svg::import_svg(doc, &bytes, page, x.unwrap_or(center.0), y.unwrap_or(center.1), &file_stem(&name)).map_err(|e| EngineError::Other(e.to_string()))?;
+            let id = figcraft_svg::import_svg(doc, &bytes, page, x.unwrap_or(center.0), y.unwrap_or(center.1), &file_stem(&name))
+                .map_err(|e| EngineError::Other(e.to_string()))?;
             s.set_selection(vec![id]);
             Ok(json!({"id": id}))
         }

@@ -106,7 +106,20 @@ fn walk(dir: &std::path::Path, f: &mut dyn FnMut(&std::path::Path)) {
 }
 
 fn parity() -> bool {
-    let extra = ["file.open", "file.import", "file.placeImage", "file.save", "file.saveAs", "file.export", "file.exportSvg", "edit.copyAsText", "edit.copyAsCss", "edit.copyAsSvg", "edit.copyAsPng", "edit.copyLink"];
+    let extra = [
+        "file.open",
+        "file.import",
+        "file.placeImage",
+        "file.save",
+        "file.saveAs",
+        "file.export",
+        "file.exportSvg",
+        "edit.copyAsText",
+        "edit.copyAsCss",
+        "edit.copyAsSvg",
+        "edit.copyAsPng",
+        "edit.copyLink",
+    ];
     let (done, total, missing) = figcraft_engine::catalog::parity(&extra);
     let pct = done as f64 * 100.0 / total.max(1) as f64;
     let mut md = format!(
@@ -134,10 +147,16 @@ fn parity() -> bool {
 fn version(sub: Option<&str>, value: Option<&str>) -> bool {
     let path = root().join("Cargo.toml");
     let Ok(text) = std::fs::read_to_string(&path) else { return false };
-    let cur = text.lines().skip_while(|l| !l.starts_with("[workspace.package]")).find_map(|l| l.strip_prefix("version = \"").and_then(|r| r.strip_suffix('"'))).unwrap_or("0.0.0").to_string();
+    let cur = text
+        .lines()
+        .skip_while(|l| !l.starts_with("[workspace.package]"))
+        .find_map(|l| l.strip_prefix("version = \"").and_then(|r| r.strip_suffix('"')))
+        .unwrap_or("0.0.0")
+        .to_string();
     match (sub, value) {
         (Some("set"), Some(v)) => {
-            let valid = v.split(['-', '+']).next().is_some_and(|core| core.split('.').count() == 3 && core.split('.').all(|p| p.parse::<u64>().is_ok()));
+            let valid =
+                v.split(['-', '+']).next().is_some_and(|core| core.split('.').count() == 3 && core.split('.').all(|p| p.parse::<u64>().is_ok()));
             if !valid {
                 eprintln!("version must look like 1.2.3 or 1.2.3-rc.1");
                 return false;

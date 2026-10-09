@@ -186,11 +186,19 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
         }
         if app.ui.rename_page.as_ref().is_some_and(|(i, _)| *i == id) {
             let tr = Rect::from_min_max(pos2(r.min.x + 8.0, r.min.y + 4.0), pos2(r.max.x - 4.0, r.max.y - 4.0));
-            if let Some(new) = crate::widgets::text_field_inline(ui, Id::new(("pagename", id)), &name, tr, if id == cur { semibold(11.0) } else { regular(11.0) }) {
+            if let Some(new) =
+                crate::widgets::text_field_inline(ui, Id::new(("pagename", id)), &name, tr, if id == cur { semibold(11.0) } else { regular(11.0) })
+            {
                 rename_done = Some((id, new));
             }
         } else {
-            ui.painter().text(pos2(r.min.x + 10.0, r.center().y), Align2::LEFT_CENTER, &name, if id == cur { semibold(11.0) } else { regular(11.0) }, t.text);
+            ui.painter().text(
+                pos2(r.min.x + 10.0, r.center().y),
+                Align2::LEFT_CENTER,
+                &name,
+                if id == cur { semibold(11.0) } else { regular(11.0) },
+                t.text,
+            );
         }
         if resp.clicked() {
             select = Some(id);
@@ -294,7 +302,12 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             } else if in_selected {
                 ui.painter().rect_filled(rr, CornerRadius::ZERO, t.selected_row_child);
             } else if resp.hovered() || hover == Some(row.id) {
-                ui.painter().rect_stroke(rr, CornerRadius::same(5), Stroke::new(1.0, if is_comp { COMPONENT } else { ACCENT }), egui::StrokeKind::Inside);
+                ui.painter().rect_stroke(
+                    rr,
+                    CornerRadius::same(5),
+                    Stroke::new(1.0, if is_comp { COMPONENT } else { ACCENT }),
+                    egui::StrokeKind::Inside,
+                );
             }
             if resp.hovered() {
                 hovered_row = Some(row.id);
@@ -333,7 +346,9 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                 } else {
                     t.text_tertiary
                 };
-                let font = if doc.node(n.parent.unwrap_or(page)).is_some_and(|p| p.is_page()) && (n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. })) {
+                let font = if doc.node(n.parent.unwrap_or(page)).is_some_and(|p| p.is_page())
+                    && (n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. }))
+                {
                     semibold(11.0)
                 } else {
                     regular(11.0)
@@ -341,7 +356,11 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                 let name = if n.name.is_empty() { n.kind.label().to_string() } else { n.name.clone() };
                 let max_w = (rr.max.x - 56.0 - name_x).max(20.0);
                 let galley = ui.painter().layout(name, font, col, max_w);
-                ui.painter().with_clip_rect(Rect::from_min_max(pos2(name_x, r.min.y), pos2(rr.max.x - 52.0, r.max.y))).galley(pos2(name_x, r.center().y - galley.size().y / 2.0), galley, col);
+                ui.painter().with_clip_rect(Rect::from_min_max(pos2(name_x, r.min.y), pos2(rr.max.x - 52.0, r.max.y))).galley(
+                    pos2(name_x, r.center().y - galley.size().y / 2.0),
+                    galley,
+                    col,
+                );
             }
             // Lock / eye on hover (or when set).
             let show_lock = resp.hovered() || n.locked;
@@ -444,10 +463,10 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             ds.hover = h;
         }
     }
-    if let Some(id) = toggle {
-        if !app.ui.expanded.remove(&id) {
-            app.ui.expanded.insert(id);
-        }
+    if let Some(id) = toggle
+        && !app.ui.expanded.remove(&id)
+    {
+        app.ui.expanded.insert(id);
     }
     if let Some(id) = vis {
         app.run("object.toggleVisible", json!({"ids": [id]}));
@@ -486,7 +505,11 @@ fn assets(app: &mut FigApp, ui: &mut Ui) {
     let Ok(doc) = app.session.doc() else { return };
     let comps: Vec<(NodeId, String, bool)> = doc
         .nodes()
-        .filter(|n| matches!(n.kind, NodeKind::Component { .. }) && !doc.node(n.parent.unwrap_or(NodeId(0))).is_some_and(|p| matches!(p.kind, NodeKind::ComponentSet { .. })) || matches!(n.kind, NodeKind::ComponentSet { .. }))
+        .filter(|n| {
+            matches!(n.kind, NodeKind::Component { .. })
+                && !doc.node(n.parent.unwrap_or(NodeId(0))).is_some_and(|p| matches!(p.kind, NodeKind::ComponentSet { .. }))
+                || matches!(n.kind, NodeKind::ComponentSet { .. })
+        })
         .map(|n| (n.id, n.name.clone(), matches!(n.kind, NodeKind::ComponentSet { .. })))
         .collect();
     let styles: Vec<(String, String, String)> = doc.styles.iter().map(|s| (s.id.clone(), s.name.clone(), s.kind.type_name().to_string())).collect();
@@ -506,7 +529,12 @@ fn assets(app: &mut FigApp, ui: &mut Ui) {
             if resp.hovered() {
                 ui.painter().rect_filled(rr, CornerRadius::same(5), t.hover);
             }
-            icons::paint(ui.painter(), Rect::from_center_size(pos2(rr.min.x + 14.0, r.center().y), vec2(14.0, 14.0)), if *set { Icon::ComponentSet } else { Icon::Component }, COMPONENT);
+            icons::paint(
+                ui.painter(),
+                Rect::from_center_size(pos2(rr.min.x + 14.0, r.center().y), vec2(14.0, 14.0)),
+                if *set { Icon::ComponentSet } else { Icon::Component },
+                COMPONENT,
+            );
             ui.painter().text(pos2(rr.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, name, regular(11.0), t.text);
             let resp = resp.on_hover_text("Click to place an instance at the centre of the view");
             if resp.clicked() {

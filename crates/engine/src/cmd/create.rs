@@ -57,16 +57,32 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             create
         ),
-        spec!("frame.create", "Create frame", "{preset? (name from FRAME_PRESETS), x?, y?, width?, height?, parent?, name?, props?}", true, frame_create),
+        spec!(
+            "frame.create",
+            "Create frame",
+            "{preset? (name from FRAME_PRESETS), x?, y?, width?, height?, parent?, name?, props?}",
+            true,
+            frame_create
+        ),
         spec!("shape.rectangle", "Rectangle", "{x, y, width, height, parent?, props?}", true, |s, p| create_kind(s, p, "rectangle")),
         spec!("shape.ellipse", "Ellipse", "{x, y, width, height, parent?, props?}", true, |s, p| create_kind(s, p, "ellipse")),
         spec!("shape.polygon", "Polygon", "{x, y, width, height, parent?, props? {pointCount}}", true, |s, p| create_kind(s, p, "polygon")),
         spec!("shape.star", "Star", "{x, y, width, height, parent?, props? {pointCount, innerRadius}}", true, |s, p| create_kind(s, p, "star")),
         spec!("shape.line", "Line", "{x, y, width (length), parent?, props? {rotation}}", true, |s, p| create_kind(s, p, "line")),
         spec!("shape.arrow", "Arrow", "{x, y, width (length), parent?, props?}", true, |s, p| create_kind(s, p, "arrow")),
-        spec!("text.create", "Text", "{text, x, y, parent?, width? (fixed width wraps), props? (fontSize, fontFamily, …)}", true, |s, p| create_kind(s, p, "text")),
-        spec!("vector.create", "Vector", "{path (SVG path data) | points [[x,y],..], closed?, x?, y?, parent?, props?}", true, |s, p| create_kind(s, p, "vector")),
-        spec!("image.place", "Place image", "{data (base64) | path, x?, y?, width?, height?, parent?, mode? (fill|fit|crop|tile)}", true, place_image),
+        spec!("text.create", "Text", "{text, x, y, parent?, width? (fixed width wraps), props? (fontSize, fontFamily, …)}", true, |s, p| {
+            create_kind(s, p, "text")
+        }),
+        spec!("vector.create", "Vector", "{path (SVG path data) | points [[x,y],..], closed?, x?, y?, parent?, props?}", true, |s, p| create_kind(
+            s, p, "vector"
+        )),
+        spec!(
+            "image.place",
+            "Place image",
+            "{data (base64) | path, x?, y?, width?, height?, parent?, mode? (fill|fit|crop|tile)}",
+            true,
+            place_image
+        ),
         spec!("frame.presets", "List frame presets", "{}", false, |_, _| {
             Ok(Value::Array(FRAME_PRESETS.iter().map(|(c, n, w, h)| json!({"category": c, "name": n, "width": w, "height": h})).collect()))
         }),
@@ -198,7 +214,11 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
                 return first;
             }
         }
-        if matches!(base, "Frame" | "Section" | "Component" | "Group") { s.doc().map(|d| d.next_name(base)).unwrap_or_else(|_| base.to_string()) } else { base.to_string() }
+        if matches!(base, "Frame" | "Section" | "Component" | "Group") {
+            s.doc().map(|d| d.next_name(base)).unwrap_or_else(|_| base.to_string())
+        } else {
+            base.to_string()
+        }
     });
     let ds = s.ds_mut()?;
     let doc = ds.doc_mut();

@@ -28,10 +28,15 @@ pub fn decode(bytes: &[u8]) -> Option<Pixmap> {
         return None;
     }
     let mut p = Pixmap::new(w, h)?;
-    for (dst, src) in p.data_mut().chunks_exact_mut(4).zip(rgba.as_raw().chunks_exact(4)) {
+    for (dst, src) in p.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(rgba.as_raw().chunks_exact(4)) {
         let a = u32::from(src.get(3).copied().unwrap_or(255));
         let pm = |c: u8| ((u32::from(c) * a + 127) / 255) as u8;
-        dst.copy_from_slice(&[pm(src.first().copied().unwrap_or(0)), pm(src.get(1).copied().unwrap_or(0)), pm(src.get(2).copied().unwrap_or(0)), a as u8]);
+        dst.copy_from_slice(&[
+            pm(src.first().copied().unwrap_or(0)),
+            pm(src.get(1).copied().unwrap_or(0)),
+            pm(src.get(2).copied().unwrap_or(0)),
+            a as u8,
+        ]);
     }
     Some(p)
 }
@@ -66,7 +71,7 @@ pub fn apply_filters(p: &mut Pixmap, f: &ImageFilters) {
     let tint = f.tint.clamp(-1.0, 1.0) * 0.15;
     let hi = f.highlights.clamp(-1.0, 1.0) * 0.3;
     let sh = f.shadows.clamp(-1.0, 1.0) * 0.3;
-    for px in p.data_mut().chunks_exact_mut(4) {
+    for px in p.data_mut().as_chunks_mut::<4>().0 {
         let a = f32::from(px.get(3).copied().unwrap_or(0)) / 255.0;
         if a <= 0.0 {
             continue;

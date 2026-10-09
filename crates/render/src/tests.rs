@@ -78,7 +78,10 @@ fn gradients_render() {
         let (mut d, p, r) = doc_with_rect(Color::BLACK);
         let g = Gradient {
             kind,
-            stops: vec![ColorStop { position: 0.0, color: Color::from_hex("FF0000").unwrap() }, ColorStop { position: 1.0, color: Color::from_hex("0000FF").unwrap() }],
+            stops: vec![
+                ColorStop { position: 0.0, color: Color::from_hex("FF0000").unwrap() },
+                ColorStop { position: 1.0, color: Color::from_hex("0000FF").unwrap() },
+            ],
             from: (0.0, 0.5),
             to: (1.0, 0.5),
             width: (0.0, 1.0),
@@ -159,7 +162,7 @@ fn text_renders_something() {
     td.style.font_size = 32.0;
     d.create(p, NodeKind::Text(td), "T", 0.0, 0.0, 200.0, 50.0).unwrap();
     let pix = render_view(&d, p, &view(200, 60), &Options { background: Some(Color::WHITE), ..Default::default() }).unwrap();
-    let dark = pix.data().chunks_exact(4).filter(|c| c[0] < 100).count();
+    let dark = pix.data().as_chunks::<4>().0.iter().filter(|c| c[0] < 100).count();
     if figcraft_text::find_face("Inter", "Regular").is_some() {
         assert!(dark > 50, "{dark}");
     }

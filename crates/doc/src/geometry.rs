@@ -9,9 +9,12 @@ pub fn shape_path(n: &Node) -> Option<BezPath> {
     let (w, h) = (n.width, n.height);
     let c = &n.corners;
     Some(match &n.kind {
-        NodeKind::Rectangle | NodeKind::Frame | NodeKind::Component { .. } | NodeKind::ComponentSet { .. } | NodeKind::Instance { .. } | NodeKind::Section { .. } => {
-            figcraft_geom::rounded_rect(w, h, c.radii, c.smoothing)
-        }
+        NodeKind::Rectangle
+        | NodeKind::Frame
+        | NodeKind::Component { .. }
+        | NodeKind::ComponentSet { .. }
+        | NodeKind::Instance { .. }
+        | NodeKind::Section { .. } => figcraft_geom::rounded_rect(w, h, c.radii, c.smoothing),
         NodeKind::Slice => figcraft_geom::rounded_rect(w, h, [0.0; 4], 0.0),
         NodeKind::Ellipse { start, sweep, inner } => figcraft_geom::ellipse(w, h, *start, *sweep, *inner),
         NodeKind::Polygon { count } => figcraft_geom::rounded_polygon(&figcraft_geom::polygon_points(w, h, *count), c.radii[0]),
@@ -165,7 +168,8 @@ pub fn select_target(doc: &Document, leaf: NodeId, context: &[NodeId], deep: boo
     if top_is_board && chain.len() > 1 {
         // Sections contain frames: the frame inside a section is the board.
         let is_section = |i: usize| chain.get(i).and_then(|c| doc.node(*c)).is_some_and(|n| matches!(n.kind, NodeKind::Section { .. }));
-        let is_board = |i: usize| chain.get(i).and_then(|c| doc.node(*c)).is_some_and(|n| n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. }));
+        let is_board =
+            |i: usize| chain.get(i).and_then(|c| doc.node(*c)).is_some_and(|n| n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. }));
         let mut i = 1;
         while is_section(i - 1) && is_board(i) && i + 1 < chain.len() {
             i += 1;

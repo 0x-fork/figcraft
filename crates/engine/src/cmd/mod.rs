@@ -70,6 +70,7 @@ fn registry() -> &'static Registry {
         list.extend(styles::specs());
         list.extend(component::specs());
         list.extend(proto::specs());
+        list.extend(crate::vectoredit::specs());
         let mut index = HashMap::new();
         for (i, s) in list.iter().enumerate() {
             if index.insert(s.id, i).is_some() {

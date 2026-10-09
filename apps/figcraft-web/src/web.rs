@@ -1,0 +1,77 @@
+//! The browser shell: web `Services` and the eframe web runner.
+
+use figcraft_engine::Session;
+use figcraft_ui_egui::{FigApp, Services};
+use wasm_bindgen::JsCast as _;
+
+const CANVAS_ID: &str = "figcraft_canvas";
+const LOADING_ID: &str = "figcraft_loading";
+
+pub fn start() {
+    eframe::WebLogger::init(log::LevelFilter::Info).ok();
+    wasm_bindgen_futures::spawn_local(async {
+        let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+            log::error!("no document");
+            return;
+        };
+        let Some(canvas) = document.get_element_by_id(CANVAS_ID).and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok()) else {
+            log::error!("missing <canvas id=\"{CANVAS_ID}\">");
+            return;
+        };
+        let mut options = eframe::WebOptions::default();
+        // `?webgl`: force the WebGL2 backend (troubleshooting, and headless browsers whose WebGPU
+        // adapter request returns nothing).
+        if query().contains("webgl")
+            && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
+        {
+            create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
+        }
+        let result = eframe::WebRunner::new()
+            .start(
+                canvas,
+                options,
+                Box::new(|cc| {
+                    if let Some(rs) = &cc.wgpu_render_state {
+                        log::info!("figcraft-web: wgpu backend {:?}", rs.adapter.get_info().backend);
+                    }
+                    let fig = FigApp::new(Session::new(), Box::new(WebServices));
+                    Ok(Box::new(WebShell { fig }))
+                }),
+            )
+            .await;
+        if let Some(el) = document.get_element_by_id(LOADING_ID) {
+            match result {
+                Ok(()) => el.remove(),
+                Err(e) => el.set_inner_html(&format!("<p>FigCraft failed to start: {e:?}</p><p>A browser with WebGPU or WebGL2 is required.</p>")),
+            }
+        }
+    });
+}
+
+fn query() -> String {
+    web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
+}
+
+struct WebShell {
+    fig: FigApp,
+}
+
+impl eframe::App for WebShell {
+    // `FigApp::ui` runs its own per-frame logic first (fonts, theme), like the desktop app.
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.fig.ui(ui);
+    }
+}
+
+/// Browser services. File dialogs return nothing for now (the trait's defaults); the clipboard
+/// goes through egui's own web clipboard handling.
+struct WebServices;
+
+impl Services for WebServices {
+    fn open_url(&mut self, url: &str) {
+        let Some(window) = web_sys::window() else { return };
+        if let Err(e) = window.open_with_url_and_target(url, "_blank") {
+            log::error!("couldn't open {url}: {e:?}");
+        }
+    }
+}

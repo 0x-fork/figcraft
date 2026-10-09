@@ -2,3 +2,6 @@
 # directory is missing the build warns and carries on with egui's bundled fonts and system fonts.
 [env]
 CRAFT_FONTS_DIR = { value = "../craft-fonts", relative = true }
+
+[alias]
+xtask = "run -q -p xtask --"

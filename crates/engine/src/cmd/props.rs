@@ -180,7 +180,9 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             }
             "strokeWeight" => doc.get_mut(id)?.stroke.weight = f64_of(v).ok_or_else(|| bad(cmd, "`strokeWeight` must be a number"))?.max(0.0),
             "strokeAlign" => doc.get_mut(id)?.stroke.align = enum_of(v).ok_or_else(|| bad(cmd, "strokeAlign: inside|center|outside"))?,
-            "strokeSides" => doc.get_mut(id)?.stroke.sides = if v.is_null() { None } else { Some(four(v).ok_or_else(|| bad(cmd, "strokeSides: [t,r,b,l]"))?) },
+            "strokeSides" => {
+                doc.get_mut(id)?.stroke.sides = if v.is_null() { None } else { Some(four(v).ok_or_else(|| bad(cmd, "strokeSides: [t,r,b,l]"))?) }
+            }
             "strokeCap" => {
                 let c: StrokeCap = enum_of(v).ok_or_else(|| bad(cmd, "unknown stroke cap"))?;
                 let n = doc.get_mut(id)?;
@@ -232,7 +234,9 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 }
             }
             "gap" | "itemSpacing" => ensure_layout(doc.get_mut(id)?).gap = f64_of(v).ok_or_else(|| bad(cmd, "`gap` must be a number"))?,
-            "crossGap" | "counterAxisSpacing" => ensure_layout(doc.get_mut(id)?).cross_gap = f64_of(v).ok_or_else(|| bad(cmd, "`crossGap` must be a number"))?,
+            "crossGap" | "counterAxisSpacing" => {
+                ensure_layout(doc.get_mut(id)?).cross_gap = f64_of(v).ok_or_else(|| bad(cmd, "`crossGap` must be a number"))?
+            }
             "padding" => {
                 let p = four(v).ok_or_else(|| bad(cmd, "padding: n or [t,r,b,l]"))?;
                 ensure_layout(doc.get_mut(id)?).padding = p.map(|x| x.max(0.0));
@@ -256,8 +260,12 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 l.padding[0] = val;
                 l.padding[2] = val;
             }
-            "mainAlign" | "primaryAxisAlignItems" => ensure_layout(doc.get_mut(id)?).main_align = enum_of(v).ok_or_else(|| bad(cmd, "mainAlign: min|center|max|spaceBetween"))?,
-            "crossAlign" | "counterAxisAlignItems" => ensure_layout(doc.get_mut(id)?).cross_align = enum_of(v).ok_or_else(|| bad(cmd, "crossAlign: min|center|max|baseline"))?,
+            "mainAlign" | "primaryAxisAlignItems" => {
+                ensure_layout(doc.get_mut(id)?).main_align = enum_of(v).ok_or_else(|| bad(cmd, "mainAlign: min|center|max|spaceBetween"))?
+            }
+            "crossAlign" | "counterAxisAlignItems" => {
+                ensure_layout(doc.get_mut(id)?).cross_align = enum_of(v).ok_or_else(|| bad(cmd, "crossAlign: min|center|max|baseline"))?
+            }
             "wrap" => ensure_layout(doc.get_mut(id)?).wrap = v.as_bool().unwrap_or(false),
             "gridColumns" => ensure_layout(doc.get_mut(id)?).grid_columns = f64_of(v).unwrap_or(2.0).clamp(1.0, 1000.0) as u32,
             "gridRows" => ensure_layout(doc.get_mut(id)?).grid_rows = f64_of(v).unwrap_or(2.0).clamp(1.0, 1000.0) as u32,
@@ -286,8 +294,12 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 }
             }
             "grids" | "layoutGrids" => doc.get_mut(id)?.grids = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("grids: {e}")))?,
-            "exports" | "exportSettings" => doc.get_mut(id)?.exports = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("exports: {e}")))?,
-            "interactions" => doc.get_mut(id)?.interactions = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("interactions: {e}")))?,
+            "exports" | "exportSettings" => {
+                doc.get_mut(id)?.exports = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("exports: {e}")))?
+            }
+            "interactions" => {
+                doc.get_mut(id)?.interactions = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("interactions: {e}")))?
+            }
             "overflow" => doc.get_mut(id)?.overflow = enum_of(v).ok_or_else(|| bad(cmd, "overflow: none|horizontal|vertical|both"))?,
             "scrollPosition" => doc.get_mut(id)?.scroll_position = enum_of(v).ok_or_else(|| bad(cmd, "scrollPosition: scrolls|fixed|sticky"))?,
             "constrainProportions" => doc.get_mut(id)?.constrain_proportions = v.as_bool().unwrap_or(false),
@@ -299,15 +311,23 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 t.replace_range(0, len, &s);
                 n.overrides.insert("characters".into());
             }
-            "fontFamily" | "fontStyle" | "fontWeight" | "fontSize" | "lineHeight" | "letterSpacing" | "textDecoration" | "textCase" | "hyperlink" | "textFills" => {
+            "fontFamily" | "fontStyle" | "fontWeight" | "fontSize" | "lineHeight" | "letterSpacing" | "textDecoration" | "textCase" | "hyperlink"
+            | "textFills" => {
                 let n = doc.get_mut(id)?;
                 let t = text_mut(cmd, n)?;
                 let (start, end) = range_of(props, t.char_count());
                 apply_text_style(cmd, t, start, end, k, v)?;
             }
-            "textAlign" | "textAlignHorizontal" => text_mut(cmd, doc.get_mut(id)?)?.align_h = enum_of(v).ok_or_else(|| bad(cmd, "textAlign: left|center|right|justified"))?,
-            "textAlignVertical" => text_mut(cmd, doc.get_mut(id)?)?.align_v = enum_of(v).ok_or_else(|| bad(cmd, "textAlignVertical: top|middle|bottom"))?,
-            "textAutoResize" => text_mut(cmd, doc.get_mut(id)?)?.auto_resize = enum_of(v).ok_or_else(|| bad(cmd, "textAutoResize: widthAndHeight|height|none|truncate"))?,
+            "textAlign" | "textAlignHorizontal" => {
+                text_mut(cmd, doc.get_mut(id)?)?.align_h = enum_of(v).ok_or_else(|| bad(cmd, "textAlign: left|center|right|justified"))?
+            }
+            "textAlignVertical" => {
+                text_mut(cmd, doc.get_mut(id)?)?.align_v = enum_of(v).ok_or_else(|| bad(cmd, "textAlignVertical: top|middle|bottom"))?
+            }
+            "textAutoResize" => {
+                text_mut(cmd, doc.get_mut(id)?)?.auto_resize =
+                    enum_of(v).ok_or_else(|| bad(cmd, "textAutoResize: widthAndHeight|height|none|truncate"))?
+            }
             "paragraphSpacing" => text_mut(cmd, doc.get_mut(id)?)?.paragraph_spacing = f64_of(v).unwrap_or(0.0).max(0.0),
             "paragraphIndent" => text_mut(cmd, doc.get_mut(id)?)?.paragraph_indent = f64_of(v).unwrap_or(0.0).max(0.0),
             "listStyle" => text_mut(cmd, doc.get_mut(id)?)?.list = enum_of(v).ok_or_else(|| bad(cmd, "listStyle: none|bulleted|numbered"))?,
@@ -434,7 +454,9 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
 pub fn override_group(k: &str) -> &'static str {
     match k {
         "fills" | "fill" => "fills",
-        "strokes" | "stroke" | "strokeWeight" | "strokeAlign" | "dashes" | "strokeCap" | "startCap" | "endCap" | "strokeJoin" | "strokeSides" => "strokes",
+        "strokes" | "stroke" | "strokeWeight" | "strokeAlign" | "dashes" | "strokeCap" | "startCap" | "endCap" | "strokeJoin" | "strokeSides" => {
+            "strokes"
+        }
         "effects" => "effects",
         "opacity" | "blend" | "blendMode" => "opacity",
         "visible" => "visible",
@@ -442,7 +464,9 @@ pub fn override_group(k: &str) -> &'static str {
         "characters" | "text" => "characters",
         "cornerRadius" | "cornerSmoothing" | "topLeftRadius" | "topRightRadius" | "bottomRightRadius" | "bottomLeftRadius" => "corners",
         "width" | "height" | "w" | "h" | "sizingH" | "sizingV" => "size",
-        k if k.starts_with("font") || k.starts_with("text") || k.starts_with("letter") || k.starts_with("line") || k.starts_with("paragraph") => "textStyle",
+        k if k.starts_with("font") || k.starts_with("text") || k.starts_with("letter") || k.starts_with("line") || k.starts_with("paragraph") => {
+            "textStyle"
+        }
         _ => "other",
     }
 }

@@ -59,6 +59,9 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 dbg_macro = "warn"
+# Style lints from newer toolchains that fight index-heavy pixel code.
+needless_range_loop = "allow"
+chunks_exact_to_as_chunks = "allow"
 # FigCraft never crashes: shipped code returns `Result`/`Option` instead of panicking (see
 # AGENTS.md › Never crash). Tests may unwrap (clippy.toml).
 unwrap_used = "deny"

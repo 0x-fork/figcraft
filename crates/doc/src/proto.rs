@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
+#[derive(Default)]
 pub enum Trigger {
+    #[default]
     OnClick,
     OnHover,
     OnPress,
@@ -14,14 +16,12 @@ pub enum Trigger {
     MouseLeave,
     MouseDown,
     MouseUp,
-    AfterDelay { ms: u32 },
-    KeyPress { key: String },
-}
-
-impl Default for Trigger {
-    fn default() -> Self {
-        Trigger::OnClick
-    }
+    AfterDelay {
+        ms: u32,
+    },
+    KeyPress {
+        key: String,
+    },
 }
 
 impl Trigger {
@@ -113,21 +113,27 @@ fn spring(t: f64, freq: f64, damping: f64) -> f64 {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
+#[derive(Default)]
 pub enum Transition {
+    #[default]
     Instant,
     Dissolve,
     SmartAnimate,
-    MoveIn { direction: Direction },
-    MoveOut { direction: Direction },
-    Push { direction: Direction },
-    SlideIn { direction: Direction },
-    SlideOut { direction: Direction },
-}
-
-impl Default for Transition {
-    fn default() -> Self {
-        Transition::Instant
-    }
+    MoveIn {
+        direction: Direction,
+    },
+    MoveOut {
+        direction: Direction,
+    },
+    Push {
+        direction: Direction,
+    },
+    SlideIn {
+        direction: Direction,
+    },
+    SlideOut {
+        direction: Direction,
+    },
 }
 
 impl Transition {
@@ -162,9 +168,13 @@ pub enum OverlayPosition {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Action {
-    Navigate { dest: NodeId },
+    Navigate {
+        dest: NodeId,
+    },
     Back,
-    ScrollTo { dest: NodeId },
+    ScrollTo {
+        dest: NodeId,
+    },
     OpenOverlay {
         dest: NodeId,
         #[serde(default)]
@@ -172,12 +182,21 @@ pub enum Action {
         #[serde(default)]
         close_on_outside: bool,
     },
-    SwapOverlay { dest: NodeId },
+    SwapOverlay {
+        dest: NodeId,
+    },
     CloseOverlay,
-    OpenUrl { url: String },
+    OpenUrl {
+        url: String,
+    },
     /// Change an instance to another variant (interactive components).
-    ChangeTo { dest: NodeId },
-    SetVariable { variable: String, value: serde_json::Value },
+    ChangeTo {
+        dest: NodeId,
+    },
+    SetVariable {
+        variable: String,
+        value: serde_json::Value,
+    },
 }
 
 impl Action {
@@ -196,9 +215,11 @@ impl Action {
     }
     pub fn dest(&self) -> Option<NodeId> {
         match self {
-            Action::Navigate { dest } | Action::ScrollTo { dest } | Action::OpenOverlay { dest, .. } | Action::SwapOverlay { dest } | Action::ChangeTo { dest } => {
-                Some(*dest)
-            }
+            Action::Navigate { dest }
+            | Action::ScrollTo { dest }
+            | Action::OpenOverlay { dest, .. }
+            | Action::SwapOverlay { dest }
+            | Action::ChangeTo { dest } => Some(*dest),
             _ => None,
         }
     }

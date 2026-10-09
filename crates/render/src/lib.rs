@@ -68,14 +68,22 @@ pub fn render_view(doc: &Document, page: NodeId, view: &View, opts: &Options) ->
                     let y0 = i * band_h;
                     let h = band_h.min(view.height.saturating_sub(y0));
                     let s = view.scale.max(1e-9);
-                    let v = View { origin: (view.origin.0, view.origin.1 + f64::from(y0) / s), scale: view.scale, width: view.width, height: h.max(1) };
+                    let v =
+                        View { origin: (view.origin.0, view.origin.1 + f64::from(y0) / s), scale: view.scale, width: view.width, height: h.max(1) };
                     (y0, render_view_single(doc, page, &v, opts))
                 })
                 .collect();
             let mut out = new_pixmap(view.width, view.height)?;
             for (y0, part) in parts {
                 let Some(part) = part else { continue };
-                out.draw_pixmap(0, y0 as i32, part.as_ref(), &tiny_skia::PixmapPaint { blend_mode: tiny_skia::BlendMode::Source, ..Default::default() }, tiny_skia::Transform::identity(), None);
+                out.draw_pixmap(
+                    0,
+                    y0 as i32,
+                    part.as_ref(),
+                    &tiny_skia::PixmapPaint { blend_mode: tiny_skia::BlendMode::Source, ..Default::default() },
+                    tiny_skia::Transform::identity(),
+                    None,
+                );
             }
             return Some(out);
         }
@@ -140,13 +148,18 @@ pub fn render_node(doc: &Document, id: NodeId, scale: f64) -> Option<Pixmap> {
 /// Un-premultiply into straight RGBA8 bytes.
 pub fn to_rgba8(p: &Pixmap) -> Vec<u8> {
     let mut out = Vec::with_capacity(p.data().len());
-    for px in p.data().chunks_exact(4) {
+    for px in p.data().as_chunks::<4>().0 {
         let a = px.get(3).copied().unwrap_or(0);
         if a == 0 {
             out.extend_from_slice(&[0, 0, 0, 0]);
         } else {
             let un = |c: u8| ((u32::from(c) * 255 + u32::from(a) / 2) / u32::from(a)).min(255) as u8;
-            out.extend_from_slice(&[un(px.first().copied().unwrap_or(0)), un(px.get(1).copied().unwrap_or(0)), un(px.get(2).copied().unwrap_or(0)), a]);
+            out.extend_from_slice(&[
+                un(px.first().copied().unwrap_or(0)),
+                un(px.get(1).copied().unwrap_or(0)),
+                un(px.get(2).copied().unwrap_or(0)),
+                a,
+            ]);
         }
     }
     out
@@ -166,7 +179,7 @@ pub fn encode_jpeg(p: &Pixmap, background: Color, quality: u8) -> Result<Vec<u8>
     let rgba = to_rgba8(p);
     let bg = background.to_rgba8();
     let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         let a = u32::from(px.get(3).copied().unwrap_or(0));
         for c in 0..3 {
             let s = u32::from(px.get(c).copied().unwrap_or(0));

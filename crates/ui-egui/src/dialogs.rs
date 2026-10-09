@@ -13,7 +13,11 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn window<'a>(title: &'a str, ctx: &Context) -> egui::Window<'a> {
     let t = Tokens::get(ctx);
-    egui::Window::new(title).collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(20)))
+    egui::Window::new(title)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+        .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(20)))
 }
 
 pub fn show(app: &mut FigApp, ctx: &Context) {
@@ -137,7 +141,11 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
         if let Some(rep) = action
             && !find.is_empty()
         {
-            let r = if rep { app.run("edit.findReplace", json!({"find": find, "replace": replace, "layerNames": false})) } else { app.run("edit.findReplace", json!({"find": find, "layerNames": true})) };
+            let r = if rep {
+                app.run("edit.findReplace", json!({"find": find, "replace": replace, "layerNames": false}))
+            } else {
+                app.run("edit.findReplace", json!({"find": find, "layerNames": true}))
+            };
             if let Some(v) = r {
                 let n = v["matches"].as_array().map(|a| a.len()).unwrap_or(0);
                 app.toast(format!("{n} match{}", if n == 1 { "" } else { "es" }));
@@ -222,7 +230,14 @@ fn export_dialog(app: &mut FigApp, ctx: &Context) {
         ui.set_width(320.0);
         ui.label(RichText::new(format!("{} layer{}", ids.len(), if ids.len() == 1 { "" } else { "s" })).color(t.text_secondary));
         ui.add_space(8.0);
-        for (label, fmt, scale) in [("PNG @1x", "png", 1.0), ("PNG @2x", "png", 2.0), ("PNG @3x", "png", 3.0), ("JPG @2x", "jpg", 2.0), ("WebP @2x", "webp", 2.0), ("SVG", "svg", 1.0)] {
+        for (label, fmt, scale) in [
+            ("PNG @1x", "png", 1.0),
+            ("PNG @2x", "png", 2.0),
+            ("PNG @3x", "png", 3.0),
+            ("JPG @2x", "jpg", 2.0),
+            ("WebP @2x", "webp", 2.0),
+            ("SVG", "svg", 1.0),
+        ] {
             let (r, resp) = ui.allocate_exact_size(vec2(320.0, 30.0), Sense::click());
             if resp.hovered() {
                 ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
