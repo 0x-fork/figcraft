@@ -7,6 +7,7 @@
 
 pub mod canvas;
 pub mod colorpicker;
+pub mod component_panel;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
@@ -15,12 +16,14 @@ pub mod icons;
 pub mod layers;
 pub mod menus;
 pub mod present;
+pub mod proto_panel;
 pub mod render_worker;
 pub mod right;
 pub mod shortcuts;
 pub mod tabs;
 pub mod theme;
 pub mod toolbar;
+pub mod typography;
 pub mod widgets;
 
 use std::collections::BTreeSet;

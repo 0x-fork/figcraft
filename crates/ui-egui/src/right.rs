@@ -11,7 +11,7 @@ use crate::widgets::{self, FIELD_H, FieldEdit, Lead, PAD};
 use crate::{FigApp, RightTab};
 
 /// Common value of `f` across `ids` (None when mixed or empty).
-fn common<T: PartialEq + Clone>(doc: &Document, ids: &[NodeId], f: impl Fn(&Node) -> T) -> Option<T> {
+pub(crate) fn common<T: PartialEq + Clone>(doc: &Document, ids: &[NodeId], f: impl Fn(&Node) -> T) -> Option<T> {
     let mut it = ids.iter().filter_map(|i| doc.node(*i));
     let first = f(it.next()?);
     if it.all(|n| f(n) == first) { Some(first) } else { None }
@@ -131,7 +131,7 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
         ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
         match app.ui.right_tab {
             RightTab::Design => design(app, ui),
-            RightTab::Prototype => prototype(app, ui),
+            RightTab::Prototype => crate::proto_panel::prototype(app, ui),
             RightTab::Inspect => inspect(app, ui),
         }
         ui.add_space(80.0);
@@ -159,7 +159,7 @@ pub fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
     resp.clicked()
 }
 
-fn row(ui: &mut Ui, h: f32, add: impl FnOnce(&mut Ui)) {
+pub(crate) fn row(ui: &mut Ui, h: f32, add: impl FnOnce(&mut Ui)) {
     let w = ui.available_width();
     let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
     let mut child = ui.new_child(
@@ -186,7 +186,7 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
     appearance(app, ui, &doc, &sel);
     widgets::separator(ui);
     if sel.iter().any(|i| matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Text(_)))) {
-        typography(app, ui, &doc, &sel);
+        crate::typography::typography(app, ui, &doc, &sel);
         widgets::separator(ui);
     }
     paints(app, ui, &doc, &sel, true);
@@ -346,85 +346,7 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         }
         x -= 26.0;
     }
-    // Instance row.
-    if sel.len() == 1
-        && let Some(n) = sel.first().and_then(|i| doc.node(*i))
-        && let NodeKind::Instance { component, props } = &n.kind
-    {
-        let comp_name = doc.node(*component).map(|c| c.name.clone()).unwrap_or_else(|| "Missing component".into());
-        let set =
-            doc.node(*component).and_then(|c| c.parent).filter(|p| doc.node(*p).is_some_and(|pn| matches!(pn.kind, NodeKind::ComponentSet { .. })));
-        row(ui, 32.0, |ui| {
-            let (ir, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-            icons::paint(ui.painter(), ir, Icon::Instance, crate::theme::COMPONENT);
-            widgets::label(ui, &comp_name, t.text);
-        });
-        // Variant properties.
-        if let Some(set) = set {
-            let mut opts: std::collections::BTreeMap<String, Vec<String>> = Default::default();
-            for c in doc.node(set).map(|s| s.children.clone()).unwrap_or_default() {
-                if let Some(cn) = doc.node(c) {
-                    for (k, v) in figcraft_engine::components::variant_props(&cn.name) {
-                        let e = opts.entry(k).or_default();
-                        if !e.contains(&v) {
-                            e.push(v);
-                        }
-                    }
-                }
-            }
-            let current = doc.node(*component).map(|c| figcraft_engine::components::variant_props(&c.name)).unwrap_or_default();
-            for (k, vals) in opts {
-                let cur = current.get(&k).cloned().unwrap_or_default();
-                let id = n.id;
-                row(ui, 32.0, |ui| {
-                    widgets::label(ui, &k, t.text_secondary);
-                    let resp = widgets::dropdown(ui, &cur, 120.0, None);
-                    egui::Popup::menu(&resp).show(|ui| {
-                        for v in &vals {
-                            if menu_item(ui, v, "") {
-                                app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): v}}));
-                                ui.close();
-                            }
-                        }
-                    });
-                });
-            }
-        }
-        for (k, v) in props.clone() {
-            let id = n.id;
-            row(ui, 32.0, |ui| {
-                widgets::label(ui, &k, t.text_secondary);
-                match v {
-                    Value::Bool(b) => {
-                        if widgets::checkbox(ui, b, "") {
-                            app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): !b}}));
-                        }
-                    }
-                    Value::String(s) => {
-                        if let Some(ns) = widgets::text_field(ui, Id::new(("iprop", id, k.as_str())), &s, 120.0, "") {
-                            app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): ns}}));
-                        }
-                    }
-                    _ => {}
-                }
-            });
-        }
-        let id = n.id;
-        row(ui, 32.0, |ui| {
-            if icons::button(ui, Icon::Reset, 24.0, false, "Reset all changes").clicked() {
-                app.run("component.resetInstance", json!({"ids": [id]}));
-            }
-            if icons::button(ui, Icon::Detach, 24.0, false, "Detach instance  ⌥⌘B").clicked() {
-                app.run("component.detach", json!({"ids": [id]}));
-            }
-            if icons::button(ui, Icon::Component, 24.0, false, "Go to main component").clicked() {
-                app.run("component.goToMain", json!({"id": id}));
-            }
-            if icons::button(ui, Icon::Export, 24.0, false, "Push changes to main component").clicked() {
-                app.run("component.pushChanges", json!({"id": id}));
-            }
-        });
-    }
+    crate::component_panel::instance_section(app, ui, doc, sel);
 }
 
 fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
@@ -1281,290 +1203,6 @@ fn export(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             export_now(app, &ids, e.format.ext(), scale);
         }
     });
-}
-
-fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
-    let t = Tokens::get(ui.ctx());
-    let ids: Vec<NodeId> = sel.iter().copied().filter(|i| matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Text(_)))).collect();
-    // While editing a range, style edits apply to it.
-    let range = figcraft_engine::textedit::selected_range(&app.session);
-    let style_of = |n: &Node| -> Option<TextStyle> {
-        let td = n.kind.text()?;
-        match range {
-            Some((id, a, b)) if id == n.id && a != b => Some(td.style_at(a).clone()),
-            _ => Some(td.style.clone()),
-        }
-    };
-    let st = common(doc, &ids, style_of).flatten();
-    let td = common(doc, &ids, |n| n.kind.text().map(|t| (t.align_h, t.align_v, t.auto_resize))).flatten();
-    widgets::section_header(ui, "Typography", &[(Icon::Styles, "Text styles")], false);
-    let apply_style = |app: &mut FigApp, key: &str, v: Value| {
-        if let Some((id, a, b)) = range
-            && a != b
-        {
-            app.run("text.style", json!({"id": id, "start": a, "end": b, key: v}));
-        } else {
-            app.set_props(&ids, json!({ key: v }));
-        }
-    };
-    let family = st.as_ref().map(|s| s.font_family.clone()).unwrap_or_else(|| "Mixed".into());
-    let fstyle = st.as_ref().map(|s| s.font_style.clone()).unwrap_or_else(|| "Mixed".into());
-    row(ui, 32.0, |ui| {
-        let w = ui.available_width();
-        let resp = widgets::dropdown(ui, &family, w, None);
-        egui::Popup::menu(&resp).width(260.0).show(|ui| {
-            let q_id = Id::new("font_query");
-            let mut q: String = ui.data(|d| d.get_temp(q_id)).unwrap_or_default();
-            ui.add(egui::TextEdit::singleline(&mut q).hint_text("Search fonts").desired_width(240.0));
-            ui.data_mut(|d| d.insert_temp(q_id, q.clone()));
-            egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                for f in figcraft_text::family_names().into_iter().filter(|f| q.is_empty() || f.to_lowercase().contains(&q.to_lowercase())).take(400)
-                {
-                    if menu_item(ui, &f, "") {
-                        apply_style(app, "fontFamily", json!(f));
-                        ui.close();
-                    }
-                }
-            });
-        });
-    });
-    let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
-    row(ui, 32.0, |ui| {
-        let resp = widgets::dropdown(ui, &fstyle, half, None);
-        let fam = family.clone();
-        egui::Popup::menu(&resp).width(200.0).show(|ui| {
-            for s in figcraft_text::family_styles(&fam) {
-                if menu_item(ui, &s, "") {
-                    apply_style(app, "fontStyle", json!(s));
-                    ui.close();
-                }
-            }
-        });
-        let size = st.as_ref().map(|s| s.font_size);
-        let e = widgets::number_field(ui, Id::new("ty_size"), Lead::None, size, "", half, 1.0);
-        match e {
-            Some(FieldEdit::Set(v)) | Some(FieldEdit::Scrub(v, true)) => apply_style(app, "fontSize", json!(v.max(1.0))),
-            Some(FieldEdit::Scrub(v, false)) => {
-                let _ = app.session.begin_interaction("Font size");
-                let _ = app.session.execute("node.set", &json!({"ids": ids, "props": {"fontSize": v.max(1.0)}}));
-            }
-            None => {}
-        }
-        if let Some(FieldEdit::Scrub(_, true)) = e {
-            let _ = app.session.commit_interaction();
-        }
-    });
-    row(ui, 32.0, |ui| {
-        let lh = st.as_ref().map(|s| s.line_height);
-        let lh_label = lh.map(|l| l.label()).unwrap_or_else(|| "Mixed".into());
-        if let Some(v) = widgets::text_field(ui, Id::new("ty_lh"), &lh_label, half, "Line height") {
-            apply_style(app, "lineHeight", if v.trim().eq_ignore_ascii_case("auto") { json!("auto") } else { json!(v.trim()) });
-        }
-        let ls = st.as_ref().map(|s| s.letter_spacing.label()).unwrap_or_else(|| "Mixed".into());
-        if let Some(v) = widgets::text_field(ui, Id::new("ty_ls"), &ls, half, "Letter spacing") {
-            apply_style(app, "letterSpacing", json!(v.trim()));
-        }
-    });
-    row(ui, 32.0, |ui| {
-        let items = [
-            (Icon::TextAlignLeft, "Align left"),
-            (Icon::TextAlignCenter, "Align center"),
-            (Icon::TextAlignRight, "Align right"),
-            (Icon::TextAlignJustify, "Justify"),
-        ];
-        let active = td.map(|(h, _, _)| match h {
-            TextAlignH::Left => 0,
-            TextAlignH::Center => 1,
-            TextAlignH::Right => 2,
-            TextAlignH::Justified => 3,
-        });
-        if let Some(i) = widgets::segmented(ui, &items, active, 26.0) {
-            app.set_props(&ids, json!({"textAlign": (["left", "center", "right", "justified"][i])}));
-        }
-        let items = [(Icon::TextTop, "Top"), (Icon::TextMiddle, "Middle"), (Icon::TextBottom, "Bottom")];
-        let active = td.map(|(_, v, _)| match v {
-            TextAlignV::Top => 0,
-            TextAlignV::Middle => 1,
-            TextAlignV::Bottom => 2,
-        });
-        if let Some(i) = widgets::segmented(ui, &items, active, 26.0) {
-            app.set_props(&ids, json!({"textAlignVertical": (["top", "middle", "bottom"][i])}));
-        }
-    });
-    row(ui, 32.0, |ui| {
-        let items = [(Icon::Hug, "Auto width"), (Icon::LayoutV, "Auto height"), (Icon::Fixed, "Fixed size"), (Icon::Dots, "Truncate text")];
-        let active = td.map(|(_, _, r)| match r {
-            TextAutoResize::WidthAndHeight => 0,
-            TextAutoResize::Height => 1,
-            TextAutoResize::None => 2,
-            TextAutoResize::Truncate => 3,
-        });
-        if let Some(i) = widgets::segmented(ui, &items, active, 26.0) {
-            app.set_props(&ids, json!({"textAutoResize": (["widthAndHeight", "height", "none", "truncate"][i])}));
-        }
-        let deco = st.as_ref().map(|s| s.decoration);
-        let more = icons::button(ui, Icon::Dots, 24.0, false, "Type details");
-        egui::Popup::menu(&more).width(220.0).show(|ui| {
-            ui.label(egui::RichText::new("Decoration").font(semibold(11.0)));
-            for (l, v) in [("None", "none"), ("Underline", "underline"), ("Strikethrough", "strikethrough")] {
-                if menu_item(ui, &format!("{}{l}", if format!("{deco:?}").eq_ignore_ascii_case(&format!("Some({l})")) { "✓ " } else { "" }), "") {
-                    apply_style(app, "textDecoration", json!(v));
-                }
-            }
-            ui.separator();
-            ui.label(egui::RichText::new("Case").font(semibold(11.0)));
-            for (l, v) in [("Original", "original"), ("Uppercase", "upper"), ("Lowercase", "lower"), ("Title case", "title")] {
-                if menu_item(ui, l, "") {
-                    apply_style(app, "textCase", json!(v));
-                }
-            }
-            ui.separator();
-            ui.label(egui::RichText::new("List").font(semibold(11.0)));
-            for (l, v) in [("None", "none"), ("Bulleted", "bulleted"), ("Numbered", "numbered")] {
-                if menu_item(ui, l, "") {
-                    app.set_props(&ids, json!({"listStyle": v}));
-                }
-            }
-        });
-    });
-    let _ = t;
-}
-
-fn prototype(app: &mut FigApp, ui: &mut Ui) {
-    let t = Tokens::get(ui.ctx());
-    let Ok(ds) = app.session.ds() else { return };
-    let doc = ds.doc.clone();
-    let sel = ds.selection.clone();
-    let page = ds.page;
-    if sel.is_empty() {
-        let flows = match doc.node(page).map(|n| &n.kind) {
-            Some(NodeKind::Page { flows, .. }) => flows.clone(),
-            _ => vec![],
-        };
-        widgets::section_header(ui, "Flow starting points", &[], flows.is_empty());
-        for f in &flows {
-            row(ui, 32.0, |ui| {
-                if icons::button(ui, Icon::Play, 24.0, false, "Present this flow").clicked() {
-                    app.run("proto.present", json!({"start": f.start}));
-                }
-                widgets::label(ui, &f.name, t.text);
-            });
-        }
-        widgets::separator(ui);
-        widgets::section_header(ui, "Prototype settings", &[], false);
-        let (device, bg) = match doc.node(page).map(|n| &n.kind) {
-            Some(NodeKind::Page { prototype, .. }) => (prototype.device.clone(), prototype.background),
-            _ => ("None".into(), figcraft_color::Color::BLACK),
-        };
-        row(ui, 32.0, |ui| {
-            let resp = widgets::dropdown(ui, &device, ui.available_width(), None);
-            egui::Popup::menu(&resp).show(|ui| {
-                for d in ["None", "iPhone 16", "iPhone 16 Pro Max", "Android Compact", "iPad mini", "MacBook Air", "Desktop"] {
-                    if menu_item(ui, d, "") {
-                        app.run("proto.settings", json!({"device": d}));
-                        ui.close();
-                    }
-                }
-            });
-        });
-        row(ui, 32.0, |ui| {
-            widgets::swatch(ui, &Paint::solid(bg), 16.0);
-            if let Some(h) = widgets::text_field(ui, Id::new("proto_bg"), &bg.to_hex(), 96.0, "")
-                && let Some(c) = figcraft_color::Color::from_hex(&h)
-            {
-                app.run("proto.settings", json!({"background": c.to_css_hex()}));
-            }
-        });
-        return;
-    }
-    let ids = sel.clone();
-    let first = sel.first().copied().unwrap_or(NodeId(0));
-    let interactions = doc.node(first).map(|n| n.interactions.clone()).unwrap_or_default();
-    if widgets::section_header(ui, "Interactions", &[(Icon::Plus, "Add interaction")], interactions.is_empty()).is_some() {
-        // Default: click → navigate to the next top-level frame.
-        let frames = doc.top_frames(page);
-        let own = doc.top_level_frame(first);
-        let dest = frames.iter().copied().find(|f| Some(*f) != own).or(frames.first().copied());
-        match dest {
-            Some(d) => {
-                app.run("proto.interaction.add", json!({"ids": ids, "dest": d}));
-            }
-            None => app.toast("Add another frame to navigate to"),
-        }
-    }
-    for (i, it) in interactions.iter().enumerate() {
-        let dest_name = it.actions.first().and_then(|a| a.dest()).and_then(|d| doc.node(d)).map(|n| n.name.clone());
-        row(ui, 40.0, |ui| {
-            ui.vertical(|ui| {
-                widgets::label(ui, &it.trigger.label(), t.text);
-                let action = it.actions.first().map(|a| a.label()).unwrap_or("None");
-                widgets::label(ui, &format!("{action} {}", dest_name.clone().unwrap_or_default()), t.text_secondary);
-            });
-        });
-        row(ui, 32.0, |ui| {
-            let frames = doc.top_frames(page);
-            let resp = widgets::dropdown(ui, &dest_name.unwrap_or_else(|| "Choose destination".into()), ui.available_width() - 32.0, None);
-            let it2 = it.clone();
-            egui::Popup::menu(&resp).show(|ui| {
-                for f in frames {
-                    let name = doc.node(f).map(|n| n.name.clone()).unwrap_or_default();
-                    if menu_item(ui, &name, "") {
-                        let mut ni = it2.clone();
-                        ni.actions = vec![proto::Action::Navigate { dest: f }];
-                        app.run("proto.interaction.set", json!({"ids": ids, "index": i, "interaction": ni}));
-                        ui.close();
-                    }
-                }
-            });
-            if icons::button(ui, Icon::Minus, 24.0, false, "Remove").clicked() {
-                app.run("proto.interaction.remove", json!({"ids": ids, "index": i}));
-            }
-        });
-        row(ui, 32.0, |ui| {
-            let resp = widgets::dropdown(ui, it.transition.label(), ui.available_width(), None);
-            let it2 = it.clone();
-            egui::Popup::menu(&resp).show(|ui| {
-                for (l, tr) in [
-                    ("Instant", proto::Transition::Instant),
-                    ("Dissolve", proto::Transition::Dissolve),
-                    ("Smart animate", proto::Transition::SmartAnimate),
-                    ("Move in", proto::Transition::MoveIn { direction: proto::Direction::Left }),
-                    ("Push", proto::Transition::Push { direction: proto::Direction::Left }),
-                    ("Slide in", proto::Transition::SlideIn { direction: proto::Direction::Left }),
-                ] {
-                    if menu_item(ui, l, "") {
-                        let mut ni = it2.clone();
-                        ni.transition = tr;
-                        app.run("proto.interaction.set", json!({"ids": ids, "index": i, "interaction": ni}));
-                        ui.close();
-                    }
-                }
-            });
-        });
-    }
-    if doc.top_level_frame(first) == Some(first) {
-        widgets::separator(ui);
-        widgets::section_header(ui, "Flow starting point", &[(Icon::Plus, "Add starting point")], false);
-        row(ui, 32.0, |ui| {
-            if ui.button("Set as flow starting point").clicked() {
-                app.run("proto.flow.add", json!({"start": first}));
-            }
-        });
-        widgets::separator(ui);
-        widgets::section_header(ui, "Scroll behavior", &[], false);
-        let ov = doc.node(first).map(|n| n.overflow).unwrap_or_default();
-        row(ui, 32.0, |ui| {
-            let resp = widgets::dropdown(ui, &format!("Overflow: {ov:?}"), ui.available_width(), None);
-            egui::Popup::menu(&resp).show(|ui| {
-                for (l, v) in [("No scrolling", "none"), ("Horizontal", "horizontal"), ("Vertical", "vertical"), ("Both directions", "both")] {
-                    if menu_item(ui, l, "") {
-                        app.set_props(&ids, json!({"overflow": v}));
-                        ui.close();
-                    }
-                }
-            });
-        });
-    }
 }
 
 /// CSS for a node (Inspect / Copy as CSS).
