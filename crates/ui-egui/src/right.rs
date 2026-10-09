@@ -507,7 +507,7 @@ fn layout(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         let sh = common(doc, sel, |n| n.child_layout.sizing_h);
         let sv = common(doc, sel, |n| n.child_layout.sizing_v);
         row(ui, 32.0, |ui| {
-            for (axis, cur, key) in [("W", sh, "sizingH"), ("H", sv, "sizingV")] {
+            for (cur, key) in [(sh, "sizingH"), (sv, "sizingV")] {
                 let label = cur.map(|s| s.label()).unwrap_or("Mixed");
                 let resp = widgets::dropdown(
                     ui,
