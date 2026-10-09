@@ -40,19 +40,24 @@ dimension measured side by side.
 
 1. **Vector edit mode** (Enter on a vector): vertex/handle editing, bend, paint bucket, lasso,
    cut/erase, vector networks with branching. 25–35 h.
-2. **Text editing depth**: mouse selection inside text, styled range editing UI, lists polish,
-   OpenType features panel, variable font axes, font picker with previews. 20–30 h.
-3. **Auto layout depth**: on-canvas padding/gap handles, drag-reorder polish, min/max UI, baseline
+2. **Text editing depth**: *landed:* OpenType features panel, small caps, lists, title case,
+   truncation/max lines, font picker with previews and recents, word/line selection, IME commit.
+   *Left:* inline IME preedit, variable font axes, visual QA. 8–12 h.
+3. **Auto layout depth**: *landed:* on-canvas padding/gap handles. *Left:* drag-reorder polish, min/max UI, baseline
    alignment, absolute positioning UI, grid tracks (fr/fixed), wrap polish. 15–25 h.
-4. **Components depth**: component properties panel (create/edit/bind), instance swap UI, nested
-   instance overrides, slots, library publishing (local files), Assets panel drag-to-canvas. 20–30 h.
-5. **Prototyping depth**: on-canvas noodle editing, overlays/scroll/fixed elements, smart animate
-   (matching layers), variables-driven interactions, device frames. 20–30 h.
-6. **Interop**: .fig import (best effort), PDF export (in progress), image crop/adjustments UI,
+4. **Components depth**: *landed (engine):* component properties (edit/delete/bind), add variant,
+   reset override, restore main, instance structure protection. *Left:* properties panel UI, instance
+   swap UI, nested overrides, slots, local libraries, Assets drag-to-canvas. 14–20 h.
+5. **Prototyping depth**: *landed:* on-canvas connections with drag-to-connect, interaction editor,
+   flows, smart animate, overlays, scroll/fixed/sticky, change-to and set-variable in the presenter.
+   *Left:* overlay close animation, springs, device frames, multi-selection editing. 6–10 h.
+6. **Interop**: .fig import (best effort), PDF export (in progress), image crop handles (landed),
    paste from other apps, Figma REST JSON import. 25–40 h.
 7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
    (cursors, modifier keys, hover states, menus, popovers). 40–60 h.
-8. **Hardening and performance**: real-world file corpus, perf budgets at 50k layers (tile cache,
+8. **Collaboration (local):** comments landed (pins, threads, resolve, panel). Version history UI,
+   multiplayer and plugins are not started. 30–60 h.
+9. **Hardening and performance**: real-world file corpus, perf budgets at 50k layers (tile cache,
    incremental re-render), Windows/Linux/browser QA, accessibility. 40–60 h.
 
 ### Where we're going
