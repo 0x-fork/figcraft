@@ -418,7 +418,7 @@ impl Session {
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
         let before = self.ds().ok().map(|d| (d.doc.clone(), d.selection.clone(), d.page, d.uid));
-        let result = guard::run(id, || (spec.run)(self, params));
+        let result = guard::run(id, || (spec.run)(self, params)).and_then(|v| self.check_instance_structure(id, &before).map(|()| v));
         match &result {
             Ok(_) => {
                 self.after_command(spec, before);
@@ -443,6 +443,16 @@ impl Session {
             }
         }
         result
+    }
+
+    /// Instances can't gain, lose or reorder layers: refuse such an edit (it is rolled back).
+    fn check_instance_structure(&self, id: &str, before: &Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>) -> Result<()> {
+        let Some((bdoc, _, _, uid)) = before else { return Ok(()) };
+        let Some(ds) = self.docs.iter().find(|d| d.uid == *uid) else { return Ok(()) };
+        if Arc::ptr_eq(&ds.doc, bdoc) {
+            return Ok(());
+        }
+        components::check_structure_edit(bdoc, &ds.doc).map_err(|m| EngineError::Disabled(id.to_string(), m))
     }
 
     /// Bookkeeping after a successful command: normalise what changed, push undo, bump revision.
