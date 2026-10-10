@@ -8,11 +8,12 @@
 use std::io;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use figcraft_collab::Client;
-use figcraft_collab::message::{self, ClientMsg, Peer, Presence, ServerMsg};
+use figcraft_collab::message::{self, ClientMsg, Peer, Presence, Resume, ServerMsg};
 use figcraft_engine::live::{Event, Role, SessionInfo, Status};
 use tungstenite::protocol::frame::coding::CloseCode;
 use tungstenite::protocol::{CloseFrame, Role as WsRole, WebSocket};
@@ -160,7 +161,13 @@ fn backoff(cfg: &GuestConfig, attempt: u32) -> Duration {
     cfg.backoff.saturating_mul(1u32 << attempt.saturating_sub(1).min(16)).min(cfg.max_backoff)
 }
 
+/// Who this guest is in the session and the last sequence number it got (from the welcome and
+/// the batches since): what a reconnect resumes with. The engine applies every message it got,
+/// in order, before the next welcome, so its sync client is at that sequence number by then.
+type Resuming = Arc<Mutex<Option<Resume>>>;
+
 fn supervise(cfg: &GuestConfig, inbox: &Inbox, rx: &Receiver<Cmd>, me: &Sender<Cmd>) {
+    let resume: Resuming = Arc::new(Mutex::new(None));
     let mut attempt = 0u32;
     let mut was_live = false;
     let mut pending: Option<Presence> = None;
@@ -169,7 +176,7 @@ fn supervise(cfg: &GuestConfig, inbox: &Inbox, rx: &Receiver<Cmd>, me: &Sender<C
     loop {
         epoch += 1;
         let outcome = match connect(cfg) {
-            Ok(c) => session(c, cfg, inbox, rx, me, epoch, &mut pending, &mut was_live, &mut attempt),
+            Ok(c) => session(c, cfg, inbox, rx, me, epoch, &resume, &mut pending, &mut was_live, &mut attempt),
             Err(e) => Outcome::Retry(e),
         };
         match outcome {
@@ -209,13 +216,14 @@ fn session(
     rx: &Receiver<Cmd>,
     me: &Sender<Cmd>,
     epoch: u64,
+    resume: &Resuming,
     pending: &mut Option<Presence>,
     was_live: &mut bool,
     attempt: &mut u32,
 ) -> Outcome {
     let Conn { reader, mut writer, sock } = c;
     let reader = {
-        let ctx = ReaderCtx { inbox: inbox.clone(), tx: me.clone(), epoch, cfg: cfg.clone() };
+        let ctx = ReaderCtx { inbox: inbox.clone(), tx: me.clone(), epoch, cfg: cfg.clone(), resume: resume.clone() };
         match std::thread::Builder::new().name("live-guest-read".into()).spawn(move || read_loop(reader, &ctx)) {
             Ok(t) => t,
             Err(e) => {
@@ -225,9 +233,12 @@ fn session(
         }
     };
     let mut last_sent = Instant::now();
-    let hello = Client::hello(&cfg.invite.file, &cfg.invite.token, &cfg.name, "");
+    let mut hello = Client::hello(&cfg.invite.file, &cfg.invite.token, &cfg.name, "");
+    // Back after a drop: the same client, catching up from where it was.
+    if let (ClientMsg::Hello(h), Some(r)) = (&mut hello, resume.lock().ok().and_then(|r| *r)) {
+        h.resume = Some(r);
+    }
     let mut welcomed = false;
-    let mut queued: Vec<ClientMsg> = Vec::new();
     let mut throttle = Throttle::new(PRESENCE_INTERVAL);
     let outcome = if send(&mut writer, &hello, &mut last_sent) {
         loop {
@@ -237,7 +248,9 @@ fn session(
             let mut now_send = Vec::new();
             match rx.recv_timeout(wake.saturating_duration_since(Instant::now())) {
                 Ok(Cmd::Send(m)) if welcomed => now_send.push(m),
-                Ok(Cmd::Send(m)) => queued.push(m),
+                // Made for the previous connection (the sync client sends again what the server
+                // didn't get once it has caught up with this connection's welcome).
+                Ok(Cmd::Send(_)) => {}
                 Ok(Cmd::Presence(p)) if welcomed => out = throttle.offer(p, Instant::now()),
                 Ok(Cmd::Presence(p)) => *pending = Some(p),
                 Ok(Cmd::Welcomed(e)) if e == epoch => {
@@ -245,7 +258,6 @@ fn session(
                     *was_live = true;
                     *attempt = 0;
                     out = pending.take().and_then(|p| throttle.offer(p, Instant::now()));
-                    now_send.append(&mut queued);
                 }
                 Ok(Cmd::Lost(e, o)) if e == epoch => break o,
                 Ok(Cmd::Leave) | Err(RecvTimeoutError::Disconnected) => {
@@ -289,6 +301,7 @@ struct ReaderCtx {
     tx: Sender<Cmd>,
     epoch: u64,
     cfg: GuestConfig,
+    resume: Resuming,
 }
 
 /// What the reader knows of the session (to tell the UI who's here).
@@ -330,7 +343,10 @@ fn read_loop(mut ws: WebSocket<Duplex>, ctx: &ReaderCtx) {
 /// Take in one message from the host; `Some` when the connection should end.
 fn take(m: ServerMsg, ctx: &ReaderCtx, seen: &mut Seen) -> Option<Outcome> {
     match m {
-        ServerMsg::Welcome { client_id, ref peers, .. } => {
+        ServerMsg::Welcome { session, client_id, seq, ref peers, .. } => {
+            if let Ok(mut r) = ctx.resume.lock() {
+                *r = Some(Resume { session, client_id, seq });
+            }
             // The sync client opens the document (and fills in its name and pages).
             let peers = peers.clone();
             let inv = &ctx.cfg.invite;
@@ -349,9 +365,11 @@ fn take(m: ServerMsg, ctx: &ReaderCtx, seen: &mut Seen) -> Option<Outcome> {
             };
             seen.peers = peers.clone();
             seen.info = Some(info.clone());
+            // The writer goes live first: what the sync client sends in answer to this welcome
+            // must go out on this connection.
+            let _ = ctx.tx.send(Cmd::Welcomed(ctx.epoch));
             ctx.inbox.push(Event::Welcome { info, peers });
             ctx.inbox.push(Event::Sync(m));
-            let _ = ctx.tx.send(Cmd::Welcomed(ctx.epoch));
         }
         ServerMsg::PeerJoined(p) => match seen.info.as_mut() {
             // The host tells you how you are shown.
@@ -376,7 +394,15 @@ fn take(m: ServerMsg, ctx: &ReaderCtx, seen: &mut Seen) -> Option<Outcome> {
             }
         }
         ServerMsg::Refused { reason } => return Some(Outcome::Refused(reason)),
-        ServerMsg::Changes { .. } | ServerMsg::Reject { .. } => ctx.inbox.push(Event::Sync(m)),
+        ServerMsg::Changes(ref acc) => {
+            if let Ok(mut r) = ctx.resume.lock()
+                && let Some(r) = r.as_mut()
+            {
+                r.seq = acc.seq;
+            }
+            ctx.inbox.push(Event::Sync(m));
+        }
+        ServerMsg::Reject { .. } => ctx.inbox.push(Event::Sync(m)),
         ServerMsg::Pong => {}
     }
     None

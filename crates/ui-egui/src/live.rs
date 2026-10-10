@@ -18,8 +18,8 @@ use crate::right::{menu_item, menu_item_with, menu_popup};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets;
 
-/// Until undo is per person, it restores whole earlier states.
-const UNDO_NOTE: &str = "Undo isn't per person yet: it can also revert others' recent edits.";
+/// How undo works in a session (per person).
+const UNDO_NOTE: &str = "Undo takes back only your own changes; what others changed since stays.";
 
 /// How fast a remote cursor closes in on where it was last reported (per second).
 const GLIDE: f64 = 20.0;
