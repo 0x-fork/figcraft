@@ -121,6 +121,8 @@ pub struct UiState {
     /// The Variables editor, when open.
     pub variables: Option<variables_panel::Editor>,
     pub about: bool,
+    /// The tab the About window shows.
+    pub about_tab: dialogs::AboutTab,
     pub preferences: bool,
     pub shortcuts_panel: bool,
     pub home: bool,
@@ -186,6 +188,7 @@ impl Default for UiState {
             palette: None,
             variables: None,
             about: false,
+            about_tab: dialogs::AboutTab::About,
             preferences: false,
             shortcuts_panel: false,
             home: false,
@@ -277,7 +280,10 @@ impl FigApp {
         let reqs = std::mem::take(&mut self.session.ui_requests);
         for r in reqs {
             match r.kind.as_str() {
-                "dialog.about" => self.ui.about = true,
+                "dialog.about" => {
+                    self.ui.about = true;
+                    self.ui.about_tab = dialogs::AboutTab::About;
+                }
                 "dialog.preferences" => self.ui.preferences = true,
                 "panel.shortcuts" => self.ui.shortcuts_panel = !self.ui.shortcuts_panel,
                 "palette.actions" => self.ui.palette = Some(String::new()),
