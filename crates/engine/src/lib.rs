@@ -21,6 +21,7 @@ pub mod drop;
 pub mod guard;
 pub mod guides;
 pub mod inspect;
+pub mod keymap;
 pub mod library;
 pub mod measure;
 pub mod params;
@@ -969,6 +970,8 @@ mod frame_tests;
 mod html_codegen_tests;
 #[cfg(test)]
 mod import_export_tests;
+#[cfg(test)]
+mod keymap_tests;
 #[cfg(test)]
 mod library_variables_tests;
 #[cfg(test)]
