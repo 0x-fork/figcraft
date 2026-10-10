@@ -898,6 +898,8 @@ mod proto_multi_tests;
 #[cfg(test)]
 mod proto_present_tests;
 #[cfg(test)]
+mod proto_responsive_tests;
+#[cfg(test)]
 mod proto_run_tests;
 #[cfg(test)]
 mod rotated_select_tests;
