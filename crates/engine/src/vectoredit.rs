@@ -3,12 +3,17 @@
 //!
 //! Entering edit mode on a non-vector shape converts it to a vector first (like the incumbent).
 //! Vertex coordinates are node-local; after each edit the node is re-fitted so its box wraps the
-//! network again. The network edits themselves live in [`ops`]; pointer gestures in `pointer.rs`.
+//! network again. The network edits themselves live in [`ops`]; pointer gestures in `pointer.rs`,
+//! the transform box around several points in [`transform`] and point snapping in `point_snap.rs`.
 
 pub mod ops;
+pub(crate) mod point_snap;
 mod pointer;
 #[cfg(test)]
 mod tests;
+pub mod transform;
+#[cfg(test)]
+mod transform_tests;
 mod width;
 #[cfg(test)]
 mod width_tests;
@@ -798,6 +803,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
     ]
     .into_iter()
+    .chain(transform::specs())
     .chain(width::specs())
     .collect()
 }

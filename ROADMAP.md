@@ -46,8 +46,14 @@ dimension measured side by side.
    (⇧M: the regions of overlapping shapes, click or drag to merge, Alt to remove, curves kept),
    variable width strokes (width profile presets with previews in the stroke settings, the Variable
    width tool ⇧W: drag the path to add a width point, slide points, drag their handles, Delete;
-   smooth interpolation per subpath, dashes, caps and joins, canvas/PNG/SVG/PDF and outline stroke).
-   *Left:* transform box for several points, point snapping, one-sided widths. 7–11 h.
+   smooth interpolation per subpath, dashes, caps and joins, canvas/PNG/SVG/PDF and outline stroke),
+   a transform box around several selected points (corners and edges scale them, Shift keeps
+   proportions, Alt from the centre; just outside a corner rotates, Shift in 15° steps; drag inside
+   to move; the Design panel's X/Y/W/H and flip/rotate act on the points), point snapping while
+   dragging points or handles and with both pens (to the points and segment midpoints of this and
+   other vectors, the usual layer targets and the pixel grid, with guides and a marker on the point
+   landed on; Ctrl/Cmd turns it off). *Left:* arc handles on the canvas, live boolean editing,
+   one-sided widths. 4–8 h.
 2. **Text editing depth**: *landed:* OpenType features panel, small caps, lists, title case,
    truncation/max lines, font picker with previews and recents, word/line selection, IME commit,
    inline IME composition (underlined at the caret, reflowing, candidate window at the caret; the
