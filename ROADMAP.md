@@ -271,7 +271,14 @@ dimension measured side by side.
    through the layer rows, menus and tool flyouts opened from the keyboard take it and give it back,
    Escape returns to the canvas (where Tab selects the next layer again instead of wandering into
    the tab strip); reduced motion follows the system's setting or a preference; secondary and
-   accent text meet WCAG AA in both themes. *Left:* a real-world file corpus, Windows/Linux/browser
+   accent text meet WCAG AA in both themes.
+   An idle window draws no frames: it redrew ~240 times a second
+   (the window title was re-sent every frame, and each viewport command asks for another), ~33% of
+   a core in a debug build, and now sits at 0 frames and ~0% CPU; the toast, the autosave
+   checkpoint and the presenter's "after delay" timers wake it at their deadline, the interaction
+   editor's curve preview plays when it shows, changes or is hovered, and a screenshot keeps frames
+   coming only until it arrives (`ui.inspect` `framesDrawn` and `repaintCauses` show what asked for
+   frames; headless tests hold it). *Left:* a real-world file corpus, Windows/Linux/browser
    QA, runs with real screen readers (NVDA, Narrator, VoiceOver, Orca), the AccessKit tree in the
    browser (eframe's web backend doesn't send it yet), keyboard box selection, keyboard rename and
    context menus in the layers panel. 28–46 h.
