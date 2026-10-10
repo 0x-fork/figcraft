@@ -426,6 +426,9 @@ pub struct Prefs {
     pub theme: String,
     /// The name comments are signed with (and whose comments count as yours).
     pub user_name: String,
+    /// Reduce motion: the interface's own animations are off (the system's setting turns them off
+    /// too). Prototype transitions still play.
+    pub reduce_motion: bool,
 }
 
 impl Default for Prefs {
@@ -440,6 +443,7 @@ impl Default for Prefs {
             show_dimensions: true,
             theme: "light".into(),
             user_name: cmd::comment::DEFAULT_AUTHOR.into(),
+            reduce_motion: false,
         }
     }
 }
@@ -1011,6 +1015,8 @@ fn mark_dev_changes(doc: &mut Document, before: &Document, touched: &BTreeSet<No
     }
 }
 
+#[cfg(test)]
+mod a11y_keys_tests;
 #[cfg(test)]
 mod al_drag_tests;
 #[cfg(test)]

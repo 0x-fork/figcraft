@@ -259,8 +259,19 @@ dimension measured side by side.
    main's layer used ~900 times 188/226 → 4/18 ms, adding a layer to it 430 → 21 ms, a label style
    in all 72 button variants (1,800 copies) 450 → 57 ms, switching a variant, reset, detach, push
    and paste ~450 → under 3 ms, accepting a library update 460 → 64 ms; the Assets panel with 2,000
-   assets 3.4 → 1.3 ms a frame. *Left:* a real-world file corpus, Windows/Linux/browser QA,
-   accessibility. 30–50 h.
+   assets 3.4 → 1.3 ms a frame. Accessibility: the custom-painted
+   controls name themselves for screen readers (AccessKit on desktop: role, name, value and state
+   for tools, layer rows with their type, level, selection and hidden/locked state, fields,
+   dropdowns, tabs, menu items, and the canvas, which describes the selection); keyboard navigation:
+   F6 / Shift+F6 move between the toolbar, layers, canvas and properties, Tab / Shift+Tab move
+   within a region with a focus ring, Enter or Space activate, the arrows go along the toolbar and
+   through the layer rows, menus and tool flyouts opened from the keyboard take it and give it back,
+   Escape returns to the canvas (where Tab selects the next layer again instead of wandering into
+   the tab strip); reduced motion follows the system's setting or a preference; secondary and
+   accent text meet WCAG AA in both themes. *Left:* a real-world file corpus, Windows/Linux/browser
+   QA, runs with real screen readers (NVDA, Narrator, VoiceOver, Orca), the AccessKit tree in the
+   browser (eframe's web backend doesn't send it yet), keyboard box selection, keyboard rename and
+   context menus in the layers panel. 28–46 h.
 
 ### Where we're going
 
@@ -320,7 +331,8 @@ dimension measured side by side.
   code where components take their properties as parameters and instances are calls), colour picker
   (HSB square, hue/alpha, hex, gradient stops, image fills), main menu generated from the catalog,
   context menu, Actions palette (⌘K), keyboard shortcuts from one keymap per platform (a tabbed,
-  searchable Keyboard shortcuts panel), presentation player with
+  searchable Keyboard shortcuts panel), keyboard navigation (F6 between regions, Tab within them, a
+  focus ring) and screen-reader names for the custom controls (AccessKit), presentation player with
   transitions, light and dark themes, home screen, About/Preferences/shortcuts/variables dialogs.
 - **Automation:** desktop control channel (`--control <port>`: execute commands, inspect document/UI,
   synthetic pointer/keys/typing, menu invocation, screenshots, renders).
