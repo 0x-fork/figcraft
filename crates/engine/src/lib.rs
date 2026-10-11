@@ -1191,6 +1191,8 @@ mod branch_tests;
 #[cfg(test)]
 mod brush_tests;
 #[cfg(test)]
+mod canvas_fixes_tests;
+#[cfg(test)]
 mod code_connect_tests;
 #[cfg(test)]
 mod collab_ids_tests;
