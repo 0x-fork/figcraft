@@ -19,7 +19,7 @@ gridColumn / gridRow (0-based cell anchor, null = auto), gridColumnSpan, gridRow
 absolute (ignore auto layout; follows constraints), minWidth, maxWidth, minHeight, maxHeight (null removes), constraints {horizontal, vertical}, grids, exports, characters, fontFamily, fontStyle, \
 fontSize, lineHeight (auto|px|\"150%\"), letterSpacing (px|\"2%\"), textAlign (left|center|right|justified), textAlignVertical, textAutoResize \
 (widthAndHeight|height|none|truncate), textDecoration, textCase (original|upper|lower|title|smallCaps), paragraphSpacing, paragraphIndent, \
-listStyle (none|bulleted|numbered), maxLines, features ({tag: bool}, e.g. {\"liga\": false, \"tnum\": true}), \
+listStyle (none|bulleted|numbered), leadingTrim (vertical trim: none|capHeight), maxLines, features ({tag: bool}, e.g. {\"liga\": false, \"tnum\": true}), \
 fontVariations / variationSettings ({axis: number}, e.g. {\"wght\": 550, \"wdth\": 85}; null = none), pointCount, innerRadius, arcStart, arcSweep, \
 arcInner, booleanOperation (a boolean group's operation, or an operand's own; null: the group's), operandOperation (a layer in a boolean \
 group: how it combines with the operands below it; null: the group's), constrainProportions, description, interactions, overflow, pluginData {k: v}";
@@ -581,6 +581,7 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             "paragraphSpacing" => text_mut(cmd, doc.get_mut(id)?)?.paragraph_spacing = f64_of(v).unwrap_or(0.0).max(0.0),
             "paragraphIndent" => text_mut(cmd, doc.get_mut(id)?)?.paragraph_indent = f64_of(v).unwrap_or(0.0).max(0.0),
             "listStyle" => text_mut(cmd, doc.get_mut(id)?)?.list = enum_of(v).ok_or_else(|| bad(cmd, "listStyle: none|bulleted|numbered"))?,
+            "leadingTrim" => text_mut(cmd, doc.get_mut(id)?)?.leading_trim = enum_of(v).ok_or_else(|| bad(cmd, "leadingTrim: none|capHeight"))?,
             "maxLines" => text_mut(cmd, doc.get_mut(id)?)?.max_lines = f64_of(v).unwrap_or(0.0).clamp(0.0, 10_000.0) as u32,
             "features" | "textFeatures" | "fontFeatures" | "openTypeFeatures" => {
                 let f = features_of(cmd, v)?;

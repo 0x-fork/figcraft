@@ -60,7 +60,7 @@ interaction feel not yet compared.
 | Vector edit mode: bend, paint bucket, lasso, cut, eraser, transform box, point snapping, mirroring | done | |
 | Shape builder (Shift+M) on fills, strokes and open paths; variable width (Shift+W), one side with Alt | done | |
 | Boolean groups: clicked where the result is, double-click or Cmd/Ctrl-click into operands, live results while dragging or editing points, per-operand operations | done | |
-| Text: point, auto height, fixed; caret, words, lines, IME | done | no spell check |
+| Text: point, auto height, fixed; caret, words, lines, IME | done | carets step over whole emoji and accented letters; CJK words by script run (no dictionary); vertical trim in Type settings; no spell check |
 | Eyedropper (I) | done | |
 | Comment (C), Shift+C to show/hide | done | local only |
 | Text on a path (Figma Draw) | done | put on from the Design panel or `text.onPath`, not by clicking a path with the Text tool; the path is edited by resizing only |

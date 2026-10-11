@@ -1325,6 +1325,8 @@ mod svg_import_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod text_behaviour_tests;
+#[cfg(test)]
 mod text_fill_tests;
 #[cfg(test)]
 mod text_motion_tests;
