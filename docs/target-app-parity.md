@@ -1,6 +1,6 @@
 # FigCraft parity with Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
 
 The authoritative assessment of how close FigCraft is to Figma Design. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu checklist is
@@ -35,8 +35,8 @@ tool; presence was being graded as behaviour in places.
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
-| Full target (ready for real work) | ~47% | ~360–680 h | multiplayer (45–90), localization (60–100), plugins (25–55), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
-| Mainstream practitioner | ~43% | ~170–315 h | core editor depth incl. `.fig` import (88–171), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
+| Full target (ready for real work) | ~47% | ~355–675 h | multiplayer (45–90), localization (60–100), plugins (25–55), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
+| Mainstream practitioner | ~43% | ~165–310 h | core editor depth incl. `.fig` import (83–163), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~53% | ~85–160 h | `.fig` import so files people send open (30–60), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
 Hours are one agent working sequentially, calibrated from this repo's history (about 1 agent-hour
@@ -108,7 +108,7 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 | 12 | Styles & variables | 5 | 92% | 72% | New library variables reaching extended collections on their own, extending an extended collection, real-library QA (extended collections, variables import/export, gradient stops and variant properties bound landed) | 1–2 |
 | 13 | Prototyping | 6 | 88% | 70% | Video triggers and media actions, gamepad triggers, real prototype QA ([prototyping-parity](prototyping-parity.md)) | 5–9 |
 | 14 | Import/export | 6 | 65% | 35% | **`.fig` import** (the blocking gap), `.fig` export, HEIC/video import, CMYK output intent ([file-format-parity](file-format-parity.md)) | 30–60 |
-| 15 | Dev Mode / inspect | 2 | 80% | 62% | Code Connect, plugins in Dev Mode, editor integrations ([dev-mode-parity](dev-mode-parity.md)) | 4–8 |
+| 15 | Dev Mode / inspect | 2 | 90% | 64% | Dev resources links, import lines for connected instances inside generated layer trees; an editor extension is left to the MCP server (code connect and plugins in Dev Mode landed) ([dev-mode-parity](dev-mode-parity.md)) | 1–3 |
 | 16 | Comments, versions, find, misc | 3 | 85% | 60% | Comments are local only; a branch's own version history (branches with review and merge landed) | 2–5 |
 | 17 | Multiplayer & sharing | 8 | 15% | 5% | Core landed (`crates/collab`: ids, change sets, server ordering, convergence tested); live sessions (preview): WebSocket transport, hosting from the desktop app, joining from the app or the browser, invite links that open the app, cursors, selections and follow, per-person undo, offline resume; a self-hosted `figcraft-server` with persistence and share links to edit or view. Left: accounts and teams, cursor chat, TLS in the desktop app ([collaboration-parity](collaboration-parity.md)) | 45–90 |
 | 18 | Plugins & widgets | 4 | 35% | 20% | Own sandboxed WASM plugins landed (#101: manifest, permissions, menu, Run last, Manage, SDK, 2 examples). Left: plugin UI at run time, settings storage, distribution, widgets; Figma's plugins are JavaScript and don't run (a JS engine would be an owner decision) ([plugins.md](plugins.md)) | 25–55 |
@@ -122,7 +122,7 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 
 | Dimension | Weight | Ready | Hours | Evidence | Doc |
 |---|---|---|---|---|---|
-| Features (depth) | 35 | 57% | 66–126 (areas 1–13, 15, 16, 20) | The table above; core editor ~67% | this file |
+| Features (depth) | 35 | 57% | 63–121 (areas 1–13, 15, 16, 20) | The table above; core editor ~67% | this file |
 | UI/UX fidelity | 15 | 58% | 40–60 | Look & feel compared side by side with UI3 (~65% by the builders); tool-by-tool interaction (cursors, modifiers while dragging, hover states, popovers) not yet compared; accessibility names and keyboard navigation landed | [ui-parity](ui-parity.md) |
 | File formats | 12 | 40% | 30–60 | No `.fig` read or write; REST JSON import, SVG in/out, PNG/JPG/WebP/PDF export solid | [file-format-parity](file-format-parity.md) |
 | Collaboration | 10 | 13% | 55–110 | Local comments, version history and branches with review and merge; the multiplayer core (sync model, server ordering, client reconciliation, convergence tests) landed in #103, and live sessions (preview) co-edit a file hosted by a desktop app or kept on a self-hosted `figcraft-server` with edit and view links, joined from the app or the browser (`docs/collab-protocol.md`) | [collaboration-parity](collaboration-parity.md) |
@@ -563,7 +563,8 @@ Carried over from the ROADMAP's "Shipped so far" (2026-10-10). The test count th
   with pinned properties and categories drawn as coloured callouts on the canvas (filtered by category),
   a ready-for-dev list, a focus view on one frame with previous / next, Compare changes since a frame
   was marked ready (before / after side by side or overlaid, property-level diffs), CSS/HTML/React/SwiftUI/Compose
-  code where components take their properties as parameters and instances are calls), colour picker
+  code where components take their properties as parameters and instances are calls, components
+  connected to their code components showing the real snippet, read-only plugins), colour picker
   (HSB square, hue/alpha, hex, gradient stops, image fills), main menu generated from the catalog,
   context menu, Actions palette (⌘K), keyboard shortcuts from one keymap per platform (a tabbed,
   searchable Keyboard shortcuts panel), keyboard navigation (F6 between regions, Tab within them, a
@@ -577,6 +578,7 @@ Carried over from the ROADMAP's "Shipped so far" (2026-10-10). The test count th
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Code connect and Dev Mode plugins (gap 16): a component or set links to its code component per language (import path, name, a template with `{property}` and `{property ? "a" : "b"}` placeholders); `inspect.code`, `inspect.componentCode` and the Inspect panel show that snippet with the instance's values (also inside generated layer trees), edited in Connect to code with a live preview; links are saved, synced and undoable, and travel as `figcraft.connect.json` (`codeConnect.export` / `codeConnect.import`). Plugins that only read run from the Inspect tab. Dev Mode breadth 80% → 90%, ready 62% → 64%, 4–8 h → 1–3 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~378–722 h → ~375–717 h |
 | 2026-10-11 | minor | Stretch and scatter brushes and pen pressure landed (gap 9): eight brushes drawn in code (four stretched along the path, four scattered with spacing, size, rotation and scatter jitter from a seed) in the stroke settings, drawn everywhere strokes are and flattened by outline stroke; the Pencil records pen pressure as the stroke's width profile (Windows pens, browser styluses; macOS and Linux tablets report none) and can draw with a brush; Figma Draw extras breadth 45% → 65%, ready 30% → 45%, 10–18 h → 5–9 h; Strokes 2–4 h → 1–3 h; Hardware 50% → 55%, 15–30 h → 13–27 h; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~378–722 h → ~373–712 h |
 | 2026-10-11 | minor | Text on a path and pattern fills landed (gap 9): text follows a path or shape (start, side, alignment; edited in place; canvas, PNG, SVG and PDF; SVG `<textPath>` imports as text on a path) and pattern fills tile a layer (grid or half-shifted rows or columns, scale, spacing, alignment; live as the source changes; SVG `<pattern>`, PDF tiling patterns); Figma Draw extras breadth 45% → 65%, ready 30% → 45%, 10–18 h → 5–10 h; Text 8–14 h → 7–13 h; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~380–725 h → ~375–715 h |
 | 2026-10-11 | minor | Team libraries on `figcraft-server` landed (gap 10): a file's library is published to the server under the file and enabled in other files by a share link (per-asset versions; updates noticed in the background and accepted with overrides kept), the server counts which files use which components, and a whole library can be swapped for another by names; Team libraries breadth 40% → 70%, ready 25% → 40%, 10–20 h → 4–8 h; collaboration 12% → 13%, 55–110 h → 49–98 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~380–725 h → ~375–715 h |

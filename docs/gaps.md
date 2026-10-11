@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -29,7 +29,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 13 | Boolean groups hit-tested by their operands (the rest of the vector tail landed) | Feature | 1–3 | [target-app-parity](target-app-parity.md) |
 | 14 | Variables: extended collections' tail | Feature | 1–2 | [components-parity](components-parity.md) |
 | 15 | Prototyping: media triggers and actions, gamepad | Feature | 3–6 | [prototyping-parity](prototyping-parity.md) |
-| 16 | Dev Mode: Code Connect, editor integrations | Feature | 4–8 | [dev-mode-parity](dev-mode-parity.md) |
+| 16 | Dev Mode: dev resources links, editor extension (code connect and Dev Mode plugins landed) | Feature | 1–3 | [dev-mode-parity](dev-mode-parity.md) |
 | 17 | Branching: per-branch version history, finer merges of list properties (branches landed 2026-10-11) | Feature | 1–3 | [collaboration-parity](collaboration-parity.md) |
 | 18 | Display P3 on screen; one window only | Hardware | 6–12 | [hardware-parity](hardware-parity.md) |
 | 19 | AI features | AI | 30–60 | [target-app-parity](target-app-parity.md) |
@@ -204,10 +204,21 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   The REST importer warns and skips them (`crates/format/src/rest/proto.rs`).
 - **Estimate:** 3–6 h after video fills (gap 12).
 
-### 16. Dev Mode: Code Connect, editor integrations
-- **Missing:** mapping components to real code (Code Connect), plugins in Dev Mode, VS Code
-  extension. FigCraft's MCP server already serves design data to agents.
-- **Estimate:** 4–8 h.
+### 16. Dev Mode: dev resources links, editor extension
+- **Landed (2026-10-11):** code connect: a component or set links to its code component per
+  language (React, SwiftUI, Compose): an import path, the name and a template whose `{property}`
+  and `{property ? "a" : "b"}` placeholders take the instance's values, escaped per language and
+  never executed. `inspect.code`, `inspect.componentCode` and the Inspect panel show that snippet
+  instead of generated code (inside generated layer trees too); the panel's Connect to code edits
+  it with a live preview. Links are stored on the component (saved, synced, undoable) and travel
+  as `figcraft.connect.json` (`codeConnect.export` / `codeConnect.import`, validated and capped)
+  so code owners can version them. Plugins whose manifest asks only to read run from the Inspect
+  tab.
+- **Missing:** dev resources links on layers; import lines for connected instances inside a
+  generated layer tree (only the selected layer's own import is shown); publishing mappings from
+  the code repository with a CLI. An editor extension is out of scope: the MCP server already
+  serves design data, code and the connected snippets to agents and editors.
+- **Estimate:** 1–3 h.
 
 ### 17. Branching and merging
 - **Landed (2026-10-11):** branches of a file (`branch.*`): File ▸ Create branch… (or the Branches
@@ -263,6 +274,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Code connect and Dev Mode plugins (gap 16): a component or set links to its code component per language (import path, name, a template with `{property}` and `{property ? "a" : "b"}` placeholders); `inspect.code`, `inspect.componentCode` and the Inspect panel show that snippet with the instance's values (also inside generated layer trees), edited in Connect to code with a live preview; links are saved, synced and undoable, and travel as `figcraft.connect.json` (`codeConnect.export` / `codeConnect.import`). Plugins that only read run from the Inspect tab. Dev Mode breadth 80% → 90%, ready 62% → 64%, 4–8 h → 1–3 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~378–722 h → ~375–717 h |
 | 2026-10-11 | minor | Stretch and scatter brushes and pen pressure landed (gap 9): eight brushes drawn in code (four stretched along the path, four scattered with spacing, size, rotation and scatter jitter from a seed) in the stroke settings, drawn everywhere strokes are and flattened by outline stroke; the Pencil records pen pressure as the stroke's width profile (Windows pens, browser styluses; macOS and Linux tablets report none) and can draw with a brush; Figma Draw extras breadth 45% → 65%, ready 30% → 45%, 10–18 h → 5–9 h; Strokes 2–4 h → 1–3 h; Hardware 50% → 55%, 15–30 h → 13–27 h; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~378–722 h → ~373–712 h |
 | 2026-10-11 | minor | Text on a path and pattern fills landed (gap 9): text follows a path or shape (start, side, alignment; edited in place; canvas, PNG, SVG and PDF; SVG `<textPath>` imports as text on a path) and pattern fills tile a layer (grid or half-shifted rows or columns, scale, spacing, alignment; live as the source changes; SVG `<pattern>`, PDF tiling patterns); Figma Draw extras breadth 45% → 65%, ready 30% → 45%, 10–18 h → 5–10 h; Text 8–14 h → 7–13 h; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~380–725 h → ~375–715 h |
 | 2026-10-11 | minor | Team libraries on `figcraft-server` landed (gap 10): a file's library is published to the server under the file and enabled in other files by a share link (per-asset versions; updates noticed in the background and accepted with overrides kept), the server counts which files use which components, and a whole library can be swapped for another by names; Team libraries breadth 40% → 70%, ready 25% → 40%, 10–20 h → 4–8 h; collaboration 12% → 13%, 55–110 h → 49–98 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~380–725 h → ~375–715 h |
