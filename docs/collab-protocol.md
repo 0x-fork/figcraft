@@ -170,6 +170,16 @@ signals only after that, so an older server never gets one either (the app says 
 older version). A signal is a kind and a text, so kinds added later are skipped by clients and
 dropped by servers that don't know them.
 
+**Open hosting and reports** came later within version 2 the same way. A connection that opens
+with `OpenHosting` asks a server about its hosting, publishes without the key when the server is
+open to the public, or manages one file with its owner token; a server older than that can't read
+the message and refuses the connection, which the app reports as "takes files only with its key".
+A client that reads `Hosting` and `Reported` says so with the word `hosting` in its hello's
+`client_version` (`"0.3.1 signals hosting"`); only those clients get a `Hosting` after their
+welcome, and a client sends `Report` only to a server that sent it one. New variants only ever go
+at the end of an enum, and existing messages keep their fields, so nothing an older peer reads
+changes.
+
 **Encoding (decided):** a binary message is a 1-byte wire version followed by **postcard** (serde),
 which is compact and needs no schema files. Property values inside are compact JSON text: the
 document types use tagged and flattened serde forms that only self-describing formats can read
@@ -195,6 +205,9 @@ Client → server:
 | `Library {fetch {have?, usage?} \| publish {archive} \| usage}` | A request on a library connection; each gets one `Library` reply, in order. `usage` is `{file, components: [(id, instances)]}`. |
 | `Signal {kind, text}` | Ephemeral presence, only after the server's `ready`: `chat` (the cursor chat message; empty: closed) or `spotlight` (`"on"`, or empty: stopped). |
 | `OpenPlugins {protocol, key, client_version}` | Instead of `Hello`: use the server's plugin directory; `key` empty to browse, the server key to publish too. |
+| `OpenHosting {protocol, client_version, file, owner}` | Instead of `Hello`: ask about the server's hosting; publish without the key (`Admin publish`) when it is open to the public; with a file's id and owner token, manage that file (`Admin links \| createLink \| revoke \| rename \| remove` of it). Answered with `Hosting` or `Refused`. |
+| `Admin {rename {file, name} \| listing \| reports \| block {ip} \| unblock {ip} \| blocked}` | Later managing requests: rename a file on the server, the files with what the operator moderates by, the reports, blocking addresses (an IPv6 address: its /64). Owner tokens may only rename their file. |
+| `Report {reason}` | On a joined connection, only to a server that sent `Hosting`: report the file to the operator (at most 500 characters kept; ten an hour per address). |
 | `Plugins {list {query} \| fetch {id, version?} \| publish {bundle} \| unpublish {id, version?}}` | A request on a plugin directory connection; each gets one `Plugins` reply, in order. `bundle` is a plugin bundle's bytes (`figcraft_plugin::bundle`). |
 
 Server → client:
@@ -210,6 +223,9 @@ Server → client:
 | `Admin {ready \| published {file, edit, view} \| files \| links \| link \| done \| failed {reason}}` | A managing connection's answer: the key is right, a published file with its first two links (tokens shown once), listings, a new link, done, or why not. |
 | `Library {ready {access} \| library {version, archive} \| unchanged {version} \| empty \| published {version} \| usage [{usage, updated}] \| failed {reason}}` | A library connection's answer: the link is right (with its access), the library (a `.figcraft` archive holding it), no newer version, no library yet, kept, the usage reports, or why not. |
 | `Signal {client_id, signal: {kind, text}}` | Someone's cursor chat or spotlight, cleaned by the server; `ready` (about the client itself, after its welcome): signals may be sent. Only to clients whose hello announced `signals`. |
+| `Hosting {open, operator, terms, idle_secs, max_file_mb, expires?}` | The answer to `OpenHosting`, and after a welcome to clients whose hello announced `hosting`: anyone may publish, how to reach the operator, the terms (a URL), how long files published without the key are kept unopened, the largest file, and this file's expiry (seconds since 1970). |
+| `Admin {hosted {file, edit, view, owner, expires?} \| listing [row] \| reports [report] \| blocked [ip]}` | A file published without the key with its links and owner token (shown once), and the answers to the later managing requests. |
+| `Reported {error?}` | The answer to `Report`: kept, or why not. |
 | `Plugins {ready {publisher} \| list [entry] \| bundle {entry, bundle} \| published entry \| removed [version] \| failed {reason}}` | A plugin directory connection's answer: opened (with the key or not), the latest version of each plugin with the versions kept, a bundle and its entry (its SHA-256 among them), kept, unpublished, or why not. |
 
 `Change` is one of: `Create {id, type, props}`, `Set {id, prop, value}`, `Delete {id}` (deleting a
@@ -572,6 +588,32 @@ installing: [`plugins.md`](plugins.md#plugin-directories)):
   checks the asset names; the app checks the same again after the hash. Fetches share a budget of
   bytes per second on the server, so many downloads at once are turned away instead of queued.
 
+*Built* (open hosting: a server open to the public; running one: [`server.md`](server.md#running-a-public-server)):
+
+- **Who the client is.** The hub knows each connection by its client's address: the socket's peer,
+  or behind the configured reverse proxy (`trusted_proxy`) the last address of its
+  `X-Forwarded-For`; an IPv6 address counts by its /64. The transport caps connections per address
+  (counted once the WebSocket handshake names the client); the server's backend refuses blocked
+  addresses and limits new connections, messages and publishes per address with token buckets in a
+  table of at most 10,000 addresses. A connection opened with the server key is exempt.
+- **Publishing without the key.** `OpenHosting` then `Admin publish`: the server checks the
+  per-address and global caps, keeps the file with a new owner token (128 bits; only its SHA-256 is
+  stored, beside the address it came from) and answers `hosted` with the links, the token and the
+  expiry. The app publishes this way when the address has no key and joins the file with its edit
+  link as for a keyed publish (`collab.publish`); `collab.serverInfo` asks first and
+  `collab.manageFile` uses the token later.
+- **Expiry.** A file published without the key expires once nobody opened it for the idle time:
+  its description records when it was last opened (on open and when everyone leaves), the server
+  deletes expired files at startup and every ten minutes (never one that is open), and `Hosting`
+  tells everyone in a file its date.
+- **Reports and blocks.** `Report` from anyone in a file is kept in `reports.json` (the last 1,000)
+  with the file, the link the reporter joined with and their address; blocking an address
+  disconnects its connections and is kept in `blocked.json`. Both are the operator's to read with
+  the server's command line.
+- **Uptime checks.** A plain `GET` of a path ending in `/healthz` on the session port is answered
+  `200 ok` (the request line is peeked at before the WebSocket handshake, which goes on untouched
+  otherwise).
+
 *Built* (opening invite links):
 
 - The desktop app takes an invite link on its command line (`figcraft "figcraft://join?…"`): once
@@ -703,14 +745,22 @@ chooses to share on the network; the default is the invite link with a random to
   whatever client sends them; the app's read-only state is for clarity.
 - **Abuse limits.** On top of the transport's: at most `max_files` files, `max_file_mb` per file
   (a publish over it is refused), `max_links` links per file, `max_people` per file and
-  `max_connections` sockets.
+  `max_connections` sockets. Open to the public, per address too: connections at once and a
+  minute, messages a second, publishes an hour, files and MiB kept, and `max_total_mb` for
+  everyone; refusals say which. Spoofing `X-Forwarded-For` does nothing unless the connection comes
+  from the trusted proxy.
+- **Open hosting** gives anyone who reaches the server the right to publish (within those limits),
+  to report a file they are in, and with an owner token to manage that one file. Everything else
+  (listing files, other files' links, reports, blocks, the plugin directory's publishing) needs the
+  server key. Files are not end-to-end encrypted: the server reads what it keeps, and so can its
+  operator.
 - **TLS.** None in the server: a reverse proxy terminates it (Caddy and nginx examples in
   `packaging/server/`, deployment in [`server.md`](server.md#deploy-on-a-linux-server)); clients
   speak `wss://` to the proxy. Tokens and keys are never in the
   WebSocket request (only in the first message), so proxies don't log them, and the server logs
   file and link ids, never secrets.
-- **Not yet**: accounts and per-person permissions, per-address rate limits, audit logs,
-  encryption at rest.
+- **Not yet**: accounts and per-person permissions, audit logs, encryption at rest, end-to-end
+  encryption.
 
 ## Implementation plan
 
@@ -733,5 +783,6 @@ chooses to share on the network; the default is the invite link with a random to
    desktop-hosted sessions; `figcraft://` links open the desktop app and join).
 5. **Standalone `figcraft-server`** with persistence, compaction, share links and permissions.
    **Done** (`apps/figcraft-server` on the shared hub; edit and view links, the server key,
-   publishing from the app; see [`server.md`](server.md)).
+   publishing from the app; see [`server.md`](server.md)), followed by open hosting for a public
+   server (owner tokens, limits per address, idle expiry, reports and blocks).
 6. **Accounts**: people signing in, per-person permissions, teams and projects.

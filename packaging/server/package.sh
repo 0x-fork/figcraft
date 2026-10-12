@@ -4,7 +4,7 @@
 #   $DIST/figcraft-server-<version>-<os>-<arch>.tar.gz
 #
 # One directory with the figcraft-server binary, the licences, docs/server.md and the deployment
-# examples (systemd unit, Caddyfile, nginx). A headless binary: no desktop files, no fonts.
+# files (install.sh, systemd units, Caddyfile, nginx). A headless binary: no desktop files, no fonts.
 #
 # Usage: packaging/server/package.sh [--skip-build]
 set -euo pipefail
@@ -39,7 +39,8 @@ mkdir -p "$STAGE"
 cp "$CARGO_TARGET_DIR/release/figcraft-server" "$STAGE/"
 strip "$STAGE/figcraft-server" 2>/dev/null || true
 for f in LICENSE-MIT LICENSE-APACHE NOTICE docs/server.md; do cp "$ROOT/$f" "$STAGE/"; done
-cp "$HERE/figcraft-server.service" "$HERE/Caddyfile" "$HERE/nginx.conf" "$STAGE/"
+cp "$HERE/figcraft-server.service" "$HERE/figcraft-backup.service" "$HERE/figcraft-backup.timer" "$HERE/Caddyfile" "$HERE/nginx.conf" "$STAGE/"
+install -m 755 "$HERE/install.sh" "$STAGE/"
 
 # Smoke test: the binary runs and reports the version being shipped.
 "$STAGE/figcraft-server" --version | grep -F "$VERSION"

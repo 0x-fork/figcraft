@@ -17,7 +17,8 @@ machine, e.g. in CI.
 
 The collaboration server is a binary of its own, `figcraft-server` (`cargo build --release -p
 figcraft-server`): it keeps files with share links and serves their live sessions, and its
-`key`, `files` and `links` subcommands manage them. See [server.md](server.md).
+`key`, `files`, `links`, `reports`, `block-ip` and `check` subcommands manage them (a server can
+be open to the public: [server.md](server.md#running-a-public-server)). See [server.md](server.md).
 
 ## Subcommands
 
@@ -119,8 +120,9 @@ machines.
 
 Serve MCP on stdio: headless by default, or attached to a running app started with
 `figcraft --control PORT`. See [mcp.md](mcp.md). The headless session can host, join and publish
-live sessions (`collab.*`) and use plugin directories (`plugin.directory.*`); the one-shot `run`
-can't (no network link).
+live sessions (`collab.*`: without a key on a server open to the public, with `collab.serverInfo`,
+`collab.manageFile` for the owner token and `collab.report`) and use plugin directories
+(`plugin.directory.*`); the one-shot `run` can't (no network link).
 
 ### `plugin publish <folder> --server ws://host:port/[?key=KEY]`
 

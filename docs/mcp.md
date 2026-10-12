@@ -907,11 +907,30 @@ joined file opens as a new document).
   file, name, edit, view}` with the file's first edit link and view link (they carry their
   tokens: share them like passwords). Someone joining with the view link gets `access: "view"`:
   every edit on the synced document is refused with "View only: …" (the server refuses them too).
+  On a server open to the public ([`server.md`](server.md#running-a-public-server)) `server` needs no
+  key (`wss://figcraft.example.com/`): `published` then also has `owner` (the owner token, shown this
+  once: keep it) and `expires` (when the server deletes the file unless someone opens it, seconds
+  since 1970), and `hosting` says who runs the server. A server that isn't open answers that it
+  takes files only with its key (`reason` in `collab.peers`).
+- `collab.serverInfo {server}` → `{open, operator, terms, idleDays, maxFileMb, expires}`: what a
+  server says about its hosting, before publishing (`open`: no key needed; `idleDays`: how long
+  files published without the key are kept unopened, null when they are kept). A server older
+  than open hosting is reported as taking files only with its key.
+- `collab.manageFile {server, file, owner, action, …}` manages a file published without the key,
+  with its owner token: `links` → `{links: [{id, access, label, created}]}`; `createLink {access?:
+  view|edit, label?}` → `{id, access, link}` (a new share link, shown once); `revoke {link}`
+  (whoever joined with it is disconnected), `rename {name}` (its name on the server) and `remove`
+  (whoever is in it is disconnected) → `{done}`. A wrong token, or another file's, is refused.
+- `collab.report {reason}` (at most 500 characters) reports the file you joined on a server to its
+  operator → `{sent}`; the session's message says when the server kept it, or why not (ten an hour
+  per address). Servers older than this version don't take reports (`hosting` is null).
 - `collab.peers {}` → `{available, canHost (false in the web build), status
   (off|connecting|live|reconnecting|failed), reason?,
   attempt?, role (host|guest), me, name, color, fileName, pages, link, url, address, network,
   access (edit|view), readOnly (the active document can't be edited now: view only, or being
-  published), published (a file you published: {server, file, name, edit, view}),
+  published), published (a file you published: {server, file, name, edit, view, owner, expires}),
+  hosting (what the server of the file you're in says: {open, operator, terms, idleDays, maxFileMb,
+  expires}, or null),
   follow, signals (the host passes cursor chat and spotlights on), chat (your cursor chat),
   spotlight (who spotlights, or null), spotlighting (you do), syncing (the document arrived),
   document (the index of the synced open document),

@@ -284,7 +284,7 @@ jobs:
       - name: Check the archive
         run: |
           tar -tzf "dist/release/figcraft-server-$FIGCRAFT_VERSION-linux-${{ matrix.arch }}.tar.gz" | tee "$RUNNER_TEMP/server-contents.txt"
-          for f in '/figcraft-server$' '/figcraft-server\.service$' '/Caddyfile$' '/nginx\.conf$' '/server\.md$' '/LICENSE-MIT$'; do
+          for f in '/figcraft-server$' '/figcraft-server\.service$' '/Caddyfile$' '/nginx\.conf$' '/install\.sh$' '/figcraft-backup\.timer$' '/server\.md$' '/LICENSE-MIT$'; do
             grep -E "$f" "$RUNNER_TEMP/server-contents.txt"
           done
           ldd target/release/figcraft-server

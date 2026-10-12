@@ -10,7 +10,9 @@ There are no user accounts yet: a share link is the access to one file, and the 
 manages files (publishing, links, removal). Accounts and per-person permissions come later. A file
 can also hold a **team library** that other files use through one of its links (see
 [Team libraries](#team-libraries)), and the server can keep a **plugin directory** for the team (see
-[Plugin directory](#plugin-directory)).
+[Plugin directory](#plugin-directory)). A server can also be **open to the public**: anyone
+publishes without the key and manages their file with its **owner token**, within limits per
+address (see [Running a public server](#running-a-public-server)).
 
 The protocol and the design behind it are in [`collab-protocol.md`](collab-protocol.md).
 
@@ -31,7 +33,11 @@ Releases also ship it ready-built for Linux (`figcraft-server-<version>-linux-x8
 - `--data` is the data directory (default `./figcraft-data`), made if missing. One server at a
   time uses a directory: a second one refuses to start.
 - Logs go to standard output (`RUST_LOG=debug` for more). They name files, link ids and addresses,
-  never keys or tokens.
+  never keys, tokens or what files contain; what the operator watches for comes as `key=value`
+  lines (`event=published file=… bytes=… ip=… by=public`, `event=refused ip=… reason=…`,
+  `event=report`, `event=expired`, `event=blocked`).
+- `GET /healthz` on the same port answers `200 ok` (on any path ending in `/healthz`), for uptime
+  checks; nothing else listens.
 - Stop it like any service (Ctrl+C, `systemctl stop`, `docker stop`, `kill`): on SIGTERM, SIGINT
   or SIGHUP (Ctrl+C or closing the console on Windows) it saves and compacts the open files and
   tells everyone it is restarting. Every change it accepted is on disk before anyone is told about
@@ -54,6 +60,15 @@ popover then shows an **edit link** and a **view link** to copy. Agents do the s
 
 Whoever has the server key can publish files and manage every file's links: give it only to
 people you trust.
+
+On a server [open to the public](#running-a-public-server) the address alone is enough
+(`wss://figcraft.example.com/`): the dialog asks the server first and shows that no key is needed,
+who runs it ("Hosted by …" and a link to its terms) and how long unopened files are kept. Publishing
+then also gives an **owner token**, shown once with the links in a **File published** window: copy
+it and keep it, it is the only way to revoke the links, rename the file or remove it later
+(`collab.manageFile` from [MCP](mcp.md#live-sessions)). The Share popover shows the server's line
+and the date the server deletes the file unless someone opens it. **Preferences ▸ Server to publish
+to** fills the address in (empty by default: the app suggests no server of its own).
 
 ## Joining
 
@@ -140,13 +155,17 @@ port as everything else; no other service is involved.
 | Command | What it does |
 |---|---|
 | `figcraft-server key [--rotate]` | The address to publish to, with the key; `--rotate` makes a new key (the server must be stopped) |
-| `figcraft-server files [list]` | The files: id, name, people in it now, last change, size |
+| `figcraft-server check` | Check the settings (after editing the `--config` file) |
+| `figcraft-server files [list] [--sort size\|age\|idle]` | The files: id, name, people in it now, size, created, days unused, expiry, reports, and who published it (`key`, or the address of a file published without it); biggest, oldest or longest unused first |
 | `figcraft-server files remove FILE` | Remove a file and its links for good (whoever is in it is disconnected) |
 | `figcraft-server links list FILE` | A file's links: id, access, created, label |
 | `figcraft-server links create FILE --access edit\|view [--label TEXT]` | A new link, printed once |
 | `figcraft-server links revoke FILE LINK` | Revoke a link: it no longer joins, and whoever joined with it is disconnected |
 | `figcraft-server plugins [list]` | The plugin directory: every plugin, its versions, author, access, size and SHA-256 |
 | `figcraft-server plugins remove ID [--version V]` | Unpublish a version of a plugin, or every version |
+| `figcraft-server reports` | What people in files reported to you: when, which file, the link and address they came with, why |
+| `figcraft-server block-ip IP` | Refuse an address (an IPv6 address: its /64) and drop its connections; kept in `blocked.json` |
+| `figcraft-server unblock-ip IP` / `blocked` | Accept it again / list the blocked addresses |
 
 Each takes `--data` (or `--config`). When a server is running on the directory, the command asks
 it over the same port with the server key (so a revoked link's users are disconnected at once);
@@ -165,7 +184,7 @@ are errors):
 | `data` | `figcraft-data` | The data directory |
 | `public_url` | (the listen address) | How links name the server, when people reach it another way (a reverse proxy: `wss://figcraft.example.com/`) |
 | `max_files` | 1000 | Most files kept |
-| `max_file_mb` | 64 | Largest file (its snapshot), in MiB; a welcome carries the whole file, and messages are at most 64 MiB |
+| `max_file_mb` | 64 (16 when open) | Largest file (its snapshot), in MiB; a welcome carries the whole file, and messages are at most 64 MiB |
 | `max_links` | 100 | Most share links per file |
 | `max_connections` | 512 | Most open connections |
 | `max_people` | 256 | Most people in one file at once |
@@ -174,9 +193,22 @@ are errors):
 | `max_plugins` | 500 | Most plugin versions the plugin directory keeps (all plugins together); 0 turns the directory off |
 | `max_plugin_mb` | 16 | Largest plugin bundle, in MiB (at most 32) |
 | `max_plugins_mb` | 1024 | Most MiB of plugin bundles kept |
+| `open_publish` | false | Anyone may publish without the key ([a public server](#running-a-public-server)) |
+| `operator_contact` | (none) | How to reach you about abuse (an email address or a page), shown to people where they publish |
+| `terms_url` | (none) | Your terms of use (`https://…`), linked where people publish |
+| `trusted_proxy` | (none) | The reverse proxy's address (`127.0.0.1` for Caddy or nginx on the same machine): only its `X-Forwarded-For` is believed |
+| `idle_days` | 30 | Files published without the key are deleted after this many days nobody opened them (0: kept; fractions allowed) |
+| `max_total_mb` | 10240 | Publishing without the key stops while all files take this many MiB |
+| `max_files_per_ip` | 20 | Open: most files one address published without the key… |
+| `max_mb_per_ip` | 256 | …and their MiB |
+| `max_connections_per_ip` | 32 | Open: most connections from one address at once |
+| `connects_per_minute` | 30 | Open: new connections an address may open a minute (a burst of as many) |
+| `publishes_per_hour` | 10 | Open: files an address may publish without the key an hour |
+| `messages_per_second` | 200 | Open: messages an address may send a second (a burst of four seconds' worth) |
 
 With `listen` on every interface (`0.0.0.0`) and no `public_url`, links name this machine's
-network address.
+network address. The limits marked *open* apply only with `open_publish = true`; a private server
+behaves as before (blocked addresses and report rates apply to every server).
 
 ## The data directory
 
@@ -192,7 +224,12 @@ network address.
 <data>/files/<id>/usage.json   which files use that library's components, as their apps report it
 <data>/plugins/index.json      the plugin directory: every version kept (manifest fields, size, SHA-256)
 <data>/plugins/<sha256>.bin    a plugin bundle, named by the SHA-256 of its bytes
+<data>/blocked.json            the addresses the operator blocked
+<data>/reports.json            the last 1,000 reports people sent about files
 ```
+
+A file published without the key also has, in its `meta.json`, the SHA-256 of its owner token,
+the address it came from and when it was last opened (for expiry).
 
 - **Writes are atomic**: a snapshot, a description or a link list is written to a temporary file
   beside it, flushed, then renamed over the old one. The log is only ever appended to, and synced
@@ -212,6 +249,12 @@ network address.
   restored or removed.
 
 ## Backups
+
+[`packaging/server/figcraft-backup.timer`](../packaging/server/figcraft-backup.timer) (installed by
+`install.sh`; `sudo systemctl enable --now figcraft-backup.timer`) does the following every night:
+it stops the server for the seconds the copy takes, keeps
+`/var/backups/figcraft-server/figcraft-YYYY-MM-DD.tar.gz` for 14 days and starts it again. Copy that
+folder off the machine too.
 
 Copy the data directory (the plugin directory, `plugins/`, included) while the server is stopped,
 or take an atomic snapshot of the filesystem it lives on (ZFS, Btrfs, LVM, a VSS shadow copy). A plain copy of a running server's
@@ -250,12 +293,143 @@ to that authority's certificate (a PEM file) before starting the app: it is trus
 to the built-in list. There is no way to skip the check: a certificate that has expired, is for
 another name or comes from an unknown authority is refused, and the app says which.
 
+## Running a public server
+
+A server **open to the public** (`open_publish = true`) lets anyone publish a file without the
+server key and share its links: hosting for people you don't know, with no accounts. The operator
+keeps the key for everything else.
+
+- **Publishing.** The app asks the server about itself first (`collab.serverInfo`): it is open, who
+  runs it (`operator_contact`), its terms (`terms_url`) and how long unopened files are kept. A file
+  published without the key gets its edit and view links and an **owner token** (128 random bits,
+  shown once, kept only as its SHA-256): with it, whoever published the file lists, makes and
+  revokes its links, renames it on the server or removes it (`collab.manageFile`), and nothing else.
+  An app older than open hosting is told the server is open when it tries a key.
+- **Limits per address** (only when open): connections at once (`max_connections_per_ip`), new
+  connections a minute (`connects_per_minute`), files published an hour (`publishes_per_hour`),
+  messages a second (`messages_per_second`), and files and MiB kept (`max_files_per_ip`,
+  `max_mb_per_ip`); for everyone: `max_files`, `max_file_mb` per file and `max_total_mb` for
+  publishing without the key. An address is an IPv4 address or an IPv6 /64. Each refusal says why
+  ("too many connections from your address…", "this server is full…") and the app shows it.
+  Behind a reverse proxy set `trusted_proxy` to its address: the server then counts the client its
+  `X-Forwarded-For` names (the last address in it, the one the proxy added) and believes the header
+  from no one else. The tables of addresses keep at most 10,000 addresses (the least recently seen
+  go first), so floods of addresses cost bounded memory.
+- **Expiry.** A file published without the key is deleted once nobody has opened it for
+  `idle_days` (30 by default; opening it, editing it and leaving it all count as use). The server
+  looks every ten minutes and at startup, never deletes a file someone is in, and tells everyone in
+  a file the date it would go (the Share popover shows it). Files published with the key never
+  expire.
+- **Moderation.** `figcraft-server files list --sort size|age|idle` shows who published what
+  (the address) and how many reports each file has; `files remove FILE` takes a file down (whoever
+  is in it is disconnected); `block-ip` refuses an address and drops its connections (kept across
+  restarts in `blocked.json`; the operator's own key still gets in from anywhere); anyone in a file
+  can report it (**Report this file…** in the Share popover, `collab.report`; ten an hour per
+  address), and `figcraft-server reports` lists the reports with the link and address they came
+  from. Plugin directory publishing stays key-only.
+- **Your responsibility.** As the operator you answer for what is published on your server: give a
+  working abuse contact (`operator_contact`) and terms (`terms_url`), read the reports, and remove
+  what breaks your terms or the law where you run it. Files are **not end-to-end encrypted**: TLS
+  protects them on the way, but whoever runs the server (and anyone who gets into the machine) can
+  read every file, link and report, and the server keeps the address each file was published from.
+  Say so in your terms.
+
+At startup a public server warns in its log when `operator_contact` is empty, when it seems to be
+behind a reverse proxy (a `wss://` `public_url`, or listening on the loopback interface) without
+`trusted_proxy` (every client would then count as the proxy's address, so one person's limits would
+stop everyone), and when `idle_days = 0`. `figcraft-server check` reads the settings without
+starting.
+
+### Threat model
+
+What someone can do, by what they hold (the server is reached through TLS at the proxy):
+
+| Who | Can | Cannot |
+|---|---|---|
+| Anyone who reaches the server, with nothing | Ask about its hosting (open, operator, terms, limits); on an open server publish files within the limits per address and for everyone; list and download the plugin directory; ask `/healthz` | Join, read or list any file; see links, reports or blocked addresses; use or learn the server key or anyone's token (none are ever sent back, and all are compared in constant time against hashes); publish plugins; spoof their address through `X-Forwarded-For` (believed only from `trusted_proxy`); get past a block |
+| Someone with a file's **view link** | See that file and everyone's changes and presence in it; read its team library and usage; report it | Change it (the server refuses a viewer's edits); reach any other file; manage links |
+| Someone with a file's **edit link** | Change that file, publish its team library; report it | Reach any other file; list, make or revoke links; rename or remove it |
+| Whoever holds a file's **owner token** (published without the key) | List, make and revoke that file's links (disconnecting whoever joined with a revoked one), rename it on the server, remove it | Touch any other file, even with its id; list files; read reports; block; anything of the plugin directory |
+| The **operator** (server key, or the machine) | Everything above for every file, reports, blocks, the plugin directory; read every file on disk | Recover a lost link or owner token (only hashes are kept) |
+
+Limits that hold against everyone: message and file sizes, connections in all and per address,
+connection, message and publish rates per address, files and MiB per address and for everyone, and
+idle expiry. Not defended against: someone with many addresses (each gets its own limits; the
+global caps still hold), a link or owner token that leaks (revoke links with the owner token or
+`figcraft-server links revoke`; remove the file), and the operator reading files (no end-to-end
+encryption).
+
+The settings for a public server, as `install.sh` writes them:
+
+```toml
+listen = "127.0.0.1:47900"
+data = "/var/lib/figcraft-server"
+public_url = "wss://figcraft.example.com/"
+trusted_proxy = "127.0.0.1"
+open_publish = true
+operator_contact = "abuse@example.com"
+terms_url = "https://example.com/figcraft-terms"
+idle_days = 30
+max_file_mb = 16
+max_total_mb = 10240
+max_files_per_ip = 20
+max_mb_per_ip = 256
+```
+
+### On a fresh Ubuntu server with install.sh
+
+[`packaging/server/install.sh`](../packaging/server/install.sh) sets up everything below on a new
+Debian 12+ or Ubuntu 24.04+ machine (a cloud provider's smallest plan, 1 GB of memory, is enough to
+run it). It installs the binary of the release archive it comes in, or builds the copy of the
+source it sits in, or else downloads the latest release for the machine (checked against
+`SHA256SUMS.txt`) or builds a fresh clone (`--from-source`); a build adds a temporary 2 GB swap
+file on a machine with less than 2 GB of memory, so it isn't killed. It makes the `figcraft` user, the
+data directory and `/etc/figcraft-server/server.toml` (only when missing: your edits are kept),
+installs the systemd unit, the nightly backup timer and the Caddy site, opens SSH, 80 and 443 in
+`ufw`, starts it all and prints what to do next. Running it again upgrades the binary and restarts
+the server only when something changed.
+
+1. Create the server (Ubuntu 24.04, x86_64 or arm64) with your SSH key, and note its address.
+2. At your DNS provider, point `figcraft.example.com` (A, and AAAA for IPv6) at that address. Caddy
+   needs it to get the certificate.
+3. Log in and run the script, from a release archive:
+
+   ```sh
+   ssh root@figcraft.example.com
+   VERSION=$(curl -fsSL https://api.github.com/repos/storytold/figcraft/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+   curl -fLO "https://github.com/storytold/figcraft/releases/download/v$VERSION/figcraft-server-$VERSION-linux-$(uname -m).tar.gz"
+   tar -xzf figcraft-server-*.tar.gz && cd figcraft-server-*/
+   sudo ./install.sh --host figcraft.example.com --email abuse@example.com --terms https://example.com/figcraft-terms
+   ```
+
+   or from a copy of the source (a private repository, or unreleased changes): it then builds that
+   copy as it is (with the swap file on a small machine).
+
+   ```sh
+   git archive --format=tar.gz -o figcraft-src.tar.gz HEAD          # on your machine
+   scp figcraft-src.tar.gz root@figcraft.example.com:
+   ssh root@figcraft.example.com 'mkdir -p figcraft && tar -xzf figcraft-src.tar.gz -C figcraft &&
+     figcraft/packaging/server/install.sh --host figcraft.example.com --email abuse@example.com'
+   ```
+
+   Without `--host` or `--email` it asks for them. `--private` keeps publishing key-only;
+   `--backups` turns the nightly backup on; `--no-firewall` leaves `ufw` alone. To upgrade, copy
+   the newer source over and run it again.
+4. Check it: `curl https://figcraft.example.com/healthz` answers `ok` once Caddy has its
+   certificate (a minute after DNS is right); `journalctl -u figcraft-server -f` shows the log.
+5. In FigCraft, **Share ▸ Publish to server…** with `wss://figcraft.example.com/`. Moderate with
+   the commands it printed (`sudo -u figcraft figcraft-server --config /etc/figcraft-server/server.toml
+   files list --sort size`, `reports`, `block-ip`).
+6. Point an uptime monitor at `https://figcraft.example.com/healthz`, copy
+   `/var/backups/figcraft-server` off the machine, and upgrade by running the script again.
+
 ## Deploy on a Linux server
 
 Hosting for people outside your network: a small Linux server (1 CPU and 1 GB of memory are
 plenty for a team), a DNS name pointing at it (`figcraft.example.com` below: use yours), the
 server behind Caddy or nginx for TLS, and systemd keeping it running. The commands are for Debian
-and Ubuntu; other distributions differ only in how packages are installed.
+and Ubuntu; other distributions differ only in how packages are installed. `install.sh` does all of
+it ([above](#on-a-fresh-ubuntu-server-with-installsh)); these are the steps by hand.
 
 **1. Install the binary**, from the latest release (x86_64 or aarch64), checked against the
 release's `SHA256SUMS.txt`:
@@ -292,8 +466,11 @@ sudo tee /etc/figcraft-server/server.toml >/dev/null <<'EOF'
 listen = "127.0.0.1:47900"
 data = "/var/lib/figcraft-server"
 public_url = "wss://figcraft.example.com/"
+trusted_proxy = "127.0.0.1"
 EOF
 ```
+
+(Add the settings of [a public server](#running-a-public-server) to open it to everyone.)
 
 **3. Run it with systemd.** [`figcraft-server.service`](../packaging/server/figcraft-server.service)
 runs it as that user, restarts it if it fails, stops it gracefully, and locks it down: no new
@@ -352,7 +529,9 @@ the `figcraft` user with `--config /etc/figcraft-server/server.toml`.
 builds a small image (the binary on a distroless base, no shell) that runs as an unprivileged
 user, keeps its files in the `/data` volume and stops gracefully on `docker stop`. Build it from
 the repository root, give it a settings file with your `public_url`, and publish its port on the
-loopback interface only (ports Docker publishes bypass `ufw`), with the proxy from step 4 in front:
+loopback interface only (ports Docker publishes bypass `ufw`), with the proxy from step 4 in front
+(connections then come from Docker's bridge, so a `trusted_proxy` is that bridge's gateway address,
+`172.17.0.1` by default):
 
 ```sh
 docker build -f packaging/server/Dockerfile -t figcraft-server .
@@ -384,17 +563,25 @@ sudo systemctl start figcraft-server
 
 ## Security
 
-- **Access** is a share link (128-bit random token) per file and access level, or the server key
-  (128-bit) for managing files. Tokens are stored as SHA-256 hashes and every comparison runs in
-  constant time; revoking a link disconnects whoever joined with it. A view link's batches are
-  refused by the server whatever the client does.
+- **Access** is a share link (128-bit random token) per file and access level, an owner token
+  (128-bit) per file published without the key, or the server key (128-bit) for managing files.
+  Tokens are stored as SHA-256 hashes and every comparison runs in constant time; revoking a link
+  disconnects whoever joined with it. A view link's batches are refused by the server whatever the
+  client does.
+- **Open to the public** (`open_publish`): anyone who reaches the server may ask about it, publish
+  a file (within the limits above) and report a file they are in; an owner token manages only its
+  own file (its links, its name, removing it). Listing files, other files' links, reports, blocking
+  and the plugin directory's publishing stay with the server key, which also gets in from blocked
+  addresses. The per-address limits trust `X-Forwarded-For` only from `trusted_proxy`; without
+  one, every connection counts as its own address.
 - **Transport**: plain `ws://` on the server's port; anyone on the network path can read traffic
   (presence, changes, tokens) unless TLS terminates in front of it. Use a reverse proxy for
   anything beyond a trusted network ([Deploy on a Linux server](#deploy-on-a-linux-server)).
 - **Limits**: the transport's (message sizes, 100 messages a second per connection, idle and
   handshake timeouts, `max_connections`) and the collaboration core's (layers, changes per batch,
-  `max_people`), plus `max_files`, `max_file_mb` and `max_links`. Every message is decoded
-  defensively, and fuzzed in the tests. A library is read in full before it is kept (as files
+  `max_people`: the cap per file), plus `max_files`, `max_file_mb` and `max_links`, and on a public
+  server the limits per address. Every message is decoded defensively, and fuzzed in the tests
+  (including open hosting, owner tokens and reports). A library is read in full before it is kept (as files
   using it read it: size limits on every part, at most `max_file_mb`), must be the file's library
   at a newer version, and is checked on the server's main thread; usage reports keep at most 2,000
   components per file and 500 files per library.
@@ -406,4 +593,8 @@ sudo systemctl start figcraft-server
   both ends and share a bandwidth budget. Installing still means trusting the publisher: a plugin
   runs in FigCraft's sandbox with the permissions its manifest asks for, which the app shows before
   it installs anything.
-- **Not there yet**: user accounts, per-person permissions, rate limits per address, audit logs.
+- **Not end-to-end encrypted**: the server reads every file it keeps (it validates and stores them);
+  so can its operator.
+- **Not there yet**: user accounts, per-person permissions, audit logs, end-to-end encryption, and
+  checking a file's size as it grows by edits (the core's caps bound each edit; `max_file_mb` is
+  checked when a file is published and logged when it is compacted).
