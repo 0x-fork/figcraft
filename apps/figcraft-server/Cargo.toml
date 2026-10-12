@@ -33,6 +33,10 @@ env_logger = { version = "0.11", default-features = false, features = ["humantim
 # Stopping gracefully on SIGTERM/SIGINT/SIGHUP (systemd, Docker, Ctrl+C) and Ctrl+C/close on Windows.
 ctrlc = { version = "3", features = ["termination"] }
 
+# Free space on the data directory's disk (statvfs, without unsafe code of our own).
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", default-features = false, features = ["std", "fs"] }
+
 [dev-dependencies]
 # Crafting hostile archives (zip bombs) in tests.
 zip = { workspace = true }

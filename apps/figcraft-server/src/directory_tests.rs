@@ -15,11 +15,11 @@ use crate::directory::{DirectoryConfig, INDEX, PLUGINS};
 use crate::store::{Store, StoreConfig};
 use crate::test_util::{Raw, TempDir, config, key, session};
 
-fn wasm() -> Vec<u8> {
+pub(crate) fn wasm() -> Vec<u8> {
     wat::parse_str(r#"(module (memory (export "memory") 1) (func (export "figcraft_run") (param i32) (result i32) i32.const 0))"#).unwrap()
 }
 
-fn manifest(id: &str, version: &str) -> String {
+pub(crate) fn manifest(id: &str, version: &str) -> String {
     json!({"id": id, "name": "Tiny tool", "version": version, "author": "Ada Example", "description": "Does very little.", "main": "tiny.wasm",
            "permissions": {"access": "write", "commands": ["shape.rectangle"]}})
     .to_string()
@@ -125,7 +125,7 @@ fn bad_bundles_caps_and_keys() {
     assert!(matches!(d.handle(true, PluginReq::Publish { bundle: bundle(ID, "1.0.0") }), PluginReply::Published(_)));
     assert!(matches!(d.handle(false, PluginReq::List { query: "x".repeat(100_000) }), PluginReply::List(_)));
     // Fetches share a budget: a flood is turned away, not queued.
-    let busy = (0..400).filter_map(|_| d.fetch(ID, None).err()).filter(|e| e.contains("busy")).count();
+    let busy = (0..800).filter_map(|_| d.fetch(ID, None).err()).filter(|e| e.contains("busy")).count();
     assert!(busy > 0, "a flood of fetches hits the budget");
     drop(store);
     // Caps: versions kept, bytes kept, off.

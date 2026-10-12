@@ -37,6 +37,9 @@ const MAX_QUERY: usize = 200;
 const MAX_LISTING: usize = 32 << 20;
 /// What fetches may send, in MiB per second on average (each costs at least one).
 const SERVE_MIB_PER_SEC: f64 = 32.0;
+/// …and at once: eight times what one block of addresses may download at once, so no block can
+/// take it all (see `abuse`).
+const SERVE_BURST_MIB: f64 = 512.0;
 const MIB: f64 = (1 << 20) as f64;
 
 /// What the directory enforces.
@@ -80,7 +83,7 @@ impl Directory {
     pub fn open(root: &Path, cfg: DirectoryConfig) -> (Directory, Vec<String>) {
         let dir = root.join(PLUGINS);
         let burst = (2 * cfg.max_plugin_bytes) as f64 / MIB;
-        let mut d = Directory { dir, cfg, entries: Vec::new(), served: Bucket::new(SERVE_MIB_PER_SEC, burst.max(64.0)), broken: false };
+        let mut d = Directory { dir, cfg, entries: Vec::new(), served: Bucket::new(SERVE_MIB_PER_SEC, burst.max(SERVE_BURST_MIB)), broken: false };
         let mut problems = Vec::new();
         let index = d.dir.join(INDEX);
         let _ = fs::remove_file(disk::temp_of(&index));
@@ -171,6 +174,15 @@ impl Directory {
             size <= MAX_LISTING
         });
         out
+    }
+
+    /// The size of version `version` (or the latest) of plugin `id`'s bundle, without reading it.
+    pub fn size_of(&self, id: &str, version: Option<&str>) -> Option<u64> {
+        self.entries
+            .iter()
+            .filter(|e| e.id == id && version.is_none_or(|v| compare_versions(&e.version, v) == Some(Ordering::Equal)))
+            .min_by(|a, b| by_version(a, b))
+            .map(|e| e.bytes)
     }
 
     /// Version `version` (or the latest) of plugin `id`, and its bundle, read back and checked

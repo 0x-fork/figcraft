@@ -1,7 +1,7 @@
 //! What one address may do how often: new connections, publishing without the key and messages
 //! (only on a server open to the public), and reports and downloads (always). Each is a token
 //! bucket per block an address counts in ([`ip_blocks`]: an IPv4 address, or an IPv6 /64 and its
-//! /56 and /48 with 4 and 16 times the rate), so a tunnel's /48 doesn't get 65,536 /64s' worth. Publishing has a budget for
+//! /56 and /48 with 2 and 4 times the rate), so a tunnel's /48 doesn't get 65,536 /64s' worth. Publishing has a budget for
 //! everyone besides ([`PUBLISHES_ALL`] times one address's). The table keeps at most
 //! [`MAX_ADDRESSES`] addresses: when it is full the half used longest ago is forgotten, so a flood
 //! of addresses costs bounded memory (and forgotten addresses start with full buckets).
@@ -19,12 +19,14 @@ pub const MAX_ADDRESSES: usize = 10_000;
 /// Reports one address may send an hour.
 pub const REPORTS_PER_HOUR: f64 = 10.0;
 
-/// Bytes one address may download a second (team libraries, plugins), and at once.
-pub const DOWNLOAD_RATE: f64 = (4u64 << 20) as f64;
-pub const DOWNLOAD_BURST: f64 = (64u64 << 20) as f64;
+/// Bytes one address may download a second (team libraries, plugins), and at once: an IPv6 /48
+/// gets four times that, an eighth of everyone's budgets (32 MiB a second, 512 MiB at once).
+pub const DOWNLOAD_RATE: f64 = (1u64 << 20) as f64;
+pub const DOWNLOAD_BURST: f64 = (16u64 << 20) as f64;
 
-/// Everyone together may publish without the key this many times what one address may.
-pub const PUBLISHES_ALL: f64 = 20.0;
+/// Everyone together may publish without the key this many times what one address may: eight
+/// times what the widest block (an IPv6 /48, four addresses' worth) may, so no block takes it all.
+pub const PUBLISHES_ALL: f64 = 32.0;
 
 /// The rates (see the server's settings).
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -35,6 +35,8 @@ jobs:
           "$RUNNER_TEMP/actionlint" -color
       - name: shellcheck
         run: shellcheck packaging/*.sh packaging/*/*.sh packaging/linux/AppRun
+      - name: Server install script (Caddyfile handling)
+        run: bash packaging/server/install-test.sh
       - name: AppImage AppRun desktop integration
         run: bash packaging/linux/apprun-test.sh
       - name: PowerShell

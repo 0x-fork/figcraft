@@ -1645,6 +1645,7 @@ dependencies = [
  "figcraft-format",
  "figcraft-plugin",
  "log",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "sha2",

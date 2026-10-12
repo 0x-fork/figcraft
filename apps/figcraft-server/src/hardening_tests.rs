@@ -147,7 +147,7 @@ fn a_client_that_never_reads_can_queue_only_so_much() {
     let dir = TempDir::new("noread");
     let cfg = Config { max_file_mb: Some(2), max_plugin_mb: 1, ..open(dir.path()) };
     let cap = cfg.net().max_queued_bytes;
-    assert_eq!(cap, 6 << 20, "twice the largest message");
+    assert_eq!(cap, 4 << 20, "the largest message and a margin");
     let view = {
         let mut store = Store::open(dir.path(), cfg.store()).unwrap();
         let (file, _, view) = store.publish("Library", &snapshot("Library")).unwrap();
@@ -390,20 +390,20 @@ fn one_ipv6_block_gets_rising_but_bounded_limits() {
     let mut server = crate::start(&cfg).unwrap();
     let addr = server.addr();
     let mut held = Vec::new();
-    // Four /64s of one /56 fit (4 × the cap), the fifth doesn't.
-    for n in 1..=4 {
+    // Two /64s of one /56 fit (2 × the cap), the third doesn't.
+    for n in 1..=2 {
         let (ws, r) = via_proxy(addr, &format!("2001:db8:1:{n}::1"));
         assert!(matches!(r, ServerMsg::Hosting(_)), "/64 number {n}");
         held.push(ws);
     }
-    assert!(matches!(via_proxy(addr, "2001:db8:1:5::1").1, ServerMsg::Refused { reason } if reason.contains("too many connections")));
-    // Sixteen /56s of one /48 fit (16 × the cap) — four of them taken above — the seventeenth doesn't.
-    for n in 1..=12u16 {
+    assert!(matches!(via_proxy(addr, "2001:db8:1:3::1").1, ServerMsg::Refused { reason } if reason.contains("too many connections")));
+    // Four of one /48 fit (4 × the cap) — two of them taken above — the fifth doesn't.
+    for n in 1..=2u16 {
         let (ws, r) = via_proxy(addr, &format!("2001:db8:1:{:x}::1", n << 8));
         assert!(matches!(r, ServerMsg::Hosting(_)), "/56 number {n}");
         held.push(ws);
     }
-    assert!(matches!(via_proxy(addr, "2001:db8:1:d00::1").1, ServerMsg::Refused { .. }), "the /48 is full");
+    assert!(matches!(via_proxy(addr, "2001:db8:1:300::1").1, ServerMsg::Refused { .. }), "the /48 is full");
     assert!(matches!(via_proxy(addr, "2001:db8:2::1").1, ServerMsg::Hosting(_)), "another /48 isn't");
     drop(held);
     server.stop();
@@ -413,14 +413,14 @@ fn one_ipv6_block_gets_rising_but_bounded_limits() {
 fn rates_count_per_block_and_publishing_for_everyone() {
     let mut a = Abuse::new(AbuseConfig { open: true, connects_per_minute: 1, publishes_per_hour: 1, messages_per_second: 1 });
     let t = Instant::now();
-    // One connection a minute per /64, four per /56, sixteen per /48.
+    // One connection a minute per /64, two per /56, four per /48.
     let in_one_56 = (0..64u16).filter(|n| a.allow(IpAddr::from([0x2001, 0xdb8, 7, *n, 0, 0, 0, 0]), Action::Connect, t)).count();
-    assert_eq!(in_one_56, 4);
+    assert_eq!(in_one_56, 2);
     let in_one_48 = (1..64u16).filter(|n| a.allow(IpAddr::from([0x2001, 0xdb8, 7, n << 8, 0, 0, 0, 0]), Action::Connect, t)).count();
-    assert_eq!(in_one_48, 12, "the /48's 16, four of them taken above");
-    // Publishing: one an hour per address, twenty for everyone together.
-    let published = (0..40u32).filter(|n| a.allow(IpAddr::from((0xC000_0200 + n).to_be_bytes()), Action::Publish, t)).count();
-    assert_eq!(published, 20);
+    assert_eq!(in_one_48, 2, "the /48's four, two of them taken above");
+    // Publishing: one an hour per address, 32 for everyone together.
+    let published = (0..60u32).filter(|n| a.allow(IpAddr::from((0xC000_0200 + n).to_be_bytes()), Action::Publish, t)).count();
+    assert_eq!(published, 32);
 }
 
 #[test]
@@ -529,7 +529,134 @@ fn downloads_have_a_share_per_address() {
     store.publish_library(&file.id, &archive(0, 4 << 20)).unwrap();
     let fetch = |s: &mut Store, who: &str| s.library(ip(who), &file.id, Access::View, LibraryReq::Fetch { have: None, usage: None });
     let served = (0..40).take_while(|_| matches!(fetch(&mut store, "198.51.100.1"), LibraryReply::Library { .. })).count();
-    assert!((10..20).contains(&served), "{served} downloads of 4 MiB in a burst of 64 MiB");
+    assert!((3..=5).contains(&served), "{served} downloads of 4 MiB in a burst of 16 MiB");
     assert!(matches!(fetch(&mut store, "198.51.100.1"), LibraryReply::Failed { reason } if reason == BUSY_DOWNLOADS));
     assert!(matches!(fetch(&mut store, "198.51.100.9"), LibraryReply::Library { .. }));
+}
+
+// Second review: N2, L7, N3, M3, N5, N7 ------------------------------------------------------
+
+#[test]
+fn a_file_at_its_cap_is_compacted_at_most_once_a_minute() {
+    let dir = TempDir::new("forced");
+    let mut c = config(dir.path());
+    c.max_file_mb = Some(1);
+    let mut store = Store::open(dir.path(), c.store()).unwrap();
+    let (info, ..) = store.publish("Full", &snapshot("Full")).unwrap();
+    let mut server = Backend::open(&mut store, &info.id).unwrap();
+    let mut client = join(&mut server);
+    let before = store.compactions();
+    // Alternate a small accepted batch with one that would take the file over its cap.
+    for i in 0..50 {
+        rename(&mut server, &mut client, &format!("page {i}"));
+        Backend::changed(&mut store, &info.id, &mut server);
+        assert!(Backend::room(&mut store, &info.id, &server, 2 << 20).is_err());
+    }
+    assert!(store.compactions() - before <= 1, "{} compactions for 50 over-cap batches", store.compactions() - before);
+}
+
+/// A plugin directory with one plugin whose bundle is about `mib` MiB.
+fn plugin_store(dir: &std::path::Path, mib: usize) -> Store {
+    let mut store = Store::open(dir, config(dir).store()).unwrap();
+    let bundle = figcraft_plugin::bundle::Bundle {
+        manifest: crate::directory_tests::manifest("org.example.big", "1.0.0"),
+        wasm: crate::directory_tests::wasm(),
+        assets: vec![figcraft_plugin::bundle::Asset { name: "data.bin".into(), data: vec![9; mib << 20] }],
+    };
+    store.directory().publish(&bundle.encode()).unwrap();
+    store
+}
+
+#[test]
+fn one_address_cant_spend_everyones_plugin_downloads() {
+    let dir = TempDir::new("plugshare");
+    let mut store = plugin_store(dir.path(), 4);
+    let fetch = || PluginReq::Fetch { id: "org.example.big".into(), version: None };
+    let greedy = ip("198.51.100.1");
+    // Its share runs out after a few; then 200 more tries cost nobody else anything.
+    let served =
+        (0..10).take_while(|_| matches!(store.plugins(greedy, false, fetch()), figcraft_collab::message::PluginReply::Bundle { .. })).count();
+    assert!((2..=5).contains(&served), "{served}");
+    for _ in 0..200 {
+        let r = store.plugins(greedy, false, fetch());
+        assert!(matches!(&r, figcraft_collab::message::PluginReply::Failed { reason } if reason == BUSY_DOWNLOADS));
+    }
+    assert!(
+        matches!(store.plugins(ip("198.51.100.2"), false, fetch()), figcraft_collab::message::PluginReply::Bundle { .. }),
+        "others still download"
+    );
+}
+
+#[test]
+fn half_read_messages_count_against_a_reading_budget() {
+    let dir = TempDir::new("reading");
+    let cfg = open(dir.path());
+    let store = Store::open(dir.path(), cfg.store()).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut busy = Hosting::serve(listener, store, NetLimits { max_reading_block: 64 << 10, max_reading_total: 1 << 20, ..cfg.net() }).unwrap();
+    let mut raw = Raw::connect(busy.addr());
+    raw.send(&hosting());
+    assert!(matches!(raw.next(), ServerMsg::Hosting(_)), "small messages are read");
+    let mut big = Document::new("Big");
+    let page = big.first_page().unwrap();
+    big.create(page, NodeKind::Rectangle, &"r".repeat(200_000), 0.0, 0.0, 1.0, 1.0).unwrap();
+    let _ = raw.try_send(&ClientMsg::Admin(Admin::Publish { name: "Big".into(), snapshot: Replica::new(big).snapshot().unwrap() }));
+    assert!(matches!(raw.next(), ServerMsg::Refused { reason } if reason.contains("busy reading")));
+    until(10, "the reading budget to be given back", || busy.connections() == 0);
+    // Given back: another address reads again.
+    let mut raw = Raw::connect(busy.addr());
+    raw.send(&hosting());
+    assert!(matches!(raw.next(), ServerMsg::Hosting(_)));
+    busy.stop();
+}
+
+#[test]
+fn one_ipv6_block_takes_at_most_an_eighth_of_the_connections() {
+    let dir = TempDir::new("eighth");
+    let cfg = Config { max_connections: 64, trusted_proxy: Some("127.0.0.1".into()), ..open(dir.path()) };
+    let mut server = crate::start(&cfg).unwrap();
+    let addr = server.addr();
+    let mut held = Vec::new();
+    for n in 1..=8u16 {
+        let (ws, r) = via_proxy(addr, &format!("2001:db8:9:{:x}::1", n << 8));
+        assert!(matches!(r, ServerMsg::Hosting(_)), "connection {n}");
+        held.push(ws);
+    }
+    assert!(matches!(via_proxy(addr, "2001:db8:9:900::1").1, ServerMsg::Refused { reason } if reason.contains("too many connections")), "64 / 8");
+    assert!(matches!(via_proxy(addr, "2001:db8:a::1").1, ServerMsg::Hosting(_)), "another /48 still gets in");
+    drop(held);
+    server.stop();
+}
+
+#[test]
+fn no_block_can_use_up_a_shared_budget() {
+    let mut a = Abuse::new(AbuseConfig { open: true, connects_per_minute: 30, publishes_per_hour: 10, messages_per_second: 200 });
+    let t = Instant::now();
+    // A /48 publishes at most an eighth of what everyone may; everyone else keeps the rest.
+    let from_48 = (0..200u16).filter(|n| a.allow(IpAddr::from([0x2001, 0xdb8, 5, n << 8, 0, 0, 0, 0]), Action::Publish, t)).count();
+    assert_eq!(from_48, 40, "four addresses' worth");
+    let others = (0..400u32).filter(|n| a.allow(IpAddr::from((0xC633_6400 + n).to_be_bytes()), Action::Publish, t)).count();
+    assert_eq!(others, 320 - 40, "the rest of everyone's 320 an hour");
+    // Downloads: a /48's burst is at most an eighth of everyone's (checked when compiling, in `store`).
+}
+
+#[test]
+fn problems_stay_bounded_and_a_full_disk_refuses_writes() {
+    let dir = TempDir::new("problems");
+    let mut store = Store::open(dir.path(), config(dir.path()).store()).unwrap();
+    let (info, ..) = store.publish("Broken", &snapshot("Broken")).unwrap();
+    std::fs::write(dir.path().join("files").join(&info.id).join("snapshot.bin"), b"junk").unwrap();
+    for _ in 0..500 {
+        assert!(Backend::open(&mut store, &info.id).is_err());
+    }
+    assert!(store.problems().len() <= 200, "{} problems kept", store.problems().len());
+    drop(store);
+    // Where the free space can be told, below the threshold nothing more is written.
+    if crate::disk::free_bytes(dir.path()).is_some() {
+        let mut c = config(dir.path()).store();
+        c.min_free_bytes = u64::MAX;
+        let mut store = Store::open(dir.path(), c).unwrap();
+        let e = store.publish("More", &snapshot("More")).unwrap_err();
+        assert!(e.contains("disk is nearly full"), "{e}");
+    }
 }

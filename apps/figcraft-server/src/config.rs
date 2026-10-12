@@ -247,6 +247,9 @@ impl Config {
                 max_plugin_bytes: mib(self.max_plugin_mb),
                 max_total_bytes: mib(self.max_plugins_mb),
             },
+            // At least 1 GiB, and room for two of the largest files (a compaction writes one beside
+            // the old one).
+            min_free_bytes: mib(self.file_mb().saturating_mul(2)).max(1 << 30),
         }
     }
 
@@ -279,11 +282,17 @@ impl Config {
             return base;
         }
         let max = self.open_message().min(base.max_client_message);
+        // Shared budgets: one block of addresses (an IPv4 address, an IPv6 /48) gets at most an
+        // eighth of each, and its biggest consumers are dropped first.
+        let (queued, reading) = (256usize << 20, 192usize << 20);
         NetLimits {
             max_per_address: self.max_connections_per_ip,
             max_client_message: max,
-            max_queued_bytes: max.saturating_mul(2),
-            max_queued_total: 256 << 20,
+            max_queued_bytes: max.saturating_add(1 << 20),
+            max_queued_block: queued / 8,
+            max_queued_total: queued,
+            max_reading_block: max.saturating_add(1 << 20).min(reading / 8),
+            max_reading_total: reading,
             max_in_flight: 128 << 20,
             reserve_for_sessions: self.max_connections / 8,
             request_idle: std::time::Duration::from_secs(20),

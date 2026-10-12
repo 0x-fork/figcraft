@@ -57,8 +57,26 @@ say() { printf '==> %s\n' "$*"; }
 warn() { printf 'install.sh: warning: %s\n' "$*" >&2; }
 die() { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 
+MARK="# figcraft-server (install.sh)"
+
+caddy_main() { # caddy_main FILE EMAIL: the main Caddyfile to install, on stdout
+  local file="$1" email="$2"
+  if [ -f "$file" ] && grep -qE '^[[:space:]]*import[[:space:]]+figcraft-server\.caddy[[:space:]]*$' "$file"; then
+    cat "$file" # it imports our site already: kept exactly as it is
+  elif [ ! -f "$file" ] || ! grep -qvE '^[[:space:]]*(#|$|:80|\{|\}|root|file_server)' "$file"; then
+    # Missing, or only the example site the package ships: ours, with the certificate email.
+    printf '%s\n{\n\temail %s\n}\n\nimport figcraft-server.caddy\n' "$MARK" "$email"
+  else
+    # Someone else's sites: kept, with one line added that imports ours.
+    cat "$file"
+    printf '\nimport figcraft-server.caddy\n'
+  fi
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
+    # For tests (packaging/server/install-test.sh): print the Caddyfile this script would write.
+    --caddy-main) caddy_main "${2:-}" "${3:-}"; exit 0 ;;
     --host) HOST="${2:-}"; shift 2 ;;
     --email) EMAIL="${2:-}"; shift 2 ;;
     --terms) TERMS="${2:-}"; shift 2 ;;
@@ -224,16 +242,19 @@ for f in figcraft-server.service Caddyfile figcraft-backup.service figcraft-back
   [ -f "$FILES/$f" ] || die "$FILES/$f is missing"
 done
 
+# The server's own account runs the binary, from here on too (root never runs what was built).
+id -u figcraft >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin figcraft
+as_server() { runuser -u figcraft -- "$@"; }
+
 CHANGED=false
 if ! cmp -s "$NEW_BIN" "$BIN"; then
-  say "Installing $("$NEW_BIN" --version)"
   install -m 755 "$NEW_BIN" "$BIN.new"
   mv -f "$BIN.new" "$BIN"
+  say "Installed $(as_server "$BIN" --version)"
   CHANGED=true
 fi
 
-# --- User, data and settings ----------------------------------------------------------------
-id -u figcraft >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin figcraft
+# --- Data and settings ----------------------------------------------------------------------
 install -d -o figcraft -g figcraft -m 700 "$DATA"
 install -d -m 755 "$CONFIG_DIR"
 if [ ! -f "$CONFIG" ]; then
@@ -260,11 +281,11 @@ if [ ! -f "$CONFIG" ]; then
   } >"$CONFIG.new"
   chmod 644 "$CONFIG.new"
   # Checked before it replaces anything.
-  "$BIN" --config "$CONFIG.new" check >/dev/null || { rm -f "$CONFIG.new"; die "the new settings don't read (see above)"; }
+  as_server "$BIN" --config "$CONFIG.new" check >/dev/null || { rm -f "$CONFIG.new"; die "the new settings don't read (see above)"; }
   mv -f "$CONFIG.new" "$CONFIG"
   CHANGED=true
 fi
-"$BIN" --config "$CONFIG" check >/dev/null ||
+as_server "$BIN" --config "$CONFIG" check >/dev/null ||
   die "$CONFIG isn't right for this figcraft-server (see above; a release older than open hosting needs --from-source)"
 
 install_file() { # install_file SOURCE TARGET MODE: true when it changed
@@ -291,9 +312,8 @@ if [ "$BACKUPS" = true ]; then
 fi
 
 # --- Caddy ----------------------------------------------------------------------------------
-# Our site lives in a file of its own; the main Caddyfile only imports it. A Caddyfile with other
-# sites is left as it is apart from that one import line.
-MARK="# figcraft-server (install.sh)"
+# Our site lives in a file of its own; the main Caddyfile only imports it (caddy_main). A
+# Caddyfile with other sites is never replaced: it only gains the import line, once.
 CADDYFILE=/etc/caddy/Caddyfile
 SITE_FILE=/etc/caddy/figcraft-server.caddy
 SITE="$(mktemp)"
@@ -302,15 +322,7 @@ MAIN="$(mktemp)"
   printf '%s: written by packaging/server/install.sh (run it again to update).\n' "$MARK"
   sed -e '/^#/d' -e "s/figcraft\.example\.com/$HOST/" "$FILES/Caddyfile" | sed -e '/./,$!d'
 } >"$SITE"
-if [ ! -f "$CADDYFILE" ] || grep -qF "$MARK" "$CADDYFILE" || ! grep -qvE '^\s*(#|$|:80|\{|\}|root|file_server)' "$CADDYFILE"; then
-  # Missing, ours, or the packaged example site: ours, with the certificate email.
-  printf '%s\n{\n\temail %s\n}\n\nimport figcraft-server.caddy\n' "$MARK" "$EMAIL" >"$MAIN"
-elif grep -qE '^\s*import\s+figcraft-server\.caddy' "$CADDYFILE"; then
-  cp "$CADDYFILE" "$MAIN"
-else
-  say "Caddy already serves other sites: adding 'import figcraft-server.caddy' to $CADDYFILE"
-  { cat "$CADDYFILE"; printf '\n%s\nimport figcraft-server.caddy\n' "$MARK"; } >"$MAIN"
-fi
+caddy_main "$CADDYFILE" "$EMAIL" >"$MAIN"
 CADDY_CHANGED=false
 for f in "$CADDYFILE" "$SITE_FILE"; do
   if [ -f "$f" ]; then cp -p "$f" "$f.before-figcraft"; else rm -f "$f.before-figcraft"; fi

@@ -34,9 +34,15 @@ pub struct NetLimits {
     /// connections from this address are believed (the header is anyone's to forge).
     pub trusted_proxy: Option<IpAddr>,
     /// Bytes queued for one client before it counts as stuck (one message always fits an empty
-    /// queue), and for every client together.
+    /// queue), for one block of addresses (an IPv4 address, an IPv6 /48), and for every client
+    /// together (a broadcast counted once; past it the biggest consumer is dropped).
     pub max_queued_bytes: usize,
+    pub max_queued_block: usize,
     pub max_queued_total: usize,
+    /// Bytes being read into messages (not whole yet) for one block, and for every connection:
+    /// past them the biggest readers are dropped.
+    pub max_reading_block: usize,
+    pub max_reading_total: usize,
     /// Bytes of messages handed to the hub and not handled yet, all connections together: past it
     /// a connection is dropped as busy instead of piling more on.
     pub max_in_flight: usize,
@@ -66,7 +72,10 @@ impl Default for NetLimits {
             max_per_address: 0,
             trusted_proxy: None,
             max_queued_bytes: 160 << 20,
+            max_queued_block: usize::MAX,
             max_queued_total: usize::MAX,
+            max_reading_block: usize::MAX,
+            max_reading_total: usize::MAX,
             max_in_flight: usize::MAX,
             max_request: 64 << 10,
             reserve_for_sessions: 0,

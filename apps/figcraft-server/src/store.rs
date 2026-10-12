@@ -62,6 +62,11 @@ const MAX_REPORTS: usize = 1_000;
 const MAX_REASON: usize = 500;
 /// How often idle files are looked for (seconds), besides at startup.
 const SWEEP_EVERY: u64 = 600;
+/// A file over its cap is compacted to make room at most this often (seconds): a compaction
+/// rewrites the whole file on the hub thread.
+const FORCED_COMPACTION_EVERY: u64 = 60;
+/// Most problems kept for the operator (the oldest go first).
+const MAX_PROBLEMS: usize = 200;
 
 /// Why a download is turned away (an address's share, or everyone's, is used up for now).
 pub const BUSY_DOWNLOADS: &str = "too many downloads from your address or from everyone right now: try again in a minute";
@@ -84,7 +89,9 @@ const MAX_USAGE_FILE: u64 = 4 << 20;
 const USAGE_WRITE_EVERY: u64 = 60;
 /// Bytes of team libraries served a second, everyone together, and at once.
 const LIBRARY_RATE: f64 = (32u64 << 20) as f64;
-const LIBRARY_BURST: f64 = (256u64 << 20) as f64;
+const LIBRARY_BURST: f64 = (512u64 << 20) as f64;
+// A /48 (four addresses' worth) may download at most an eighth of everyone's budgets.
+const _: () = assert!(crate::abuse::DOWNLOAD_RATE * 4.0 <= LIBRARY_RATE / 8.0 && crate::abuse::DOWNLOAD_BURST * 4.0 <= LIBRARY_BURST / 8.0);
 
 /// What the store enforces.
 #[derive(Clone, Debug, PartialEq)]
@@ -97,6 +104,9 @@ pub struct StoreConfig {
     pub core: figcraft_collab::Limits,
     pub directory: DirectoryConfig,
     pub hosting: HostingConfig,
+    /// Below this much free space on the data directory's disk, changes and new files are
+    /// refused (with the reason) rather than half written.
+    pub min_free_bytes: u64,
 }
 
 /// Hosting for the public (see the server's settings).
@@ -206,6 +216,8 @@ struct Entry {
     log: Option<Log>,
     /// Its snapshot's and log's bytes on disk (what was written; pending records not yet).
     bytes: u64,
+    /// When it was last compacted to make room (seconds since 1970).
+    forced: u64,
 }
 
 /// A library's usage reports in memory, and whether (and when) they were written.
@@ -235,6 +247,10 @@ pub struct Store {
     reports: Vec<ReportInfo>,
     /// When idle files are looked for next (seconds since 1970).
     next_sweep: u64,
+    /// Compactions so far (tests count them).
+    compactions: u64,
+    /// The free space last seen on the data directory's disk, and when.
+    free: Option<(Instant, Option<u64>)>,
     _lock: File,
 }
 
@@ -326,6 +342,8 @@ impl Store {
             blocked: BTreeSet::new(),
             reports: Vec::new(),
             next_sweep: 0,
+            compactions: 0,
+            free: None,
             _lock: lock,
         };
         store.scan(&dir);
@@ -400,7 +418,7 @@ impl Store {
             log::info!("file at {}: its log predates the last compaction; it is ignored", path.display());
         }
         let bytes = [SNAPSHOT, LOG].iter().filter_map(|n| fs::metadata(path.join(n)).ok()).map(|m| m.len()).sum();
-        Ok(Entry { meta, links, log: None, bytes })
+        Ok(Entry { meta, links, log: None, bytes, forced: 0 })
     }
 
     /// The server key (for managing files).
@@ -517,6 +535,9 @@ impl Store {
         if self.files.len() >= self.cfg.max_files {
             return Err(format!("the server keeps at most {} files", self.cfg.max_files));
         }
+        if let Some(why) = self.low_disk() {
+            return Err(why);
+        }
         let replica = Replica::from_snapshot(snapshot).map_err(|e| format!("the file couldn't be read: {e}"))?;
         if replica.document().node_count() > self.cfg.core.max_nodes {
             return Err(format!("the file has more than {} layers", self.cfg.core.max_nodes));
@@ -558,7 +579,7 @@ impl Store {
             let _ = fs::remove_dir_all(&dir);
             return Err(format!("couldn't keep the file: {e}"));
         }
-        let entry = Entry { meta, links: vec![edit.clone(), view.clone()], log: None, bytes: (bytes.len() + LOG_HEADER) as u64 };
+        let entry = Entry { meta, links: vec![edit.clone(), view.clone()], log: None, bytes: (bytes.len() + LOG_HEADER) as u64, forced: 0 };
         self.files.insert(id.clone(), entry);
         let info = self.files.get(&id).map(|e| self.info(&id, e, None)).ok_or("the file vanished")?;
         match ip {
@@ -894,9 +915,20 @@ impl Store {
     /// without the key its address's share and everyone's. A log that took it over its cap is
     /// compacted first (the state may be smaller than its history).
     fn room_for(&mut self, file: &str, server: &Server, n: u64) -> Result<(), String> {
+        if let Some(why) = self.low_disk() {
+            return Err(why);
+        }
         let max = self.cfg.max_file_bytes;
         let over = |s: &Store| s.bytes(file).saturating_add(n) > max;
-        if over(self) && self.files.get(file).and_then(|e| e.log.as_ref()).is_some_and(|l| l.entries > 0 || !l.pending.is_empty()) {
+        // A compaction to make room at most once a minute per file (it rewrites the whole file).
+        let t = now();
+        let may_compact = self.files.get(file).is_some_and(|e| {
+            t >= e.forced.saturating_add(FORCED_COMPACTION_EVERY) && e.log.as_ref().is_some_and(|l| l.entries > 0 || !l.pending.is_empty())
+        });
+        if over(self) && may_compact {
+            if let Some(e) = self.files.get_mut(file) {
+                e.forced = t;
+            }
             self.compact(file, server);
         }
         if over(self) {
@@ -947,7 +979,7 @@ impl Store {
         }
         for i in issues {
             log::warn!("{i}");
-            self.problems.push(i);
+            self.note(i);
         }
         server.journaling(true);
         let file_handle = OpenOptions::new().append(true).open(dir.join(LOG));
@@ -986,8 +1018,39 @@ impl Store {
         Ok(Log { generation, file: f, pending: Vec::new(), entries: 0, bytes: LOG_HEADER as u64, dirty: false })
     }
 
+    /// Compactions so far.
+    pub fn compactions(&self) -> u64 {
+        self.compactions
+    }
+
+    /// Why nothing more may be written when the data directory's disk is nearly full (less free
+    /// than [`StoreConfig::min_free_bytes`]); looked up at most once a second. Where the free space
+    /// can't be told, nothing is refused.
+    fn low_disk(&mut self) -> Option<String> {
+        let now = Instant::now();
+        let free = match self.free {
+            Some((at, free)) if now.saturating_duration_since(at) < std::time::Duration::from_secs(1) => free,
+            _ => {
+                let free = disk::free_bytes(&self.root);
+                self.free = Some((now, free));
+                free
+            }
+        };
+        free.filter(|f| *f < self.cfg.min_free_bytes)
+            .map(|_| "the server's disk is nearly full: it takes no changes or new files for now (tell its operator)".to_string())
+    }
+
+    /// Note a problem for the operator (logged too); only the latest [`MAX_PROBLEMS`] are kept.
+    fn note(&mut self, problem: String) {
+        if self.problems.len() >= MAX_PROBLEMS {
+            self.problems.remove(0);
+        }
+        self.problems.push(problem);
+    }
+
     /// Compact an open file: its state as the next snapshot, an empty log.
     fn compact(&mut self, file: &str, server: &Server) {
+        self.compactions += 1;
         let Some(generation) = self.files.get(file).and_then(|e| e.log.as_ref()).map(|l| l.generation) else { return };
         match self.rewrite(file, generation + 1, server) {
             Ok(log) => {
@@ -1070,7 +1133,7 @@ impl Backend for Store {
         self.load(file).map_err(|e| {
             let why = format!("file {file} can't be opened: {e}");
             log::error!("{why}");
-            self.problems.push(why);
+            self.note(why);
             "this file can't be opened on the server (its data is damaged); tell the server's owner".to_string()
         })
     }
@@ -1266,14 +1329,14 @@ impl Backend for Store {
     }
 
     fn plugins(&mut self, ip: IpAddr, publisher: bool, req: PluginReq) -> PluginReply {
-        let reply = self.directory.handle(publisher, req);
-        // One address's share of the directory's download budget (the bundle is dropped unsent).
-        if let PluginReply::Bundle { bundle, .. } = &reply
-            && !self.abuse.allow(ip, Action::Download(bundle.len()), Instant::now())
+        // One address's share first (before everyone's budget is spent or anything is read).
+        if let PluginReq::Fetch { id, version } = &req
+            && let Some(size) = self.directory.size_of(id, version.as_deref())
+            && !self.abuse.allow(ip, Action::Download(usize::try_from(size).unwrap_or(usize::MAX)), Instant::now())
         {
             return PluginReply::Failed { reason: BUSY_DOWNLOADS.into() };
         }
-        reply
+        self.directory.handle(publisher, req)
     }
 
     fn closing(&self) -> Closing {

@@ -311,9 +311,10 @@ keeps the key for everything else.
   connections a minute (`connects_per_minute`), files published an hour (`publishes_per_hour`),
   messages a second (`messages_per_second`), and files and MiB kept (`max_files_per_ip`,
   `max_mb_per_ip`, counting what files grow to by edits); for everyone: `max_files`, `max_file_mb`
-  per file (also as it grows), `max_total_mb` and twenty addresses' worth of publishing an hour. An
-  address is an IPv4 address or an IPv6 /64; an IPv6 /56 and /48 also count together, with 4 and 16
-  times one address's limits. Each refusal says why ("too many connections from your address…",
+  per file (also as it grows), `max_total_mb` and 32 addresses' worth of publishing an hour. An
+  address is an IPv4 address or an IPv6 /64; an IPv6 /56 and /48 also count together, with 2 and 4
+  times one address's limits, and a /48 never more than an eighth of any budget everyone shares
+  (connections, queued bytes, bytes being read, publishing, downloads). Each refusal says why ("too many connections from your address…",
   "this server is full…") and the app shows it. See also [Resource limits](#resource-limits).
   Behind a reverse proxy set `trusted_proxy` to its address: the server then counts the client its
   `X-Forwarded-For` names (the last address in it, the one the proxy added) and believes the header
@@ -371,22 +372,31 @@ revoke`; remove the file), and the operator reading files (no end-to-end encrypt
 ### Resource limits
 
 What keeps one client (or a few) from exhausting a small machine (the official one has 2 GB of
-memory and 2 GB of swap; the defaults are chosen to hold on 1 GB). All of these apply only with
-`open_publish = true` unless marked *always*; a private server keeps its earlier behaviour.
+memory and 2 GB of swap; the defaults are chosen to hold on 1 GB). The rule throughout: no single
+address or block of addresses can use up a budget everyone shares (each gets at most an eighth),
+and when a shared budget runs out the biggest consumer is dropped, not the next client that happens
+to need a little of it. These apply only with `open_publish = true` unless marked *always*.
+
+**On private servers too** (a change from earlier versions): a batch that would take a file past
+`max_file_mb` (64 MiB by default there) is now refused with the reason, and the app rolls it back,
+where it used to be kept and only logged; and nothing is written while the disk has less than
+1 GiB (or two of the largest files) free. Raise `max_file_mb` (at most 4096) if your team's files
+are larger.
 
 | Resource | Limit |
 |---|---|
 | Message size | A file's size and 1 MiB (`max_file_mb`, 16 by default when open, or `max_plugin_mb` if larger): checked as the message is read, before anything is decoded; 64 KiB on a connection that only browses plugins (a client sending more is disconnected with the limit as the reason; the app keeps its own copy). The core's 64 MiB otherwise |
-| A file as it grows | Every batch is checked first: past `max_file_mb` (after compacting a long log), past its publisher's `max_mb_per_ip` or past `max_total_mb`, it is refused with the reason and the app rolls it back. A file's snapshot also holds the recent batches kept for reconnecting clients, at most a quarter of `max_file_mb` |
+| A file as it grows | Every batch is checked first (*always*): past `max_file_mb`, past its publisher's `max_mb_per_ip` or past `max_total_mb`, it is refused with the reason and the app rolls it back. A long log is compacted to make room at most once a minute per file (a compaction rewrites the whole file). A file's snapshot also holds the recent batches kept for reconnecting clients, at most a quarter of `max_file_mb` |
 | Recent batches in memory | A quarter of `max_file_mb` (256 KiB at least) per open file; older ones are dropped (a client that missed them catches up with the whole file) |
-| Bytes queued for a slow client | Twice the largest message per connection, 256 MiB for all of them: a client that doesn't read its answers is dropped instead of making the server hold more |
+| Bytes queued for slow clients | The largest message and 1 MiB per connection, 32 MiB per block of addresses, 256 MiB for everyone (a message sent to many people counts once): a client that doesn't read its answers is dropped; when everyone's budget runs out, the connection holding the most is dropped |
+| Bytes being read | Messages not yet whole: the largest message and 1 MiB per block, 192 MiB for everyone; past them the biggest readers are dropped as busy |
 | Bytes waiting for the server | 128 MiB of read messages not handled yet: past it a connection is dropped as busy |
-| Connections | `max_connections` (512) in all (*always*); `max_connections_per_ip` (32) per address, ×4 per IPv6 /56, ×16 per /48; one-shot requests (asking about hosting, libraries, browsing plugins) can't take the last eighth, which stays for people joining files, and are dropped after 20 idle seconds |
-| Rates | Per address and block: `connects_per_minute`, `publishes_per_hour` (and twenty addresses' worth for everyone), `messages_per_second`; reports, ten an hour (*always*); downloads of libraries and plugins, 4 MiB a second with bursts of 64 MiB (*always*), within 32 MiB a second for libraries and the plugin directory's own budget for everyone |
+| Connections | `max_connections` (512) in all (*always*); `max_connections_per_ip` (32) per address, ×2 per IPv6 /56 (at most a sixteenth of all), ×4 per /48 (at most an eighth of all), joins included, so no block can take every connection; one-shot requests (asking about hosting, libraries, browsing plugins) can't take the last eighth, which stays for people joining files, and are dropped after 20 idle seconds |
+| Rates | Per address and block: `connects_per_minute`, `publishes_per_hour` (and 32 addresses' worth for everyone), `messages_per_second`; reports, ten an hour (*always*); downloads of libraries and plugins, 1 MiB a second with bursts of 16 MiB per address (*always*), checked before anything is read, within 32 MiB a second (512 MiB at once) for libraries and for plugins, everyone together |
 | Team libraries | Only files published with the key hold one on a public server; an archive is at most `max_file_mb` and everything it unpacks to counts against the same cap (*always*), so a zip bomb is refused before it expands |
 | Usage reports | Kept in memory, written at most once a minute per library and when the server stops; at most 1,000 components per file and 200 files per library (*always*) |
-| Disk writes | A batch is confirmed only once it is on disk; when its log can't be written (a full disk), nobody hears it was accepted: the file closes, everyone in it reconnects and their apps send again what wasn't confirmed (*always*) |
-| Storage | `max_files`, `max_total_mb` (10240), `max_files_per_ip` (20), `max_mb_per_ip` (256), and idle expiry (`idle_days`, 30) for files published without the key |
+| Disk writes | A batch is confirmed only once it is on disk; when its log can't be written, nobody hears it was accepted: the file closes, everyone in it reconnects and their apps send again what wasn't confirmed. Below 1 GiB (or two of the largest files) free, changes and new files are refused with "the server's disk is nearly full" instead (*always*, where the free space can be told: Unix). The server keeps the last 200 problems for the operator |
+| Storage | `max_files`, `max_total_mb` (10240), `max_files_per_ip` (20), `max_mb_per_ip` (256), and idle expiry (`idle_days`, 30) for files published without the key. Size `max_total_mb` to the disk: the files, a compaction's copy of the largest, the nightly backups (each about the data's size, seven kept unless you move them off) and 1 GiB to spare |
 | The service | systemd caps it at 60% (slows down) and 75% (stopped and restarted) of the machine's memory, and only lets it talk to this machine (the proxy) |
 
 The settings for a public server, as `install.sh` writes them:
@@ -419,8 +429,10 @@ installs the systemd units and its Caddy site (`/etc/caddy/figcraft-server.caddy
 the main Caddyfile, whose other sites it leaves alone), opens the SSH ports `sshd` listens on, 80
 and 443 in `ufw`, and turns `ufw` on unless other services listen on the machine (then it says
 so: allow their ports and enable it yourself, or pass `--firewall-anyway`). Builds run as the
-unprivileged `figcraft-build` user; a fresh clone builds the latest release tag. It checks new
-settings before they replace anything, starts it all and prints what to do next. Running it again
+unprivileged `figcraft-build` user, and the binary is only ever run as `figcraft` (never as root);
+a fresh clone builds the latest release tag. A Caddyfile with other sites is never replaced: it
+gains one `import figcraft-server.caddy` line, once (`packaging/server/install-test.sh` checks
+this). It checks new settings before they replace anything, starts it all and prints what to do next. Running it again
 upgrades the binary and restarts the server only when something changed.
 
 1. Create the server (Ubuntu 24.04, x86_64 or arm64) with your SSH key, and note its address.
@@ -634,5 +646,6 @@ sudo systemctl start figcraft-server
 - **The machine**: the data directory is made readable by the server's account only and the server
   key is written owner-only from the start; the systemd unit caps memory and network
   (`MemoryHigh`, `MemoryMax`, `IPAddressAllow=localhost`); `install.sh` builds as an unprivileged
-  user and never cuts off SSH or other services when it turns `ufw` on.
+  user, runs the binary only as the server's account, never replaces someone else's Caddyfile and
+  never cuts off SSH or other services when it turns `ufw` on.
 - **Not there yet**: user accounts, per-person permissions, audit logs, end-to-end encryption.

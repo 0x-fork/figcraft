@@ -32,6 +32,19 @@ const SNAP_HEADER: usize = 4 + 1 + 8 + 4;
 pub const LOG_HEADER: usize = 4 + 1 + 8;
 const RECORD_HEADER: usize = 8;
 
+/// Free space on the disk holding `path`, in bytes, where it can be told (Unix).
+pub fn free_bytes(path: &Path) -> Option<u64> {
+    #[cfg(unix)]
+    {
+        rustix::fs::statvfs(path).ok().map(|s| s.f_bavail.saturating_mul(s.f_frsize))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
+}
+
 /// `path` with `.tmp` added: where its next version is written first.
 pub fn temp_of(path: &Path) -> PathBuf {
     let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
