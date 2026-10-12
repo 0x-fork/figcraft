@@ -34,6 +34,9 @@ DATA=/var/lib/figcraft-server
 BIN=/usr/local/bin/figcraft-server
 BUILD=/var/cache/figcraft-build
 BUILDER=figcraft-build
+# Root's own work (downloads, its clone, the swap file, the built binary once copied out): never
+# a place the build user can touch.
+WORK=/var/cache/figcraft-install
 SERVICE=figcraft-server
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The source tree this script sits in (packaging/server/ of a copy or checkout), if any.
@@ -129,6 +132,7 @@ export DEBIAN_FRONTEND=noninteractive
 say "Packages"
 apt-get update -qq
 apt-get install -y -qq curl ca-certificates tar caddy ufw >/dev/null
+install -d -o root -g root -m 700 "$WORK"
 
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -147,7 +151,7 @@ from_release() { # download and check the release archive; sets NEW_BIN and FILE
     [ -n "$version" ] || return 1
   fi
   name="figcraft-server-$version-linux-$ARCH"
-  dir="$BUILD/release"
+  dir="$WORK/release"
   rm -rf "$dir"
   mkdir -p "$dir"
   say "Downloading $name"
@@ -176,7 +180,7 @@ as_builder() { # run a command as the unprivileged build user, with its own tool
 }
 
 from_source() { # build the source tree around this script, else a fresh clone; sets NEW_BIN and FILES
-  local mem_kb src ref="$REF"
+  local mem_kb src ref="$REF" copy="$BUILD/src"
   apt-get install -y -qq build-essential git pkg-config >/dev/null
   id -u "$BUILDER" >/dev/null 2>&1 || useradd --system --home-dir "$BUILD" --shell /usr/sbin/nologin "$BUILDER"
   install -d -o "$BUILDER" -g "$BUILDER" -m 755 "$BUILD"
@@ -185,34 +189,35 @@ from_source() { # build the source tree around this script, else a fresh clone; 
   else
     as_builder "$BUILD/cargo/bin/rustup" update stable >/dev/null
   fi
+  # The source root installs files from is root's own (the copy beside this script, or root's
+  # clone); the build user only ever builds a copy of it.
   if [ -n "$LOCAL_SRC" ]; then
-    # A copy the build user owns (the original may sit in root's home).
-    src="$BUILD/src-local"
+    src="$LOCAL_SRC"
     say "Building the source in $LOCAL_SRC: this takes a while"
-    rm -rf "$src"
-    install -d -o "$BUILDER" -g "$BUILDER" -m 755 "$src"
-    tar -C "$LOCAL_SRC" --exclude=./target --exclude=./plugins/target -cf - . | as_builder tar -C "$src" -xf -
   else
-    src="$BUILD/src"
+    src="$WORK/src"
     if [ -d "$src/.git" ]; then
-      as_builder git -C "$src" fetch --quiet --tags origin
+      git -C "$src" fetch --quiet --tags origin
     else
-      as_builder git clone --quiet "https://github.com/$REPO" "$src" ||
+      git clone --quiet "https://github.com/$REPO" "$src" ||
         die "can't clone $REPO (a private repository: copy the source to this machine and run its packaging/server/install.sh)"
     fi
     if [ -z "$ref" ]; then
-      if [ -n "$VERSION" ]; then ref="v$VERSION"; else ref="$(as_builder git -C "$src" tag --list 'v*' --sort=-v:refname | head -n 1)"; fi
+      if [ -n "$VERSION" ]; then ref="v$VERSION"; else ref="$(git -C "$src" tag --list 'v*' --sort=-v:refname | head -n 1)"; fi
       [ -n "$ref" ] || ref=main
     fi
     say "Building $ref from a clone: this takes a while"
     # A branch as it is upstream now, or a tag.
-    as_builder git -C "$src" checkout --quiet --force --detach "origin/$ref" 2>/dev/null ||
-      as_builder git -C "$src" checkout --quiet --force --detach "$ref"
+    git -C "$src" checkout --quiet --force --detach "origin/$ref" 2>/dev/null || git -C "$src" checkout --quiet --force --detach "$ref"
   fi
+  # The build user clears and fills its own copy (root never touches paths it controls).
+  as_builder rm -rf "$copy"
+  as_builder mkdir -p "$copy"
+  tar -C "$src" --exclude=./target --exclude=./plugins/target --exclude=./.git -cf - . | as_builder tar -C "$copy" -xf -
   # The compiler needs about 2 GB: add a temporary swap file on smaller machines.
   mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
   if [ "$mem_kb" -lt 2000000 ] && [ -z "$(swapon --show --noheadings)" ]; then
-    SWAP="$BUILD/swapfile"
+    SWAP="$WORK/swapfile"
     say "Adding a temporary 2 GB swap file for the build"
     fallocate -l 2G "$SWAP" 2>/dev/null || dd if=/dev/zero of="$SWAP" bs=1M count=2048 status=none
     chmod 600 "$SWAP"
@@ -220,10 +225,15 @@ from_source() { # build the source tree around this script, else a fresh clone; 
     swapon "$SWAP"
     export CARGO_BUILD_JOBS=1
   fi
-  (cd "$src" && as_builder "$BUILD/cargo/bin/cargo" build --release --locked -p figcraft-server)
+  (cd "$copy" && as_builder "$BUILD/cargo/bin/cargo" build --release --locked -p figcraft-server)
   cleanup
   SWAP=""
-  NEW_BIN="$BUILD/target/release/figcraft-server"
+  # Copied out with the build user's rights into a file root made: a link the build user planted
+  # can't make root read (or install) anything else.
+  NEW_BIN="$WORK/figcraft-server.built"
+  rm -f "$NEW_BIN"
+  as_builder cat "$BUILD/target/release/figcraft-server" >"$NEW_BIN" || die "the build left no binary"
+  chmod 755 "$NEW_BIN"
   FILES="$src/packaging/server"
 }
 
@@ -273,11 +283,15 @@ if [ ! -f "$CONFIG" ]; then
     printf 'terms_url = "%s"\n' "$TERMS"
     printf '# Files published without the key are deleted after this many days unopened.\n'
     printf 'idle_days = 30\n'
-    printf 'max_file_mb = 16\n'
-    printf '# All files together, and per address (see docs/server.md for every limit).\n'
-    printf 'max_total_mb = 10240\n'
+    printf 'max_file_mb = 8\n'
+    printf 'max_plugin_mb = 8\n'
+    printf '# All files together (leave room for the nightly backups on the same disk), and per address.\n'
+    printf 'max_total_mb = 6144\n'
     printf 'max_files_per_ip = 20\n'
     printf 'max_mb_per_ip = 256\n'
+    printf '# Per address: an office behind one address shares these (see docs/server.md for every limit).\n'
+    printf 'messages_per_second = 600\n'
+    printf 'connects_per_minute = 60\n'
   } >"$CONFIG.new"
   chmod 644 "$CONFIG.new"
   # Checked before it replaces anything.

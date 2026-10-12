@@ -44,6 +44,8 @@ pub enum Action {
     Connect,
     Publish,
     Message,
+    /// Presence (cursors, selections, viewports), cursor chat and pings: twice `messages_per_second`.
+    Presence,
     Report,
     /// Downloading this many bytes.
     Download(usize),
@@ -53,6 +55,7 @@ struct Address {
     connects: Bucket,
     publishes: Bucket,
     messages: Bucket,
+    presence: Bucket,
     reports: Bucket,
     downloads: Bucket,
     used: Instant,
@@ -79,7 +82,7 @@ impl Abuse {
 
     /// Whether `ip` may do `what` now (counting it, in every block it is in, when it may).
     pub fn allow(&mut self, ip: IpAddr, what: Action, now: Instant) -> bool {
-        if !self.cfg.open && matches!(what, Action::Connect | Action::Publish | Action::Message) {
+        if !self.cfg.open && matches!(what, Action::Connect | Action::Publish | Action::Message | Action::Presence) {
             return true;
         }
         let keys: Vec<(Block, f64)> = ip_blocks(ip).into_iter().map(|(k, times)| (k, f64::from(times))).collect();
@@ -108,6 +111,7 @@ impl Abuse {
             publishes: bucket(f64::from(c.publishes_per_hour) * times, 3600.0),
             // A burst of four seconds' worth (a big paste, a quick drag).
             messages: Bucket::new(f64::from(c.messages_per_second) * times, f64::from(c.messages_per_second) * times * 4.0),
+            presence: Bucket::new(f64::from(c.messages_per_second) * times * 2.0, f64::from(c.messages_per_second) * times * 8.0),
             reports: bucket(REPORTS_PER_HOUR * times, 3600.0),
             downloads: Bucket::new(DOWNLOAD_RATE * times, DOWNLOAD_BURST * times),
             used: now,
@@ -121,6 +125,7 @@ impl Abuse {
             Action::Connect => (&mut a.connects, 1.0),
             Action::Publish => (&mut a.publishes, 1.0),
             Action::Message => (&mut a.messages, 1.0),
+            Action::Presence => (&mut a.presence, 1.0),
             Action::Report => (&mut a.reports, 1.0),
             Action::Download(n) => (&mut a.downloads, n as f64),
         }

@@ -44,6 +44,11 @@ impl Running {
         self.hosting.queued_bytes()
     }
 
+    /// Blocks of addresses the server keeps counters for (see [`Hosting::blocks_remembered`]).
+    pub fn blocks_remembered(&self) -> usize {
+        self.hosting.blocks_remembered()
+    }
+
     /// Stop (see the type's docs).
     pub fn stop(&mut self) {
         self.hosting.stop();

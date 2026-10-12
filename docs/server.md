@@ -388,11 +388,11 @@ are larger.
 | Message size | A file's size and 1 MiB (`max_file_mb`, 16 by default when open, or `max_plugin_mb` if larger): checked as the message is read, before anything is decoded; 64 KiB on a connection that only browses plugins (a client sending more is disconnected with the limit as the reason; the app keeps its own copy). The core's 64 MiB otherwise |
 | A file as it grows | Every batch is checked first (*always*): past `max_file_mb`, past its publisher's `max_mb_per_ip` or past `max_total_mb`, it is refused with the reason and the app rolls it back. A long log is compacted to make room at most once a minute per file (a compaction rewrites the whole file). A file's snapshot also holds the recent batches kept for reconnecting clients, at most a quarter of `max_file_mb` |
 | Recent batches in memory | A quarter of `max_file_mb` (256 KiB at least) per open file; older ones are dropped (a client that missed them catches up with the whole file) |
-| Bytes queued for slow clients | The largest message and 1 MiB per connection, 32 MiB per block of addresses, 256 MiB for everyone (a message sent to many people counts once): a client that doesn't read its answers is dropped; when everyone's budget runs out, the connection holding the most is dropped |
-| Bytes being read | Messages not yet whole: the largest message and 1 MiB per block, 192 MiB for everyone; past them the biggest readers are dropped as busy |
+| Bytes queued for slow clients | The largest message and 1 MiB per connection, 32 MiB per block of addresses, 256 MiB for everyone. A message sent to many people counts once for everyone and once per block (twenty colleagues behind one office address cost their block one copy of a broadcast), and welcomes (bounded by the file's size) don't count against blocks, so a whole office can join a file at once. A client that doesn't read its answers is dropped; when everyone's budget runs out, the connection holding the most is dropped |
+| Bytes being read | Messages not yet whole: the largest message and 1 MiB per block, 192 MiB for everyone; past everyone's budget the readers holding the most are cut off until it fits (their bytes count as free at once), and a reader is refused only when it is the biggest |
 | Bytes waiting for the server | 128 MiB of read messages not handled yet: past it a connection is dropped as busy |
 | Connections | `max_connections` (512) in all (*always*); `max_connections_per_ip` (32) per address, ×2 per IPv6 /56 (at most a sixteenth of all), ×4 per /48 (at most an eighth of all), joins included, so no block can take every connection; one-shot requests (asking about hosting, libraries, browsing plugins) can't take the last eighth, which stays for people joining files, and are dropped after 20 idle seconds |
-| Rates | Per address and block: `connects_per_minute`, `publishes_per_hour` (and 32 addresses' worth for everyone), `messages_per_second`; reports, ten an hour (*always*); downloads of libraries and plugins, 1 MiB a second with bursts of 16 MiB per address (*always*), checked before anything is read, within 32 MiB a second (512 MiB at once) for libraries and for plugins, everyone together |
+| Rates | Per address and block: `connects_per_minute`, `publishes_per_hour` (and 32 addresses' worth for everyone), `messages_per_second` (cursors, selections, cursor chat and pings have their own budget beside it, twice that, so an office moving its cursors together doesn't trip it); reports, ten an hour (*always*); downloads of libraries and plugins, 1 MiB a second with bursts of 16 MiB per address (*always*), checked before anything is read, within 32 MiB a second (512 MiB at once) for libraries and for plugins, everyone together |
 | Team libraries | Only files published with the key hold one on a public server; an archive is at most `max_file_mb` and everything it unpacks to counts against the same cap (*always*), so a zip bomb is refused before it expands |
 | Usage reports | Kept in memory, written at most once a minute per library and when the server stops; at most 1,000 components per file and 200 files per library (*always*) |
 | Disk writes | A batch is confirmed only once it is on disk; when its log can't be written, nobody hears it was accepted: the file closes, everyone in it reconnects and their apps send again what wasn't confirmed. Below 1 GiB (or two of the largest files) free, changes and new files are refused with "the server's disk is nearly full" instead (*always*, where the free space can be told: Unix). The server keeps the last 200 problems for the operator |
@@ -410,11 +410,19 @@ open_publish = true
 operator_contact = "abuse@example.com"
 terms_url = "https://example.com/figcraft-terms"
 idle_days = 30
-max_file_mb = 16
-max_total_mb = 10240
+max_file_mb = 8
+max_plugin_mb = 8
+max_total_mb = 6144
 max_files_per_ip = 20
 max_mb_per_ip = 256
+messages_per_second = 600
+connects_per_minute = 60
 ```
+
+These are the recommended values for a small public server (2 GB of memory, a 25-50 GB disk with
+the nightly backups on it): files up to 8 MiB keep a whole office's welcomes within the queues,
+6 GiB of files leaves room for a week of backups, and the per-address rates leave room for an
+office behind one address.
 
 ### On a fresh Ubuntu server with install.sh
 
@@ -429,7 +437,9 @@ installs the systemd units and its Caddy site (`/etc/caddy/figcraft-server.caddy
 the main Caddyfile, whose other sites it leaves alone), opens the SSH ports `sshd` listens on, 80
 and 443 in `ufw`, and turns `ufw` on unless other services listen on the machine (then it says
 so: allow their ports and enable it yourself, or pass `--firewall-anyway`). Builds run as the
-unprivileged `figcraft-build` user, and the binary is only ever run as `figcraft` (never as root);
+unprivileged `figcraft-build` user on a copy of the source (root installs nothing from that copy;
+the swap file and the built binary, copied out with the build user's rights, live in the root-only
+`/var/cache/figcraft-install`), and the binary is only ever run as `figcraft` (never as root);
 a fresh clone builds the latest release tag. A Caddyfile with other sites is never replaced: it
 gains one `import figcraft-server.caddy` line, once (`packaging/server/install-test.sh` checks
 this). It checks new settings before they replace anything, starts it all and prints what to do next. Running it again

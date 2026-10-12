@@ -660,3 +660,131 @@ fn problems_stay_bounded_and_a_full_disk_refuses_writes() {
         assert!(e.contains("disk is nearly full"), "{e}");
     }
 }
+
+// Third review: R1, N3, R2 -------------------------------------------------------------------
+
+/// Read messages until `pick` takes one (others in between are skipped).
+fn wait_for<T>(raw: &mut Raw, what: &str, mut pick: impl FnMut(ServerMsg) -> Option<T>) -> T {
+    loop {
+        match raw.next() {
+            ServerMsg::Refused { reason } => panic!("refused while waiting for {what}: {reason}"),
+            m => {
+                if let Some(t) = pick(m) {
+                    return t;
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn an_office_behind_one_address_works_together() {
+    let dir = TempDir::new("office");
+    let cfg = Config { max_file_mb: Some(4), max_plugin_mb: 1, ..open(dir.path()) };
+    let mut server = crate::start(&cfg).unwrap();
+    let addr = server.addr();
+    // A file near the size limit.
+    let mut d = Document::new("Office");
+    let page = d.first_page().unwrap();
+    d.create(page, NodeKind::Rectangle, &"o".repeat(3_000_000), 0.0, 0.0, 10.0, 10.0).unwrap();
+    let (_, replies) = manage::hosting(
+        &Endpoint::plain(addr.to_string()),
+        "",
+        "",
+        vec![Admin::Publish { name: "Office".into(), snapshot: Replica::new(d).snapshot().unwrap() }],
+        &NetLimits::default(),
+        Duration::from_secs(10),
+    )
+    .unwrap();
+    let Some(AdminReply::Hosted { file, edit, .. }) = replies.into_iter().next() else { panic!("not hosted") };
+    // Twenty colleagues, one address, all joining at once: twenty welcomes of 3 MB.
+    let mut people: Vec<Raw> = (0..20).map(|_| Raw::connect(addr)).collect();
+    for (i, p) in people.iter_mut().enumerate() {
+        p.send(&Client::hello(&file.id, &edit.token, &format!("Person {i}"), ""));
+    }
+    let mut clients: Vec<Client> = people
+        .iter_mut()
+        .map(|p| Client::join(wait_for(p, "the welcome", |m| matches!(m, ServerMsg::Welcome { .. }).then_some(m))).unwrap())
+        .collect();
+    // Everyone moves their cursor (twenty people at ~30 a second share the address's budget).
+    for p in people.iter_mut() {
+        for k in 0..60 {
+            p.send(&ClientMsg::Presence(figcraft_collab::Presence { cursor: Some((page, f64::from(k), 0.0)), ..Default::default() }));
+        }
+    }
+    // One pastes 1 MB: the broadcast reaches all twenty.
+    let mut doc = clients[0].document().clone();
+    doc.create(page, NodeKind::Rectangle, &"p".repeat(1_000_000), 0.0, 0.0, 5.0, 5.0).unwrap();
+    let batch = clients[0].edit(&doc).unwrap().unwrap();
+    people[0].send(&batch);
+    for (i, p) in people.iter_mut().enumerate() {
+        let seq = wait_for(p, "the paste", |m| {
+            if let ServerMsg::Changes(a) = m {
+                a.changes.iter().any(|c| matches!(c, figcraft_collab::Change::Create { .. })).then_some(a.seq)
+            } else {
+                None
+            }
+        });
+        assert!(seq > 0, "person {i}");
+    }
+    // Still all connected.
+    for p in people.iter_mut() {
+        p.send(&ClientMsg::Ping);
+        wait_for(p, "the pong", |m| (m == ServerMsg::Pong).then_some(()));
+    }
+    assert_eq!(server.connections(), 20);
+    drop(clients.drain(..));
+    server.stop();
+}
+
+#[test]
+fn the_biggest_reader_is_cut_off_when_everyones_reading_budget_runs_out() {
+    count_connection_panics();
+    let dir = TempDir::new("readers");
+    let cfg = open(dir.path());
+    let store = Store::open(dir.path(), cfg.store()).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let limits = NetLimits { max_reading_block: 10 << 20, max_reading_total: 300_000, ..cfg.net() };
+    let mut busy = Hosting::serve(listener, store, limits).unwrap();
+    let addr = busy.addr();
+    // A slow sender: it starts a 300 KB message, sends 250 KB of it and stops.
+    let mut hog = Raw::connect(addr);
+    hog.send(&hosting());
+    assert!(matches!(hog.next(), ServerMsg::Hosting(_)));
+    let mut frame = vec![0x82, 0x80 | 127];
+    frame.extend_from_slice(&300_000u64.to_be_bytes());
+    frame.extend_from_slice(&[1, 2, 3, 4]);
+    frame.extend(std::iter::repeat_n(0x55, 250_000));
+    hog.raw_write(&frame);
+    until(10, "the server to read the hog's bytes", || busy.reading_bytes() >= 250_000);
+    // Someone else sends a 100 KB message: the hog is cut off, not them.
+    let mut other = Raw::connect(addr);
+    other.send(&hosting());
+    assert!(matches!(other.next(), ServerMsg::Hosting(_)));
+    let mut d = Document::new("Other");
+    let page = d.first_page().unwrap();
+    d.create(page, NodeKind::Rectangle, &"q".repeat(100_000), 0.0, 0.0, 1.0, 1.0).unwrap();
+    other.send(&ClientMsg::Admin(Admin::Publish { name: "Other".into(), snapshot: Replica::new(d).snapshot().unwrap() }));
+    assert!(matches!(other.next(), ServerMsg::Admin(_)), "the message was read and answered");
+    assert!(hog.closed_within(Duration::from_secs(10)), "the hog's connection was cut");
+    until(10, "the hog's bytes to be given back", || busy.reading_bytes() == 0);
+    assert_eq!(CONNECTION_PANICS.load(std::sync::atomic::Ordering::SeqCst), 0);
+    busy.stop();
+}
+
+#[test]
+fn the_server_forgets_addresses_whose_connections_are_gone() {
+    let dir = TempDir::new("forget");
+    let cfg = Config { trusted_proxy: Some("127.0.0.1".into()), ..open(dir.path()) };
+    let mut server = crate::start(&cfg).unwrap();
+    let addr = server.addr();
+    for n in 1..=10u8 {
+        let (ws, r) = via_proxy(addr, &format!("203.0.113.{n}"));
+        assert!(matches!(r, ServerMsg::Hosting(_)));
+        drop(ws);
+    }
+    until(10, "the connections to close", || server.connections() == 0);
+    let (_last, _) = via_proxy(addr, "203.0.113.200");
+    assert!(server.blocks_remembered() <= 2, "{} blocks remembered", server.blocks_remembered());
+    server.stop();
+}

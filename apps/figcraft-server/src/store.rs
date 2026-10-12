@@ -36,8 +36,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use figcraft_collab::message::{
-    Access, Admin, AdminReply, FileInfo, FileRow, FileUsage, HostInfo, LibraryReply, LibraryReq, LinkInfo, NewLink, PluginReply, PluginReq,
-    ReportInfo, Usage,
+    Access, Admin, AdminReply, ClientMsg, FileInfo, FileRow, FileUsage, HostInfo, LibraryReply, LibraryReq, LinkInfo, NewLink, PluginReply,
+    PluginReq, ReportInfo, Usage,
 };
 use figcraft_collab::{Change, Replica, Server, same_secret};
 use figcraft_collab_net::hub::{Admission, Backend, Closing, Handled, OpenFile, ip_key};
@@ -1219,8 +1219,11 @@ impl Backend for Store {
         Ok(())
     }
 
-    fn message(&mut self, ip: IpAddr) -> bool {
-        self.abuse.allow(ip, Action::Message, Instant::now())
+    fn message(&mut self, ip: IpAddr, msg: &ClientMsg) -> bool {
+        // Cursors and cursor chat (many people behind one address each send ~30 a second while
+        // they move) have a budget of their own, beside everything else.
+        let what = if matches!(msg, ClientMsg::Presence(_) | ClientMsg::Signal(_) | ClientMsg::Ping) { Action::Presence } else { Action::Message };
+        self.abuse.allow(ip, what, Instant::now())
     }
 
     fn hosting(&mut self, file: &str) -> Option<HostInfo> {

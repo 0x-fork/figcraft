@@ -6,9 +6,10 @@
 //! machines over the same socket; every write goes through one lock and writes whole frames, so
 //! frames from the two never interleave.
 
+use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -56,45 +57,123 @@ impl Duplex {
     }
 }
 
+/// Every reader that counts what it reads, with what it holds half-read and its socket: when
+/// everyone's reading budget runs out, the reader holding the most is cut off.
+#[derive(Clone, Default)]
+pub struct Readers(Arc<Mutex<HashMap<u64, Reader>>>);
+
+/// One registered reader: what it holds half-read, its block's count, whether it was cut off, and
+/// its socket.
+struct Reader {
+    mine: Arc<AtomicUsize>,
+    block: Arc<AtomicUsize>,
+    shed: Arc<AtomicBool>,
+    sock: TcpStream,
+}
+
+impl Readers {
+    /// Cut off the reader holding the most half-read bytes, unless that is `me` (then `false`: the
+    /// caller is the biggest). Its bytes are given back to the budget at once, it can't read any
+    /// more, and its socket is shut (where that wakes a blocked read, it ends now; elsewhere at its
+    /// read timeout).
+    fn shed_biggest(&self, me: u64, all: &AtomicUsize) -> bool {
+        let t = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some((&id, r)) = t.iter().filter(|(_, r)| !r.shed.load(Ordering::Relaxed)).max_by_key(|(_, r)| r.mine.load(Ordering::Relaxed)) else {
+            return false;
+        };
+        if id == me || r.mine.load(Ordering::Relaxed) == 0 {
+            return false;
+        }
+        log::info!("event=shed conn={id} reason=reading_bytes");
+        r.shed.store(true, Ordering::Relaxed);
+        let held = r.mine.swap(0, Ordering::Relaxed);
+        r.block.fetch_sub(held, Ordering::Relaxed);
+        all.fetch_sub(held, Ordering::Relaxed);
+        let _ = r.sock.shutdown(Shutdown::Both);
+        true
+    }
+
+    /// Readers registered.
+    pub fn len(&self) -> usize {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).len()
+    }
+
+    /// None registered.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// Bytes being read into messages (not whole yet), per connection, per block of addresses and
-/// for every connection together: a read that takes a block over its share, or takes everyone
-/// over the budget while its block holds a large part of it, fails, so the biggest readers are
-/// dropped and memory for half-read messages stays bounded.
+/// for every connection together. A read that takes its block over its share fails. One that takes
+/// everyone over the budget cuts off the readers holding the most until it fits (their bytes are
+/// given back at once, they can't read any more and their sockets are shut) or, when this reader is
+/// the biggest, fails: the biggest readers go, not the next one.
 pub struct Meter {
-    mine: usize,
+    id: u64,
+    mine: Arc<AtomicUsize>,
+    shed: Arc<AtomicBool>,
     block: Arc<AtomicUsize>,
     all: Arc<AtomicUsize>,
     max_block: usize,
     max_all: usize,
+    readers: Readers,
 }
 
+/// What a reader cut off for using too much of the budget is told.
+const BUSY_READING: &str = "the server is busy reading from others: try again in a moment";
+
 impl Meter {
-    pub fn new(block: Arc<AtomicUsize>, all: Arc<AtomicUsize>, max_block: usize, max_all: usize) -> Self {
-        Self { mine: 0, block, all, max_block, max_all }
+    /// Connection `id`'s meter (registered with `readers`, cut off through `sock`).
+    pub fn new(
+        id: u64,
+        sock: &TcpStream,
+        readers: &Readers,
+        block: Arc<AtomicUsize>,
+        all: Arc<AtomicUsize>,
+        max_block: usize,
+        max_all: usize,
+    ) -> Self {
+        let (mine, shed) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicBool::new(false)));
+        if let Ok(s) = sock.try_clone() {
+            let r = Reader { mine: mine.clone(), block: block.clone(), shed: shed.clone(), sock: s };
+            readers.0.lock().unwrap_or_else(PoisonError::into_inner).insert(id, r);
+        }
+        Self { id, mine, shed, block, all, max_block, max_all, readers: readers.clone() }
     }
 
     fn add(&mut self, n: usize) -> io::Result<()> {
-        self.mine += n;
+        if self.shed.load(Ordering::Relaxed) {
+            return Err(io::Error::other(BUSY_READING));
+        }
+        self.mine.fetch_add(n, Ordering::Relaxed);
         let block = self.block.fetch_add(n, Ordering::Relaxed).saturating_add(n);
-        let all = self.all.fetch_add(n, Ordering::Relaxed).saturating_add(n);
-        // Over its block's share; or over everyone's budget while its block holds a quarter of it
-        // (the big readers go first); or far over everyone's budget.
-        if block > self.max_block || (all > self.max_all && block.saturating_mul(4) >= self.max_all) || all > self.max_all.saturating_mul(2) {
-            return Err(io::Error::other("the server is busy reading from others: try again in a moment"));
+        let mut all = self.all.fetch_add(n, Ordering::Relaxed).saturating_add(n);
+        if block > self.max_block {
+            return Err(io::Error::other(BUSY_READING));
+        }
+        // Over everyone's budget: the biggest readers are cut off until it fits, or this one goes
+        // when it is the biggest.
+        while all > self.max_all {
+            if !self.readers.shed_biggest(self.id, &self.all) {
+                return Err(io::Error::other(BUSY_READING));
+            }
+            all = self.all.load(Ordering::Relaxed);
         }
         Ok(())
     }
 
     fn release(&mut self) {
-        self.block.fetch_sub(self.mine, Ordering::Relaxed);
-        self.all.fetch_sub(self.mine, Ordering::Relaxed);
-        self.mine = 0;
+        let mine = self.mine.swap(0, Ordering::Relaxed);
+        self.block.fetch_sub(mine, Ordering::Relaxed);
+        self.all.fetch_sub(mine, Ordering::Relaxed);
     }
 }
 
 impl Drop for Meter {
     fn drop(&mut self) {
         self.release();
+        self.readers.0.lock().unwrap_or_else(PoisonError::into_inner).remove(&self.id);
     }
 }
 

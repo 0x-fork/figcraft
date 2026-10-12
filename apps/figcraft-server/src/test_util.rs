@@ -123,6 +123,30 @@ impl Raw {
         self.0.send(Message::Binary(Bytes::from(message::encode(m).unwrap()))).unwrap();
     }
 
+    /// Write raw bytes on the socket (a hand-made, partial frame).
+    pub fn raw_write(&mut self, bytes: &[u8]) {
+        use std::io::Write as _;
+        self.0.get_mut().write_all(bytes).unwrap();
+    }
+
+    /// The server closed the connection within `limit` (anything it sends meanwhile is skipped).
+    pub fn closed_within(&mut self, limit: Duration) -> bool {
+        use std::io::Read as _;
+        let s = self.0.get_mut();
+        let end = Instant::now() + limit;
+        let mut buf = [0u8; 4096];
+        let _ = s.set_read_timeout(Some(Duration::from_millis(200)));
+        while Instant::now() < end {
+            match s.read(&mut buf) {
+                Ok(0) => return true,
+                Ok(_) => {}
+                Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                Err(_) => return true,
+            }
+        }
+        false
+    }
+
     /// Send without waiting to be read (`Err` once the server has hung up).
     pub fn try_send(&mut self, m: &ClientMsg) -> tungstenite::Result<()> {
         self.0.send(Message::Binary(Bytes::from(message::encode(m).unwrap())))
