@@ -332,7 +332,7 @@ fn messages_are_capped_by_what_the_connection_is_for() {
     let mut raw = Raw::connect(addr);
     raw.send(&ClientMsg::OpenPlugins(OpenPlugins { protocol: PROTOCOL, key: String::new(), client_version: String::new() }));
     raw.next();
-    raw.send(&ClientMsg::Plugins(PluginReq::List { query: "q".repeat(200_000) }));
+    raw.send_header(200_000);
     assert!(matches!(raw.next(), ServerMsg::Refused { reason } if reason.contains("too large") && reason.contains("KiB")));
     drop(raw);
     // A joined client whose batch is bigger than a file may be is told the limit.
@@ -349,10 +349,7 @@ fn messages_are_capped_by_what_the_connection_is_for() {
     let mut joined = Raw::connect(addr);
     joined.send(&Client::hello(&file.id, &edit.token, "Big", ""));
     while !matches!(joined.next(), ServerMsg::Welcome { .. }) {}
-    joined.send(&ClientMsg::Presence(figcraft_collab::Presence {
-        selection: Some((0..5_000_000u64).map(|i| NodeId(i + (1 << 40))).collect()),
-        ..Default::default()
-    }));
+    joined.send_header(40 << 20);
     let reason = loop {
         if let ServerMsg::Refused { reason } = joined.next() {
             break reason;

@@ -123,6 +123,16 @@ impl Raw {
         self.0.send(Message::Binary(Bytes::from(message::encode(m).unwrap()))).unwrap();
     }
 
+    /// Write just the header of a masked binary frame declaring `len` payload bytes: the server
+    /// refuses an oversized message from its header, before the client would push the payload
+    /// into a socket the server has already closed (a broken pipe on Linux).
+    pub fn send_header(&mut self, len: u64) {
+        let mut h = vec![0x82u8, 0x80 | 127];
+        h.extend_from_slice(&len.to_be_bytes());
+        h.extend_from_slice(&[1, 2, 3, 4]);
+        self.raw_write(&h);
+    }
+
     /// Write raw bytes on the socket (a hand-made, partial frame).
     pub fn raw_write(&mut self, bytes: &[u8]) {
         use std::io::Write as _;
