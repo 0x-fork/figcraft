@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
 use figcraft_engine::live::{Access, PEOPLE, Role, Signal, Status, initials, parse_color, presence_page};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::FigApp;
 use crate::a11y::{self, Tip};
@@ -39,6 +39,14 @@ const VIEW_NOTE: &str = tr_noop("View only: you see every change as it happens b
 const PUBLISHED_NOTE: &str = tr_noop(
     "Anyone with the edit link can change the file; the view link only lets people look. The links carry their secrets: share them like passwords. `figcraft-server links` makes more and revokes them.",
 );
+
+/// Why the owner token matters (shown once, when a file is published without the server key).
+const OWNER_NOTE: &str = tr_noop(
+    "Copy the owner token and keep it somewhere safe: it is the only way to revoke these links, rename the file or delete it from the server, and it won't be shown again.",
+);
+
+/// What a server open to the public can see.
+const PLAIN_NOTE: &str = tr_noop("Files aren't end-to-end encrypted: the server's operator can read them.");
 
 /// How fast a remote cursor closes in on where it was last reported (per second).
 const GLIDE: f64 = 20.0;
@@ -84,6 +92,12 @@ pub struct LiveUi {
     focus_publish: bool,
     /// The last server address published to (kept for this run only: it carries the server key).
     last_server: String,
+    /// A file published from the dialog without the key: its owner token shows once it arrives.
+    show_owner: bool,
+    /// The report being written about the file you're in (open when `Some`), and putting the
+    /// keyboard in its field on its next frame.
+    pub report: Option<String>,
+    focus_report: bool,
     /// Others' chat messages as last seen, with when they changed (UI clock): they fade from then.
     chat_seen: BTreeMap<u32, (String, f64)>,
     /// Your cursor chat (open when `Some`).
@@ -97,6 +111,8 @@ pub struct PublishForm {
     pub server: String,
     /// The file's name on the server.
     pub name: String,
+    /// What the server said about its hosting (`collab.serverInfo`), and the address asked.
+    pub info: Option<(String, Value)>,
 }
 
 impl LiveUi {
@@ -613,13 +629,87 @@ fn guest_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
             widgets::label(ui, &trf("Pages: {pages}", &[("pages", &pages.join(", "))]), t.text_secondary);
         }
     }
+    let hosting = live.hosting.clone();
     if let Some(p) = live.published.clone() {
         link_rows(app, ui, &[(tr("Edit link"), &p.edit, tr("Edit link copied")), (tr("View link"), &p.view, tr("View link copied"))]);
         widgets::label(ui, tr(PUBLISHED_NOTE), t.text_secondary);
     }
+    if let Some(h) = &hosting {
+        host_line(ui, t, &h.operator, &h.terms);
+        expiry_line(ui, t, h.expires);
+    }
     widgets::label(ui, tr(if view { VIEW_NOTE } else { UNDO_NOTE }), t.text_secondary);
     if widgets::button(ui, tr("Leave session"), false, true).on_hover_text(tr("Your copy of the file stays open")).clicked() {
         app.run("collab.leave", json!({}));
+    }
+    // A server that takes reports said so (its hosting).
+    if hosting.is_some() && app.session.live.status == Status::Live {
+        report_ui(app, ui, t);
+    }
+}
+
+/// "Hosted by …" and a link to the terms, when the server names them.
+fn host_line(ui: &mut Ui, t: &Tokens, operator: &str, terms: &str) {
+    if operator.is_empty() && terms.is_empty() {
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        if !operator.is_empty() {
+            widgets::label(ui, &trf("Hosted by {operator}", &[("operator", &operator)]), t.text_secondary);
+        }
+        if !terms.is_empty() {
+            if !operator.is_empty() {
+                widgets::label(ui, "·", t.text_secondary);
+            }
+            ui.hyperlink_to(egui::RichText::new(tr("Terms")).font(regular(11.0)), terms).on_hover_text(terms);
+        }
+    });
+}
+
+/// When the server deletes the file unless someone opens it.
+fn expiry_line(ui: &mut Ui, t: &Tokens, expires: Option<u64>) {
+    if let Some(e) = expires {
+        let date = figcraft_engine::live::utc_date(e);
+        widgets::label(ui, &trf("The server deletes this file if nobody opens it before {date}.", &[("date", &date)]), t.text_secondary);
+    }
+}
+
+/// Report the file you're in to the server's operator: a button, then a reason to send.
+fn report_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
+    let Some(mut reason) = app.ui.live.report.take() else {
+        if widgets::button(ui, tr("Report this file…"), false, true).on_hover_text(tr("Tell the server's operator what is wrong with it")).clicked()
+        {
+            app.ui.live.report = Some(String::new());
+            app.ui.live.focus_report = true;
+        }
+        return;
+    };
+    widgets::label(ui, tr("What is wrong with this file? The server's operator gets your report."), t.text);
+    let resp = ui.add(
+        egui::TextEdit::singleline(&mut reason)
+            .hint_text(tr("Spam, stolen work, abuse…"))
+            .char_limit(figcraft_engine::live::MAX_REPORT)
+            .desired_width(ui.available_width())
+            .id(egui::Id::new("live_report_reason")),
+    );
+    a11y::text(&resp, tr("Report"), &reason);
+    if std::mem::take(&mut app.ui.live.focus_report) {
+        resp.request_focus();
+    }
+    let mut keep = true;
+    ui.horizontal(|ui| {
+        let send = widgets::button(ui, tr("Send report"), true, !reason.trim().is_empty()).clicked()
+            || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+        if send && !reason.trim().is_empty() && app.run("collab.report", json!({"reason": reason.trim()})).is_some() {
+            keep = false;
+        }
+        if widgets::button(ui, tr("Cancel"), false, true).clicked() {
+            keep = false;
+        }
+    });
+    if keep {
+        app.ui.live.report = Some(reason);
     }
 }
 
@@ -704,25 +794,59 @@ pub fn join_dialog(app: &mut FigApp, ctx: &egui::Context) {
     }
 }
 
-/// Open the Publish to server dialog for the open file (the last address used this run in it).
+/// Open the Publish to server dialog for the open file (the last address used this run in it,
+/// else the one in Preferences).
 pub fn open_publish(app: &mut FigApp) {
     if !app.session.live.can_host() {
         app.toast(tr("Publishing to a server needs the desktop app; in the browser you can join a server's files"));
         return;
     }
     let name = app.session.doc().map(|d| d.name.clone()).unwrap_or_default();
-    app.ui.live.publish = Some(PublishForm { server: app.ui.live.last_server.clone(), name });
+    let server = if app.ui.live.last_server.is_empty() { app.session.prefs.publish_server.clone() } else { app.ui.live.last_server.clone() };
+    app.ui.live.publish = Some(PublishForm { server, name, info: None });
     app.ui.live.focus_publish = true;
 }
 
-/// Share ▸ Publish to server…: the server's address (with its key) and the file's name.
+/// The address carries a server key (`?key=…`).
+fn has_key(server: &str) -> bool {
+    server.split_once('?').is_some_and(|(_, q)| q.split('&').any(|kv| kv.strip_prefix("key=").is_some_and(|k| !k.trim().is_empty())))
+}
+
+/// Ask the server at `server` about its hosting in the background; the answer goes into the
+/// Publish dialog while it still shows that address.
+fn ask_server(app: &mut FigApp, ctx: &egui::Context, server: String) {
+    app.run_background(
+        ctx,
+        SERVER_INFO,
+        json!({"server": server}),
+        Box::new(move |app, _, v| {
+            if let Some(f) = app.ui.live.publish.as_mut().filter(|f| f.server.trim() == server) {
+                f.info = Some((server, v));
+            }
+        }),
+    );
+}
+
+const SERVER_INFO: &str = "collab.serverInfo";
+
+/// Share ▸ Publish to server…: the server's address (with its key, unless the server is open to
+/// the public: it is asked first) and the file's name.
 pub fn publish_dialog(app: &mut FigApp, ctx: &egui::Context) {
+    published_dialog(app, ctx);
     let Some(mut form) = app.ui.live.publish.take() else { return };
     let t = Tokens::get(ctx);
     let mut open = true;
     let mut cancel = false;
     let mut go = false;
+    let mut ask = false;
     let focus = std::mem::take(&mut app.ui.live.focus_publish);
+    let address = form.server.trim().to_string();
+    let keyed = has_key(&address);
+    let info = form.info.as_ref().filter(|(at, _)| *at == address).map(|(_, v)| v.clone());
+    let asking = app.session.waiting_for(SERVER_INFO);
+    let open_server = info.as_ref().is_some_and(|v| v["open"] == true);
+    // A first look at an address already filled in.
+    ask |= focus && !address.is_empty() && !keyed && info.is_none();
     crate::dialogs::window(tr("Publish to server"), ctx).id(egui::Id::new("Publish to server")).open(&mut open).show(ctx, |ui| {
         ui.set_width(380.0);
         widgets::label(
@@ -733,34 +857,104 @@ pub fn publish_dialog(app: &mut FigApp, ctx: &egui::Context) {
         widgets::label(ui, tr("Server address"), t.text_secondary);
         let resp = ui.add(
             egui::TextEdit::singleline(&mut form.server)
-                .hint_text("ws://server:47900/?key=…")
+                .hint_text("wss://server/ or ws://server:47900/?key=…")
                 .desired_width(380.0)
                 .id(egui::Id::new("live_publish_server")),
         );
-        // The address carries the server key: it isn't read out.
+        // The address may carry the server key: it isn't read out.
         a11y::text(&resp, tr("Server address"), "");
         if focus {
             resp.request_focus();
         }
         let enter = |ui: &Ui| ui.input(|i| i.key_pressed(egui::Key::Enter));
-        go = resp.lost_focus() && enter(ui);
-        widgets::label(ui, tr("On the server's machine, `figcraft-server key` prints it."), t.text_secondary);
+        // Leaving the field (or Enter) asks a server without a key whether it is open.
+        let left = resp.lost_focus() && !address.is_empty() && !keyed && info.is_none() && !asking;
+        go = resp.lost_focus() && enter(ui) && (keyed || open_server);
+        ask |= left;
+        match &info {
+            _ if keyed => widgets::label(ui, tr("Publishing with the server's key."), t.text_secondary),
+            _ if asking => widgets::label(ui, tr("Asking the server…"), t.text_secondary),
+            Some(v) if open_server => {
+                widgets::label(ui, tr("This server is open to the public: no key needed."), t.success);
+                host_line(ui, &t, v["operator"].as_str().unwrap_or_default(), v["terms"].as_str().unwrap_or_default());
+                if let Some(days) = v["idleDays"].as_f64() {
+                    let n = days.ceil().max(1.0) as usize;
+                    widgets::label(ui, &trn("Files nobody opens for {n} days are deleted.", n, &[]), t.text_secondary);
+                }
+                widgets::label(ui, tr(PLAIN_NOTE), t.text_secondary);
+            }
+            Some(_) => widgets::label(
+                ui,
+                tr("This server needs its key: add ?key=… to the address (`figcraft-server key` prints it on the server's machine)."),
+                t.danger,
+            ),
+            None => widgets::label(
+                ui,
+                tr("Give the address of a server open to the public, or a server's address with its key (`figcraft-server key` prints it)."),
+                t.text_secondary,
+            ),
+        }
         widgets::label(ui, tr("File name"), t.text_secondary);
         let nresp = ui.add(egui::TextEdit::singleline(&mut form.name).desired_width(380.0).id(egui::Id::new("live_publish_name")));
         a11y::text(&nresp, tr("File name"), &form.name);
-        go |= nresp.lost_focus() && enter(ui);
+        go |= nresp.lost_focus() && enter(ui) && (keyed || open_server);
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            go |= widgets::button(ui, tr("Publish"), true, !form.server.trim().is_empty()).clicked();
+            go |= widgets::button(ui, tr("Publish"), true, keyed || open_server).clicked();
             cancel = widgets::button(ui, tr("Cancel"), false, true).clicked();
         });
     });
-    if go && !form.server.trim().is_empty() && app.run("collab.publish", json!({"server": form.server.trim(), "name": form.name.trim()})).is_some() {
-        app.ui.live.last_server = form.server.trim().to_string();
+    if ask {
+        ask_server(app, ctx, address.clone());
+    }
+    if go && app.run("collab.publish", json!({"server": address, "name": form.name.trim()})).is_some() {
+        app.ui.live.last_server = address;
+        // The owner token shows once the file is on the server.
+        app.ui.live.show_owner = !keyed;
+        app.cancel_background(SERVER_INFO);
         return;
     }
     if open && !cancel {
         app.ui.live.publish = Some(form);
+    } else {
+        app.cancel_background(SERVER_INFO);
+    }
+}
+
+/// The file just published from the dialog without the key: its links and its owner token, shown
+/// this once, with where it is hosted and when it expires.
+fn published_dialog(app: &mut FigApp, ctx: &egui::Context) {
+    if !app.ui.live.show_owner {
+        return;
+    }
+    let live = &app.session.live;
+    let Some(p) = live.published.clone().filter(|p| p.owner.is_some()) else {
+        // Still on its way, or it didn't get there (the message says why).
+        app.ui.live.show_owner = live.status == Status::Connecting;
+        return;
+    };
+    let hosting = live.hosting.clone();
+    let owner = p.owner.clone().unwrap_or_default();
+    let t = Tokens::get(ctx);
+    let mut open = true;
+    let mut done = false;
+    crate::dialogs::window(tr("File published"), ctx).id(egui::Id::new("File published")).open(&mut open).show(ctx, |ui| {
+        ui.set_width(400.0);
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+        widgets::label(ui, &trf("{name} is on the server.", &[("name", &p.name)]), t.text);
+        link_rows(app, ui, &[(tr("Owner token"), &owner, tr("Owner token copied"))]);
+        widgets::label(ui, tr(OWNER_NOTE), t.danger);
+        link_rows(app, ui, &[(tr("Edit link"), &p.edit, tr("Edit link copied")), (tr("View link"), &p.view, tr("View link copied"))]);
+        expiry_line(ui, &t, p.expires);
+        if let Some(h) = &hosting {
+            host_line(ui, &t, &h.operator, &h.terms);
+        }
+        widgets::label(ui, tr(PLAIN_NOTE), t.text_secondary);
+        ui.add_space(4.0);
+        done = widgets::button(ui, tr("Done"), true, true).clicked();
+    });
+    if !open || done {
+        app.ui.live.show_owner = false;
     }
 }
 
@@ -781,6 +975,9 @@ pub fn inspect(app: &FigApp) -> serde_json::Value {
         "cursorsShown": app.ui.live.shown(),
         "joinDialog": app.ui.live.join.is_some(),
         "publishDialog": app.ui.live.publish.is_some(),
+        "publishInfo": app.ui.live.publish.as_ref().and_then(|f| f.info.as_ref().map(|(_, v)| v.clone())),
+        "ownerDialog": app.ui.live.show_owner && app.session.live.published.as_ref().is_some_and(|p| p.owner.is_some()),
+        "report": app.ui.live.report,
         "readOnly": app.session.active_read_only(),
     })
 }

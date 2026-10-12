@@ -7,7 +7,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use figcraft_collab::message::{Access, Admin, AdminReply, FileInfo, LinkInfo, NewLink, PluginEntry, PluginReply, PluginReq};
+use figcraft_collab::message::{Access, Admin, AdminReply, FileRow, LinkInfo, NewLink, PluginEntry, PluginReply, PluginReq, ReportInfo};
 use figcraft_collab_net::hub::Backend;
 use figcraft_collab_net::{Endpoint, Invite, manage};
 use serde::{Deserialize, Serialize};
@@ -25,13 +25,18 @@ figcraft-server: FigCraft's collaboration server (files, share links, live sessi
 Usage:
   figcraft-server [serve] [--listen ADDR] [--data DIR] [--public-url URL] [--config FILE]
   figcraft-server key [--rotate]                 the address to publish to, with the server key
-  figcraft-server files [list]                   the files kept
+  figcraft-server check                          check the settings (after editing the --config file)
+  figcraft-server files [list] [--sort size|age|idle]  the files kept (biggest, oldest or longest unopened first)
   figcraft-server files remove FILE              remove a file and its links for good
   figcraft-server links list FILE                a file's share links
   figcraft-server links create FILE --access edit|view [--label TEXT]
   figcraft-server links revoke FILE LINK         revoke a link (whoever joined with it is disconnected)
   figcraft-server plugins [list]                 the plugin directory: every plugin and its versions
   figcraft-server plugins remove ID [--version V]  unpublish a plugin (every version, or one)
+  figcraft-server reports                        what people reported about files
+  figcraft-server block-ip IP                    refuse an address (an IPv6 address: its /64) and drop its connections
+  figcraft-server unblock-ip IP                  accept an address again
+  figcraft-server blocked                        the blocked addresses
 
 Options (also keys of the --config TOML file):
   --listen ADDR       where to listen (default 127.0.0.1:47900; 0.0.0.0:47900 for every network)
@@ -39,25 +44,48 @@ Options (also keys of the --config TOML file):
   --public-url URL    how links name the server behind a reverse proxy (wss://host/path/)
   --config FILE       settings: listen, data, public_url, max_files, max_file_mb, max_links,
                       max_connections, max_people, compact_after, compact_mb, max_plugins,
-                      max_plugin_mb, max_plugins_mb
+                      max_plugin_mb, max_plugins_mb; for a public server: open_publish,
+                      operator_contact, terms_url, trusted_proxy, idle_days, max_total_mb,
+                      max_files_per_ip, max_mb_per_ip, max_connections_per_ip,
+                      connects_per_minute, publishes_per_hour, messages_per_second
   -h, --help          this text
   -V, --version       the version
 
-Logs go to standard output (RUST_LOG=debug for more); they never contain keys or tokens.
+Logs go to standard output (RUST_LOG=debug for more); they never contain keys, tokens or file contents.
+GET /healthz on the same port answers \"ok\" (for uptime checks).
 ";
+
+/// How `files list` orders the files.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Sort {
+    /// By id.
+    #[default]
+    Id,
+    /// Biggest first.
+    Size,
+    /// Oldest first.
+    Age,
+    /// Longest unused first.
+    Idle,
+}
 
 /// What to do.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     Serve,
     Key { rotate: bool },
-    Files,
+    Files { sort: Sort },
     RemoveFile { file: String },
     Links { file: String },
     CreateLink { file: String, access: Access, label: String },
     Revoke { file: String, link: String },
     Plugins,
     RemovePlugin { id: String, version: Option<String> },
+    Reports,
+    Check,
+    Block { ip: String },
+    Unblock { ip: String },
+    Blocked,
     Help,
     Version,
 }
@@ -81,6 +109,7 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
     let mut label = String::new();
     let mut rotate = false;
     let mut version = None;
+    let mut sort = Sort::Id;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = |name: &str| it.next().cloned().ok_or_else(|| format!("{name} needs a value"));
@@ -98,6 +127,14 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
             "--access" => access = Some(Access::parse(&value("--access")?).ok_or("--access must be edit or view")?),
             "--label" => label = value("--label")?,
             "--rotate" => rotate = true,
+            "--sort" => {
+                sort = match value("--sort")?.as_str() {
+                    "size" => Sort::Size,
+                    "age" => Sort::Age,
+                    "idle" => Sort::Idle,
+                    _ => return Err("--sort must be size, age or idle".into()),
+                }
+            }
             s if s.starts_with('-') => return Err(format!("unknown option {s}")),
             s => words.push(s.to_string()),
         }
@@ -106,7 +143,7 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
     let command = match w.as_slice() {
         [] | ["serve"] => Command::Serve,
         ["key"] => Command::Key { rotate },
-        ["files"] | ["files", "list"] => Command::Files,
+        ["files"] | ["files", "list"] => Command::Files { sort },
         ["files", "remove", file] => Command::RemoveFile { file: file.to_string() },
         ["links", "list", file] => Command::Links { file: file.to_string() },
         ["links", "create", file] => {
@@ -115,6 +152,11 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         ["links", "revoke", file, link] => Command::Revoke { file: file.to_string(), link: link.to_string() },
         ["plugins"] | ["plugins", "list"] => Command::Plugins,
         ["plugins", "remove", id] => Command::RemovePlugin { id: id.to_string(), version },
+        ["reports"] => Command::Reports,
+        ["check"] => Command::Check,
+        ["block-ip", ip] => Command::Block { ip: ip.to_string() },
+        ["unblock-ip", ip] => Command::Unblock { ip: ip.to_string() },
+        ["blocked"] => Command::Blocked,
         _ => return Err(format!("unknown command `{}`", words.join(" "))),
     };
     config.check()?;
@@ -161,8 +203,29 @@ pub fn run(cli: &Cli) -> Result<String, String> {
         Command::Version => Ok(format!("figcraft-server {}\n", env!("CARGO_PKG_VERSION"))),
         Command::Serve => Err("serving runs in the foreground: run figcraft-server without a command".into()),
         Command::Key { rotate } => key(cfg, *rotate),
-        Command::Files => match admin(cfg, Admin::Files)? {
-            AdminReply::Files(files) => Ok(files_table(&files)),
+        Command::Files { sort } => match admin(cfg, Admin::Listing)? {
+            AdminReply::Listing(files) => Ok(files_table(files, *sort, store::now())),
+            other => unexpected(other),
+        },
+        // `parse` checked them.
+        Command::Check => {
+            Ok(format!("The settings are fine{}.\n", if cfg.open_publish { ": open to the public (anyone may publish without the key)" } else { "" }))
+        }
+        Command::Reports => match admin(cfg, Admin::Reports)? {
+            AdminReply::Reports(reports) => Ok(reports_table(&reports)),
+            other => unexpected(other),
+        },
+        Command::Block { ip } => match admin(cfg, Admin::Block { ip: ip.clone() })? {
+            AdminReply::Done => Ok(format!("Blocked {ip}: its connections were dropped and new ones are refused.\n")),
+            other => unexpected(other),
+        },
+        Command::Unblock { ip } => match admin(cfg, Admin::Unblock { ip: ip.clone() })? {
+            AdminReply::Done => Ok(format!("Unblocked {ip}.\n")),
+            other => unexpected(other),
+        },
+        Command::Blocked => match admin(cfg, Admin::Blocked)? {
+            AdminReply::Blocked(list) if list.is_empty() => Ok("No addresses are blocked.\n".into()),
+            AdminReply::Blocked(list) => Ok(list.iter().map(|ip| format!("{ip}\n")).collect()),
             other => unexpected(other),
         },
         Command::RemoveFile { file } => match admin(cfg, Admin::Remove { file: file.clone() })? {
@@ -284,6 +347,9 @@ fn key(cfg: &Config, rotate: bool) -> Result<String, String> {
     let _ = writeln!(out, "Publish to this address (in FigCraft: Share > Publish to server…):");
     let _ = writeln!(out, "  {}?key={key}", public.url());
     let _ = writeln!(out, "Whoever has it can publish files and manage their links: share it only with people you trust.");
+    if cfg.open_publish {
+        let _ = writeln!(out, "Open to the public: anyone can publish to {} without the key (each file gets an owner token).", public.url());
+    }
     Ok(out)
 }
 
@@ -302,15 +368,58 @@ fn new_link(cfg: &Config, l: &NewLink) -> Result<String, String> {
     Ok(out)
 }
 
-fn files_table(files: &[FileInfo]) -> String {
+/// When a listed file was last used (made, changed or opened).
+fn used(f: &FileRow) -> u64 {
+    f.info.created.max(f.info.updated).max(f.opened)
+}
+
+fn files_table(mut files: Vec<FileRow>, sort: Sort, now: u64) -> String {
     if files.is_empty() {
         return "No files yet (publish one from FigCraft: Share > Publish to server…).\n".into();
     }
-    let mut out = String::from("ID                NAME                            PEOPLE  UPDATED               SIZE\n");
-    for f in files {
-        let _ = writeln!(out, "{:<16}  {:<30}  {:>6}  {:<20}  {}", f.id, elide(&f.name, 30), f.people, date(f.updated), size(f.bytes));
+    match sort {
+        Sort::Id => {}
+        Sort::Size => files.sort_by_key(|f| std::cmp::Reverse(f.info.bytes)),
+        Sort::Age => files.sort_by_key(|f| f.info.created),
+        Sort::Idle => files.sort_by_key(used),
+    }
+    let mut out = String::from("ID                NAME                            PEOPLE  SIZE       CREATED     IDLE  EXPIRES     REPORTS  BY\n");
+    for f in &files {
+        let idle = format!("{}d", now.saturating_sub(used(f)) / 86_400);
+        let expires = f.expires.map_or_else(|| "never".to_string(), day);
+        let by = if f.open { f.ip.as_str() } else { "key" };
+        let _ = writeln!(
+            out,
+            "{:<16}  {:<30}  {:>6}  {:<9}  {:<10}  {:>4}  {:<10}  {:>7}  {}",
+            f.info.id,
+            elide(&f.info.name, 30),
+            f.info.people,
+            size(f.info.bytes),
+            day(f.info.created),
+            idle,
+            expires,
+            f.reports,
+            by
+        );
     }
     out
+}
+
+fn reports_table(reports: &[ReportInfo]) -> String {
+    if reports.is_empty() {
+        return "No reports.\n".into();
+    }
+    let mut out = String::new();
+    for r in reports {
+        let _ = writeln!(out, "{}  file {} ({})  from {}  link {}", date(r.at), r.file, elide(&r.name, 40), r.ip, r.link);
+        let _ = writeln!(out, "    {}", r.reason);
+    }
+    out
+}
+
+/// `YYYY-MM-DD` for seconds since 1970.
+fn day(secs: u64) -> String {
+    date(secs).chars().take(10).collect()
 }
 
 fn links_table(links: &[LinkInfo]) -> String {
@@ -337,18 +446,4 @@ fn size(bytes: u64) -> String {
 }
 
 /// `YYYY-MM-DD HH:MM UTC` for seconds since 1970.
-pub fn date(secs: u64) -> String {
-    let days = i64::try_from(secs / 86_400).unwrap_or(0);
-    let (h, m) = ((secs % 86_400) / 3600, (secs % 3600) / 60);
-    // Days to a civil date (proleptic Gregorian).
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(mo <= 2);
-    format!("{y:04}-{mo:02}-{d:02} {h:02}:{m:02} UTC")
-}
+pub use figcraft_collab::message::utc_date as date;

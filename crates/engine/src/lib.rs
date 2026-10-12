@@ -564,6 +564,10 @@ pub struct Prefs {
     /// The plugin directory browsed last (`ws://host:port/`, never with a key).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_directory: Option<String>,
+    /// The server Share ▸ Publish to server suggests (`wss://host/`, never with a key; empty:
+    /// none). There is no built-in default.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub publish_server: String,
     /// Recently opened or saved files, newest first (File ▸ Open recent; at most
     /// [`cmd::file::MAX_RECENT`]).
     pub recent_files: Vec<String>,
@@ -587,6 +591,7 @@ impl Default for Prefs {
             plugins: Vec::new(),
             plugin_settings: BTreeMap::new(),
             plugin_directory: None,
+            publish_server: String::new(),
             recent_files: Vec::new(),
         }
     }

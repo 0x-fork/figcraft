@@ -8,6 +8,7 @@
 //! that was confirmed and clients resume where they were. There are no user accounts yet: share
 //! links are the access, and the server key manages files.
 
+pub mod abuse;
 pub mod cli;
 pub mod config;
 pub mod directory;
@@ -51,6 +52,9 @@ pub fn start(cfg: &Config) -> Result<Running, String> {
     for p in store.problems() {
         log::warn!("{p}");
     }
+    for w in cfg.warnings() {
+        log::warn!("{w}");
+    }
     let files = store.len();
     let addr = cfg.addr()?;
     let listener = TcpListener::bind(addr).map_err(|e| format!("can't listen on {addr}: {e}"))?;
@@ -79,6 +83,8 @@ mod cli_tests;
 mod directory_tests;
 #[cfg(test)]
 mod library_tests;
+#[cfg(test)]
+mod public_tests;
 #[cfg(test)]
 mod server_tests;
 #[cfg(test)]

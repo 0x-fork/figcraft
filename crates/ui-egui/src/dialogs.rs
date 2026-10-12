@@ -186,6 +186,14 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
+                ui.label(tr("Server to publish to"));
+                // Suggested by Share > Publish to server; no key here (preferences are saved as text).
+                if let Some(url) = crate::widgets::text_field(ui, egui::Id::new("pref_publish_server"), &prefs.publish_server, 220.0, "wss://…") {
+                    app.run("pref.publishServer", json!({"url": url}));
+                }
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
                 ui.label(tr("Nudge amount"));
                 let mut small = prefs.nudge_small;
                 let mut big = prefs.nudge_big;

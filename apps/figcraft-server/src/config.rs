@@ -1,13 +1,14 @@
 //! The server's settings: defaults, then a TOML file (`--config server.toml`), then flags.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use figcraft_collab_net::{Endpoint, NetLimits};
 use serde::Deserialize;
 
+use crate::abuse::AbuseConfig;
 use crate::directory::DirectoryConfig;
-use crate::store::StoreConfig;
+use crate::store::{HostingConfig, StoreConfig};
 
 /// The port the server listens on unless told otherwise (the app's sessions try it first too).
 pub const DEFAULT_PORT: u16 = figcraft_collab_net::DEFAULT_PORT;
@@ -26,8 +27,8 @@ pub struct Config {
     /// Most files kept.
     pub max_files: usize,
     /// Largest file (its snapshot), in MiB (a welcome carries the whole file, and messages are at
-    /// most 64 MiB).
-    pub max_file_mb: u64,
+    /// most 64 MiB). Unset: 64, or 16 when open to the public ([`Config::file_mb`]).
+    pub max_file_mb: Option<u64>,
     /// Most share links per file.
     pub max_links: usize,
     /// Most open connections.
@@ -44,6 +45,30 @@ pub struct Config {
     pub max_plugin_mb: u64,
     /// Most MiB of plugin bundles kept.
     pub max_plugins_mb: u64,
+    /// Anyone may publish a file without the server key (and gets an owner token for it): a
+    /// server open to the public. The limits below then apply per address.
+    pub open_publish: bool,
+    /// How to reach the operator (an email address or a web page) and the terms of use (a web
+    /// address): the app shows them where people publish.
+    pub operator_contact: String,
+    pub terms_url: String,
+    /// The reverse proxy in front of the server (`127.0.0.1` for Caddy or nginx on the same
+    /// machine): only its `X-Forwarded-For` is believed.
+    pub trusted_proxy: Option<String>,
+    /// Files published without the key are deleted after this many days without anyone opening
+    /// them (0: kept; fractions allowed).
+    pub idle_days: f64,
+    /// Publishing without the key stops while the files take this many MiB in all.
+    pub max_total_mb: u64,
+    /// Per address, when open: most files published without the key, and their MiB.
+    pub max_files_per_ip: usize,
+    pub max_mb_per_ip: u64,
+    /// Per address, when open: most connections at once, new connections a minute, files
+    /// published an hour and messages a second.
+    pub max_connections_per_ip: usize,
+    pub connects_per_minute: u32,
+    pub publishes_per_hour: u32,
+    pub messages_per_second: u32,
 }
 
 impl Default for Config {
@@ -53,7 +78,7 @@ impl Default for Config {
             data: PathBuf::from("figcraft-data"),
             public_url: None,
             max_files: 1000,
-            max_file_mb: 64,
+            max_file_mb: None,
             max_links: 100,
             max_connections: 512,
             max_people: 256,
@@ -62,6 +87,18 @@ impl Default for Config {
             max_plugins: 500,
             max_plugin_mb: 16,
             max_plugins_mb: 1024,
+            open_publish: false,
+            operator_contact: String::new(),
+            terms_url: String::new(),
+            trusted_proxy: None,
+            idle_days: 30.0,
+            max_total_mb: 10_240,
+            max_files_per_ip: 20,
+            max_mb_per_ip: 256,
+            max_connections_per_ip: 32,
+            connects_per_minute: 30,
+            publishes_per_hour: 10,
+            messages_per_second: 200,
         }
     }
 }
@@ -88,13 +125,71 @@ impl Config {
         Ok(Some(e))
     }
 
+    /// The largest file in MiB: as set, else 64, or 16 on a server open to the public (strangers'
+    /// files stay small unless the operator says otherwise).
+    pub fn file_mb(&self) -> u64 {
+        self.max_file_mb.unwrap_or(if self.open_publish { 16 } else { 64 })
+    }
+
+    /// What an operator should hear about these settings at startup (a public server without an
+    /// abuse contact, or one whose clients would all count as its proxy).
+    pub fn warnings(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if !self.open_publish {
+            return out;
+        }
+        if self.operator_contact.trim().is_empty() {
+            out.push("open_publish is on but operator_contact is empty: people can't reach you about abuse; set it (and terms_url)".into());
+        }
+        let behind_proxy = self.public().ok().flatten().is_some_and(|e| e.secure) || self.addr().is_ok_and(|a| a.ip().is_loopback());
+        if behind_proxy && self.trusted_proxy.as_deref().is_none_or(|p| p.trim().is_empty()) {
+            out.push(
+                "open_publish is on without trusted_proxy: behind a reverse proxy every client counts as the proxy's address, so one person's limits stop everyone; set trusted_proxy = \"127.0.0.1\"".into(),
+            );
+        }
+        if self.idle_days == 0.0 {
+            out.push("open_publish is on with idle_days = 0: files published without the key are never deleted".into());
+        }
+        out
+    }
+
+    /// The trusted proxy's address, when set.
+    pub fn proxy(&self) -> Result<Option<IpAddr>, String> {
+        let Some(p) = self.trusted_proxy.as_deref().map(str::trim).filter(|p| !p.is_empty()) else { return Ok(None) };
+        p.parse().map(Some).map_err(|_| "`trusted_proxy` must be an IP address, like 127.0.0.1".to_string())
+    }
+
     /// Check everything (before starting).
     pub fn check(&self) -> Result<(), String> {
         self.addr()?;
         self.public()?;
+        self.proxy()?;
+        if !self.idle_days.is_finite() || !(0.0..=3650.0).contains(&self.idle_days) {
+            return Err("`idle_days` must be from 0 to 3650".into());
+        }
+        let terms = self.terms_url.trim();
+        if !terms.is_empty() && !(terms.starts_with("https://") || terms.starts_with("http://")) || terms.contains(char::is_whitespace) {
+            return Err("`terms_url` must be a web address (https://…)".into());
+        }
+        if self.operator_contact.chars().count() > 120 || self.operator_contact.chars().any(char::is_control) || terms.len() > 500 {
+            return Err("`operator_contact` is at most 120 characters and `terms_url` at most 500, on one line".into());
+        }
+        for (name, v) in [
+            ("max_total_mb", self.max_total_mb),
+            ("max_files_per_ip", self.max_files_per_ip as u64),
+            ("max_mb_per_ip", self.max_mb_per_ip),
+            ("max_connections_per_ip", self.max_connections_per_ip as u64),
+            ("connects_per_minute", u64::from(self.connects_per_minute)),
+            ("publishes_per_hour", u64::from(self.publishes_per_hour)),
+            ("messages_per_second", u64::from(self.messages_per_second)),
+        ] {
+            if v == 0 {
+                return Err(format!("`{name}` must be at least 1"));
+            }
+        }
         for (name, v) in [
             ("max_files", self.max_files as u64),
-            ("max_file_mb", self.max_file_mb),
+            ("max_file_mb", self.file_mb()),
             ("max_links", self.max_links as u64),
             ("max_connections", self.max_connections as u64),
             ("max_people", self.max_people as u64),
@@ -107,7 +202,7 @@ impl Config {
                 return Err(format!("`{name}` must be at least 1"));
             }
         }
-        if self.max_file_mb > 4096 || self.compact_mb > 4096 {
+        if self.file_mb() > 4096 || self.compact_mb > 4096 {
             return Err("sizes are in MiB and at most 4096".into());
         }
         // A bundle travels in one message (at most 64 MiB) next to its entry.
@@ -124,8 +219,25 @@ impl Config {
     pub fn store(&self) -> StoreConfig {
         let mib = |n: u64| n.saturating_mul(1 << 20);
         StoreConfig {
+            hosting: HostingConfig {
+                open: self.open_publish,
+                operator: self.operator_contact.trim().to_string(),
+                terms: self.terms_url.trim().to_string(),
+                // Whole seconds: `check` keeps the days finite and at most 3650.
+                idle_secs: (self.idle_days * 86_400.0).round() as u64,
+                max_file_mb: self.file_mb(),
+                max_total_bytes: mib(self.max_total_mb),
+                max_files_per_ip: self.max_files_per_ip,
+                max_bytes_per_ip: mib(self.max_mb_per_ip),
+                abuse: AbuseConfig {
+                    open: self.open_publish,
+                    connects_per_minute: self.connects_per_minute,
+                    publishes_per_hour: self.publishes_per_hour,
+                    messages_per_second: self.messages_per_second,
+                },
+            },
             max_files: self.max_files,
-            max_file_bytes: mib(self.max_file_mb),
+            max_file_bytes: mib(self.file_mb()),
             max_links: self.max_links,
             compact_after: self.compact_after,
             compact_bytes: mib(self.compact_mb),
@@ -138,8 +250,13 @@ impl Config {
         }
     }
 
-    /// The transport's part.
+    /// The transport's part (connections per address are capped only when open to the public).
     pub fn net(&self) -> NetLimits {
-        NetLimits { max_connections: self.max_connections, ..NetLimits::default() }
+        NetLimits {
+            max_connections: self.max_connections,
+            max_per_address: if self.open_publish { self.max_connections_per_ip } else { 0 },
+            trusted_proxy: self.proxy().ok().flatten(),
+            ..NetLimits::default()
+        }
     }
 }

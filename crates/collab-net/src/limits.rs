@@ -1,5 +1,6 @@
 //! Transport limits, shared by the native transport and the browser client.
 
+use std::net::IpAddr;
 use std::time::Duration;
 
 /// Transport limits (the collaboration core has its own: [`figcraft_collab::Limits`]).
@@ -27,6 +28,11 @@ pub struct NetLimits {
     pub queue: usize,
     /// How long a write may block.
     pub write_timeout: Duration,
+    /// Most connections from one address at once (an IPv6 address counts by its /64; 0: no cap).
+    pub max_per_address: usize,
+    /// The reverse proxy in front of a host, whose `X-Forwarded-For` names the client: only
+    /// connections from this address are believed (the header is anyone's to forge).
+    pub trusted_proxy: Option<IpAddr>,
 }
 
 impl Default for NetLimits {
@@ -43,6 +49,8 @@ impl Default for NetLimits {
             keepalive: Duration::from_secs(15),
             queue: 1024,
             write_timeout: Duration::from_secs(10),
+            max_per_address: 0,
+            trusted_proxy: None,
         }
     }
 }

@@ -409,3 +409,24 @@ fn a_guest_opens_the_hosts_file_as_a_new_tab() {
     assert_eq!(s.docs.len(), 2);
     assert!(s.doc().unwrap().contains(NodeId(r["id"].as_u64().unwrap())));
 }
+
+#[test]
+fn hosting_commands_check_what_they_are_given() {
+    let mut s = Session::new();
+    // The publish server preference: a WebSocket address without a key, or nothing.
+    assert_eq!(s.execute("pref.publishServer", &json!({"url": " wss://figcraft.example.com/ "})).unwrap()["url"], "wss://figcraft.example.com/");
+    for bad in ["https://figcraft.example.com/", "wss://host/?key=secret", "wss://a b/"] {
+        assert!(s.execute("pref.publishServer", &json!({"url": bad})).is_err(), "{bad}");
+    }
+    assert_eq!(s.prefs.publish_server, "wss://figcraft.example.com/", "a refused address changes nothing");
+    s.execute("pref.publishServer", &json!({"url": ""})).unwrap();
+    assert!(s.prefs.publish_server.is_empty());
+    // No network here: the server can't be asked, nothing can be reported.
+    let e = s.execute("collab.serverInfo", &json!({"server": "wss://figcraft.example.com/"})).unwrap_err().to_string();
+    assert!(e.contains("desktop app or the MCP server"), "{e}");
+    let e = s.execute("collab.manageFile", &json!({"server": "wss://x/", "file": "f", "owner": "o", "action": "explode"})).unwrap_err().to_string();
+    assert!(e.contains("`action` must be"), "{e}");
+    let e = s.execute("collab.report", &json!({"reason": "Spam"})).unwrap_err().to_string();
+    assert!(e.contains("join a file"), "{e}");
+    assert!(s.execute("collab.report", &json!({"reason": " \n "})).unwrap_err().to_string().contains("few words"));
+}

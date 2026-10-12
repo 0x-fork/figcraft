@@ -32,9 +32,9 @@ use std::sync::Arc;
 
 use figcraft_collab::Client;
 pub use figcraft_collab::message::Signal;
-use figcraft_collab::message::{ClientMsg, EditingText, LibraryReply, LibraryReq, PluginReply, PluginReq, ServerMsg};
+use figcraft_collab::message::{Admin, AdminReply, ClientMsg, EditingText, LibraryReply, LibraryReq, PluginReply, PluginReq, ServerMsg};
 
-pub use figcraft_collab::message::Access;
+pub use figcraft_collab::message::{Access, HostInfo, utc_date};
 use figcraft_doc::{Document, NodeId};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -162,6 +162,11 @@ pub struct Published {
     /// The link that lets people edit, and the one that lets them only view.
     pub edit: String,
     pub view: String,
+    /// Published without the server's key: the owner token that revokes links, renames or removes
+    /// the file (shown this once; the server keeps only its hash).
+    pub owner: Option<String>,
+    /// When the server deletes the file if nobody opens it (seconds since 1970).
+    pub expires: Option<u64>,
 }
 
 /// What happened in the session since the last [`LiveLink::poll`].
@@ -187,6 +192,10 @@ pub enum Event {
     },
     /// The document is on the server (`collab.publish`); joining it follows.
     Published(Published),
+    /// What the server says about its hosting (operator, terms, this file's expiry).
+    Hosting(HostInfo),
+    /// The server's answer to `collab.report`: kept, or why not.
+    Reported(Option<String>),
     /// The answer to a team library request sent in the background
     /// ([`LiveLink::library_background`]) about the file behind share link `link`.
     Library {
@@ -211,6 +220,9 @@ pub enum NetRequest {
     Library { link: String, req: LibraryReq },
     /// Keep a file on a server without joining it ([`LiveLink::upload`]).
     Upload(PublishOptions),
+    /// Ask the server at `server` about its hosting and, with a file's owner token, manage that
+    /// file ([`LiveLink::hosting`]).
+    Hosting { server: String, file: String, owner: String, req: Option<Admin> },
 }
 
 impl NetRequest {
@@ -219,6 +231,7 @@ impl NetRequest {
         match self {
             NetRequest::Plugins { .. } => crate::plugin_directory::NO_DIRECTORY,
             NetRequest::Library { .. } | NetRequest::Upload(_) => NO_TEAM_LIBRARIES,
+            NetRequest::Hosting { .. } => NO_HOSTING,
         }
     }
 
@@ -228,6 +241,7 @@ impl NetRequest {
             NetRequest::Plugins { .. } => |why| NetReply::Plugins(Err(why)),
             NetRequest::Library { .. } => |why| NetReply::Library(Err(why)),
             NetRequest::Upload(_) => |why| NetReply::Upload(Err(why)),
+            NetRequest::Hosting { .. } => |why| NetReply::Hosting(Err(why)),
         }
     }
 
@@ -239,6 +253,9 @@ impl NetRequest {
             (NetRequest::Plugins { server: a, req: x }, NetRequest::Plugins { server: b, req: y }) => a == b && discriminant(x) == discriminant(y),
             (NetRequest::Library { link: a, req: x }, NetRequest::Library { link: b, req: y }) => a == b && discriminant(x) == discriminant(y),
             (NetRequest::Upload(a), NetRequest::Upload(b)) => a.server == b.server,
+            (NetRequest::Hosting { server: a, file: f, req: x, .. }, NetRequest::Hosting { server: b, file: g, req: y, .. }) => {
+                a == b && f == g && x.as_ref().map(discriminant) == y.as_ref().map(discriminant)
+            }
             _ => false,
         }
     }
@@ -250,7 +267,12 @@ pub enum NetReply {
     Plugins(std::result::Result<PluginReply, String>),
     Library(std::result::Result<LibraryReply, String>),
     Upload(std::result::Result<Published, String>),
+    /// What the server says about its hosting, and its answer to the request, if one was sent.
+    Hosting(std::result::Result<(HostInfo, Option<AdminReply>), String>),
 }
+
+/// What a session without the network says about servers' hosting.
+pub const NO_HOSTING: &str = "publishing to a server needs the desktop app or the MCP server";
 
 /// Which network interface a hosted session listens on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,7 +303,8 @@ pub struct PublishOptions {
     /// The server's address (`ws://host:port/`, `wss://host/path/`), which may carry its key
     /// (`?key=…`).
     pub server: String,
-    /// The server's key, when the address doesn't carry it.
+    /// The server's key, when the address doesn't carry it. Without one the file is published
+    /// as anyone may, on a server open to the public (with an owner token).
     pub key: Option<String>,
     /// The file's name on the server.
     pub name: String,
@@ -329,12 +352,25 @@ pub trait LiveLink: Send {
     fn plugins(&mut self, _server: &str, _req: PluginReq) -> std::result::Result<PluginReply, String> {
         Err(crate::plugin_directory::NO_DIRECTORY.into())
     }
+    /// What the server at `server` says about its hosting, and with a file's owner token
+    /// (`file` and `owner`) its answer to `req` about that file; waits for the server. Errors
+    /// never echo the token.
+    fn hosting(
+        &mut self,
+        _server: &str,
+        _file: &str,
+        _owner: &str,
+        _req: Option<Admin>,
+    ) -> std::result::Result<(HostInfo, Option<AdminReply>), String> {
+        Err(NO_HOSTING.into())
+    }
     /// Send `req` and wait for the answer (through the methods above).
     fn request(&mut self, req: NetRequest) -> NetReply {
         match req {
             NetRequest::Plugins { server, req } => NetReply::Plugins(self.plugins(&server, req)),
             NetRequest::Library { link, req } => NetReply::Library(self.library(&link, req)),
             NetRequest::Upload(o) => NetReply::Upload(self.upload(o)),
+            NetRequest::Hosting { server, file, owner, req } => NetReply::Hosting(self.hosting(&server, &file, &owner, req)),
         }
     }
     /// Send `req` on a thread of its own and return at once: the answer arrives as [`Event::Net`]
@@ -393,6 +429,9 @@ pub struct Live {
     pub links: Option<Box<dyn crate::invite_links::LinkRegistrar>>,
     /// The file you published to a server in this session, with its links.
     pub published: Option<Published>,
+    /// What the server of the file you're in says about its hosting (operator, terms, expiry);
+    /// a server that says it takes reports (`collab.report`).
+    pub hosting: Option<HostInfo>,
     /// The host passes cursor chat and spotlights on (it said so after the welcome).
     pub signals: bool,
     /// Others' open cursor chat messages.
@@ -445,6 +484,7 @@ impl Live {
         self.deferred.clear();
         self.hold = 0;
         self.published = None;
+        self.hosting = None;
         self.signals = false;
         self.chats.clear();
         self.chat.clear();
@@ -702,6 +742,11 @@ impl Session {
             Event::Published(p) => {
                 self.message = Some(format!("Published {} to the server", p.name));
                 live.published = Some(p);
+            }
+            Event::Hosting(info) => live.hosting = Some(clean_hosting(info)),
+            Event::Reported(error) => {
+                self.message =
+                    Some(error.map_or_else(|| "Your report was sent to the server's operator".into(), |e| format!("The report wasn't sent: {e}")));
             }
             Event::Library { link, reply } => self.library_answer(&link, reply),
             Event::Net { job, reply } => self.background_answer(job, *reply),
@@ -1131,6 +1176,7 @@ impl Session {
             "access": l.client.as_ref().map(Client::access).or(info.map(|i| i.access)),
             "readOnly": self.active_read_only().is_some(),
             "published": l.published,
+            "hosting": l.hosting.as_ref().map(hosting_json),
             "follow": l.follow,
             "signals": l.signals,
             "chat": l.chat,
@@ -1142,6 +1188,31 @@ impl Session {
             "peers": peers,
         })
     }
+}
+
+/// What a server says about its hosting, made safe to show: no control characters, short, and a
+/// terms address only when it is a web page (`http(s)://`).
+fn clean_hosting(mut info: HostInfo) -> HostInfo {
+    let clean = |s: &str, n: usize| s.trim().chars().filter(|c| !c.is_control()).take(n).collect::<String>();
+    info.operator = clean(&info.operator, 120);
+    info.terms = clean(&info.terms, 500);
+    let web = info.terms.starts_with("https://") || info.terms.starts_with("http://");
+    if !web || info.terms.contains(char::is_whitespace) {
+        info.terms.clear();
+    }
+    info
+}
+
+/// A server's hosting as JSON (`collab.peers`, `collab.serverInfo`).
+pub fn hosting_json(h: &HostInfo) -> Value {
+    json!({
+        "open": h.open,
+        "operator": h.operator,
+        "terms": h.terms,
+        "idleDays": (h.idle_secs > 0).then(|| (h.idle_secs as f64 / 86_400.0 * 100.0).round() / 100.0),
+        "maxFileMb": h.max_file_mb,
+        "expires": h.expires,
+    })
 }
 
 fn unavailable(cmd: &str) -> EngineError {
@@ -1189,6 +1260,76 @@ fn publish(s: &mut Session, p: &Value) -> Result<Value> {
     s.live.doc_uid = Some(uid);
     Ok(s.live_summary())
 }
+
+/// What the server at `server` says about its hosting, and its answer to `req` about `file` with
+/// its owner token (`collab.serverInfo`, `collab.manageFile`).
+fn hosting_request(s: &mut Session, cmd: &str, server: &str, file: &str, owner: &str, req: Option<Admin>) -> Result<(HostInfo, Option<AdminReply>)> {
+    let req = NetRequest::Hosting { server: server.to_string(), file: file.to_string(), owner: owner.to_string(), req };
+    match s.net(req)?.0 {
+        // The server's refusals say why themselves.
+        NetReply::Hosting(Ok((_, Some(AdminReply::Failed { reason })))) | NetReply::Hosting(Err(reason)) => Err(EngineError::Other(reason)),
+        NetReply::Hosting(Ok((info, reply))) => Ok((clean_hosting(info), reply)),
+        _ => Err(EngineError::Other(format!("{cmd}: the server answered something else"))),
+    }
+}
+
+fn server_info(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "collab.serverInfo";
+    let server = req_string(CMD, p, "server")?;
+    let (info, _) = hosting_request(s, CMD, server.trim(), "", "", None)?;
+    Ok(hosting_json(&info))
+}
+
+fn manage_file(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "collab.manageFile";
+    let (server, file, owner) = (req_string(CMD, p, "server")?, req_string(CMD, p, "file")?, req_string(CMD, p, "owner")?);
+    let (file, owner) = (file.trim().to_string(), owner.trim().to_string());
+    let action = req_string(CMD, p, "action")?;
+    let req = match action.trim() {
+        "links" => Admin::Links { file: file.clone() },
+        "createLink" => {
+            let access = match string(p, "access").as_deref().map(str::trim) {
+                None | Some("view") => Access::View,
+                Some("edit") => Access::Edit,
+                Some(_) => return Err(bad(CMD, "`access` must be \"edit\" or \"view\"")),
+            };
+            Admin::CreateLink { file: file.clone(), access, label: string(p, "label").unwrap_or_default() }
+        }
+        "revoke" => Admin::Revoke { file: file.clone(), link: req_string(CMD, p, "link")?.trim().to_string() },
+        "rename" => Admin::Rename { file: file.clone(), name: req_string(CMD, p, "name")? },
+        "remove" => Admin::Remove { file: file.clone() },
+        _ => return Err(bad(CMD, "`action` must be links, createLink, revoke, rename or remove")),
+    };
+    match hosting_request(s, CMD, server.trim(), &file, &owner, Some(req))?.1 {
+        Some(AdminReply::Links(links)) => Ok(json!({"links": links.iter().map(|l| json!({
+            "id": l.id, "access": l.access.id(), "label": l.label, "created": l.created
+        })).collect::<Vec<_>>()})),
+        // The link layer gives the new link whole in place of its token.
+        Some(AdminReply::Link(l)) => Ok(json!({"id": l.link.id, "access": l.link.access.id(), "link": l.token})),
+        Some(AdminReply::Done) => Ok(json!({"done": true})),
+        _ => Err(bad(CMD, "the server answered something else")),
+    }
+}
+
+fn report(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "collab.report";
+    let reason: String = req_string(CMD, p, "reason")?.trim().chars().map(|c| if c.is_control() { ' ' } else { c }).take(MAX_REPORT).collect();
+    if reason.is_empty() {
+        return Err(bad(CMD, "say in a few words what is wrong with the file (`reason`)"));
+    }
+    if s.live.status != Status::Live || s.live.role() != Some(Role::Guest) {
+        return Err(bad(CMD, "join a file on a FigCraft server first: reports go to that server's operator"));
+    }
+    if s.live.hosting.is_none() {
+        return Err(bad(CMD, "this server doesn't take reports (it is older than this app); contact its operator another way"));
+    }
+    let link = s.live.link.as_mut().ok_or_else(|| unavailable(CMD))?;
+    link.send(ClientMsg::Report { reason });
+    Ok(json!({"sent": true}))
+}
+
+/// Longest report sent (characters).
+pub const MAX_REPORT: usize = 500;
 
 fn join(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "collab.join";
@@ -1280,9 +1421,30 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "collab.publish",
             "Publish to server",
-            "{server: ws://host:port/?key=… or wss://host/path/?key=… (the server's address with its key; `figcraft-server key` prints it), key? (when the address has none), name? (default: the file's name)} → status \"connecting\": the open file is uploaded as a new file and this tab syncs through the server; `collab.peers` then has `published: {server, file, name, edit, view}` (share links: edit, or view only)",
+            "{server: ws://host:port/?key=… or wss://host/path/?key=… (the server's address with its key; `figcraft-server key` prints it; without a key on a server open to the public), key? (when the address has none), name? (default: the file's name)} → status \"connecting\": the open file is uploaded as a new file and this tab syncs through the server; `collab.peers` then has `published: {server, file, name, edit, view, owner (published without a key: the owner token, shown once), expires (seconds since 1970, or null)}` and `hosting` (the server's operator, terms and idle expiry)",
             false,
             publish
+        ),
+        spec!(
+            "collab.serverInfo",
+            "Server info",
+            "{server: ws://host:port/ or wss://host/path/} → {open (anyone may publish without the key), operator, terms (a web address), idleDays (files published without the key are deleted after this many days unopened; null: kept), maxFileMb, expires}",
+            false,
+            server_info
+        ),
+        spec!(
+            "collab.manageFile",
+            "Manage published file",
+            "{server, file (its id), owner (the owner token you got when you published it without the key), action: links | createLink {access?: view (default) | edit, label?} | revoke {link (a link's id)} | rename {name} | remove} → {links: [{id, access, label, created}]} | {id, access, link (a new share link, shown once)} | {done}",
+            false,
+            manage_file
+        ),
+        spec!(
+            "collab.report",
+            "Report file to server operator",
+            "{reason (a few words, at most 500 characters)} → {sent}: the file you joined on a server is reported to its operator; the session's message says when the server kept it (servers older than this app don't take reports)",
+            false,
+            report
         ),
         spec!(
             "collab.peers",

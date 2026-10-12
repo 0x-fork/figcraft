@@ -181,7 +181,10 @@ fn revoked_links_stop_working_at_once() {
 #[test]
 fn fuzzed_frames_dont_hurt_the_server() {
     let dir = TempDir::new("fuzz");
-    let mut server = crate::start(&config(dir.path())).unwrap();
+    // Open to the public, so publishing without the key and owner tokens are fuzzed too (with
+    // rates high enough that the noise gets in).
+    let cfg = crate::config::Config { open_publish: true, connects_per_minute: 100_000, messages_per_second: 100_000, ..config(dir.path()) };
+    let mut server = crate::start(&cfg).unwrap();
     let addr = server.addr();
     let mut a = session("Ada");
     let p = publish(&mut a, dir.path(), addr);
@@ -202,6 +205,26 @@ fn fuzzed_frames_dont_hurt_the_server() {
         }),
         ClientMsg::OpenPlugins(message::OpenPlugins { protocol: message::PROTOCOL, key: String::new(), client_version: String::new() }),
         ClientMsg::Plugins(message::PluginReq::List { query: "tiny".into() }),
+        ClientMsg::OpenHosting(message::OpenHosting {
+            protocol: message::PROTOCOL,
+            client_version: String::new(),
+            file: String::new(),
+            owner: String::new(),
+        }),
+        ClientMsg::OpenHosting(message::OpenHosting {
+            protocol: message::PROTOCOL,
+            client_version: String::new(),
+            file: edit.file.clone(),
+            owner: "AAAAAAAAAAAAAAAAAAAAAA".into(),
+        }),
+        ClientMsg::Admin(Admin::Publish {
+            name: "Fuzz".into(),
+            snapshot: figcraft_collab::Replica::new(figcraft_doc::Document::new("F")).snapshot().unwrap(),
+        }),
+        ClientMsg::Admin(Admin::Rename { file: edit.file.clone(), name: "Fuzzed".into() }),
+        ClientMsg::Admin(Admin::Listing),
+        ClientMsg::Admin(Admin::Block { ip: "203.0.113.1".into() }),
+        ClientMsg::Report { reason: "fuzz".into() },
         ClientMsg::Plugins(message::PluginReq::Fetch { id: "org.example.tiny".into(), version: None }),
         ClientMsg::Plugins(message::PluginReq::Publish {
             bundle: figcraft_plugin::bundle::Bundle { manifest: "{}".into(), wasm: b"\0asm".to_vec(), assets: Vec::new() }.encode(),

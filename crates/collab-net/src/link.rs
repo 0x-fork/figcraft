@@ -5,9 +5,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use figcraft_collab::message::{Access, ClientMsg, LibraryReply, LibraryReq, PluginReply, PluginReq};
+use figcraft_collab::message::{Access, Admin, AdminReply, ClientMsg, LibraryReply, LibraryReq, PluginReply, PluginReq};
 use figcraft_engine::live::{
-    Bind, Event, HostOptions, LiveLink, NetReply, NetRequest, PageInfo, Presence, PublishOptions, Published, Role, SessionInfo,
+    Bind, Event, HostInfo, HostOptions, LiveLink, NetReply, NetRequest, PageInfo, Presence, PublishOptions, Published, Role, SessionInfo,
 };
 
 use crate::guest::{Guest, GuestConfig, Publish, upload_file};
@@ -151,8 +151,8 @@ impl LiveLink for NetLink {
 
     fn publish(&mut self, o: PublishOptions) -> Result<(), String> {
         let (server, query) = Endpoint::parse(&o.server)?;
+        // Without a key: as anyone may, when the server is open to the public (it says if not).
         let key = o.key.or_else(|| query.into_iter().find(|(k, _)| k == "key").map(|(_, v)| v)).filter(|k| !k.trim().is_empty());
-        let key = key.ok_or("the server address needs the server's key (ws://host:port/?key=…; `figcraft-server key` prints it)")?;
         // Until the upload is done the invite names only the server.
         let cfg = self.guest_config(Invite { server: server.clone(), file: String::new(), token: String::new() }, &o.me);
         self.leave();
@@ -176,6 +176,10 @@ impl LiveLink for NetLink {
         plugins(server, req, &self.limits)
     }
 
+    fn hosting(&mut self, server: &str, file: &str, owner: &str, req: Option<Admin>) -> Result<(HostInfo, Option<AdminReply>), String> {
+        hosting(server, file, owner, req, &self.limits)
+    }
+
     fn background(&mut self, job: u64, req: NetRequest) -> bool {
         let (inbox, limits) = (self.libraries.clone(), self.limits);
         let (failed, failure) = (inbox.clone(), req.failure());
@@ -184,6 +188,7 @@ impl LiveLink for NetLink {
                 NetRequest::Plugins { server, req } => NetReply::Plugins(plugins(&server, req, &limits)),
                 NetRequest::Library { link, req } => NetReply::Library(manage::library(&link, req, &limits, CONNECT)),
                 NetRequest::Upload(o) => NetReply::Upload(upload(o, &limits)),
+                NetRequest::Hosting { server, file, owner, req } => NetReply::Hosting(hosting(&server, &file, &owner, req, &limits)),
             };
             inbox.push(Event::Net { job, reply: Box::new(reply) });
         });
@@ -248,7 +253,22 @@ fn upload(o: PublishOptions, limits: &NetLimits) -> Result<Published, String> {
     let (server, query) = Endpoint::parse(&o.server)?;
     let key = o.key.or_else(|| query.into_iter().find(|(k, _)| k == "key").map(|(_, v)| v)).filter(|k| !k.trim().is_empty());
     let key = key.ok_or("the server address needs the server's key (ws://host:port/?key=…; `figcraft-server key` prints it)")?;
-    upload_file(&server, &key, &o.name, &o.doc, limits, CONNECT).map(|(_, published)| published)
+    upload_file(&server, Some(&key), &o.name, &o.doc, limits, CONNECT).map(|(_, published, _)| published)
+}
+
+/// What the server at `server` says about its hosting, and its answer to `req` about `file` with
+/// its owner token (see [`LiveLink::hosting`]). A new link comes back whole, in place of its token.
+fn hosting(server: &str, file: &str, owner: &str, req: Option<Admin>, limits: &NetLimits) -> Result<(HostInfo, Option<AdminReply>), String> {
+    let (endpoint, _) = Endpoint::parse(server)?;
+    let (info, replies) = manage::hosting(&endpoint, file, owner, req.into_iter().collect(), limits, CONNECT)?;
+    let reply = replies.into_iter().next().map(|r| match r {
+        AdminReply::Link(mut l) => {
+            l.token = Invite { server: endpoint.clone(), file: l.link.file.clone(), token: l.token }.link();
+            AdminReply::Link(l)
+        }
+        other => other,
+    });
+    Ok((info, reply))
 }
 
 /// One request to the plugin directory at `server` (its key in the address's query, if any).

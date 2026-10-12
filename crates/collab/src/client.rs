@@ -449,8 +449,9 @@ impl Client {
                 self.presence.remove(&client_id);
                 Ok(Vec::new())
             }
-            // Cursor chat and spotlights are the app's (the transport hands them over).
-            ServerMsg::Pong | ServerMsg::Signal { .. } => Ok(Vec::new()),
+            // Cursor chat, spotlights and what a server says about its hosting are the app's (the
+            // transport hands them over).
+            ServerMsg::Pong | ServerMsg::Signal { .. } | ServerMsg::Hosting(_) | ServerMsg::Reported { .. } => Ok(Vec::new()),
             ServerMsg::Welcome { .. } if self.online => Err(Error::Protocol("already joined".into())),
             ServerMsg::Welcome { session, client_id, seq, catch_up, processed, peers, access } => {
                 if session != self.session || client_id != self.id {

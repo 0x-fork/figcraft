@@ -5,7 +5,7 @@ use figcraft_collab::Replica;
 use figcraft_collab::message::Access;
 use figcraft_doc::Document;
 
-use crate::cli::{self, Cli, Command, date, parse};
+use crate::cli::{self, Cli, Command, Sort, date, parse};
 use crate::config::Config;
 use crate::store::Store;
 use crate::test_util::{TempDir, config};
@@ -36,7 +36,7 @@ fn parsing() {
         parse(&args(&["links", "create", "f1", "--access", "view", "--label", "Client"])).unwrap().command,
         Command::CreateLink { file: "f1".into(), access: Access::View, label: "Client".into() }
     );
-    assert_eq!(parse(&args(&["files"])).unwrap().command, Command::Files);
+    assert_eq!(parse(&args(&["files"])).unwrap().command, Command::Files { sort: Sort::Id });
     assert_eq!(parse(&args(&["key", "--rotate"])).unwrap().command, Command::Key { rotate: true });
     assert_eq!(parse(&args(&["-h"])).unwrap().command, Command::Help);
     for bad in
@@ -60,7 +60,7 @@ fn parsing() {
 fn managing_a_directory_on_its_own() {
     let dir = TempDir::new("cli-offline");
     let file = with_file(dir.path());
-    let list = run(dir.path(), Command::Files).unwrap();
+    let list = run(dir.path(), Command::Files { sort: Sort::Id }).unwrap();
     assert!(list.contains(&file) && list.contains("Board"), "{list}");
     let made = run(dir.path(), Command::CreateLink { file: file.clone(), access: Access::View, label: "Client".into() }).unwrap();
     assert!(made.contains("New view link") && made.contains(&format!("file={file}&token=")), "{made}");
@@ -75,7 +75,7 @@ fn managing_a_directory_on_its_own() {
     let rotated = run(dir.path(), Command::Key { rotate: true }).unwrap();
     assert_ne!(key.lines().nth(1), rotated.lines().nth(2));
     run(dir.path(), Command::RemoveFile { file: file.clone() }).unwrap();
-    assert!(run(dir.path(), Command::Files).unwrap().contains("No files yet"));
+    assert!(run(dir.path(), Command::Files { sort: Sort::Id }).unwrap().contains("No files yet"));
     assert!(run(dir.path(), Command::Links { file }).is_err());
 }
 
@@ -91,12 +91,12 @@ fn managing_through_the_running_server() {
     assert!(links.contains("Team"), "{links}");
     let id = links.lines().find(|l| l.contains("Team")).and_then(|l| l.split_whitespace().next()).unwrap().to_string();
     assert!(run(dir.path(), Command::Revoke { file: file.clone(), link: id }).unwrap().contains("Revoked"));
-    assert!(run(dir.path(), Command::Files).unwrap().contains("Board"));
+    assert!(run(dir.path(), Command::Files { sort: Sort::Id }).unwrap().contains("Board"));
     assert!(run(dir.path(), Command::Key { rotate: true }).unwrap_err().contains("stop the server"));
     assert!(run(dir.path(), Command::Key { rotate: false }).unwrap().contains(&format!("ws://{}/?key=", server.addr())));
     server.stop();
     // Stopped: the directory is free again.
-    assert!(run(dir.path(), Command::Files).unwrap().contains("Board"));
+    assert!(run(dir.path(), Command::Files { sort: Sort::Id }).unwrap().contains("Board"));
 }
 
 #[test]

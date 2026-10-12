@@ -272,6 +272,9 @@ fn every_command_survives_junk_params() {
         // Keyboard steps (view.pan) and toggles as junk.
         json!({"dx": 1e308, "dy": "NaN", "big": "yes", "on": 3}),
         json!({"dx": -1e308, "dy": [1], "big": null, "on": null}),
+        // Open hosting: servers, owner tokens, actions, reports and the publish server as junk.
+        json!({"server": "wss://\u{0}", "file": [1], "owner": {"x": 1}, "action": "remove", "reason": 5, "link": -1, "access": "admin", "url": 7}),
+        json!({"server": "ws://127.0.0.1:1/", "file": "../x", "owner": "", "action": "createLink", "reason": "\u{7}\u{0}", "name": "", "url": "ws://x/?key=k"}),
         // Rotation origins and placing with a tool as junk.
         json!({"tool": [1], "x": 1e308, "y": "NaN", "reset": "maybe", "on": {"x": 1}}),
         json!({"tool": "frame", "x": -1e308, "y": 1e308, "reset": true, "on": "yes"}),

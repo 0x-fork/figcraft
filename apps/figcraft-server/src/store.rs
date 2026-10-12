@@ -12,7 +12,14 @@
 //! <data>/files/<id>/library.bin  its team library, when one was published (a `.figcraft` archive)
 //! <data>/files/<id>/usage.json   how other files use that library, as their apps report it
 //! <data>/plugins/                the plugin directory (see `directory`)
+//! <data>/blocked.json            addresses the operator blocked
+//! <data>/reports.json            reports people sent about files
 //! ```
+//!
+//! A server open to the public ([`HostingConfig::open`]) also keeps files anyone published
+//! without the key: such a file has an owner token (stored as its hash) that manages it, the
+//! address it came from (for the per-address caps and the operator), and it is deleted once nobody
+//! has opened it for [`HostingConfig::idle_secs`].
 //!
 //! An open file appends its server's journal to its log; the hub has the store make the appends
 //! durable before anyone hears of them. After [`StoreConfig::compact_after`] entries or
@@ -21,27 +28,43 @@
 //! hashes and compared in constant time. Whatever is damaged at startup is skipped and reported,
 //! never deleted.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Cursor, Write};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use figcraft_collab::message::{
-    Access, Admin, AdminReply, FileInfo, FileUsage, LibraryReply, LibraryReq, LinkInfo, NewLink, PluginReply, PluginReq, Usage,
+    Access, Admin, AdminReply, FileInfo, FileRow, FileUsage, HostInfo, LibraryReply, LibraryReq, LinkInfo, NewLink, PluginReply, PluginReq,
+    ReportInfo, Usage,
 };
 use figcraft_collab::{Change, Replica, Server, same_secret};
-use figcraft_collab_net::hub::{Admission, Backend, Closing, Handled, OpenFile};
+use figcraft_collab_net::hub::{Admission, Backend, Closing, Handled, OpenFile, ip_key};
 use figcraft_collab_net::token;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::abuse::{Abuse, AbuseConfig, Action};
 use crate::directory::{Directory, DirectoryConfig};
 use crate::disk::{self, LIBRARY, LINKS, LOG, LOG_HEADER, META, SNAPSHOT, USAGE};
 
 pub const LOCK: &str = "LOCK";
 pub const KEY: &str = "server.key";
 pub const FILES: &str = "files";
+pub const BLOCKED: &str = "blocked.json";
+pub const REPORTS: &str = "reports.json";
+
+/// Most addresses blocked, and most reports kept (the oldest go first).
+const MAX_BLOCKED: usize = 100_000;
+const MAX_REPORTS: usize = 1_000;
+/// Longest report reason kept (characters).
+const MAX_REASON: usize = 500;
+/// How often idle files are looked for (seconds), besides at startup.
+const SWEEP_EVERY: u64 = 600;
+
+/// Why publishing without the key is refused on a server that isn't open to the public.
+pub const KEY_ONLY: &str = "this server takes files only from people who have its key: add ?key=… to the address (its operator has the key)";
 
 /// Most files whose usage of one library is kept (the least recently changed go first), and most
 /// components one file's report keeps.
@@ -51,7 +74,7 @@ const MAX_REPORTED: usize = 2_000;
 const MAX_USAGE_FILE: u64 = 32 << 20;
 
 /// What the store enforces.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StoreConfig {
     pub max_files: usize,
     pub max_file_bytes: u64,
@@ -60,6 +83,41 @@ pub struct StoreConfig {
     pub compact_bytes: u64,
     pub core: figcraft_collab::Limits,
     pub directory: DirectoryConfig,
+    pub hosting: HostingConfig,
+}
+
+/// Hosting for the public (see the server's settings).
+#[derive(Clone, Debug, PartialEq)]
+pub struct HostingConfig {
+    /// Anyone may publish without the key.
+    pub open: bool,
+    pub operator: String,
+    pub terms: String,
+    /// Files published without the key are deleted after this long unopened (0: kept).
+    pub idle_secs: u64,
+    pub max_file_mb: u64,
+    /// Publishing without the key stops while the files take this much in all.
+    pub max_total_bytes: u64,
+    /// Files published without the key per address, and their bytes.
+    pub max_files_per_ip: usize,
+    pub max_bytes_per_ip: u64,
+    pub abuse: AbuseConfig,
+}
+
+impl Default for HostingConfig {
+    fn default() -> Self {
+        Self {
+            open: false,
+            operator: String::new(),
+            terms: String::new(),
+            idle_secs: 0,
+            max_file_mb: 64,
+            max_total_bytes: u64::MAX,
+            max_files_per_ip: usize::MAX,
+            max_bytes_per_ip: u64::MAX,
+            abuse: AbuseConfig { open: false, connects_per_minute: 30, publishes_per_hour: 10, messages_per_second: 200 },
+        }
+    }
 }
 
 /// A file's description (`meta.json`).
@@ -73,6 +131,21 @@ struct Meta {
     /// The team library published under the file, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     library: Option<LibraryMeta>,
+    /// Published without the key: SHA-256 of its owner token (hex), and the address it came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ip: Option<String>,
+    /// When someone last opened it (seconds since 1970).
+    #[serde(default)]
+    opened: u64,
+}
+
+impl Meta {
+    /// When it was last used: made, changed or opened.
+    fn used(&self) -> u64 {
+        self.created.max(self.updated).max(self.opened)
+    }
 }
 
 /// What a file's team library is (`library.bin` holds it).
@@ -130,6 +203,12 @@ pub struct Store {
     problems: Vec<String>,
     /// The plugin directory.
     directory: Directory,
+    /// What addresses may do how often, the ones blocked, and the reports kept.
+    abuse: Abuse,
+    blocked: BTreeSet<IpAddr>,
+    reports: Vec<ReportInfo>,
+    /// When idle files are looked for next (seconds since 1970).
+    next_sweep: u64,
     _lock: File,
 }
 
@@ -207,9 +286,41 @@ impl Store {
         let dir = root.join(FILES);
         fs::create_dir_all(&dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
         let (directory, problems) = Directory::open(root, cfg.directory);
-        let mut store = Store { root: root.to_path_buf(), cfg, key, files: BTreeMap::new(), problems, directory, _lock: lock };
+        let abuse = Abuse::new(cfg.hosting.abuse);
+        let mut store = Store {
+            root: root.to_path_buf(),
+            cfg,
+            key,
+            files: BTreeMap::new(),
+            problems,
+            directory,
+            abuse,
+            blocked: BTreeSet::new(),
+            reports: Vec::new(),
+            next_sweep: 0,
+            _lock: lock,
+        };
         store.scan(&dir);
+        store.blocked = store.read_list::<String>(BLOCKED).iter().filter_map(|s| s.parse().ok()).map(ip_key).collect();
+        store.reports = store.read_list(REPORTS);
+        store.sweep();
         Ok(Some(store))
+    }
+
+    /// A list kept at the root (missing: empty; damaged: empty and reported, kept until the next
+    /// change writes over it).
+    fn read_list<T: serde::de::DeserializeOwned>(&mut self, name: &str) -> Vec<T> {
+        let path = self.root.join(name);
+        if !path.exists() {
+            return Vec::new();
+        }
+        match disk::read_capped(&path, 16 << 20).and_then(|b| serde_json::from_slice(&b).map_err(|e| format!("{name} is damaged ({e})"))) {
+            Ok(list) => list,
+            Err(e) => {
+                self.problems.push(e);
+                Vec::new()
+            }
+        }
     }
 
     fn scan(&mut self, dir: &Path) {
@@ -302,9 +413,20 @@ impl Store {
         self.files.get_mut(id).ok_or_else(|| "this file isn't on the server (it may have been removed)".to_string())
     }
 
-    fn info(&self, id: &str, e: &Entry, open: Option<OpenFile>) -> FileInfo {
+    /// A file's bytes on disk (its snapshot and log).
+    fn bytes(&self, id: &str) -> u64 {
         let dir = self.dir(id);
-        let bytes = [SNAPSHOT, LOG].iter().filter_map(|n| fs::metadata(dir.join(n)).ok()).map(|m| m.len()).sum();
+        [SNAPSHOT, LOG].iter().filter_map(|n| fs::metadata(dir.join(n)).ok()).map(|m| m.len()).sum()
+    }
+
+    /// When a file published without the key is deleted unless someone opens it.
+    fn expires(&self, meta: &Meta) -> Option<u64> {
+        let idle = self.cfg.hosting.idle_secs;
+        (meta.owner.is_some() && idle > 0).then(|| meta.used().saturating_add(idle))
+    }
+
+    fn info(&self, id: &str, e: &Entry, open: Option<OpenFile>) -> FileInfo {
+        let bytes = self.bytes(id);
         FileInfo {
             id: id.to_string(),
             name: e.meta.name.clone(),
@@ -318,6 +440,52 @@ impl Store {
 
     /// Keep a document (its snapshot) as a new file with an edit link and a view link.
     pub fn publish(&mut self, name: &str, snapshot: &[Change]) -> Result<(FileInfo, NewLink, NewLink), String> {
+        self.keep(name, snapshot, None, &|_| Ok(())).map(|(info, edit, view, _)| (info, edit, view))
+    }
+
+    /// Keep a document published without the key from `ip`, within the caps on what one address
+    /// and everyone may keep: the file, its links and its owner token.
+    pub fn publish_open(&mut self, ip: IpAddr, name: &str, snapshot: &[Change]) -> Result<(FileInfo, NewLink, NewLink, String), String> {
+        let h = &self.cfg.hosting;
+        let (open, max_files, max_ip, max_all) = (h.open, h.max_files_per_ip, h.max_bytes_per_ip, h.max_total_bytes);
+        if !open {
+            return Err(KEY_ONLY.into());
+        }
+        if !self.abuse.allow(ip, Action::Publish, Instant::now()) {
+            return Err("too many files published from your address lately: try again in an hour".into());
+        }
+        let ip_text = ip.to_string();
+        let mine: Vec<&String> = self.files.iter().filter(|(_, e)| e.meta.ip.as_deref() == Some(ip_text.as_str())).map(|(id, _)| id).collect();
+        if mine.len() >= max_files {
+            return Err(format!(
+                "your address keeps {} files on this server already, the most it may: remove one (with its owner token) or wait until one expires",
+                mine.len()
+            ));
+        }
+        let used_ip: u64 = mine.iter().map(|id| self.bytes(id)).sum();
+        let used_all: u64 = self.files.keys().map(|id| self.bytes(id)).sum();
+        let fits = |n: u64| {
+            if used_ip.saturating_add(n) > max_ip {
+                return Err(format!("your address's files would take more than the {} MiB it may keep here: remove one first", max_ip >> 20));
+            }
+            if used_all.saturating_add(n) > max_all {
+                return Err("this server is full: it takes no more files for now (try again later, or another server)".into());
+            }
+            Ok(())
+        };
+        let (info, edit, view, owner) = self.keep(name, snapshot, Some(ip), &fits)?;
+        Ok((info, edit, view, owner.unwrap_or_default()))
+    }
+
+    /// Keep a document as a new file: published without the key from `ip` (it gets an owner
+    /// token), else by the operator. `fits` checks its size against the caps that apply.
+    fn keep(
+        &mut self,
+        name: &str,
+        snapshot: &[Change],
+        ip: Option<IpAddr>,
+        fits: &dyn Fn(u64) -> Result<(), String>,
+    ) -> Result<(FileInfo, NewLink, NewLink, Option<String>), String> {
         if self.files.len() >= self.cfg.max_files {
             return Err(format!("the server keeps at most {} files", self.cfg.max_files));
         }
@@ -337,6 +505,7 @@ impl Store {
         if bytes.len() as u64 > self.cfg.max_file_bytes {
             return Err(format!("the file is {} MiB; this server keeps files up to {} MiB", bytes.len() >> 20, self.cfg.max_file_bytes >> 20));
         }
+        fits(bytes.len() as u64)?;
         let id = loop {
             let id = token::file_id()?;
             if !self.files.contains_key(&id) && !self.dir(&id).exists() {
@@ -346,7 +515,9 @@ impl Store {
         let t = now();
         let (edit, edit_token) = new_link(Access::Edit, "Published (edit)", t)?;
         let (view, view_token) = new_link(Access::View, "Published (view)", t)?;
-        let meta = Meta { name, created: t, updated: t, seq: 0, library: None };
+        let owner = ip.map(|_| token::secret()).transpose()?;
+        let meta =
+            Meta { name, created: t, updated: t, seq: 0, library: None, owner: owner.as_deref().map(hash), ip: ip.map(|i| i.to_string()), opened: 0 };
         let dir = self.dir(&id);
         let written = fs::create_dir_all(&dir)
             .map_err(|e| e.to_string())
@@ -362,8 +533,139 @@ impl Store {
         let entry = Entry { meta, links: vec![edit.clone(), view.clone()], log: None };
         let info = self.info(&id, &entry, None);
         self.files.insert(id.clone(), entry);
-        log::info!("published file {id} ({} bytes)", bytes.len());
-        Ok((info, NewLink { link: edit.info(&id), token: edit_token }, NewLink { link: view.info(&id), token: view_token }))
+        match ip {
+            Some(ip) => log::info!("event=published file={id} bytes={} ip={ip} by=public", bytes.len()),
+            None => log::info!("event=published file={id} bytes={} by=key", bytes.len()),
+        }
+        Ok((info, NewLink { link: edit.info(&id), token: edit_token }, NewLink { link: view.info(&id), token: view_token }, owner))
+    }
+
+    /// The files kept, with what the operator moderates by.
+    pub fn listing(&self, open: &dyn Fn(&str) -> Option<OpenFile>) -> Vec<FileRow> {
+        self.files
+            .iter()
+            .map(|(id, e)| FileRow {
+                info: self.info(id, e, open(id)),
+                opened: e.meta.opened,
+                expires: self.expires(&e.meta),
+                open: e.meta.owner.is_some(),
+                ip: e.meta.ip.clone().unwrap_or_default(),
+                reports: u32::try_from(self.reports.iter().filter(|r| r.file == *id).count()).unwrap_or(u32::MAX),
+            })
+            .collect()
+    }
+
+    /// Rename a file (its listing; the document inside keeps its own name).
+    pub fn rename(&mut self, file: &str, name: &str) -> Result<(), String> {
+        let name = clean_name(name);
+        if name.is_empty() {
+            return Err("give the file a name".into());
+        }
+        let path = self.dir(file).join(META);
+        let entry = self.entry(file)?;
+        let before = std::mem::replace(&mut entry.meta.name, name);
+        if let Err(e) = write_json(&path, &entry.meta) {
+            entry.meta.name = before;
+            return Err(format!("couldn't rename the file: {e}"));
+        }
+        Ok(())
+    }
+
+    /// Delete the files published without the key that nobody opened for the idle time (not
+    /// those open now); their ids.
+    pub fn sweep(&mut self) -> Vec<String> {
+        let t = now();
+        self.next_sweep = t.saturating_add(SWEEP_EVERY);
+        let due: Vec<String> =
+            self.files.iter().filter(|(_, e)| e.log.is_none() && self.expires(&e.meta).is_some_and(|x| x <= t)).map(|(id, _)| id.clone()).collect();
+        for id in &due {
+            match self.remove(id) {
+                Ok(()) => log::info!("event=expired file={id}"),
+                Err(e) => log::warn!("event=expire_failed file={id} reason={e:?}"),
+            }
+        }
+        due
+    }
+
+    /// Make a file look unused for `secs` more (tests: expiry without waiting).
+    #[cfg(test)]
+    pub fn age(&mut self, file: &str, secs: u64) {
+        let path = self.dir(file).join(META);
+        if let Some(e) = self.files.get_mut(file) {
+            let m = &mut e.meta;
+            (m.created, m.updated, m.opened) = (m.created.saturating_sub(secs), m.updated.saturating_sub(secs), m.opened.saturating_sub(secs));
+            let _ = write_json(&path, m);
+        }
+    }
+
+    /// Note that a file was opened now (it is used: it doesn't expire).
+    fn touch(&mut self, file: &str) {
+        let path = self.dir(file).join(META);
+        if let Some(e) = self.files.get_mut(file) {
+            e.meta.opened = now();
+            if let Err(err) = write_json(&path, &e.meta) {
+                log::warn!("file {file}: couldn't update {META}: {err}");
+            }
+        }
+    }
+
+    /// What the server says about its hosting (with `file`'s expiry).
+    fn host_info(&self, file: Option<&str>) -> HostInfo {
+        let h = &self.cfg.hosting;
+        let expires = file.and_then(|f| self.files.get(f)).and_then(|e| self.expires(&e.meta));
+        HostInfo { open: h.open, operator: h.operator.clone(), terms: h.terms.clone(), idle_secs: h.idle_secs, max_file_mb: h.max_file_mb, expires }
+    }
+
+    /// Block or unblock an address (an IPv6 address: its /64); the address as kept.
+    pub fn block(&mut self, ip: &str, on: bool) -> Result<IpAddr, String> {
+        let ip = ip_key(ip.trim().parse::<IpAddr>().map_err(|_| format!("`{}` isn't an IP address", ip.trim()))?);
+        if on && !self.blocked.contains(&ip) && self.blocked.len() >= MAX_BLOCKED {
+            return Err(format!("at most {MAX_BLOCKED} addresses can be blocked"));
+        }
+        let changed = if on { self.blocked.insert(ip) } else { self.blocked.remove(&ip) };
+        if changed {
+            let list: Vec<String> = self.blocked.iter().map(IpAddr::to_string).collect();
+            write_json(&self.root.join(BLOCKED), &list).map_err(|e| format!("couldn't keep the blocked addresses: {e}"))?;
+            log::info!("event={} ip={ip}", if on { "blocked" } else { "unblocked" });
+        }
+        Ok(ip)
+    }
+
+    /// The blocked addresses.
+    pub fn blocked(&self) -> Vec<String> {
+        self.blocked.iter().map(IpAddr::to_string).collect()
+    }
+
+    /// The reports kept, oldest first.
+    pub fn reports(&self) -> &[ReportInfo] {
+        &self.reports
+    }
+
+    /// Keep a report about `file` (from someone who joined it with `link`, at `ip`).
+    pub fn keep_report(&mut self, file: &str, link: Option<&str>, ip: IpAddr, reason: &str) -> Result<(), String> {
+        let reason: String = reason.trim().chars().map(|c| if c.is_control() { ' ' } else { c }).take(MAX_REASON).collect();
+        if reason.is_empty() {
+            return Err("say what is wrong with the file".into());
+        }
+        let name = self.entry(file)?.meta.name.clone();
+        if !self.abuse.allow(ip, Action::Report, Instant::now()) {
+            return Err("too many reports from your address lately: try again in an hour".into());
+        }
+        self.reports.push(ReportInfo {
+            at: now(),
+            file: file.to_string(),
+            name,
+            link: link.unwrap_or_default().to_string(),
+            ip: ip.to_string(),
+            reason,
+        });
+        if self.reports.len() > MAX_REPORTS {
+            let extra = self.reports.len() - MAX_REPORTS;
+            self.reports.drain(..extra);
+        }
+        write_json(&self.root.join(REPORTS), &self.reports).map_err(|e| format!("couldn't keep the report: {e}"))?;
+        log::info!("event=report file={file} ip={ip}");
+        Ok(())
     }
 
     /// The files kept.
@@ -508,6 +810,7 @@ impl Store {
 
     /// Load a file's session: its snapshot, then its log (a damaged end is dropped and reported).
     fn load(&mut self, file: &str) -> Result<Server, String> {
+        self.touch(file);
         let dir = self.dir(file);
         let (generation, state) = disk::decode_snapshot(&disk::read_capped(&dir.join(SNAPSHOT), self.cfg.max_file_bytes)?)?;
         let mut server = Server::restore(state, "", self.cfg.core).map_err(|e| format!("the snapshot can't be used: {e}"))?;
@@ -685,6 +988,8 @@ impl Backend for Store {
         if let Some(e) = self.files.get_mut(file) {
             e.log = None;
         }
+        // Everyone just left: idle time counts from now.
+        self.touch(file);
         true
     }
 
@@ -698,7 +1003,78 @@ impl Backend for Store {
     }
 
     fn manage(&mut self, key: &str) -> Result<(), String> {
-        if same_secret(key, &self.key) { Ok(()) } else { Err("wrong server key".into()) }
+        match same_secret(key, &self.key) {
+            true => Ok(()),
+            false if self.cfg.hosting.open => {
+                Err("wrong server key (this server is open to the public: publish without a key, with an up-to-date FigCraft)".into())
+            }
+            false => Err("wrong server key".into()),
+        }
+    }
+
+    fn connect(&mut self, ip: IpAddr) -> Result<(), String> {
+        if now() >= self.next_sweep {
+            self.sweep();
+        }
+        if self.blocked.contains(&ip) {
+            return Err("this server doesn't accept connections from your address".into());
+        }
+        if !self.abuse.allow(ip, Action::Connect, Instant::now()) {
+            return Err("too many connections from your address lately: wait a minute and try again".into());
+        }
+        Ok(())
+    }
+
+    fn message(&mut self, ip: IpAddr) -> bool {
+        self.abuse.allow(ip, Action::Message, Instant::now())
+    }
+
+    fn hosting(&mut self, file: &str) -> Option<HostInfo> {
+        Some(self.host_info(Some(file)))
+    }
+
+    fn open_hosting(&mut self, _ip: IpAddr, file: &str, owner: &str) -> Result<HostInfo, String> {
+        if file.is_empty() && owner.is_empty() {
+            return Ok(self.host_info(None));
+        }
+        let presented = hash(owner);
+        let owns = self.files.get(file).and_then(|e| e.meta.owner.as_deref()).is_some_and(|h| same_secret(&presented, h));
+        if !owns {
+            return Err("that owner token doesn't manage a file of that id here (it may have been removed or expired)".into());
+        }
+        Ok(self.host_info(Some(file)))
+    }
+
+    fn hosted(&mut self, ip: IpAddr, owns: Option<&str>, req: Admin, open: &dyn Fn(&str) -> Option<OpenFile>) -> Handled {
+        let failed = |reason: &str| Handled::from(AdminReply::Failed { reason: reason.to_string() });
+        let file = match &req {
+            Admin::Publish { name, snapshot } => {
+                return match self.publish_open(ip, name, snapshot) {
+                    Ok((file, edit, view, owner)) => {
+                        let expires = self.files.get(&file.id).and_then(|e| self.expires(&e.meta));
+                        AdminReply::Hosted { file, edit, view, owner, expires }.into()
+                    }
+                    Err(e) => {
+                        log::info!("event=publish_refused ip={ip} reason={e:?}");
+                        Handled::from(AdminReply::Failed { reason: e })
+                    }
+                };
+            }
+            Admin::Links { file }
+            | Admin::CreateLink { file, .. }
+            | Admin::Revoke { file, .. }
+            | Admin::Rename { file, .. }
+            | Admin::Remove { file } => file,
+            _ => return failed("that needs the server key"),
+        };
+        if owns != Some(file.as_str()) {
+            return failed("an owner token manages only its own file");
+        }
+        self.admin(req, open)
+    }
+
+    fn report(&mut self, file: &str, link: Option<&str>, ip: IpAddr, reason: &str) -> Result<(), String> {
+        self.keep_report(file, link, ip, reason)
     }
 
     fn admin(&mut self, req: Admin, open: &dyn Fn(&str) -> Option<OpenFile>) -> Handled {
@@ -712,9 +1088,18 @@ impl Backend for Store {
             Admin::Links { file } => self.links(&file).map_or_else(failed, |l| AdminReply::Links(l).into()),
             Admin::CreateLink { file, access, label } => self.create_link(&file, access, &label).map_or_else(failed, |l| AdminReply::Link(l).into()),
             Admin::Revoke { file, link } => match self.revoke(&file, &link) {
-                Ok(()) => Handled { reply: AdminReply::Done, revoked: Some((file, link)), removed: None },
+                Ok(()) => Handled { reply: AdminReply::Done, revoked: Some((file, link)), removed: None, blocked: None },
                 Err(e) => failed(e),
             },
+            Admin::Rename { file, name } => self.rename(&file, &name).map_or_else(failed, |()| AdminReply::Done.into()),
+            Admin::Listing => AdminReply::Listing(self.listing(open)).into(),
+            Admin::Reports => AdminReply::Reports(self.reports.clone()).into(),
+            Admin::Block { ip } => match self.block(&ip, true) {
+                Ok(ip) => Handled { reply: AdminReply::Done, revoked: None, removed: None, blocked: Some(ip) },
+                Err(e) => failed(e),
+            },
+            Admin::Unblock { ip } => self.block(&ip, false).map_or_else(failed, |_| AdminReply::Done.into()),
+            Admin::Blocked => AdminReply::Blocked(self.blocked()).into(),
             Admin::Remove { file } => {
                 if !self.files.contains_key(&file) {
                     return failed("this file isn't on the server (it may have been removed)".into());
@@ -723,7 +1108,7 @@ impl Backend for Store {
                     Ok(()) => AdminReply::Done,
                     Err(reason) => AdminReply::Failed { reason },
                 };
-                Handled { reply, revoked: None, removed: Some(file) }
+                Handled { reply, revoked: None, removed: Some(file), blocked: None }
             }
         }
     }

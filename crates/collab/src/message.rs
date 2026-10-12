@@ -19,14 +19,23 @@ pub const WIRE_VERSION: u8 = 1;
 /// server sends signals only to clients that say so (older ones couldn't read the message).
 pub const SIGNALS: &str = "signals";
 
+/// The word a client puts in its [`Hello::client_version`] when it reads [`ServerMsg::Hosting`] and
+/// [`ServerMsg::Reported`]: a server sends them only to clients that say so.
+pub const HOSTING: &str = "hosting";
+
 /// The `client_version` this build announces: its version, then what it reads beyond the protocol.
 pub fn client_version() -> String {
-    format!("{} {SIGNALS}", env!("CARGO_PKG_VERSION"))
+    format!("{} {SIGNALS} {HOSTING}", env!("CARGO_PKG_VERSION"))
 }
 
 /// A [`Hello::client_version`] that announces [`SIGNALS`].
 pub fn reads_signals(client_version: &str) -> bool {
     client_version.split_whitespace().any(|w| w == SIGNALS)
+}
+
+/// A [`Hello::client_version`] that announces [`HOSTING`].
+pub fn reads_hosting(client_version: &str) -> bool {
+    client_version.split_whitespace().any(|w| w == HOSTING)
 }
 
 /// Join a file's session.
@@ -245,6 +254,18 @@ pub enum Admin {
     Revoke { file: String, link: String },
     /// Remove a file and its links (whoever is in it is disconnected).
     Remove { file: String },
+    /// Rename a file on the server (its listing; the document inside keeps its own name).
+    Rename { file: String, name: String },
+    /// The files kept, with what the operator moderates by ([`AdminReply::Listing`]).
+    Listing,
+    /// The reports people sent about files.
+    Reports,
+    /// Refuse connections from an address (an IPv6 address: its /64), and disconnect them.
+    Block { ip: String },
+    /// Accept an address again.
+    Unblock { ip: String },
+    /// The blocked addresses.
+    Blocked,
 }
 
 /// A file a server keeps.
@@ -303,6 +324,76 @@ pub enum AdminReply {
     Failed {
         reason: String,
     },
+    /// A file published on an open hosting connection: its first two links and its owner token
+    /// (tokens shown once), and when it is deleted if nobody opens it (seconds since 1970).
+    Hosted {
+        file: FileInfo,
+        edit: NewLink,
+        view: NewLink,
+        owner: String,
+        expires: Option<u64>,
+    },
+    Listing(Vec<FileRow>),
+    Reports(Vec<ReportInfo>),
+    Blocked(Vec<String>),
+}
+
+/// A file with what its operator moderates by.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FileRow {
+    pub info: FileInfo,
+    /// When someone last opened it (seconds since 1970; 0: never since it was published).
+    pub opened: u64,
+    /// When it is deleted if nobody opens it (files published without the server key).
+    pub expires: Option<u64>,
+    /// Published without the server key (it has an owner token), from this address.
+    pub open: bool,
+    pub ip: String,
+    /// Reports kept about it.
+    pub reports: u32,
+}
+
+/// A report someone in a file sent its server's operator.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ReportInfo {
+    /// Seconds since 1970.
+    pub at: u64,
+    pub file: String,
+    /// The file's name then.
+    pub name: String,
+    /// The link the reporter joined with, and their address.
+    pub link: String,
+    pub ip: String,
+    pub reason: String,
+}
+
+/// Opens a connection to a server's open hosting (instead of [`Hello`]): anyone may ask about the
+/// server and, when it is open to the public, publish a file without the server key; with a file's
+/// owner token (`file` and `owner` set) the connection also manages that file. Answered with
+/// [`ServerMsg::Hosting`] or `Refused`; requests are [`Admin`] messages, each answered with one
+/// [`AdminReply`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OpenHosting {
+    pub protocol: u32,
+    pub client_version: String,
+    pub file: String,
+    pub owner: String,
+}
+
+/// What a server says about its hosting: whether anyone may publish, who runs it and its terms,
+/// how long files published without the key are kept unopened, and the largest file.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostInfo {
+    /// Anyone may publish without the server key.
+    pub open: bool,
+    /// How to reach the operator (an email address or a web page), and the terms of use (a URL).
+    pub operator: String,
+    pub terms: String,
+    /// Files published without the key are deleted after this many seconds unopened (0: kept).
+    pub idle_secs: u64,
+    pub max_file_mb: u64,
+    /// This file's expiry (seconds since 1970), when it is one that expires.
+    pub expires: Option<u64>,
 }
 
 /// Opens a connection that uses a file's team library (instead of [`Hello`]), with one of the
@@ -481,6 +572,14 @@ pub enum ClientMsg {
     OpenPlugins(OpenPlugins),
     /// A request on a plugin directory connection.
     Plugins(PluginReq),
+    /// Ask about the server's hosting, publish without the key or manage a file with its owner
+    /// token (the first message on a connection, instead of `Hello`).
+    OpenHosting(OpenHosting),
+    /// Report the file you are in to the server's operator (only to a server that sent
+    /// [`ServerMsg::Hosting`]): why, in a few words.
+    Report {
+        reason: String,
+    },
 }
 
 /// Server → client.
@@ -536,6 +635,31 @@ pub enum ServerMsg {
     },
     /// The answer to a plugin directory connection's request.
     Plugins(Box<PluginReply>),
+    /// The server's hosting: the answer to [`OpenHosting`], and after a welcome to clients whose
+    /// hello announced [`HOSTING`] (with the file's expiry).
+    Hosting(Box<HostInfo>),
+    /// The answer to a [`ClientMsg::Report`]: kept, or why not.
+    Reported {
+        error: Option<String>,
+    },
+}
+
+/// `YYYY-MM-DD HH:MM UTC` for seconds since 1970 (how servers and apps show the times in these
+/// messages).
+pub fn utc_date(secs: u64) -> String {
+    let days = i64::try_from(secs / 86_400).unwrap_or(0);
+    let (h, m) = ((secs % 86_400) / 3600, (secs % 3600) / 60);
+    // Days to a civil date (proleptic Gregorian).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(mo <= 2);
+    format!("{y:04}-{mo:02}-{d:02} {h:02}:{m:02} UTC")
 }
 
 /// The binary form of `msg`: [`WIRE_VERSION`], then postcard.

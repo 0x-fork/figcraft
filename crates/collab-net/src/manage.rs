@@ -7,7 +7,8 @@
 use std::time::Duration;
 
 use figcraft_collab::message::{
-    self, Admin, AdminReply, ClientMsg, LibraryReply, LibraryReq, Manage, OpenLibrary, OpenPlugins, PROTOCOL, PluginReply, PluginReq, ServerMsg,
+    self, Admin, AdminReply, ClientMsg, HostInfo, LibraryReply, LibraryReq, Manage, OpenHosting, OpenLibrary, OpenPlugins, PROTOCOL, PluginReply,
+    PluginReq, ServerMsg,
 };
 use tungstenite::{Bytes, Message, WebSocket};
 
@@ -38,6 +39,45 @@ pub fn request(server: &Endpoint, key: &str, requests: Vec<Admin>, limits: &NetL
     }
     close(ws);
     Ok(replies)
+}
+
+/// Ask the server at `server` about its hosting, with a file's owner token when `file` and `owner`
+/// aren't empty; what it says, and its replies to `requests` (publishing without the key, managing
+/// that file), in order. Fails when the server can't be reached or refuses (a wrong owner token, a
+/// blocked address); a server older than open hosting can't read the request, and is reported as
+/// taking files only with its key. Never echoes the token.
+pub fn hosting(
+    server: &Endpoint,
+    file: &str,
+    owner: &str,
+    requests: Vec<Admin>,
+    limits: &NetLimits,
+    timeout: Duration,
+) -> Result<(HostInfo, Vec<AdminReply>), String> {
+    let admin = |m: ServerMsg| match m {
+        ServerMsg::Admin(r) => Some(*r),
+        _ => None,
+    };
+    let open = OpenHosting { protocol: PROTOCOL, client_version: message::client_version(), file: file.to_string(), owner: owner.to_string() };
+    let mut ws = connect(server, limits, timeout)?;
+    send(&mut ws, &ClientMsg::OpenHosting(open))?;
+    let info = match reply(&mut ws, limits, |m| match m {
+        ServerMsg::Hosting(i) => Some(*i),
+        _ => None,
+    }) {
+        Ok(i) => i,
+        Err(e) if e.contains("couldn't be read") => {
+            return Err(format!("{} takes files only with its key (it is older than this app): add ?key=… to the address", server.display()));
+        }
+        Err(e) => return Err(e),
+    };
+    let mut replies = Vec::with_capacity(requests.len());
+    for r in requests {
+        send(&mut ws, &ClientMsg::Admin(r))?;
+        replies.push(reply(&mut ws, limits, admin)?);
+    }
+    close(ws);
+    Ok((info, replies))
 }
 
 /// Send one library request about the file behind share link `link`; the reply. Fails when the

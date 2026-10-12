@@ -1,12 +1,14 @@
 //! Files on a server in the window: the Publish to server dialog (from the File menu and the
 //! Share popover; its field takes the keyboard; Escape closes it; publishing leaves the tab
-//! read-only until the file is there), the Share popover's address, access and a published file's
-//! links, and a view link's "View only" badge with only the moving tools.
+//! read-only until the file is there; a server open to the public takes it without a key and the
+//! owner token shows once), the Share popover's address, access, a published file's links, where
+//! it is hosted, when it expires and reporting it, and a view link's "View only" badge with only
+//! the moving tools.
 
 use egui::{Event, Key};
 use figcraft_engine::figcraft_collab::message::{ClientMsg, ServerMsg};
 use figcraft_engine::figcraft_collab::{Client, Limits, Outgoing, Server};
-use figcraft_engine::live::{Access, Event as LiveEvent, Published, Role, SessionInfo, Status, VIEW_ONLY};
+use figcraft_engine::live::{Access, Event as LiveEvent, HostInfo, Published, Role, SessionInfo, Status, VIEW_ONLY};
 use figcraft_engine::tools::ToolId;
 use serde_json::json;
 
@@ -63,15 +65,82 @@ fn the_publish_dialog() {
     assert!(has_text(&shapes, "Or keep the file on a FigCraft server and share links to edit or to view it."));
     h.click(text_center(&shapes, "Publish to server…"));
     let shapes = h.frames(2);
-    assert!(has_text(&shapes, "On the server's machine, `figcraft-server key` prints it."));
+    assert!(has_text(
+        &shapes,
+        "Give the address of a server open to the public, or a server's address with its key (`figcraft-server key` prints it)."
+    ));
     h.frame(vec![Event::Text("ws://127.0.0.1:47900/?key=KeyKeyKeyKeyKeyKeyKey0".into())]);
     let shapes = h.frames(1);
+    assert!(has_text(&shapes, "Publishing with the server's key."));
     h.click(text_center(&shapes, "Publish"));
     let shapes = h.frames(2);
     assert!(h.app.ui.live.publish.is_none(), "it closes once publishing starts");
     assert_eq!(h.app.session.live.status, Status::Connecting);
     assert!(has_text(&shapes, "Publishing…"), "the toolbar says why the file can't be edited yet");
     assert_eq!(crate::live::inspect(&h.app)["readOnly"], figcraft_engine::live::PUBLISHING);
+}
+
+fn hosting(expires: Option<u64>) -> HostInfo {
+    HostInfo {
+        open: true,
+        operator: "abuse@example.com".into(),
+        terms: "https://example.com/terms".into(),
+        idle_secs: 30 * 86_400,
+        max_file_mb: 64,
+        expires,
+    }
+}
+
+#[test]
+fn a_server_open_to_the_public_takes_a_file_without_a_key() {
+    let (mut h, _) = Harness::new();
+    crate::menus::invoke(&mut h.app, "collab.publish");
+    h.frames(2);
+    h.frame(vec![Event::Text("wss://figcraft.example.com/".into())]);
+    let shapes = h.frames(1);
+    assert!(!crate::live::inspect(&h.app)["publishDialog"].is_null());
+    // Without a key and before the server said it is open, Publish waits.
+    h.click(text_center(&shapes, "Publish"));
+    assert!(h.app.ui.live.publish.is_some(), "nothing is sent yet");
+    // The server's answer (collab.serverInfo).
+    h.app.ui.live.publish.as_mut().unwrap().info = Some((
+        "wss://figcraft.example.com/".into(),
+        json!({"open": true, "operator": "abuse@example.com", "terms": "https://example.com/terms", "idleDays": 30.0}),
+    ));
+    let shapes = h.frames(2);
+    assert!(has_text(&shapes, "This server is open to the public: no key needed."));
+    assert!(has_text(&shapes, "Hosted by abuse@example.com") && has_text(&shapes, "Terms"));
+    assert!(has_text(&shapes, "Files nobody opens for 30 days are deleted."));
+    assert!(has_text(&shapes, "Files aren't end-to-end encrypted: the server's operator can read them."));
+    h.click(text_center(&shapes, "Publish"));
+    h.frames(2);
+    assert!(h.app.ui.live.publish.is_none());
+    assert_eq!(h.app.session.live.status, Status::Connecting);
+    // On the server: the owner token shows once, with the links and the expiry.
+    let owner = "OwnerOwnerOwnerOwner00";
+    h.send(vec![
+        LiveEvent::Hosting(hosting(None)),
+        LiveEvent::Published(Published {
+            server: "wss://figcraft.example.com/".into(),
+            file: "f".into(),
+            name: "Poster".into(),
+            edit: "figcraft://join?server=wss://figcraft.example.com/&file=f&token=EditEditEditEditEdit00".into(),
+            view: "figcraft://join?server=wss://figcraft.example.com/&file=f&token=ViewViewViewViewView00".into(),
+            owner: Some(owner.into()),
+            expires: Some(1_800_000_000),
+        }),
+    ]);
+    let shapes = h.frames(3);
+    assert_eq!(crate::live::inspect(&h.app)["ownerDialog"], true);
+    assert!(has_text(&shapes, "File published") && has_text(&shapes, "Owner token") && has_text(&shapes, owner));
+    assert!(has_text(
+        &shapes,
+        "Copy the owner token and keep it somewhere safe: it is the only way to revoke these links, rename the file or delete it from the server, and it won't be shown again."
+    ));
+    assert!(has_text(&shapes, "The server deletes this file if nobody opens it before 2027-01-15 08:00 UTC."));
+    h.click(text_center(&shapes, "Done"));
+    h.frames(2);
+    assert_eq!(crate::live::inspect(&h.app)["ownerDialog"], false, "shown once");
 }
 
 #[test]
@@ -84,7 +153,10 @@ fn a_published_file_shows_its_links() {
         name: "Team".into(),
         edit: "figcraft://join?host=127.0.0.1:47900&file=f&token=EditEditEditEditEdit00".into(),
         view: "figcraft://join?host=127.0.0.1:47900&file=f&token=ViewViewViewViewView00".into(),
+        owner: None,
+        expires: None,
     });
+    h.send(vec![LiveEvent::Hosting(hosting(Some(1_800_000_000)))]);
     let shapes = h.frames(2);
     h.click(text_center(&shapes, "Share"));
     let shapes = h.frames(2);
@@ -92,6 +164,18 @@ fn a_published_file_shows_its_links() {
     assert!(has_text(&shapes, "127.0.0.1:47900 · Can edit"));
     assert!(has_text(&shapes, "Edit link") && has_text(&shapes, "View link"));
     assert!(has_text(&shapes, "Leave session"));
+    assert!(!has_text(&shapes, "Owner token"), "the owner token showed once, not here");
+    // Where it is hosted, when it expires, and reporting it to the operator.
+    assert!(has_text(&shapes, "Hosted by abuse@example.com") && has_text(&shapes, "Terms"));
+    assert!(has_text(&shapes, "The server deletes this file if nobody opens it before 2027-01-15 08:00 UTC."));
+    h.click(text_center(&shapes, "Report this file…"));
+    let shapes = h.frames(2);
+    assert!(has_text(&shapes, "What is wrong with this file? The server's operator gets your report."));
+    h.app.ui.live.report = Some("Spam".into());
+    let shapes = h.frames(2);
+    h.click(text_center(&shapes, "Send report"));
+    h.frames(2);
+    assert!(h.app.ui.live.report.is_none(), "sent");
 }
 
 #[test]

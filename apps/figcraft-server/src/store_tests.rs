@@ -99,7 +99,7 @@ fn a_file_survives_a_crash_and_compacts() {
     let dir = TempDir::new("crash");
     let c = StoreConfig { compact_after: 1000, ..cfg(dir.path()) };
     let (id, before, seq) = {
-        let mut store = Store::open(dir.path(), c).unwrap();
+        let mut store = Store::open(dir.path(), c.clone()).unwrap();
         let (id, _, _) = publish(&mut store, "Crash");
         let mut server = store.open(&id).unwrap();
         let mut a = join(&mut server, Access::Edit);
@@ -131,7 +131,7 @@ fn a_file_survives_a_crash_and_compacts() {
 fn a_long_log_is_compacted_while_open() {
     let dir = TempDir::new("compact");
     let c = StoreConfig { compact_after: 3, ..cfg(dir.path()) };
-    let mut store = Store::open(dir.path(), c).unwrap();
+    let mut store = Store::open(dir.path(), c.clone()).unwrap();
     let (id, _, _) = publish(&mut store, "Busy");
     let mut server = store.open(&id).unwrap();
     let mut a = join(&mut server, Access::Edit);

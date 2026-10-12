@@ -4,9 +4,9 @@ use figcraft_doc::{Document, NodeId, NodeKind};
 
 use crate::change::{Change, Json, Prop};
 use crate::message::{
-    Accepted, Access, Admin, AdminReply, CatchUp, ClientMsg, EditingText, FileInfo, FileUsage, Hello, LibraryReply, LibraryReq, LinkInfo, Manage,
-    NewLink, OpenLibrary, OpenPlugins, PROTOCOL, Peer, PluginEntry, PluginReply, PluginReq, Presence, Processed, Resume, ServerMsg, Signal, Usage,
-    WIRE_VERSION, decode, decode_json, encode, encode_json,
+    Accepted, Access, Admin, AdminReply, CatchUp, ClientMsg, EditingText, FileInfo, FileRow, FileUsage, Hello, HostInfo, LibraryReply, LibraryReq,
+    LinkInfo, Manage, NewLink, OpenHosting, OpenLibrary, OpenPlugins, PROTOCOL, Peer, PluginEntry, PluginReply, PluginReq, Presence, Processed,
+    ReportInfo, Resume, ServerMsg, Signal, Usage, WIRE_VERSION, decode, decode_json, encode, encode_json,
 };
 use crate::sim::Rng;
 use crate::{Error, Replica, diff};
@@ -68,6 +68,14 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
         ClientMsg::Plugins(PluginReq::Fetch { id: "org.example.p".into(), version: Some("1.0.0".into()) }),
         ClientMsg::Plugins(PluginReq::Publish { bundle: vec![b'F', b'C'] }),
         ClientMsg::Plugins(PluginReq::Unpublish { id: "org.example.p".into(), version: None }),
+        ClientMsg::OpenHosting(OpenHosting { protocol: PROTOCOL, client_version: "0.3.2 hosting".into(), file: "f".into(), owner: "o".into() }),
+        ClientMsg::Admin(Admin::Rename { file: "f".into(), name: "Café 2".into() }),
+        ClientMsg::Admin(Admin::Listing),
+        ClientMsg::Admin(Admin::Reports),
+        ClientMsg::Admin(Admin::Block { ip: "203.0.113.9".into() }),
+        ClientMsg::Admin(Admin::Unblock { ip: "2001:db8::".into() }),
+        ClientMsg::Admin(Admin::Blocked),
+        ClientMsg::Report { reason: "Spam ☕".into() },
     ];
     let snapshot = Replica::new(Document::new("Snap")).snapshot().unwrap();
     let file = FileInfo { id: "f".into(), name: "Café".into(), created: 1, updated: 2, seq: 3, bytes: 4, people: 5 };
@@ -112,9 +120,9 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
         ServerMsg::Pong,
         ServerMsg::Admin(Box::new(AdminReply::Ready)),
         ServerMsg::Admin(Box::new(AdminReply::Published { file: file.clone(), edit: new_link.clone(), view: new_link.clone() })),
-        ServerMsg::Admin(Box::new(AdminReply::Files(vec![file]))),
+        ServerMsg::Admin(Box::new(AdminReply::Files(vec![file.clone()]))),
         ServerMsg::Admin(Box::new(AdminReply::Links(vec![link]))),
-        ServerMsg::Admin(Box::new(AdminReply::Link(new_link))),
+        ServerMsg::Admin(Box::new(AdminReply::Link(new_link.clone()))),
         ServerMsg::Admin(Box::new(AdminReply::Done)),
         ServerMsg::Admin(Box::new(AdminReply::Failed { reason: "no".into() })),
         ServerMsg::Library(Box::new(LibraryReply::Ready { access: Access::View })),
@@ -135,6 +143,40 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
         ServerMsg::Plugins(Box::new(PluginReply::Published(entry))),
         ServerMsg::Plugins(Box::new(PluginReply::Removed(vec!["1.0.0".into()]))),
         ServerMsg::Plugins(Box::new(PluginReply::Failed { reason: "no".into() })),
+        ServerMsg::Admin(Box::new(AdminReply::Hosted {
+            file: file.clone(),
+            edit: new_link.clone(),
+            view: new_link.clone(),
+            owner: "o".into(),
+            expires: Some(99),
+        })),
+        ServerMsg::Admin(Box::new(AdminReply::Listing(vec![FileRow {
+            info: file.clone(),
+            opened: 7,
+            expires: None,
+            open: true,
+            ip: "203.0.113.9".into(),
+            reports: 2,
+        }]))),
+        ServerMsg::Admin(Box::new(AdminReply::Reports(vec![ReportInfo {
+            at: 8,
+            file: "f".into(),
+            name: "Café".into(),
+            link: "l".into(),
+            ip: "203.0.113.9".into(),
+            reason: "Spam".into(),
+        }]))),
+        ServerMsg::Admin(Box::new(AdminReply::Blocked(vec!["203.0.113.9".into()]))),
+        ServerMsg::Hosting(Box::new(HostInfo {
+            open: true,
+            operator: "abuse@example.com".into(),
+            terms: "https://example.com/terms".into(),
+            idle_secs: 86_400,
+            max_file_mb: 16,
+            expires: Some(1_800_000_000),
+        })),
+        ServerMsg::Reported { error: None },
+        ServerMsg::Reported { error: Some("too many reports".into()) },
     ];
     (client, server)
 }

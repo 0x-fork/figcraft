@@ -16,7 +16,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use figcraft_collab::Replica;
-use figcraft_collab::message::{self, Admin, AdminReply, ClientMsg, Presence, ServerMsg};
+use figcraft_collab::message::{self, Admin, AdminReply, ClientMsg, HostInfo, Presence, ServerMsg};
 use figcraft_doc::Document;
 use figcraft_engine::live::{Event, Published, Status};
 use tungstenite::protocol::frame::coding::CloseCode;
@@ -34,8 +34,8 @@ use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
 /// What [`Guest::publish`] uploads, and where.
 pub struct Publish {
     pub server: Endpoint,
-    /// The server's key.
-    pub key: String,
+    /// The server's key (`None`: publish as anyone may, on a server open to the public).
+    pub key: Option<String>,
     /// The file's name on the server.
     pub name: String,
     pub doc: Arc<Document>,
@@ -75,10 +75,13 @@ impl Guest {
         let me = tx.clone();
         let thread = std::thread::Builder::new().name("live-publish".into()).spawn(move || {
             inbox.push(Event::Status(Status::Connecting));
-            let (cfg, published) = match upload(&job, cfg) {
+            let (cfg, published, hosting) = match upload(&job, cfg) {
                 Ok(done) => done,
                 Err(e) => return inbox.push(Event::Status(Status::Failed { reason: format!("Couldn't publish to the server: {e}") })),
             };
+            if let Some(h) = hosting {
+                inbox.push(Event::Hosting(h));
+            }
             inbox.push(Event::Published(published));
             // Left while uploading: the file stays on the server, nobody joins it. Anything else
             // that came meanwhile (presence) waits for the session.
@@ -138,33 +141,44 @@ struct Conn {
     sock: TcpStream,
 }
 
-/// Keep `doc` on `server` as a new file named `name`: its edit link, and where it is with its links.
+/// Keep `doc` on `server` as a new file named `name`, with the server's `key` (or, without one, as
+/// anyone may on a server open to the public): its edit link, where it is with its links (and its
+/// owner token without a key), and what the server says about its hosting (without a key).
 pub(crate) fn upload_file(
     server: &Endpoint,
-    key: &str,
+    key: Option<&str>,
     name: &str,
     doc: &Document,
     limits: &NetLimits,
     timeout: Duration,
-) -> Result<(Invite, Published), String> {
+) -> Result<(Invite, Published, Option<HostInfo>), String> {
     let snapshot = Replica::new(doc.clone()).snapshot().map_err(|e| e.to_string())?;
-    let replies = manage::request(server, key, vec![Admin::Publish { name: name.to_string(), snapshot }], limits, timeout)?;
-    let (file, edit, view) = match replies.into_iter().next() {
-        Some(AdminReply::Published { file, edit, view }) => (file, edit, view),
+    let publish = vec![Admin::Publish { name: name.to_string(), snapshot }];
+    let (replies, hosting) = match key {
+        Some(key) => (manage::request(server, key, publish, limits, timeout)?, None),
+        None => {
+            let (info, replies) = manage::hosting(server, "", "", publish, limits, timeout)?;
+            (replies, Some(info))
+        }
+    };
+    let (file, edit, view, owner, expires) = match replies.into_iter().next() {
+        Some(AdminReply::Published { file, edit, view }) => (file, edit, view, None, None),
+        Some(AdminReply::Hosted { file, edit, view, owner, expires }) => (file, edit, view, Some(owner), expires),
         Some(AdminReply::Failed { reason }) => return Err(reason),
         _ => return Err("the server didn't say where the file is".into()),
     };
     let link = |token: String| Invite { server: server.clone(), file: file.id.clone(), token };
     let (edit, view) = (link(edit.token), link(view.token));
-    let published = Published { server: server.display(), file: file.id.clone(), name: file.name, edit: edit.link(), view: view.link() };
-    Ok((edit, published))
+    let published =
+        Published { server: server.display(), file: file.id.clone(), name: file.name, edit: edit.link(), view: view.link(), owner, expires };
+    Ok((edit, published, hosting))
 }
 
-/// Upload the document; the join settings for the new file and its links.
-fn upload(job: &Publish, mut cfg: GuestConfig) -> Result<(GuestConfig, Published), String> {
-    let (edit, published) = upload_file(&job.server, &job.key, &job.name, &job.doc, &cfg.limits, cfg.connect_timeout)?;
+/// Upload the document; the join settings for the new file, its links and the server's hosting.
+fn upload(job: &Publish, mut cfg: GuestConfig) -> Result<(GuestConfig, Published, Option<HostInfo>), String> {
+    let (edit, published, hosting) = upload_file(&job.server, job.key.as_deref(), &job.name, &job.doc, &cfg.limits, cfg.connect_timeout)?;
     cfg.invite = edit;
-    Ok((cfg, published))
+    Ok((cfg, published, hosting))
 }
 
 fn connect(cfg: &GuestConfig) -> Result<Conn, String> {

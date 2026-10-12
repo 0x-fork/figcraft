@@ -46,7 +46,15 @@ fn publishing_makes_the_open_tab_the_server_file() {
     let mut doc = s.doc().unwrap().clone();
     doc.name = "Team".into();
     let (mut server, id, welcome) = serve_as(&doc, Access::Edit);
-    let published = Published { server: "127.0.0.1:47900".into(), file: "f".into(), name: "Team".into(), edit: "e".into(), view: "v".into() };
+    let published = Published {
+        server: "127.0.0.1:47900".into(),
+        file: "f".into(),
+        name: "Team".into(),
+        edit: "e".into(),
+        view: "v".into(),
+        owner: None,
+        expires: None,
+    };
     push(&script, vec![Event::Published(published.clone()), Event::Welcome { info: info(Role::Guest, id), peers: vec![] }, welcome]);
     s.live_poll();
     assert!(s.live.syncing());
