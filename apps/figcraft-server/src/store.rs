@@ -63,15 +63,28 @@ const MAX_REASON: usize = 500;
 /// How often idle files are looked for (seconds), besides at startup.
 const SWEEP_EVERY: u64 = 600;
 
+/// Why a download is turned away (an address's share, or everyone's, is used up for now).
+pub const BUSY_DOWNLOADS: &str = "too many downloads from your address or from everyone right now: try again in a minute";
+
 /// Why publishing without the key is refused on a server that isn't open to the public.
 pub const KEY_ONLY: &str = "this server takes files only from people who have its key: add ?key=… to the address (its operator has the key)";
 
+/// Why a file published without the key can't hold a team library on a public server (a library
+/// is a whole archive checked on the server; strangers' files don't get that).
+pub const NO_PUBLIC_LIBRARY: &str = "on this public server only files published with the server key can hold a team library";
+
 /// Most files whose usage of one library is kept (the least recently changed go first), and most
 /// components one file's report keeps.
-const MAX_USERS: usize = 500;
-const MAX_REPORTED: usize = 2_000;
+const MAX_USERS: usize = 200;
+const MAX_REPORTED: usize = 1_000;
 /// Largest `usage.json` read.
-const MAX_USAGE_FILE: u64 = 32 << 20;
+const MAX_USAGE_FILE: u64 = 4 << 20;
+/// A library's usage reports are kept in memory and written at most this often (seconds), and
+/// when the server stops.
+const USAGE_WRITE_EVERY: u64 = 60;
+/// Bytes of team libraries served a second, everyone together, and at once.
+const LIBRARY_RATE: f64 = (32u64 << 20) as f64;
+const LIBRARY_BURST: f64 = (256u64 << 20) as f64;
 
 /// What the store enforces.
 #[derive(Clone, Debug, PartialEq)]
@@ -191,6 +204,15 @@ struct Entry {
     links: Vec<Link>,
     /// Open: its log.
     log: Option<Log>,
+    /// Its snapshot's and log's bytes on disk (what was written; pending records not yet).
+    bytes: u64,
+}
+
+/// A library's usage reports in memory, and whether (and when) they were written.
+struct UsageCache {
+    list: Vec<FileUsage>,
+    dirty: bool,
+    written: u64,
 }
 
 /// The data directory in use (it holds the directory's lock until dropped).
@@ -205,6 +227,10 @@ pub struct Store {
     directory: Directory,
     /// What addresses may do how often, the ones blocked, and the reports kept.
     abuse: Abuse,
+    /// Team library bytes served, everyone together.
+    served: figcraft_collab_net::net::Bucket,
+    /// Usage reports by library file.
+    usage: BTreeMap<String, UsageCache>,
     blocked: BTreeSet<IpAddr>,
     reports: Vec<ReportInfo>,
     /// When idle files are looked for next (seconds since 1970).
@@ -234,7 +260,12 @@ fn clean_name(s: &str) -> String {
 
 /// Take the data directory's lock: `None` when someone else holds it.
 pub fn lock(root: &Path) -> Result<Option<File>, String> {
-    fs::create_dir_all(root).map_err(|e| format!("can't create the data directory {}: {e}", root.display()))?;
+    // Only the server's account reads what it keeps (files, addresses, reports, the key).
+    let mut dirs = fs::DirBuilder::new();
+    dirs.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut dirs, 0o700);
+    dirs.create(root).map_err(|e| format!("can't create the data directory {}: {e}", root.display()))?;
     let f = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -263,12 +294,7 @@ fn load_key(root: &Path) -> Result<String, String> {
 fn write_key(root: &Path) -> Result<String, String> {
     let key = token::secret()?;
     let path = root.join(KEY);
-    disk::write_atomic(&path, format!("{key}\n").as_bytes()).map_err(|e| format!("can't write {}: {e}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-    }
+    disk::write_atomic_private(&path, format!("{key}\n").as_bytes()).map_err(|e| format!("can't write {}: {e}", path.display()))?;
     Ok(key)
 }
 
@@ -295,6 +321,8 @@ impl Store {
             problems,
             directory,
             abuse,
+            served: figcraft_collab_net::net::Bucket::new(LIBRARY_RATE, LIBRARY_BURST),
+            usage: BTreeMap::new(),
             blocked: BTreeSet::new(),
             reports: Vec::new(),
             next_sweep: 0,
@@ -371,7 +399,8 @@ impl Store {
         {
             log::info!("file at {}: its log predates the last compaction; it is ignored", path.display());
         }
-        Ok(Entry { meta, links, log: None })
+        let bytes = [SNAPSHOT, LOG].iter().filter_map(|n| fs::metadata(path.join(n)).ok()).map(|m| m.len()).sum();
+        Ok(Entry { meta, links, log: None, bytes })
     }
 
     /// The server key (for managing files).
@@ -413,10 +442,9 @@ impl Store {
         self.files.get_mut(id).ok_or_else(|| "this file isn't on the server (it may have been removed)".to_string())
     }
 
-    /// A file's bytes on disk (its snapshot and log).
+    /// A file's bytes on disk (its snapshot and log), with the log records not written yet.
     fn bytes(&self, id: &str) -> u64 {
-        let dir = self.dir(id);
-        [SNAPSHOT, LOG].iter().filter_map(|n| fs::metadata(dir.join(n)).ok()).map(|m| m.len()).sum()
+        self.files.get(id).map_or(0, |e| e.bytes + e.log.as_ref().map_or(0, |l| l.pending.len() as u64))
     }
 
     /// When a file published without the key is deleted unless someone opens it.
@@ -530,9 +558,9 @@ impl Store {
             let _ = fs::remove_dir_all(&dir);
             return Err(format!("couldn't keep the file: {e}"));
         }
-        let entry = Entry { meta, links: vec![edit.clone(), view.clone()], log: None };
-        let info = self.info(&id, &entry, None);
+        let entry = Entry { meta, links: vec![edit.clone(), view.clone()], log: None, bytes: (bytes.len() + LOG_HEADER) as u64 };
         self.files.insert(id.clone(), entry);
+        let info = self.files.get(&id).map(|e| self.info(&id, e, None)).ok_or("the file vanished")?;
         match ip {
             Some(ip) => log::info!("event=published file={id} bytes={} ip={ip} by=public", bytes.len()),
             None => log::info!("event=published file={id} bytes={} by=key", bytes.len()),
@@ -595,6 +623,17 @@ impl Store {
             let m = &mut e.meta;
             (m.created, m.updated, m.opened) = (m.created.saturating_sub(secs), m.updated.saturating_sub(secs), m.opened.saturating_sub(secs));
             let _ = write_json(&path, m);
+        }
+    }
+
+    /// Make an open file's log refuse writes (tests: a full or failing disk).
+    #[cfg(test)]
+    pub fn break_log(&mut self, file: &str) {
+        let path = self.dir(file).join(LOG);
+        if let Some(log) = self.files.get_mut(file).and_then(|e| e.log.as_mut())
+            && let Ok(f) = File::open(path)
+        {
+            log.file = f;
         }
     }
 
@@ -722,12 +761,18 @@ impl Store {
         Ok(())
     }
 
-    /// A file's team library, unless its version is `have`.
-    fn fetch_library(&mut self, file: &str, have: Option<u64>) -> Result<LibraryReply, String> {
+    /// A file's team library for `ip`, unless its version is `have`; within what one address and
+    /// everyone may download (the size is known before anything is read).
+    fn fetch_library(&mut self, ip: IpAddr, file: &str, have: Option<u64>) -> Result<LibraryReply, String> {
         let (path, max) = (self.dir(file).join(LIBRARY), self.cfg.max_file_bytes);
         let Some(lib) = self.entry(file)?.meta.library.clone() else { return Ok(LibraryReply::Empty) };
         if have == Some(lib.version) {
             return Ok(LibraryReply::Unchanged { version: lib.version });
+        }
+        let size = fs::metadata(&path).map_or(0, |m| m.len());
+        let now = Instant::now();
+        if !self.abuse.allow(ip, Action::Download(usize::try_from(size).unwrap_or(usize::MAX)), now) || !self.served.take_n(now, size as f64) {
+            return Err(BUSY_DOWNLOADS.into());
         }
         Ok(LibraryReply::Library { version: lib.version, archive: disk::read_capped(&path, max)? })
     }
@@ -738,10 +783,15 @@ impl Store {
     // move it to a worker if large libraries make that noticeable.
     pub fn publish_library(&mut self, file: &str, archive: &[u8]) -> Result<u64, String> {
         let max = self.cfg.max_file_bytes;
+        if self.cfg.hosting.open && self.entry(file)?.meta.owner.is_some() {
+            return Err(NO_PUBLIC_LIBRARY.into());
+        }
         if archive.len() as u64 > max {
             return Err(format!("the library is {} MiB; this server keeps files up to {} MiB", archive.len() >> 20, max >> 20));
         }
-        let lib = match figcraft_format::read_library(Cursor::new(archive)) {
+        // Everything it unpacks to counts against the same cap, so a small archive can't expand
+        // into a large library in memory.
+        let lib = match figcraft_format::read_library_within(Cursor::new(archive), max) {
             Ok(Some(lib)) => lib,
             Ok(None) => return Err("that isn't a published library".into()),
             Err(e) => return Err(format!("the library can't be read: {e}")),
@@ -772,40 +822,98 @@ impl Store {
         Ok(m.version)
     }
 
-    /// The usage reports kept for a file's library (none when it has no library).
-    pub fn library_usage(&mut self, file: &str) -> Result<Vec<FileUsage>, String> {
-        let path = self.dir(file).join(USAGE);
-        if self.entry(file)?.meta.library.is_none() || !path.exists() {
-            return Ok(Vec::new());
+    /// A library's usage reports in memory (read from disk the first time; a damaged list starts
+    /// over: it is only statistics). `None` when the file has no library.
+    fn usage_of(&mut self, file: &str) -> Result<Option<&mut UsageCache>, String> {
+        if self.entry(file)?.meta.library.is_none() {
+            return Ok(None);
         }
-        serde_json::from_slice(&disk::read_capped(&path, MAX_USAGE_FILE)?).map_err(|e| format!("{USAGE} is damaged ({e})"))
+        if !self.usage.contains_key(file) {
+            let path = self.dir(file).join(USAGE);
+            let list = if path.exists() {
+                disk::read_capped(&path, MAX_USAGE_FILE).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            self.usage.insert(file.to_string(), UsageCache { list, dirty: false, written: now() });
+        }
+        Ok(self.usage.get_mut(file))
     }
 
-    /// Keep how one file uses a file's library (written only when it changed).
+    /// The usage reports kept for a file's library (none when it has no library).
+    pub fn library_usage(&mut self, file: &str) -> Result<Vec<FileUsage>, String> {
+        Ok(self.usage_of(file)?.map(|u| u.list.clone()).unwrap_or_default())
+    }
+
+    /// Keep how one file uses a file's library (in memory; written when it changed, at most every
+    /// [`USAGE_WRITE_EVERY`] seconds).
     pub fn report_usage(&mut self, file: &str, usage: Usage) -> Result<(), String> {
         let name = clean_name(&usage.file);
-        if name.is_empty() || self.entry(file)?.meta.library.is_none() {
+        if name.is_empty() {
             return Ok(());
         }
-        let mut components: Vec<_> = usage.components.into_iter().filter(|(_, n)| *n > 0).collect();
+        let mut components: Vec<_> = usage.components.into_iter().filter(|(_, n)| *n > 0).take(MAX_REPORTED * 4).collect();
         components.sort();
         components.dedup_by_key(|c| c.0);
         components.truncate(MAX_REPORTED);
-        // A damaged report list starts over (it is only statistics).
-        let mut all = self.library_usage(file).unwrap_or_default();
-        match all.iter_mut().find(|f| f.usage.file == name) {
+        let Some(u) = self.usage_of(file)? else { return Ok(()) };
+        match u.list.iter_mut().find(|f| f.usage.file == name) {
             Some(f) if f.usage.components == components => return Ok(()),
             Some(f) => {
                 f.usage.components = components;
                 f.updated = now();
             }
-            None => all.push(FileUsage { usage: Usage { file: name, components }, updated: now() }),
+            None => u.list.push(FileUsage { usage: Usage { file: name, components }, updated: now() }),
         }
-        if all.len() > MAX_USERS {
-            all.sort_by_key(|f| std::cmp::Reverse(f.updated));
-            all.truncate(MAX_USERS);
+        if u.list.len() > MAX_USERS {
+            u.list.sort_by_key(|f| std::cmp::Reverse(f.updated));
+            u.list.truncate(MAX_USERS);
         }
-        write_json(&self.dir(file).join(USAGE), &all)
+        u.dirty = true;
+        if now() >= u.written.saturating_add(USAGE_WRITE_EVERY) {
+            self.write_usage(false);
+        }
+        Ok(())
+    }
+
+    /// Write the usage reports that changed (`all`: whenever they were last written).
+    fn write_usage(&mut self, all: bool) {
+        let t = now();
+        let root = self.root.join(FILES);
+        for (file, u) in &mut self.usage {
+            if u.dirty && (all || t >= u.written.saturating_add(USAGE_WRITE_EVERY)) {
+                if let Err(e) = write_json(&root.join(file).join(USAGE), &u.list) {
+                    log::warn!("file {file}: library usage couldn't be kept: {e}");
+                }
+                (u.dirty, u.written) = (false, t);
+            }
+        }
+    }
+
+    /// Whether `file` has room for about `n` more bytes: its cap, and for a file published
+    /// without the key its address's share and everyone's. A log that took it over its cap is
+    /// compacted first (the state may be smaller than its history).
+    fn room_for(&mut self, file: &str, server: &Server, n: u64) -> Result<(), String> {
+        let max = self.cfg.max_file_bytes;
+        let over = |s: &Store| s.bytes(file).saturating_add(n) > max;
+        if over(self) && self.files.get(file).and_then(|e| e.log.as_ref()).is_some_and(|l| l.entries > 0 || !l.pending.is_empty()) {
+            self.compact(file, server);
+        }
+        if over(self) {
+            return Err(format!("this file has reached the server's limit of {} MiB: that change wasn't kept", max >> 20));
+        }
+        let h = &self.cfg.hosting;
+        let Some(ip) = self.files.get(file).filter(|e| e.meta.owner.is_some()).and_then(|e| e.meta.ip.clone()) else { return Ok(()) };
+        let (max_ip, max_all) = (h.max_bytes_per_ip, h.max_total_bytes);
+        let used_ip: u64 = self.files.iter().filter(|(_, e)| e.meta.ip.as_deref() == Some(ip.as_str())).map(|(id, _)| self.bytes(id)).sum();
+        if used_ip.saturating_add(n) > max_ip {
+            return Err(format!("the files published from this file's address have reached their {} MiB: that change wasn't kept", max_ip >> 20));
+        }
+        let used_all: u64 = self.files.keys().map(|id| self.bytes(id)).sum();
+        if used_all.saturating_add(n) > max_all {
+            return Err("this server is full: that change wasn't kept".into());
+        }
+        Ok(())
     }
 
     /// Load a file's session: its snapshot, then its log (a damaged end is dropped and reported).
@@ -868,6 +976,7 @@ impl Store {
         disk::write_atomic(&dir.join(LOG), &disk::log_header(generation)).map_err(|e| format!("couldn't start the log: {e}"))?;
         let f = OpenOptions::new().append(true).open(dir.join(LOG)).map_err(|e| format!("couldn't open the log: {e}"))?;
         if let Ok(e) = self.entry(file) {
+            e.bytes = (bytes.len() + LOG_HEADER) as u64;
             e.meta.seq = server.seq();
             let meta = e.meta.clone();
             if let Err(err) = write_json(&dir.join(META), &meta) {
@@ -892,27 +1001,43 @@ impl Store {
         }
     }
 
-    /// Write and sync what's pending in every open log.
-    fn flush_all(&mut self) {
+    /// Write and sync what's pending in every open log; the files whose log couldn't be written.
+    /// Those are closed here (their pending records dropped: nobody was told of them) and open
+    /// again from what is on disk.
+    fn flush_all(&mut self) -> Vec<String> {
+        let mut failed = Vec::new();
         for (id, e) in &mut self.files {
             if let Some(log) = e.log.as_mut() {
-                flush_log(id, log);
+                match flush_log(id, log) {
+                    Ok(n) => e.bytes += n,
+                    Err(()) => {
+                        e.log = None;
+                        failed.push(id.clone());
+                    }
+                }
             }
         }
+        failed
     }
 }
 
-/// Write and sync a log's pending records (kept for the next try when that fails).
-fn flush_log(id: &str, log: &mut Log) {
+/// Write and sync a log's pending records: the bytes written, or `Err` when that failed (the log
+/// can't be trusted to hold them).
+fn flush_log(id: &str, log: &mut Log) -> Result<u64, ()> {
     if log.pending.is_empty() {
-        return;
+        return Ok(0);
     }
     match log.file.write_all(&log.pending).and_then(|()| log.file.sync_data()) {
         Ok(()) => {
-            log.bytes += log.pending.len() as u64;
+            let n = log.pending.len() as u64;
+            log.bytes += n;
             log.pending.clear();
+            Ok(n)
         }
-        Err(e) => log::error!("file {id}: couldn't write its log: {e}"),
+        Err(e) => {
+            log::error!("file {id}: couldn't write its log: {e}");
+            Err(())
+        }
     }
 }
 
@@ -973,13 +1098,17 @@ impl Backend for Store {
         }
     }
 
-    fn flush(&mut self) {
-        self.flush_all();
+    fn flush(&mut self) -> Vec<String> {
+        self.flush_all()
+    }
+
+    fn room(&mut self, file: &str, server: &Server, bytes: usize) -> Result<(), String> {
+        self.room_for(file, server, bytes as u64)
     }
 
     fn idle(&mut self, file: &str, server: &mut Server) -> bool {
         let dirty = self.files.get_mut(file).and_then(|e| e.log.as_mut()).is_some_and(|log| {
-            flush_log(file, log);
+            let _ = flush_log(file, log);
             log.dirty
         });
         if dirty {
@@ -994,6 +1123,7 @@ impl Backend for Store {
     }
 
     fn stop(&mut self, open: Vec<(&str, &mut Server)>) {
+        self.write_usage(true);
         self.flush_all();
         for (file, server) in open {
             if self.files.get(file).and_then(|e| e.log.as_ref()).is_some_and(|l| l.dirty) {
@@ -1015,6 +1145,7 @@ impl Backend for Store {
     fn connect(&mut self, ip: IpAddr) -> Result<(), String> {
         if now() >= self.next_sweep {
             self.sweep();
+            self.write_usage(false);
         }
         if self.blocked.contains(&ip) {
             return Err("this server doesn't accept connections from your address".into());
@@ -1113,7 +1244,7 @@ impl Backend for Store {
         }
     }
 
-    fn library(&mut self, file: &str, access: Access, req: LibraryReq) -> LibraryReply {
+    fn library(&mut self, ip: IpAddr, file: &str, access: Access, req: LibraryReq) -> LibraryReply {
         let failed = |reason: String| LibraryReply::Failed { reason };
         match req {
             LibraryReq::Fetch { have, usage } => {
@@ -1122,7 +1253,7 @@ impl Backend for Store {
                 {
                     log::warn!("file {file}: a library usage report couldn't be kept: {e}");
                 }
-                self.fetch_library(file, have).unwrap_or_else(failed)
+                self.fetch_library(ip, file, have).unwrap_or_else(failed)
             }
             LibraryReq::Publish { .. } if access != Access::Edit => {
                 failed("you can only view this file: publishing its library needs an edit link".into())
@@ -1134,8 +1265,15 @@ impl Backend for Store {
         }
     }
 
-    fn plugins(&mut self, publisher: bool, req: PluginReq) -> PluginReply {
-        self.directory.handle(publisher, req)
+    fn plugins(&mut self, ip: IpAddr, publisher: bool, req: PluginReq) -> PluginReply {
+        let reply = self.directory.handle(publisher, req);
+        // One address's share of the directory's download budget (the bundle is dropped unsent).
+        if let PluginReply::Bundle { bundle, .. } = &reply
+            && !self.abuse.allow(ip, Action::Download(bundle.len()), Instant::now())
+        {
+            return PluginReply::Failed { reason: BUSY_DOWNLOADS.into() };
+        }
+        reply
     }
 
     fn closing(&self) -> Closing {

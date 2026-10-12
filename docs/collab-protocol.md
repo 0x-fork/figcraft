@@ -610,6 +610,13 @@ installing: [`plugins.md`](plugins.md#plugin-directories)):
   with the file, the link the reporter joined with and their address; blocking an address
   disconnects its connections and is kept in `blocked.json`. Both are the operator's to read with
   the server's command line.
+- **Resources.** Open to the public, a message is at most a file's size (checked while it is read),
+  a batch a file has no room for is answered with a `Reject` carrying the reason (no fixes: the
+  client rolls it back), the bytes queued for a client and for all of them and the bytes waiting
+  for the hub thread are capped (past them a connection is dropped), one-shot request connections
+  leave an eighth of the connections to sessions, and when a file's log can't be written nothing
+  of it is confirmed: everyone in it reconnects with close code 1012 and sends again what wasn't
+  confirmed. Revoking a link or removing a file also cuts library connections that used it.
 - **Uptime checks.** A plain `GET` of a path ending in `/healthz` on the session port is answered
   `200 ok` (the request line is peeked at before the WebSocket handshake, which goes on untouched
   otherwise).

@@ -57,8 +57,13 @@ pub(crate) fn write<W: Write + Seek>(z: &mut zip::ZipWriter<W>, lib: &PublishedL
 }
 
 /// The published library in an archive (`None` when the file was never published). `own` are
-/// the images already read from `images/`.
-pub(crate) fn read<R: Read + Seek>(z: &mut zip::ZipArchive<R>, own: &BTreeMap<String, ImageData>) -> Result<Option<PublishedLibrary>, FormatError> {
+/// the images already read from `images/`; `budget` caps the bytes its snapshot and images unpack
+/// to, together (beyond the per-part caps).
+pub(crate) fn read<R: Read + Seek>(
+    z: &mut zip::ZipArchive<R>,
+    own: &BTreeMap<String, ImageData>,
+    budget: u64,
+) -> Result<Option<PublishedLibrary>, FormatError> {
     if z.index_for_name(MANIFEST).is_none() {
         return Ok(None);
     }
@@ -66,9 +71,9 @@ pub(crate) fn read<R: Read + Seek>(z: &mut zip::ZipArchive<R>, own: &BTreeMap<St
     if !is_valid_library_id(&manifest.id) {
         return Err(corrupt("the library has an invalid id"));
     }
-    let text = String::from_utf8(read_member(z, SNAPSHOT, MAX_MEMBER)?).map_err(corrupt)?;
+    let text = String::from_utf8(read_member(z, SNAPSHOT, budget.min(MAX_MEMBER))?).map_err(corrupt)?;
+    let mut budget = budget.saturating_sub(text.len() as u64).min(MAX_IMAGE_BYTES);
     let (mut doc, _) = from_json(&text)?;
-    let mut budget = MAX_IMAGE_BYTES;
     for hash in used_images(&doc) {
         if !is_valid_hash(&hash) {
             continue;
@@ -97,7 +102,15 @@ pub(crate) fn read<R: Read + Seek>(z: &mut zip::ZipArchive<R>, own: &BTreeMap<St
 /// when the file was never published, an error when it isn't a FigCraft archive or is damaged.
 pub fn read_library<R: Read + Seek>(r: R) -> Result<Option<PublishedLibrary>, FormatError> {
     let mut z = zip::ZipArchive::new(r).map_err(corrupt)?;
-    read(&mut z, &BTreeMap::new())
+    read(&mut z, &BTreeMap::new(), u64::MAX)
+}
+
+/// [`read_library`] unpacking at most `max_bytes` in all (snapshot and images: an archive that
+/// would unpack to more is refused, or loses the images past it), for libraries from people the
+/// reader doesn't trust (a server).
+pub fn read_library_within<R: Read + Seek>(r: R, max_bytes: u64) -> Result<Option<PublishedLibrary>, FormatError> {
+    let mut z = zip::ZipArchive::new(r).map_err(corrupt)?;
+    read(&mut z, &BTreeMap::new(), max_bytes)
 }
 
 #[cfg(test)]

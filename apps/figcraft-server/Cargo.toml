@@ -34,6 +34,8 @@ env_logger = { version = "0.11", default-features = false, features = ["humantim
 ctrlc = { version = "3", features = ["termination"] }
 
 [dev-dependencies]
+# Crafting hostile archives (zip bombs) in tests.
+zip = { workspace = true }
 wat = { workspace = true }
 figcraft-engine = { workspace = true }
 figcraft-doc = { workspace = true }

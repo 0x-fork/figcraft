@@ -130,7 +130,7 @@ fn publish_enable_update_and_usage() {
     let LibraryReply::Usage(files) = answer(&mut raw) else { panic!("no usage") };
     let spam = files.iter().find(|f| f.usage.file.starts_with("Spam")).unwrap();
     assert!(spam.usage.file.chars().count() <= 256 && !spam.usage.file.contains('\n'), "names are cleaned and capped");
-    assert_eq!(spam.usage.components.len(), 2_000, "reports are capped");
+    assert_eq!(spam.usage.components.len(), 1_000, "reports are capped");
     let mut raw = Raw::connect(addr);
     raw.send(&open(&Invite { token: "nope".into(), ..edit.clone() }));
     assert!(matches!(raw.next(), ServerMsg::Refused { .. }));
@@ -141,7 +141,7 @@ fn publish_enable_update_and_usage() {
     drop(server);
     let mut store = Store::open(dir.path(), cfg.store()).unwrap();
     assert!(matches!(
-        store.library(&edit.file, Access::View, LibraryReq::Fetch { have: None, usage: None }),
+        store.library(std::net::Ipv4Addr::LOCALHOST.into(), &edit.file, Access::View, LibraryReq::Fetch { have: None, usage: None }),
         LibraryReply::Library { version: 2, .. }
     ));
 }

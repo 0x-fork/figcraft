@@ -4,13 +4,13 @@
 #
 #   sudo ./install.sh --host figcraft.example.com --email you@example.com
 #
-# It installs the binary (from this folder when run from a release archive; built from the source
-# tree around this script when it sits in one, e.g. a copy of the repository; else the latest
-# release for this machine checked against its SHA256SUMS.txt, else built from a fresh clone; builds
-# add a temporary swap file when the machine has under 2 GB of memory), makes the `figcraft` user, its
-# data directory and /etc/figcraft-server/server.toml (only when missing: your edits are kept),
-# installs the systemd unit and the Caddy site, opens SSH, 80 and 443 in ufw and starts it all.
-# Safe to run again: it upgrades the binary and restarts the server only when something changed.
+# The binary comes from this folder when it is an unpacked release archive; else it is built from
+# the source tree around this script (a copy of the repository); else it is the latest release for
+# this machine (checked against SHA256SUMS.txt); else it is built from a fresh clone of the latest
+# release tag. Builds run as an unprivileged user, with a temporary swap file under 2 GB of memory.
+# It makes the `figcraft` user, its data directory and /etc/figcraft-server/server.toml (only when
+# missing: your edits are kept), installs the systemd units and its own Caddy site, opens SSH, 80
+# and 443 in ufw and starts it all. Safe to run again: it upgrades and restarts only on change.
 #
 # Options:
 #   --host HOST        the DNS name people use (its A/AAAA records must point at this machine)
@@ -20,9 +20,10 @@
 #   --version X.Y.Z    install this release (default: the latest)
 #   --from-source      build from source even when a release archive exists
 #   --ref REF          the git branch or tag to clone and build (default: vX.Y.Z with --version,
-#                      else main; a source tree around this script is built as it is)
+#                      else the latest release tag; a source tree around this script is built as is)
 #   --backups          also enable the nightly backup timer (stops the server for a few seconds)
 #   --no-firewall      leave ufw alone
+#   --firewall-anyway  enable ufw even though other services listen on this machine
 #   -h, --help         this text
 set -euo pipefail
 
@@ -32,6 +33,7 @@ CONFIG="$CONFIG_DIR/server.toml"
 DATA=/var/lib/figcraft-server
 BIN=/usr/local/bin/figcraft-server
 BUILD=/var/cache/figcraft-build
+BUILDER=figcraft-build
 SERVICE=figcraft-server
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The source tree this script sits in (packaging/server/ of a copy or checkout), if any.
@@ -49,8 +51,10 @@ FROM_SOURCE=false
 REF=""
 BACKUPS=false
 FIREWALL=true
+FIREWALL_ANYWAY=false
 
 say() { printf '==> %s\n' "$*"; }
+warn() { printf 'install.sh: warning: %s\n' "$*" >&2; }
 die() { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
@@ -64,7 +68,8 @@ while [ $# -gt 0 ]; do
     --ref) REF="${2:-}"; shift 2 ;;
     --backups) BACKUPS=true; shift ;;
     --no-firewall) FIREWALL=false; shift ;;
-    -h | --help) sed -n '2,26p' "$0"; exit 0 ;;
+    --firewall-anyway) FIREWALL_ANYWAY=true; shift ;;
+    -h | --help) sed -n '2,27p' "$0"; exit 0 ;;
     *) die "unknown option $1 (see --help)" ;;
   esac
 done
@@ -77,7 +82,7 @@ case " ${ID:-} ${ID_LIKE:-} " in
   *) die "this script is for Debian and Ubuntu (see docs/server.md for other systems)" ;;
 esac
 
-ask() { # ask VAR "question": read an answer from the terminal when the value wasn't given
+ask() { # ask VAR "question" FLAG: read an answer from the terminal when the value wasn't given
   local var="$1" question="$2" answer
   if [ -z "${!var}" ]; then
     [ -t 0 ] || die "give $3 (no terminal to ask on)"
@@ -115,7 +120,7 @@ esac
 
 # --- The binary -----------------------------------------------------------------------------
 NEW_BIN=""
-FILES="$HERE" # where the unit and the Caddyfile come from
+FILES="$HERE" # where the units and the Caddyfile come from
 
 from_release() { # download and check the release archive; sets NEW_BIN and FILES
   local version="$VERSION" name dir
@@ -145,34 +150,46 @@ cleanup() {
 }
 trap cleanup EXIT
 
+as_builder() { # run a command as the unprivileged build user, with its own toolchain
+  local jobs=()
+  if [ -n "${CARGO_BUILD_JOBS:-}" ]; then jobs=("CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS"); fi
+  runuser -u "$BUILDER" -- env HOME="$BUILD" RUSTUP_HOME="$BUILD/rustup" CARGO_HOME="$BUILD/cargo" \
+    CARGO_TARGET_DIR="$BUILD/target" "${jobs[@]}" "$@"
+}
+
 from_source() { # build the source tree around this script, else a fresh clone; sets NEW_BIN and FILES
   local mem_kb src ref="$REF"
-  if [ -z "$ref" ]; then
-    if [ -n "$VERSION" ]; then ref="v$VERSION"; else ref=main; fi
-  fi
   apt-get install -y -qq build-essential git pkg-config >/dev/null
-  mkdir -p "$BUILD"
-  export RUSTUP_HOME="$BUILD/rustup" CARGO_HOME="$BUILD/cargo" CARGO_TARGET_DIR="$BUILD/target"
-  if [ ! -x "$CARGO_HOME/bin/cargo" ]; then
-    curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path >/dev/null
+  id -u "$BUILDER" >/dev/null 2>&1 || useradd --system --home-dir "$BUILD" --shell /usr/sbin/nologin "$BUILDER"
+  install -d -o "$BUILDER" -g "$BUILDER" -m 755 "$BUILD"
+  if [ ! -x "$BUILD/cargo/bin/cargo" ]; then
+    as_builder sh -c "curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path" >/dev/null
   else
-    "$CARGO_HOME/bin/rustup" update stable >/dev/null
+    as_builder "$BUILD/cargo/bin/rustup" update stable >/dev/null
   fi
   if [ -n "$LOCAL_SRC" ]; then
-    src="$LOCAL_SRC"
-    say "Building the source in $src: this takes a while"
+    # A copy the build user owns (the original may sit in root's home).
+    src="$BUILD/src-local"
+    say "Building the source in $LOCAL_SRC: this takes a while"
+    rm -rf "$src"
+    install -d -o "$BUILDER" -g "$BUILDER" -m 755 "$src"
+    tar -C "$LOCAL_SRC" --exclude=./target --exclude=./plugins/target -cf - . | as_builder tar -C "$src" -xf -
   else
     src="$BUILD/src"
-    say "Building from a clone ($ref): this takes a while"
     if [ -d "$src/.git" ]; then
-      git -C "$src" fetch --quiet --tags origin
+      as_builder git -C "$src" fetch --quiet --tags origin
     else
-      rm -rf "$src"
-      git clone --quiet "https://github.com/$REPO" "$src" || die "can't clone $REPO (a private repository: copy the source to this machine and run its packaging/server/install.sh)"
+      as_builder git clone --quiet "https://github.com/$REPO" "$src" ||
+        die "can't clone $REPO (a private repository: copy the source to this machine and run its packaging/server/install.sh)"
     fi
+    if [ -z "$ref" ]; then
+      if [ -n "$VERSION" ]; then ref="v$VERSION"; else ref="$(as_builder git -C "$src" tag --list 'v*' --sort=-v:refname | head -n 1)"; fi
+      [ -n "$ref" ] || ref=main
+    fi
+    say "Building $ref from a clone: this takes a while"
     # A branch as it is upstream now, or a tag.
-    git -C "$src" checkout --quiet --force --detach "origin/$ref" 2>/dev/null ||
-      git -C "$src" checkout --quiet --force --detach "$ref"
+    as_builder git -C "$src" checkout --quiet --force --detach "origin/$ref" 2>/dev/null ||
+      as_builder git -C "$src" checkout --quiet --force --detach "$ref"
   fi
   # The compiler needs about 2 GB: add a temporary swap file on smaller machines.
   mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
@@ -185,10 +202,10 @@ from_source() { # build the source tree around this script, else a fresh clone; 
     swapon "$SWAP"
     export CARGO_BUILD_JOBS=1
   fi
-  (cd "$src" && "$CARGO_HOME/bin/cargo" build --release --locked -p figcraft-server)
+  (cd "$src" && as_builder "$BUILD/cargo/bin/cargo" build --release --locked -p figcraft-server)
   cleanup
   SWAP=""
-  NEW_BIN="$CARGO_TARGET_DIR/release/figcraft-server"
+  NEW_BIN="$BUILD/target/release/figcraft-server"
   FILES="$src/packaging/server"
 }
 
@@ -201,7 +218,7 @@ elif [ "$FROM_SOURCE" = true ] || ! from_release; then
   from_source
 fi
 [ -x "$NEW_BIN" ] || die "no figcraft-server binary to install"
-# The unit files and the Caddyfile beside this script when it has them (a checkout or an archive).
+# The units and the Caddyfile beside this script when it has them (a checkout or an archive).
 [ -f "$HERE/figcraft-backup.timer" ] && FILES="$HERE"
 for f in figcraft-server.service Caddyfile figcraft-backup.service figcraft-backup.timer; do
   [ -f "$FILES/$f" ] || die "$FILES/$f is missing"
@@ -242,6 +259,8 @@ if [ ! -f "$CONFIG" ]; then
     printf 'max_mb_per_ip = 256\n'
   } >"$CONFIG.new"
   chmod 644 "$CONFIG.new"
+  # Checked before it replaces anything.
+  "$BIN" --config "$CONFIG.new" check >/dev/null || { rm -f "$CONFIG.new"; die "the new settings don't read (see above)"; }
   mv -f "$CONFIG.new" "$CONFIG"
   CHANGED=true
 fi
@@ -272,40 +291,70 @@ if [ "$BACKUPS" = true ]; then
 fi
 
 # --- Caddy ----------------------------------------------------------------------------------
+# Our site lives in a file of its own; the main Caddyfile only imports it. A Caddyfile with other
+# sites is left as it is apart from that one import line.
 MARK="# figcraft-server (install.sh)"
 CADDYFILE=/etc/caddy/Caddyfile
-OWN=true
-# Anything but the packaged example site (or ours) is someone else's: leave it, add a file of ours.
-if [ -f "$CADDYFILE" ] && ! grep -qF "$MARK" "$CADDYFILE" && grep -qvE '^\s*(#|$|:80|\{|\}|root|file_server)' "$CADDYFILE"; then
-  CADDYFILE=/etc/caddy/figcraft-server.caddy
-  OWN=false
-fi
+SITE_FILE=/etc/caddy/figcraft-server.caddy
 SITE="$(mktemp)"
+MAIN="$(mktemp)"
 {
   printf '%s: written by packaging/server/install.sh (run it again to update).\n' "$MARK"
-  # Global options belong at the top of the main Caddyfile only.
-  [ "$OWN" = false ] || printf '{\n\temail %s\n}\n\n' "$EMAIL"
   sed -e '/^#/d' -e "s/figcraft\.example\.com/$HOST/" "$FILES/Caddyfile" | sed -e '/./,$!d'
 } >"$SITE"
-[ "$OWN" = true ] || say "Caddy already serves other sites: add 'import figcraft-server.caddy' to /etc/caddy/Caddyfile"
-if install_file "$SITE" "$CADDYFILE" 644; then
-  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || die "Caddy doesn't accept /etc/caddy/Caddyfile"
+if [ ! -f "$CADDYFILE" ] || grep -qF "$MARK" "$CADDYFILE" || ! grep -qvE '^\s*(#|$|:80|\{|\}|root|file_server)' "$CADDYFILE"; then
+  # Missing, ours, or the packaged example site: ours, with the certificate email.
+  printf '%s\n{\n\temail %s\n}\n\nimport figcraft-server.caddy\n' "$MARK" "$EMAIL" >"$MAIN"
+elif grep -qE '^\s*import\s+figcraft-server\.caddy' "$CADDYFILE"; then
+  cp "$CADDYFILE" "$MAIN"
+else
+  say "Caddy already serves other sites: adding 'import figcraft-server.caddy' to $CADDYFILE"
+  { cat "$CADDYFILE"; printf '\n%s\nimport figcraft-server.caddy\n' "$MARK"; } >"$MAIN"
+fi
+CADDY_CHANGED=false
+for f in "$CADDYFILE" "$SITE_FILE"; do
+  if [ -f "$f" ]; then cp -p "$f" "$f.before-figcraft"; else rm -f "$f.before-figcraft"; fi
+done
+install_file "$SITE" "$SITE_FILE" 644 && CADDY_CHANGED=true
+install_file "$MAIN" "$CADDYFILE" 644 && CADDY_CHANGED=true
+rm -f "$SITE" "$MAIN"
+if [ "$CADDY_CHANGED" = true ]; then
+  if ! caddy validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1; then
+    for f in "$CADDYFILE" "$SITE_FILE"; do
+      if [ -f "$f.before-figcraft" ]; then cp -p "$f.before-figcraft" "$f"; else rm -f "$f"; fi
+    done
+    die "Caddy doesn't accept the new configuration (the old one is back; see: caddy validate --config $CADDYFILE)"
+  fi
   systemctl reload caddy || systemctl restart caddy
 fi
-rm -f "$SITE"
 systemctl enable --now --quiet caddy
 
 # --- Firewall -------------------------------------------------------------------------------
 if [ "$FIREWALL" = true ]; then
-  say "Firewall: SSH, 80 and 443"
-  ufw allow 22/tcp >/dev/null
-  # The port this SSH session came in on, if it isn't 22.
-  if [ -n "${SSH_CONNECTION:-}" ]; then
-    ufw allow "${SSH_CONNECTION##* }/tcp" >/dev/null
-  fi
+  # The ports sshd really listens on (sudo doesn't pass SSH_CONNECTION on).
+  SSH_PORTS="$(sshd -T 2>/dev/null | awk '/^port / {print $2}' | sort -u)"
+  [ -n "$SSH_PORTS" ] || SSH_PORTS=22
+  say "Firewall: SSH ($(echo "$SSH_PORTS" | tr '\n' ' ' | sed 's/ $//')), 80 and 443"
+  for p in $SSH_PORTS; do ufw allow "$p/tcp" >/dev/null; done
   ufw allow 80/tcp >/dev/null
   ufw allow 443/tcp >/dev/null
-  ufw --force enable >/dev/null
+  if ufw status | grep -q '^Status: active'; then
+    :
+  else
+    # Other services reachable from outside would be cut off by enabling ufw.
+    OTHERS=""
+    for a in $(ss -Hltn | awk '{print $4}'); do
+      case "$a" in 127.* | "[::1]:"* | ::1:*) continue ;; esac
+      port="${a##*:}"
+      case " $(echo "$SSH_PORTS" | tr '\n' ' ') 80 443 " in *" $port "*) continue ;; esac
+      OTHERS="$OTHERS $port"
+    done
+    if [ -n "$OTHERS" ] && [ "$FIREWALL_ANYWAY" = false ]; then
+      warn "other services listen on port(s)$OTHERS: ufw was not enabled (rules added; allow those ports, then 'ufw enable', or run again with --firewall-anyway)"
+    else
+      ufw --force enable >/dev/null
+    fi
+  fi
 fi
 
 # --- Done -----------------------------------------------------------------------------------
@@ -330,7 +379,8 @@ figcraft-server is running behind Caddy.
              $ADMIN block-ip ADDRESS      (unblock-ip, blocked)
   Server key: $ADMIN key
   Settings:  $CONFIG (then: systemctl restart $SERVICE)
-  Backups:   systemctl enable --now figcraft-backup.timer   (nightly, to /var/backups/figcraft-server)
+  Backups:   systemctl enable --now figcraft-backup.timer   (nightly, to /var/backups/figcraft-server;
+             the archives hold every file and the server key: keep them as private as the server)
   Upgrade:   run this script again
 
 You are responsible for what people publish here: keep the abuse contact and terms current.

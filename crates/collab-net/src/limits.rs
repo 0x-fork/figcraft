@@ -33,6 +33,20 @@ pub struct NetLimits {
     /// The reverse proxy in front of a host, whose `X-Forwarded-For` names the client: only
     /// connections from this address are believed (the header is anyone's to forge).
     pub trusted_proxy: Option<IpAddr>,
+    /// Bytes queued for one client before it counts as stuck (one message always fits an empty
+    /// queue), and for every client together.
+    pub max_queued_bytes: usize,
+    pub max_queued_total: usize,
+    /// Bytes of messages handed to the hub and not handled yet, all connections together: past it
+    /// a connection is dropped as busy instead of piling more on.
+    pub max_in_flight: usize,
+    /// Largest message on a connection that only asks small things (browsing a plugin directory).
+    pub max_request: usize,
+    /// Connections only sessions (`Hello`) and the operator may take: one-shot requests leave them.
+    pub reserve_for_sessions: usize,
+    /// A one-shot request connection (hosting, a library, a plugin directory) with no traffic for
+    /// this long is dropped.
+    pub request_idle: Duration,
 }
 
 impl Default for NetLimits {
@@ -51,6 +65,12 @@ impl Default for NetLimits {
             write_timeout: Duration::from_secs(10),
             max_per_address: 0,
             trusted_proxy: None,
+            max_queued_bytes: 160 << 20,
+            max_queued_total: usize::MAX,
+            max_in_flight: usize::MAX,
+            max_request: 64 << 10,
+            reserve_for_sessions: 0,
+            request_idle: Duration::from_secs(45),
         }
     }
 }

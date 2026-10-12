@@ -252,9 +252,11 @@ the address it came from and when it was last opened (for expiry).
 
 [`packaging/server/figcraft-backup.timer`](../packaging/server/figcraft-backup.timer) (installed by
 `install.sh`; `sudo systemctl enable --now figcraft-backup.timer`) does the following every night:
-it stops the server for the seconds the copy takes, keeps
-`/var/backups/figcraft-server/figcraft-YYYY-MM-DD.tar.gz` for 14 days and starts it again. Copy that
-folder off the machine too.
+it checks there is twice the data directory's size free, stops the server for the seconds the copy
+takes, keeps `/var/backups/figcraft-server/figcraft-YYYY-MM-DD.tar.gz` (readable by root only) for
+7 days and starts it again. Copy that folder off the machine too. The archives hold every file,
+the addresses files came from, the reports and the **server key**: keep them, and any copy, as
+private as the server itself.
 
 Copy the data directory (the plugin directory, `plugins/`, included) while the server is stopped,
 or take an atomic snapshot of the filesystem it lives on (ZFS, Btrfs, LVM, a VSS shadow copy). A plain copy of a running server's
@@ -308,9 +310,11 @@ keeps the key for everything else.
 - **Limits per address** (only when open): connections at once (`max_connections_per_ip`), new
   connections a minute (`connects_per_minute`), files published an hour (`publishes_per_hour`),
   messages a second (`messages_per_second`), and files and MiB kept (`max_files_per_ip`,
-  `max_mb_per_ip`); for everyone: `max_files`, `max_file_mb` per file and `max_total_mb` for
-  publishing without the key. An address is an IPv4 address or an IPv6 /64. Each refusal says why
-  ("too many connections from your address…", "this server is full…") and the app shows it.
+  `max_mb_per_ip`, counting what files grow to by edits); for everyone: `max_files`, `max_file_mb`
+  per file (also as it grows), `max_total_mb` and twenty addresses' worth of publishing an hour. An
+  address is an IPv4 address or an IPv6 /64; an IPv6 /56 and /48 also count together, with 4 and 16
+  times one address's limits. Each refusal says why ("too many connections from your address…",
+  "this server is full…") and the app shows it. See also [Resource limits](#resource-limits).
   Behind a reverse proxy set `trusted_proxy` to its address: the server then counts the client its
   `X-Forwarded-For` names (the last address in it, the one the proxy added) and believes the header
   from no one else. The tables of addresses keep at most 10,000 addresses (the least recently seen
@@ -320,6 +324,8 @@ keeps the key for everything else.
   looks every ten minutes and at startup, never deletes a file someone is in, and tells everyone in
   a file the date it would go (the Share popover shows it). Files published with the key never
   expire.
+- **Team libraries** on a public server live only in files published with the key: a file published
+  without it can't hold one (a library is a whole archive the server unpacks and checks).
 - **Moderation.** `figcraft-server files list --sort size|age|idle` shows who published what
   (the address) and how many reports each file has; `files remove FILE` takes a file down (whoever
   is in it is disconnected); `block-ip` refuses an address and drops its connections (kept across
@@ -348,16 +354,40 @@ What someone can do, by what they hold (the server is reached through TLS at the
 |---|---|---|
 | Anyone who reaches the server, with nothing | Ask about its hosting (open, operator, terms, limits); on an open server publish files within the limits per address and for everyone; list and download the plugin directory; ask `/healthz` | Join, read or list any file; see links, reports or blocked addresses; use or learn the server key or anyone's token (none are ever sent back, and all are compared in constant time against hashes); publish plugins; spoof their address through `X-Forwarded-For` (believed only from `trusted_proxy`); get past a block |
 | Someone with a file's **view link** | See that file and everyone's changes and presence in it; read its team library and usage; report it | Change it (the server refuses a viewer's edits); reach any other file; manage links |
-| Someone with a file's **edit link** | Change that file, publish its team library; report it | Reach any other file; list, make or revoke links; rename or remove it |
+| Someone with a file's **edit link** | Change that file, within its size cap; publish its team library (on a public server only for files published with the key); report it | Reach any other file; grow it past `max_file_mb` or its publisher's share; list, make or revoke links; rename or remove it |
 | Whoever holds a file's **owner token** (published without the key) | List, make and revoke that file's links (disconnecting whoever joined with a revoked one), rename it on the server, remove it | Touch any other file, even with its id; list files; read reports; block; anything of the plugin directory |
 | The **operator** (server key, or the machine) | Everything above for every file, reports, blocks, the plugin directory; read every file on disk | Recover a lost link or owner token (only hashes are kept) |
 
-Limits that hold against everyone: message and file sizes, connections in all and per address,
-connection, message and publish rates per address, files and MiB per address and for everyone, and
-idle expiry. Not defended against: someone with many addresses (each gets its own limits; the
-global caps still hold), a link or owner token that leaks (revoke links with the owner token or
-`figcraft-server links revoke`; remove the file), and the operator reading files (no end-to-end
-encryption).
+Limits that hold against everyone: message sizes by what a connection is for, file sizes as they
+grow, connections in all and per address and block, connection, message, publish and download rates
+per address and block, files and MiB per address and for everyone, the bytes queued for slow
+clients and waiting for the server, and idle expiry ([Resource limits](#resource-limits)). Revoking
+a link or removing a file cuts every connection that used it, library connections included. Not
+defended against: someone with many unrelated addresses (each gets its own limits; the global caps
+still hold, so they can fill the server up to them until you block them or the files expire), a
+link or owner token that leaks (revoke links with the owner token or `figcraft-server links
+revoke`; remove the file), and the operator reading files (no end-to-end encryption).
+
+### Resource limits
+
+What keeps one client (or a few) from exhausting a small machine (the official one has 2 GB of
+memory and 2 GB of swap; the defaults are chosen to hold on 1 GB). All of these apply only with
+`open_publish = true` unless marked *always*; a private server keeps its earlier behaviour.
+
+| Resource | Limit |
+|---|---|
+| Message size | A file's size and 1 MiB (`max_file_mb`, 16 by default when open, or `max_plugin_mb` if larger): checked as the message is read, before anything is decoded; 64 KiB on a connection that only browses plugins (a client sending more is disconnected with the limit as the reason; the app keeps its own copy). The core's 64 MiB otherwise |
+| A file as it grows | Every batch is checked first: past `max_file_mb` (after compacting a long log), past its publisher's `max_mb_per_ip` or past `max_total_mb`, it is refused with the reason and the app rolls it back. A file's snapshot also holds the recent batches kept for reconnecting clients, at most a quarter of `max_file_mb` |
+| Recent batches in memory | A quarter of `max_file_mb` (256 KiB at least) per open file; older ones are dropped (a client that missed them catches up with the whole file) |
+| Bytes queued for a slow client | Twice the largest message per connection, 256 MiB for all of them: a client that doesn't read its answers is dropped instead of making the server hold more |
+| Bytes waiting for the server | 128 MiB of read messages not handled yet: past it a connection is dropped as busy |
+| Connections | `max_connections` (512) in all (*always*); `max_connections_per_ip` (32) per address, ×4 per IPv6 /56, ×16 per /48; one-shot requests (asking about hosting, libraries, browsing plugins) can't take the last eighth, which stays for people joining files, and are dropped after 20 idle seconds |
+| Rates | Per address and block: `connects_per_minute`, `publishes_per_hour` (and twenty addresses' worth for everyone), `messages_per_second`; reports, ten an hour (*always*); downloads of libraries and plugins, 4 MiB a second with bursts of 64 MiB (*always*), within 32 MiB a second for libraries and the plugin directory's own budget for everyone |
+| Team libraries | Only files published with the key hold one on a public server; an archive is at most `max_file_mb` and everything it unpacks to counts against the same cap (*always*), so a zip bomb is refused before it expands |
+| Usage reports | Kept in memory, written at most once a minute per library and when the server stops; at most 1,000 components per file and 200 files per library (*always*) |
+| Disk writes | A batch is confirmed only once it is on disk; when its log can't be written (a full disk), nobody hears it was accepted: the file closes, everyone in it reconnects and their apps send again what wasn't confirmed (*always*) |
+| Storage | `max_files`, `max_total_mb` (10240), `max_files_per_ip` (20), `max_mb_per_ip` (256), and idle expiry (`idle_days`, 30) for files published without the key |
+| The service | systemd caps it at 60% (slows down) and 75% (stopped and restarted) of the machine's memory, and only lets it talk to this machine (the proxy) |
 
 The settings for a public server, as `install.sh` writes them:
 
@@ -385,9 +415,13 @@ source it sits in, or else downloads the latest release for the machine (checked
 `SHA256SUMS.txt`) or builds a fresh clone (`--from-source`); a build adds a temporary 2 GB swap
 file on a machine with less than 2 GB of memory, so it isn't killed. It makes the `figcraft` user, the
 data directory and `/etc/figcraft-server/server.toml` (only when missing: your edits are kept),
-installs the systemd unit, the nightly backup timer and the Caddy site, opens SSH, 80 and 443 in
-`ufw`, starts it all and prints what to do next. Running it again upgrades the binary and restarts
-the server only when something changed.
+installs the systemd units and its Caddy site (`/etc/caddy/figcraft-server.caddy`, imported from
+the main Caddyfile, whose other sites it leaves alone), opens the SSH ports `sshd` listens on, 80
+and 443 in `ufw`, and turns `ufw` on unless other services listen on the machine (then it says
+so: allow their ports and enable it yourself, or pass `--firewall-anyway`). Builds run as the
+unprivileged `figcraft-build` user; a fresh clone builds the latest release tag. It checks new
+settings before they replace anything, starts it all and prints what to do next. Running it again
+upgrades the binary and restarts the server only when something changed.
 
 1. Create the server (Ubuntu 24.04, x86_64 or arm64) with your SSH key, and note its address.
 2. At your DNS provider, point `figcraft.example.com` (A, and AAAA for IPv6) at that address. Caddy
@@ -475,7 +509,9 @@ EOF
 **3. Run it with systemd.** [`figcraft-server.service`](../packaging/server/figcraft-server.service)
 runs it as that user, restarts it if it fails, stops it gracefully, and locks it down: no new
 privileges, a read-only system with only the data directory writable, no capabilities, private
-`/tmp` and devices, and a system-call filter.
+`/tmp` and devices, a system-call filter, memory caps (60% of the machine slows it down, 75%
+stops and restarts it, so only this service is hit) and network only to this machine (the proxy;
+remove `IPAddressAllow`/`IPAddressDeny` to listen on a network address without one).
 
 ```sh
 sudo cp figcraft-server.service /etc/systemd/system/
@@ -580,11 +616,11 @@ sudo systemctl start figcraft-server
 - **Limits**: the transport's (message sizes, 100 messages a second per connection, idle and
   handshake timeouts, `max_connections`) and the collaboration core's (layers, changes per batch,
   `max_people`: the cap per file), plus `max_files`, `max_file_mb` and `max_links`, and on a public
-  server the limits per address. Every message is decoded defensively, and fuzzed in the tests
-  (including open hosting, owner tokens and reports). A library is read in full before it is kept (as files
-  using it read it: size limits on every part, at most `max_file_mb`), must be the file's library
-  at a newer version, and is checked on the server's main thread; usage reports keep at most 2,000
-  components per file and 500 files per library.
+  server the limits per address ([Resource limits](#resource-limits)). Every message is decoded
+  defensively, and fuzzed in the tests (including open hosting, owner tokens and reports). A
+  library is read in full before it is kept (everything it unpacks to within `max_file_mb`), must
+  be the file's library at a newer version, and is checked on the server's main thread; usage
+  reports keep at most 1,000 components per file and 200 files per library.
 - **Team libraries**: any link of a file reads its library and its usage reports (file names and
   counts); only an edit link publishes it.
 - **Plugin directory**: anyone who reaches the server reads it; only the server key writes to it.
@@ -595,6 +631,8 @@ sudo systemctl start figcraft-server
   it installs anything.
 - **Not end-to-end encrypted**: the server reads every file it keeps (it validates and stores them);
   so can its operator.
-- **Not there yet**: user accounts, per-person permissions, audit logs, end-to-end encryption, and
-  checking a file's size as it grows by edits (the core's caps bound each edit; `max_file_mb` is
-  checked when a file is published and logged when it is compacted).
+- **The machine**: the data directory is made readable by the server's account only and the server
+  key is written owner-only from the start; the systemd unit caps memory and network
+  (`MemoryHigh`, `MemoryMax`, `IPAddressAllow=localhost`); `install.sh` builds as an unprivileged
+  user and never cuts off SSH or other services when it turns `ufw` on.
+- **Not there yet**: user accounts, per-person permissions, audit logs, end-to-end encryption.

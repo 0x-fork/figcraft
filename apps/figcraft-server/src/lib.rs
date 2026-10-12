@@ -39,6 +39,11 @@ impl Running {
         self.hosting.connections()
     }
 
+    /// Bytes waiting to be sent to clients, all connections together.
+    pub fn queued_bytes(&self) -> usize {
+        self.hosting.queued_bytes()
+    }
+
     /// Stop (see the type's docs).
     pub fn stop(&mut self) {
         self.hosting.stop();
@@ -81,6 +86,8 @@ mod background_tests;
 mod cli_tests;
 #[cfg(test)]
 mod directory_tests;
+#[cfg(test)]
+mod hardening_tests;
 #[cfg(test)]
 mod library_tests;
 #[cfg(test)]

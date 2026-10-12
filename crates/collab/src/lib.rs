@@ -87,6 +87,8 @@ pub struct Limits {
     pub max_log_batches: usize,
     /// Most changes in those batches together.
     pub max_log_changes: usize,
+    /// About how many bytes those batches may hold together ([`server::weight`]).
+    pub max_log_bytes: usize,
 }
 
 impl Default for Limits {
@@ -99,6 +101,7 @@ impl Default for Limits {
             max_name: 64,
             max_log_batches: 10_000,
             max_log_changes: 1_000_000,
+            max_log_bytes: usize::MAX,
         }
     }
 }

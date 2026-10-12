@@ -123,6 +123,11 @@ impl Raw {
         self.0.send(Message::Binary(Bytes::from(message::encode(m).unwrap()))).unwrap();
     }
 
+    /// Send without waiting to be read (`Err` once the server has hung up).
+    pub fn try_send(&mut self, m: &ClientMsg) -> tungstenite::Result<()> {
+        self.0.send(Message::Binary(Bytes::from(message::encode(m).unwrap())))
+    }
+
     pub fn next(&mut self) -> ServerMsg {
         loop {
             if let Message::Binary(b) = self.0.read().unwrap() {

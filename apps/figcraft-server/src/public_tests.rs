@@ -276,7 +276,7 @@ fn participants_report_files_to_the_operator() {
 }
 
 /// Connect with `X-Forwarded-For: forwarded` and open a hosting connection: what the server said.
-fn via_proxy(addr: SocketAddr, forwarded: &str) -> (tungstenite::WebSocket<TcpStream>, ServerMsg) {
+pub(crate) fn via_proxy(addr: SocketAddr, forwarded: &str) -> (tungstenite::WebSocket<TcpStream>, ServerMsg) {
     let s = TcpStream::connect(addr).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     let mut req = format!("ws://{addr}/").into_client_request().unwrap();
@@ -410,6 +410,10 @@ fn open_mode_has_safe_defaults_and_warns_the_operator() {
     assert_eq!(open.file_mb(), 16, "strangers' files stay small");
     assert_eq!(open.store().hosting.idle_secs, 30 * 86_400, "idle files expire");
     assert_eq!(open.net().max_per_address, 32);
+    assert_eq!(open.net().request_idle, Duration::from_secs(20), "idle one-shot requests go quickly");
+    assert_eq!(open.net().reserve_for_sessions, 512 / 8);
+    assert_eq!(open.net().max_client_message, 17 << 20);
+    assert_eq!(private.net().max_client_message, NetLimits::default().max_client_message, "unchanged when private");
     let w = open.warnings().join("\n");
     assert!(w.contains("operator_contact is empty") && w.contains("trusted_proxy"), "{w}");
     let set = Config { operator_contact: "abuse@example.com".into(), trusted_proxy: Some("127.0.0.1".into()), max_file_mb: Some(8), ..open };

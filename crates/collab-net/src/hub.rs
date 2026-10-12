@@ -129,8 +129,17 @@ pub trait Backend: Send + 'static {
     fn changed(&mut self, _file: &str, _server: &mut Server) {}
 
     /// Make what [`changed`](Self::changed) kept durable; the hub sends the servers' answers
-    /// after this.
-    fn flush(&mut self) {}
+    /// after this. The files whose changes couldn't be made durable: nobody hears of them, the
+    /// files are closed (the backend forgets their open state) and everyone in them reconnects.
+    fn flush(&mut self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Whether `file` has room for a batch of about `bytes` (its size on the wire): why not, and
+    /// the batch is refused.
+    fn room(&mut self, _file: &str, _server: &Server, _bytes: usize) -> Result<(), String> {
+        Ok(())
+    }
 
     /// Everyone left `file`: save it. True closes it (the next hello opens it again).
     fn idle(&mut self, _file: &str, _server: &mut Server) -> bool {
@@ -152,13 +161,13 @@ pub trait Backend: Send + 'static {
 
     /// A request on a library connection to `file`, opened with a link of `access` (checked by
     /// [`admit`](Self::admit)).
-    fn library(&mut self, _file: &str, _access: Access, _req: LibraryReq) -> LibraryReply {
+    fn library(&mut self, _ip: IpAddr, _file: &str, _access: Access, _req: LibraryReq) -> LibraryReply {
         LibraryReply::Failed { reason: "this session is hosted by an app: team libraries live on a figcraft-server".into() }
     }
 
     /// A request on a plugin directory connection; `publisher`: it was opened with the right key
     /// (checked by [`manage`](Self::manage)).
-    fn plugins(&mut self, _publisher: bool, _req: PluginReq) -> PluginReply {
+    fn plugins(&mut self, _ip: IpAddr, _publisher: bool, _req: PluginReq) -> PluginReply {
         PluginReply::Failed { reason: "this session is hosted by an app: plugin directories live on a figcraft-server".into() }
     }
 
@@ -200,10 +209,75 @@ pub trait Backend: Send + 'static {
     fn closing(&self) -> Closing;
 }
 
-/// A message for one connection's writer.
+/// A message for one connection's writer: bytes (with what they count against, released when
+/// they are sent or dropped), or the close.
 enum Out {
-    Bytes(Bytes),
+    Bytes(Bytes, Option<Charge>),
     Close(CloseCode, String),
+}
+
+/// Bytes waiting in a connection's queue, counted against its cap and the server's until dropped.
+struct Charge {
+    n: usize,
+    mine: Arc<AtomicUsize>,
+    all: Arc<AtomicUsize>,
+}
+
+impl Drop for Charge {
+    fn drop(&mut self) {
+        self.mine.fetch_sub(self.n, Ordering::Relaxed);
+        self.all.fetch_sub(self.n, Ordering::Relaxed);
+    }
+}
+
+/// One connection's way out: its writer's queue, capped in messages and in bytes (its own and,
+/// with every other connection's, the server's), so a client that doesn't read can't make the
+/// server hold more than that for it.
+#[derive(Clone)]
+struct Line {
+    tx: SyncSender<Out>,
+    queued: Arc<AtomicUsize>,
+    all: Arc<AtomicUsize>,
+    max: usize,
+    max_all: usize,
+}
+
+impl Line {
+    /// Queue `b`; `Full` when it would go over a cap (one message always fits an empty queue, so a
+    /// welcome as large as the largest file gets out).
+    fn push(&self, b: Bytes) -> Result<(), TrySendError<()>> {
+        let n = b.len();
+        let mine = self.queued.load(Ordering::Relaxed);
+        if (mine > 0 && mine.saturating_add(n) > self.max) || self.all.load(Ordering::Relaxed).saturating_add(n) > self.max_all {
+            return Err(TrySendError::Full(()));
+        }
+        self.queued.fetch_add(n, Ordering::Relaxed);
+        self.all.fetch_add(n, Ordering::Relaxed);
+        let charge = Charge { n, mine: self.queued.clone(), all: self.all.clone() };
+        self.tx.try_send(Out::Bytes(b, Some(charge))).map_err(|e| match e {
+            TrySendError::Full(_) => TrySendError::Full(()),
+            TrySendError::Disconnected(_) => TrySendError::Disconnected(()),
+        })
+    }
+}
+
+/// Messages handed to the hub thread and not handled yet, in bytes: past the budget a reader
+/// drops its connection instead of piling more on a busy hub.
+#[derive(Clone)]
+struct InFlight(Arc<AtomicUsize>);
+
+impl InFlight {
+    fn take(&self, n: usize, max: usize) -> bool {
+        if self.0.fetch_add(n, Ordering::Relaxed).saturating_add(n) > max {
+            self.0.fetch_sub(n, Ordering::Relaxed);
+            return false;
+        }
+        true
+    }
+
+    fn give(&self, n: usize) {
+        self.0.fetch_sub(n, Ordering::Relaxed);
+    }
 }
 
 enum HubIn {
@@ -213,12 +287,15 @@ enum HubIn {
         conn: u64,
         ip: IpAddr,
         first: ClientMsg,
-        out: SyncSender<Out>,
+        out: Line,
         sock: TcpStream,
+        /// Its size (in flight until handled).
+        bytes: usize,
     },
     Msg {
         conn: u64,
         msg: ClientMsg,
+        bytes: usize,
     },
     Gone {
         conn: u64,
@@ -255,6 +332,9 @@ pub struct Hosting {
     hub: Sender<HubIn>,
     stop: Arc<AtomicBool>,
     open: Arc<AtomicUsize>,
+    /// Bytes queued for every connection together, and in flight to the hub.
+    queued: Arc<AtomicUsize>,
+    in_flight: InFlight,
     hub_thread: Option<JoinHandle<()>>,
     accept_thread: Option<JoinHandle<()>>,
 }
@@ -267,7 +347,8 @@ impl Hosting {
 
     pub(crate) fn start<B: Backend>(listener: TcpListener, backend: B, limits: NetLimits, local: Option<Local>) -> io::Result<Hosting> {
         let addr = listener.local_addr()?;
-        let mut hub = Hub { backend, rooms: HashMap::new(), conns: HashMap::new(), local: None, outbox: Vec::new() };
+        let in_flight = InFlight(Arc::default());
+        let mut hub = Hub { backend, rooms: HashMap::new(), conns: HashMap::new(), local: None, outbox: Vec::new(), in_flight: in_flight.clone() };
         if let Some(l) = local {
             let mut room = Room::new(l.server);
             room.local = Some((l.id, l.inbox));
@@ -278,9 +359,11 @@ impl Hosting {
         let stop = Arc::new(AtomicBool::new(false));
         let open = Arc::new(AtomicUsize::new(0));
         let hub_thread = spawn("live-hub", move || hub.run(&hub_rx))?;
+        let shared = Shared { per_address: PerAddress::default(), queued: Arc::default(), in_flight: in_flight.clone() };
+        let queued = shared.queued.clone();
         let accept_thread = {
             let (hub_tx, stop, open) = (hub_tx.clone(), stop.clone(), open.clone());
-            spawn("live-accept", move || accept(&listener, &hub_tx, &stop, &open, limits))
+            spawn("live-accept", move || accept(&listener, &hub_tx, &stop, &open, limits, shared))
         };
         let accept_thread = match accept_thread {
             Ok(t) => t,
@@ -291,7 +374,17 @@ impl Hosting {
             }
         };
         log::info!("live session: listening on {addr}");
-        Ok(Hosting { addr, hub: hub_tx, stop, open, hub_thread: Some(hub_thread), accept_thread: Some(accept_thread) })
+        Ok(Hosting { addr, hub: hub_tx, stop, open, queued, in_flight, hub_thread: Some(hub_thread), accept_thread: Some(accept_thread) })
+    }
+
+    /// Bytes waiting to be sent to clients, all connections together.
+    pub fn queued_bytes(&self) -> usize {
+        self.queued.load(Ordering::Relaxed)
+    }
+
+    /// Bytes of messages read and not handled by the hub yet.
+    pub fn in_flight_bytes(&self) -> usize {
+        self.in_flight.0.load(Ordering::Relaxed)
     }
 
     /// Where it listens.
@@ -369,27 +462,56 @@ impl Drop for Open {
     }
 }
 
-/// Open connections per client address ([`ip_key`]); an address leaves when its last one closes,
-/// so the table never holds more than the open connections.
-#[derive(Clone, Default)]
-struct PerAddress(Arc<Mutex<HashMap<IpAddr, usize>>>);
+/// A block of addresses: its first address and its prefix length (2001:db8:: as a /64 and as a
+/// /48 are different blocks).
+pub type Block = (IpAddr, u8);
 
-/// One connection counted for its address until dropped.
+/// The blocks a client's address ([`ip_key`]) counts in, with how many times its own limits each
+/// gets: the address itself (an IPv4 /32 or an IPv6 /64, ×1) and, for IPv6, its /56 (×4) and /48
+/// (×16), so a tunnel's free /48 doesn't multiply the limits 65,536 times.
+pub fn ip_blocks(key: IpAddr) -> Vec<(Block, u32)> {
+    let IpAddr::V6(v6) = key else { return vec![((key, 32), 1)] };
+    let [a, b, c, d, ..] = v6.segments();
+    vec![
+        ((IpAddr::V6(Ipv6Addr::new(a, b, c, d, 0, 0, 0, 0)), 64), 1),
+        ((IpAddr::V6(Ipv6Addr::new(a, b, c, d & 0xff00, 0, 0, 0, 0)), 56), 4),
+        ((IpAddr::V6(Ipv6Addr::new(a, b, c, 0, 0, 0, 0, 0)), 48), 16),
+    ]
+}
+
+/// Open connections per client address ([`ip_key`], and its wider IPv6 blocks); an address
+/// leaves when its last one closes, so the table never holds more than the open connections.
+#[derive(Clone, Default)]
+struct PerAddress(Arc<Mutex<HashMap<Block, usize>>>);
+
+/// One connection counted for a block until dropped.
 struct Counted {
     table: PerAddress,
-    ip: IpAddr,
+    ip: Block,
 }
 
 impl PerAddress {
-    /// Count a connection from `ip`, unless it has `cap` already (0: no cap).
-    fn enter(&self, ip: IpAddr, cap: usize) -> Option<Counted> {
+    /// Count a connection from block `ip`, unless it has `cap` already (0: no cap).
+    fn enter(&self, ip: Block, cap: usize) -> Option<Counted> {
         let mut t = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let n = t.entry(ip).or_insert(0);
         if cap > 0 && *n >= cap {
+            if *n == 0 {
+                t.remove(&ip);
+            }
             return None;
         }
         *n += 1;
         Some(Counted { table: self.clone(), ip })
+    }
+
+    /// Count a connection from `ip` in each of its blocks, unless one of them is full.
+    fn enter_all(&self, ip: IpAddr, cap: usize) -> Option<Vec<Counted>> {
+        let mut held = Vec::new();
+        for (block, times) in ip_blocks(ip) {
+            held.push(self.enter(block, cap.saturating_mul(times as usize))?);
+        }
+        Some(held)
     }
 }
 
@@ -459,8 +581,16 @@ fn forwarded_for(req: &Request) -> Option<IpAddr> {
     entry.parse::<IpAddr>().ok().or_else(|| entry.parse::<SocketAddr>().ok().map(|a| a.ip()))
 }
 
-fn accept(listener: &TcpListener, hub: &Sender<HubIn>, stop: &AtomicBool, open: &Arc<AtomicUsize>, limits: NetLimits) {
-    let per_address = PerAddress::default();
+/// What every connection shares: the count per address, the bytes queued for all of them and the
+/// bytes in flight to the hub.
+#[derive(Clone)]
+struct Shared {
+    per_address: PerAddress,
+    queued: Arc<AtomicUsize>,
+    in_flight: InFlight,
+}
+
+fn accept(listener: &TcpListener, hub: &Sender<HubIn>, stop: &AtomicBool, open: &Arc<AtomicUsize>, limits: NetLimits, shared: Shared) {
     let mut next = 0u64;
     for stream in listener.incoming() {
         if stop.load(Ordering::SeqCst) {
@@ -482,8 +612,8 @@ fn accept(listener: &TcpListener, hub: &Sender<HubIn>, stop: &AtomicBool, open: 
         open.fetch_add(1, Ordering::Relaxed);
         let guard = Open(open.clone());
         next += 1;
-        let (conn, hub, per_address) = (next, hub.clone(), per_address.clone());
-        if let Err(e) = spawn("live-conn", move || serve(stream, conn, &hub, limits, guard, &per_address)) {
+        let (conn, hub, shared) = (next, hub.clone(), shared.clone());
+        if let Err(e) = spawn("live-conn", move || serve(stream, conn, &hub, limits, guard, &shared)) {
             log::warn!("live session: can't start a connection thread: {e}");
         }
     }
@@ -508,30 +638,43 @@ fn encode(msg: &ServerMsg) -> Option<Bytes> {
     }
 }
 
-/// Queue `Refused {reason}` and a close for one connection.
-fn refuse(out: &SyncSender<Out>, why: &str) {
+/// Queue `Refused {reason}` and a close for one connection (small: not counted against its caps).
+fn refuse(out: &Line, why: &str) {
     if let Some(b) = encode(&ServerMsg::Refused { reason: why.to_string() }) {
-        let _ = out.try_send(Out::Bytes(b));
+        let _ = out.tx.try_send(Out::Bytes(b, None));
     }
-    let _ = out.try_send(Out::Close(CloseCode::Policy, reason(why)));
+    let _ = out.tx.try_send(Out::Close(CloseCode::Policy, reason(why)));
 }
 
-/// Read the next binary message (skipping pings), or why the connection should end.
-fn next_message(ws: &mut WebSocket<Duplex>, max: usize) -> Result<Option<ClientMsg>, &'static str> {
+/// What the server tells a client when it is too busy to take more from it.
+const BUSY: &str = "the server is busy: try again in a moment";
+
+/// Read the next binary message (skipping pings) and its size, or why the connection should end.
+fn next_message(ws: &mut WebSocket<Duplex>, max: usize) -> Result<Option<(ClientMsg, usize)>, String> {
     loop {
         return match ws.read() {
-            Ok(Message::Binary(b)) => message::decode::<ClientMsg>(&b, max).map(Some).map_err(|_| "that message couldn't be read"),
-            Ok(Message::Text(_)) => Err("only binary messages are spoken here"),
+            Ok(Message::Binary(b)) => {
+                message::decode::<ClientMsg>(&b, max).map(|m| Some((m, b.len()))).map_err(|_| "that message couldn't be read".to_string())
+            }
+            Ok(Message::Text(_)) => Err("only binary messages are spoken here".into()),
             Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)) => continue,
             Ok(Message::Close(_)) => Ok(None),
-            Err(tungstenite::Error::Capacity(_)) => Err("message too large"),
+            Err(tungstenite::Error::Capacity(_)) => Err(too_large(max)),
             Err(_) => Ok(None),
         };
     }
 }
 
+/// Why a message over `max` bytes is refused.
+fn too_large(max: usize) -> String {
+    match max >> 20 {
+        0 => format!("message too large: this server takes at most {} KiB at once here", max >> 10),
+        mib => format!("message too large: this server takes at most {mib} MiB at once (a change that big can't be kept here)"),
+    }
+}
+
 /// One connection's reader (the writer runs on its own thread).
-fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimits, _open: Open, per_address: &PerAddress) {
+fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimits, open: Open, shared: &Shared) {
     let _ = stream.set_nodelay(true);
     if stream.set_read_timeout(Some(limits.hello_timeout)).is_err() || stream.set_write_timeout(Some(limits.write_timeout)).is_err() {
         return;
@@ -564,8 +707,9 @@ fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimit
         log::debug!("live session: connection {conn} came through the proxy without X-Forwarded-For");
     }
     let ip = ip_key(forwarded.unwrap_or(peer));
-    let counted = per_address.enter(ip, limits.max_per_address);
-    let (out, rx) = sync_channel::<Out>(limits.queue.max(4));
+    let counted = shared.per_address.enter_all(ip, limits.max_per_address);
+    let (tx, rx) = sync_channel::<Out>(limits.queue.max(4));
+    let out = Line { tx, queued: Arc::default(), all: shared.queued.clone(), max: limits.max_queued_bytes, max_all: limits.max_queued_total };
     let writer =
         match sock.try_clone().map(|s| spawn("live-write", move || write_loop(WebSocket::from_raw_socket(wr, Role::Server, Some(cfg)), &rx, &s))) {
             Ok(Ok(t)) => t,
@@ -578,7 +722,7 @@ fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimit
         if let Some(why) = why {
             refuse(&out, why);
         } else {
-            let _ = out.try_send(Out::Close(CloseCode::Normal, String::new()));
+            let _ = out.tx.try_send(Out::Close(CloseCode::Normal, String::new()));
         }
     };
     if counted.is_none() {
@@ -586,23 +730,38 @@ fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimit
         end(Some("too many connections from your address: close some and try again"));
     } else {
         match next_message(&mut ws, limits.max_hello) {
-            Ok(Some(
+            Ok(Some((
                 first @ (ClientMsg::Hello(_)
                 | ClientMsg::Manage(_)
                 | ClientMsg::OpenLibrary(_)
                 | ClientMsg::OpenPlugins(_)
                 | ClientMsg::OpenHosting(_)),
-            )) => {
-                ws.set_config(|c| *c = cfg);
-                let opened = sock.try_clone().is_ok_and(|s| hub.send(HubIn::Open { conn, ip, first, out: out.clone(), sock: s }).is_ok());
-                if opened && ws.get_ref().set_read_timeout(Some(limits.idle_timeout)).is_ok() {
-                    read_loop(&mut ws, conn, hub, limits, &end);
-                    let _ = hub.send(HubIn::Gone { conn });
+                bytes,
+            ))) => {
+                // Sessions and the operator may use the last connections; one-shot requests
+                // (hosting, libraries, browsing plugins) leave them free.
+                let session = matches!(first, ClientMsg::Hello(_) | ClientMsg::Manage(_));
+                let max = match &first {
+                    ClientMsg::OpenPlugins(o) if o.key.is_empty() => limits.max_request,
+                    _ => limits.max_client_message,
+                };
+                let idle = if session { limits.idle_timeout } else { limits.request_idle };
+                let reserved = !session && open.0.load(Ordering::Relaxed) > limits.max_connections.saturating_sub(limits.reserve_for_sessions);
+                // (In flight is only taken when the connection goes on: the hub gives it back.)
+                if reserved || !shared.in_flight.take(bytes, limits.max_in_flight) {
+                    end(Some(BUSY));
+                } else {
+                    ws.set_config(|c| *c = config(max));
+                    let opened = sock.try_clone().is_ok_and(|s| hub.send(HubIn::Open { conn, ip, first, out: out.clone(), sock: s, bytes }).is_ok());
+                    if opened && ws.get_ref().set_read_timeout(Some(idle)).is_ok() {
+                        read_loop(&mut ws, conn, hub, limits, max, &shared.in_flight, &end);
+                        let _ = hub.send(HubIn::Gone { conn });
+                    }
                 }
             }
             Ok(Some(_)) => end(Some("say hello first")),
             Ok(None) => {}
-            Err(why) => end(Some(why)),
+            Err(why) => end(Some(&why)),
         }
     }
     drop(counted);
@@ -613,12 +772,20 @@ fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimit
     shutdown(&sock);
 }
 
-fn read_loop(ws: &mut WebSocket<Duplex>, conn: u64, hub: &Sender<HubIn>, limits: NetLimits, end: &dyn Fn(Option<&str>)) {
+fn read_loop(
+    ws: &mut WebSocket<Duplex>,
+    conn: u64,
+    hub: &Sender<HubIn>,
+    limits: NetLimits,
+    max: usize,
+    in_flight: &InFlight,
+    end: &dyn Fn(Option<&str>),
+) {
     let mut bucket = Bucket::new(limits.rate, limits.burst);
     let mut signals = Bucket::new(SIGNAL_RATE, SIGNAL_BURST);
     loop {
-        match next_message(ws, limits.max_client_message) {
-            Ok(Some(msg)) => {
+        match next_message(ws, max) {
+            Ok(Some((msg, bytes))) => {
                 let now = Instant::now();
                 if !bucket.take(now) {
                     log::info!("live session: connection {conn} sends too much; disconnecting it");
@@ -629,12 +796,16 @@ fn read_loop(ws: &mut WebSocket<Duplex>, conn: u64, hub: &Sender<HubIn>, limits:
                     log::debug!("live session: connection {conn} sends signals too fast; dropping one");
                     continue;
                 }
-                if hub.send(HubIn::Msg { conn, msg }).is_err() {
+                if !in_flight.take(bytes, limits.max_in_flight) {
+                    log::info!("live session: the hub is behind; dropping connection {conn}");
+                    return end(Some(BUSY));
+                }
+                if hub.send(HubIn::Msg { conn, msg, bytes }).is_err() {
                     return;
                 }
             }
             Ok(None) => return end(None),
-            Err(why) => return end(Some(why)),
+            Err(why) => return end(Some(&why)),
         }
     }
 }
@@ -643,7 +814,7 @@ fn write_loop(mut ws: WebSocket<Duplex>, rx: &Receiver<Out>, sock: &TcpStream) {
     let mut close = Some((CloseCode::Normal, String::new()));
     while let Ok(o) = rx.recv() {
         match o {
-            Out::Bytes(b) => {
+            Out::Bytes(b, _charge) => {
                 if ws.send(Message::Binary(b)).is_err() {
                     close = None;
                     break;
@@ -672,14 +843,16 @@ fn write_loop(mut ws: WebSocket<Duplex>, rx: &Receiver<Out>, sock: &TcpStream) {
 }
 
 /// Read and drop what the peer still sends after the close, until it hangs up (at most
-/// [`LINGER`]).
+/// [`LINGER`]). Raw bytes, not frames: after a frame over the size limit the WebSocket's reader
+/// is mid-frame and mustn't be asked for more.
 fn linger(ws: &mut WebSocket<Duplex>) {
     let until = Instant::now() + LINGER;
+    let mut buf = [0u8; 4096];
     while Instant::now() < until && ws.get_ref().set_read_timeout(Some(Duration::from_millis(250))).is_ok() {
-        match ws.read() {
-            Ok(Message::Close(_)) => break,
+        match ws.get_mut().read(&mut buf) {
+            Ok(0) => break,
             Ok(_) => {}
-            Err(tungstenite::Error::Io(e)) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {}
+            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted) => {}
             Err(_) => break,
         }
     }
@@ -691,8 +864,8 @@ enum Kind {
     Joined { file: String, id: u32, link: Option<String> },
     /// Managing the server's files.
     Managing,
-    /// Using `file`'s team library through a link of `access`.
-    Library { file: String, access: Access },
+    /// Using `file`'s team library through link `link` of `access` (revoking it disconnects).
+    Library { file: String, access: Access, link: Option<String> },
     /// Using the plugin directory; `publisher`: with the server's key.
     Plugins { publisher: bool },
     /// Publishing without the key, or managing the file `owns` with its owner token.
@@ -701,14 +874,14 @@ enum Kind {
 
 /// A connection whose first message the hub is looking at.
 struct Pending {
-    out: SyncSender<Out>,
+    out: Line,
     sock: TcpStream,
     ip: IpAddr,
 }
 
 /// A connection the hub took in.
 struct Conn {
-    out: SyncSender<Out>,
+    out: Line,
     sock: TcpStream,
     kind: Kind,
     /// Its client's address ([`ip_key`]).
@@ -750,8 +923,12 @@ fn unsupported(protocol: u32) -> String {
     format!("protocol {protocol} isn't supported (this server speaks {PROTOCOL})")
 }
 
+/// What everyone in a file is told when its changes couldn't be saved (they reconnect).
+const UNSAVED: &str = "The server couldn't save the latest changes; reconnecting";
+
 /// Owns the open files' servers and routes their messages.
 struct Hub<B> {
+    in_flight: InFlight,
     backend: B,
     rooms: HashMap<String, Room>,
     conns: HashMap<u64, Conn>,
@@ -796,7 +973,7 @@ impl<B: Backend> Hub<B> {
             Closing::Restarting => (CloseCode::Restart, RESTARTING),
         };
         for c in self.conns.values() {
-            if c.out.try_send(Out::Close(code, why.into())).is_err() {
+            if c.out.tx.try_send(Out::Close(code, why.into())).is_err() {
                 shutdown(&c.sock);
             }
         }
@@ -804,7 +981,8 @@ impl<B: Backend> Hub<B> {
 
     fn handle(&mut self, m: HubIn) {
         match m {
-            HubIn::Open { conn, ip, first, out, sock } => {
+            HubIn::Open { conn, ip, first, out, sock, bytes } => {
+                self.in_flight.give(bytes);
                 // The operator (with the server key) gets in from anywhere; everyone else is
                 // checked (blocked addresses, connection rates).
                 let operator = matches!(&first, ClientMsg::Manage(m) if self.backend.manage(&m.key).is_ok());
@@ -822,7 +1000,8 @@ impl<B: Backend> Hub<B> {
                     _ => refuse(&c.out, "say hello first"),
                 }
             }
-            HubIn::Msg { conn, msg } => {
+            HubIn::Msg { conn, msg, bytes } => {
+                self.in_flight.give(bytes);
                 let Some(c) = self.conns.get(&conn) else { return };
                 let ip = c.ip;
                 // The operator (with the server key) isn't held to the limits on addresses.
@@ -830,7 +1009,7 @@ impl<B: Backend> Hub<B> {
                     log::info!("event=refused ip={ip} reason=messages_per_address");
                     return self.kick(&[conn], "too many messages from your address: wait a minute and try again");
                 }
-                self.message(conn, ip, msg);
+                self.message(conn, ip, msg, bytes);
             }
             HubIn::Gone { conn } => self.gone(conn),
             HubIn::Local(p) | HubIn::LocalMsg(ClientMsg::Presence(p)) => {
@@ -840,7 +1019,7 @@ impl<B: Backend> Hub<B> {
             }
             HubIn::LocalMsg(msg) => {
                 if let Some((file, id)) = self.local_id() {
-                    self.client_message(&file, id, msg);
+                    self.client_message(&file, id, msg, None);
                 }
             }
             #[cfg(test)]
@@ -854,7 +1033,7 @@ impl<B: Backend> Hub<B> {
     }
 
     /// A message on connection `conn` (from `ip`), by what the connection is for.
-    fn message(&mut self, conn: u64, ip: IpAddr, msg: ClientMsg) {
+    fn message(&mut self, conn: u64, ip: IpAddr, msg: ClientMsg, bytes: usize) {
         match self.conns.get(&conn).map(|c| &c.kind) {
             Some(Kind::Joined { file, link, .. }) if matches!(msg, ClientMsg::Report { .. }) => {
                 let (file, link) = (file.clone(), link.clone());
@@ -864,7 +1043,7 @@ impl<B: Backend> Hub<B> {
             }
             Some(Kind::Joined { file, id, .. }) => {
                 let (file, id) = (file.clone(), *id);
-                self.client_message(&file, id, msg);
+                self.client_message(&file, id, msg, Some(bytes));
             }
             Some(Kind::Hosting { owns }) => match msg {
                 ClientMsg::Admin(req) => {
@@ -882,10 +1061,10 @@ impl<B: Backend> Hub<B> {
                 ClientMsg::Ping => self.answer(conn, &ServerMsg::Pong),
                 _ => self.kick(&[conn], "only requests to manage files are spoken on this connection"),
             },
-            Some(Kind::Library { file, access }) => match msg {
+            Some(Kind::Library { file, access, .. }) => match msg {
                 ClientMsg::Library(req) => {
                     let (file, access) = (file.clone(), *access);
-                    let reply = self.backend.library(&file, access, req);
+                    let reply = self.backend.library(ip, &file, access, req);
                     self.answer(conn, &ServerMsg::Library(Box::new(reply)));
                 }
                 ClientMsg::Ping => self.answer(conn, &ServerMsg::Pong),
@@ -893,7 +1072,7 @@ impl<B: Backend> Hub<B> {
             },
             Some(Kind::Plugins { publisher }) => match msg {
                 ClientMsg::Plugins(req) => {
-                    let reply = self.backend.plugins(*publisher, req);
+                    let reply = self.backend.plugins(ip, *publisher, req);
                     self.answer(conn, &ServerMsg::Plugins(Box::new(reply)));
                 }
                 ClientMsg::Ping => self.answer(conn, &ServerMsg::Pong),
@@ -911,9 +1090,19 @@ impl<B: Backend> Hub<B> {
     }
 
     /// A message from client `id` of `file`.
-    fn client_message(&mut self, file: &str, id: u32, msg: ClientMsg) {
+    /// A message from client `id` of `file`; `bytes`: its size on the wire (a socket's).
+    fn client_message(&mut self, file: &str, id: u32, msg: ClientMsg, bytes: Option<usize>) {
         if let ClientMsg::Presence(p) = msg {
             return self.presence(file, id, p);
+        }
+        // A batch the file has no room for is refused before the session takes it (the client
+        // rolls it back with the reason).
+        if let (ClientMsg::Changes { batch_id, .. }, Some(n)) = (&msg, bytes)
+            && let Some(room) = self.rooms.get(file)
+            && let Err(reason) = self.backend.room(file, &room.server, n)
+        {
+            let reject = ServerMsg::Reject { batch_id: *batch_id, reason, fixes: Vec::new() };
+            return self.queue(file, vec![Outgoing::To(id, reject)]);
         }
         let Some(room) = self.rooms.get_mut(file) else { return };
         let outs = room.server.receive(id, msg);
@@ -1009,11 +1198,11 @@ impl<B: Backend> Hub<B> {
         if o.protocol != PROTOCOL {
             return refuse(&c.out, &unsupported(o.protocol));
         }
-        let access = match self.backend.admit(&o.file, &o.token) {
-            Ok(a) => a.access,
+        let (access, link) = match self.backend.admit(&o.file, &o.token) {
+            Ok(a) => (a.access, a.link),
             Err(why) => return refuse(&c.out, &why),
         };
-        self.take_in(conn, c, Kind::Library { file: o.file, access }, &ServerMsg::Library(Box::new(LibraryReply::Ready { access })));
+        self.take_in(conn, c, Kind::Library { file: o.file, access, link }, &ServerMsg::Library(Box::new(LibraryReply::Ready { access })));
     }
 
     /// A plugin directory connection: anyone may browse; a key, when given, must be the server's.
@@ -1059,14 +1248,20 @@ impl<B: Backend> Hub<B> {
             let users: Vec<u64> = self
                 .conns
                 .iter()
-                .filter(|(_, c)| matches!(&c.kind, Kind::Joined { file: f, link: Some(l), .. } if *f == file && *l == link))
+                .filter(|(_, c)| {
+                    matches!(&c.kind, Kind::Joined { file: f, link: Some(l), .. } | Kind::Library { file: f, link: Some(l), .. } if *f == file && *l == link)
+                })
                 .map(|(k, _)| *k)
                 .collect();
             self.kick(&users, "the link you joined with was revoked");
         }
         if let Some(file) = handled.removed {
-            let users: Vec<u64> =
-                self.conns.iter().filter(|(_, c)| matches!(&c.kind, Kind::Joined { file: f, .. } if *f == file)).map(|(k, _)| *k).collect();
+            let users: Vec<u64> = self
+                .conns
+                .iter()
+                .filter(|(_, c)| matches!(&c.kind, Kind::Joined { file: f, .. } | Kind::Library { file: f, .. } if *f == file))
+                .map(|(k, _)| *k)
+                .collect();
             // Closed without saving: the file is gone.
             self.rooms.remove(&file);
             self.kick(&users, "this file was removed from the server");
@@ -1080,7 +1275,7 @@ impl<B: Backend> Hub<B> {
     /// Send one message to one connection now (managing connections' answers).
     fn answer(&mut self, conn: u64, msg: &ServerMsg) {
         let Some(c) = self.conns.get(&conn) else { return };
-        let sent = encode(msg).is_some_and(|b| c.out.try_send(Out::Bytes(b)).is_ok());
+        let sent = encode(msg).is_some_and(|b| c.out.push(b).is_ok());
         if !sent {
             shutdown(&c.sock);
             self.gone(conn);
@@ -1109,6 +1304,24 @@ impl<B: Backend> Hub<B> {
         let outs = room.server.leave(id);
         self.queue(&file, outs);
         self.close_if_empty(&file);
+    }
+
+    /// What changed in `file` couldn't be made durable: nobody is told it was confirmed. The file
+    /// is closed without saving and everyone in it reconnects (its last durable state opens again
+    /// and their apps send again what wasn't confirmed).
+    fn unsaved(&mut self, file: &str) {
+        log::error!("file {file}: changes couldn't be saved; reconnecting everyone in it");
+        self.outbox.retain(|(f, _)| f != file);
+        self.rooms.remove(file);
+        let users: Vec<u64> =
+            self.conns.iter().filter(|(_, c)| matches!(&c.kind, Kind::Joined { file: f, .. } if f == file)).map(|(k, _)| *k).collect();
+        for conn in users {
+            if let Some(c) = self.conns.remove(&conn)
+                && c.out.tx.try_send(Out::Close(CloseCode::Restart, reason(UNSAVED))).is_err()
+            {
+                shutdown(&c.sock);
+            }
+        }
     }
 
     /// Nobody is in `file`: the backend saves it and may close it.
@@ -1143,7 +1356,9 @@ impl<B: Backend> Hub<B> {
     /// Make what changed durable, then send what the servers said; connections that can't keep up
     /// are dropped (which may say more: that they left).
     fn send_out(&mut self) {
-        self.backend.flush();
+        for file in self.backend.flush() {
+            self.unsaved(&file);
+        }
         while !self.outbox.is_empty() {
             let mut stuck = Vec::new();
             for (file, o) in std::mem::take(&mut self.outbox) {
@@ -1161,7 +1376,7 @@ impl<B: Backend> Hub<B> {
                     }
                     let Some((&conn, c)) = room.ids.get(&id).and_then(|conn| self.conns.get_key_value(conn)) else { continue };
                     let Some(b) = bytes.get_or_insert_with(|| encode(&msg)).clone() else { continue };
-                    match c.out.try_send(Out::Bytes(b)) {
+                    match c.out.push(b) {
                         Ok(()) => {}
                         Err(TrySendError::Full(_)) => {
                             log::info!("live session: client {id} can't keep up; disconnecting it");

@@ -41,9 +41,27 @@ pub fn temp_of(path: &Path) -> PathBuf {
 
 /// Replace `path` with `bytes` atomically: a reader sees the old or the new content, never a mix.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic_as(path, bytes, false)
+}
+
+/// [`write_atomic`] for a secret: on Unix only the owner can read it, from the moment it exists.
+pub fn write_atomic_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic_as(path, bytes, true)
+}
+
+fn write_atomic_as(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
     let tmp = temp_of(path);
     {
-        let mut f = File::create(&tmp)?;
+        let mut o = fs::OpenOptions::new();
+        o.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::OpenOptionsExt;
+            o.mode(0o600);
+        }
+        #[cfg(not(unix))]
+        let _ = private;
+        let mut f = o.open(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
     }

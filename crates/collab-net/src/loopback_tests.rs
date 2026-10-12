@@ -384,7 +384,7 @@ fn oversized_messages_end_the_connection() {
     let mut raw = Raw::hello(addr, TOKEN);
     let Some(ServerMsg::Welcome { client_id, .. }) = raw.next() else { panic!("no welcome") };
     raw.send(&ClientMsg::Presence(Presence { selection: Some((0..5000).map(NodeId).collect()), ..Presence::default() }));
-    assert_eq!(raw.refusal().as_deref(), Some("message too large"));
+    assert!(raw.refusal().is_some_and(|r| r.starts_with("message too large")));
     hp.wait("it left", |e| e.iter().any(|e| matches!(e, Event::PeerLeft(id) if *id == client_id)));
     // The host still serves others.
     let (_a, mut ap) = join(&invite, "Ada");

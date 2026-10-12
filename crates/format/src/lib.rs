@@ -21,7 +21,7 @@ pub mod fig;
 pub mod library;
 pub mod rest;
 
-pub use library::{is_valid_library_id, read_library};
+pub use library::{is_valid_library_id, read_library, read_library_within};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, Write};
@@ -470,7 +470,7 @@ pub fn load_bytes_with_versions(bytes: &[u8]) -> Result<Loaded, FormatError> {
         let hash = name.trim_start_matches("images/").to_string();
         images.insert(hash, image_data(data));
     }
-    match library::read(&mut z, &images) {
+    match library::read(&mut z, &images, u64::MAX) {
         Ok(lib) => doc.published = lib.map(Arc::new),
         Err(e) => issues.push(format!("the published library was skipped: {e}")),
     }

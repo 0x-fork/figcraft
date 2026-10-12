@@ -23,6 +23,14 @@ RestartSec=2
 # max_connections (512 by default) plus the files kept open.
 LimitNOFILE=4096
 UMask=0077
+# Under memory pressure this service slows down, then it alone is stopped (and restarted), not the
+# rest of the machine.
+MemoryHigh=60%
+MemoryMax=75%
+# It talks only to the proxy on this machine (listen = "127.0.0.1:47900"). Listening on a network
+# address without a proxy in front needs these two lines removed.
+IPAddressAllow=localhost
+IPAddressDeny=any
 
 # Hardening: the only writable place is the data directory.
 NoNewPrivileges=yes

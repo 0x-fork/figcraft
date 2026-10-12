@@ -241,7 +241,7 @@ impl Config {
             max_links: self.max_links,
             compact_after: self.compact_after,
             compact_bytes: mib(self.compact_mb),
-            core: figcraft_collab::Limits { max_peers: self.max_people, ..figcraft_collab::Limits::default() },
+            core: self.core(),
             directory: DirectoryConfig {
                 max_plugins: self.max_plugins,
                 max_plugin_bytes: mib(self.max_plugin_mb),
@@ -250,13 +250,44 @@ impl Config {
         }
     }
 
-    /// The transport's part (connections per address are capped only when open to the public).
+    /// Largest message a client may send when open to the public: a whole file (or plugin bundle)
+    /// and a margin, not the core's 64 MiB.
+    fn open_message(&self) -> usize {
+        usize::try_from(self.file_mb().max(self.max_plugin_mb).saturating_add(1).saturating_mul(1 << 20)).unwrap_or(usize::MAX)
+    }
+
+    /// The collaboration core's part: when open, messages as large as a file at most, and the
+    /// batches kept for reconnecting clients (in memory, and in the file's snapshot) at most a
+    /// quarter of a file's bytes (256 KiB at least).
+    fn core(&self) -> figcraft_collab::Limits {
+        let base = figcraft_collab::Limits { max_peers: self.max_people, ..figcraft_collab::Limits::default() };
+        if !self.open_publish {
+            return base;
+        }
+        let max = self.open_message().min(base.max_message_bytes);
+        let file = usize::try_from(self.file_mb().saturating_mul(1 << 20)).unwrap_or(usize::MAX);
+        figcraft_collab::Limits { max_message_bytes: max, max_log_bytes: (file / 4).max(256 << 10), ..base }
+    }
+
+    /// The transport's part. A private server keeps the defaults; open to the public, connections
+    /// per address are capped, messages are as large as a file at most, the bytes queued for a
+    /// client and for everyone and those waiting for the hub are bounded, one-shot requests leave
+    /// an eighth of the connections to sessions and are dropped after 20 idle seconds.
     pub fn net(&self) -> NetLimits {
+        let base = NetLimits { max_connections: self.max_connections, trusted_proxy: self.proxy().ok().flatten(), ..NetLimits::default() };
+        if !self.open_publish {
+            return base;
+        }
+        let max = self.open_message().min(base.max_client_message);
         NetLimits {
-            max_connections: self.max_connections,
-            max_per_address: if self.open_publish { self.max_connections_per_ip } else { 0 },
-            trusted_proxy: self.proxy().ok().flatten(),
-            ..NetLimits::default()
+            max_per_address: self.max_connections_per_ip,
+            max_client_message: max,
+            max_queued_bytes: max.saturating_mul(2),
+            max_queued_total: 256 << 20,
+            max_in_flight: 128 << 20,
+            reserve_for_sessions: self.max_connections / 8,
+            request_idle: std::time::Duration::from_secs(20),
+            ..base
         }
     }
 }

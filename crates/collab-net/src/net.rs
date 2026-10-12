@@ -134,4 +134,9 @@ impl Bucket {
         self.tokens -= n;
         true
     }
+
+    /// Give back `n` tokens (up to the burst).
+    pub fn give(&mut self, n: f64) {
+        self.tokens = (self.tokens + n).min(self.burst);
+    }
 }

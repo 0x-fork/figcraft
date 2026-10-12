@@ -63,8 +63,9 @@ pub struct Server {
     issued: BTreeMap<u32, Processed>,
     /// The latest accepted batches, oldest first (a reconnecting client gets what it missed).
     log: VecDeque<Accepted>,
-    /// Changes in `log`.
+    /// Changes in `log`, and about how many bytes it holds ([`weight`]).
     log_changes: usize,
+    log_bytes: usize,
     /// The connected clients that may only view.
     viewers: BTreeSet<u32>,
     /// What changed the lasting state since it was last taken (`None`: not kept).
@@ -117,6 +118,7 @@ impl Server {
             issued: BTreeMap::new(),
             log: VecDeque::new(),
             log_changes: 0,
+            log_bytes: 0,
             viewers: BTreeSet::new(),
             journal: None,
             signals: BTreeSet::new(),
@@ -399,12 +401,23 @@ impl Server {
     /// Keep an accepted batch in the log (dropping the oldest beyond the limits).
     fn remember(&mut self, acc: Accepted) {
         self.log_changes += acc.changes.len();
+        self.log_bytes = self.log_bytes.saturating_add(weight(&acc.changes));
         self.log.push_back(acc);
-        while self.log.len() > self.limits.max_log_batches || (self.log_changes > self.limits.max_log_changes && !self.log.is_empty()) {
+        while !self.log.is_empty()
+            && (self.log.len() > self.limits.max_log_batches
+                || self.log_changes > self.limits.max_log_changes
+                || self.log_bytes > self.limits.max_log_bytes)
+        {
             if let Some(old) = self.log.pop_front() {
                 self.log_changes = self.log_changes.saturating_sub(old.changes.len());
+                self.log_bytes = self.log_bytes.saturating_sub(weight(&old.changes));
             }
         }
+    }
+
+    /// About how many bytes the batches kept for reconnecting clients hold.
+    pub fn log_bytes(&self) -> usize {
+        self.log_bytes
     }
 
     /// Validate and apply a batch; on success it has the next sequence number.
@@ -558,4 +571,28 @@ fn reason(e: &Error) -> String {
         Error::Unknown(_) => "a layer it changes was deleted by someone else".into(),
         e => e.to_string(),
     }
+}
+
+/// About how many bytes `changes` take in memory: their values' text and a little per change.
+pub fn weight(changes: &[Change]) -> usize {
+    fn json(v: &serde_json::Value) -> usize {
+        match v {
+            serde_json::Value::String(s) => s.len() + 2,
+            serde_json::Value::Array(a) => a.iter().map(json).fold(2, usize::saturating_add),
+            serde_json::Value::Object(o) => o.iter().map(|(k, v)| k.len() + 3 + json(v)).fold(2, usize::saturating_add),
+            _ => 8,
+        }
+    }
+    changes
+        .iter()
+        .map(|c| match c {
+            Change::Create { kind, position, props, .. } => {
+                props.iter().map(|(_, v)| 16 + json(&v.0)).fold(64 + json(&kind.0) + position.len(), usize::saturating_add)
+            }
+            Change::Set { value, .. } | Change::SetDoc { value, .. } => 32 + json(&value.0),
+            Change::Put { value, .. } => 64 + json(&value.0),
+            Change::Delete { .. } => 16,
+            Change::Remove { .. } => 64,
+        })
+        .fold(0, usize::saturating_add)
 }

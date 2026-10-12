@@ -1651,6 +1651,7 @@ dependencies = [
  "toml",
  "tungstenite",
  "wat",
+ "zip",
 ]
 
 [[package]]
