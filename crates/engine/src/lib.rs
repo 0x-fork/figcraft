@@ -1395,6 +1395,8 @@ mod effects_tests;
 #[cfg(test)]
 mod export_behaviour_tests;
 #[cfg(test)]
+mod export_depth_tests;
+#[cfg(test)]
 mod extended_chain_tests;
 #[cfg(test)]
 mod fig_export_assets_tests;
