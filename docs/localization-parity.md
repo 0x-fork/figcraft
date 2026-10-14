@@ -1,10 +1,10 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (Turkish draft catalog; draft catalogs catch up: every draft translates every string again; Simplified Chinese draft catalog) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (reviewed Turkish catalog; draft catalogs catch up: every draft translates every string again; Simplified Chinese draft catalog) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft's interface has a localization layer with an English catalog and Spanish (with a Latin
-American overlay), French, German, Brazilian Portuguese, Japanese, Korean, Simplified Chinese and
-Turkish drafts (machine-drafted, waiting for native speakers' review). This page lists the twelve key
+American overlay), French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese
+drafts (machine-drafted, waiting for native speakers' review) and a reviewed Turkish catalog. This page lists the twelve key
 languages of the craftrules standard, then the other languages Figma ships. How to add a
 language: [`translating.md`](translating.md).
 

@@ -1,6 +1,6 @@
 # FigCraft interface strings: Turkish.
 #
-# Draft — needs native review: machine-drafted from the English catalog. Brand names and keyboard
+# Machine-drafted from the English catalog and reviewed by a native speaker. Brand names and keyboard
 # glyphs stay as they are. Buttons and menu items are bare imperatives (Kaydet, Sil); instructions
 # address the user politely (-in/-ın: "seçin", "tıklayın"). The percent sign goes before the number
 # (%50). Turkish nouns stay singular after a count, so plural entries give only `other`. See
@@ -8,7 +8,6 @@
 
 [meta]
 name = "Türkçe"
-status = "draft — needs native review"
 
 [ui]
 "% of all commits" = "Tüm commit'lerin %'si"

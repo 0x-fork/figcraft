@@ -13,8 +13,9 @@ Simplified.
 `pref.language {language}` does the same from the CLI, MCP and the control channel.
 
 The catalogs: English (`en`, the source), and Spanish (`es`, with the Latin American overlay
-`es-419`), French (`fr`), German (`de`), Brazilian Portuguese (`pt-BR`), Japanese (`ja`), Korean (`ko`),
-Simplified Chinese (`zh-Hans`) and Turkish (`tr`), machine-drafted and waiting for native speakers' review.
+`es-419`), French (`fr`), German (`de`), Brazilian Portuguese (`pt-BR`), Japanese (`ja`), Korean (`ko`) and
+Simplified Chinese (`zh-Hans`), machine-drafted and waiting for native speakers' review, and
+Turkish (`tr`), machine-drafted and reviewed by a native speaker.
 
 ## The catalogs
 
@@ -67,8 +68,9 @@ language also needs its script in `cjk::language`.
 4. To require full coverage, add the code to `COMPLETE` in
    [`crates/ui-egui/src/i18n_tests.rs`](../crates/ui-egui/src/i18n_tests.rs). Every later PR that
    adds a string then has to translate it into each complete language, so only Spanish is there:
-   French, German, Brazilian Portuguese, Japanese, Korean, Simplified Chinese and Turkish are
-   registered as drafts, and a string added later shows English in them until it is translated. To list what a draft lacks,
+   French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese are registered as
+   drafts, Turkish is reviewed but not required, and a string added later shows English in them until
+   it is translated. To list what a draft lacks,
    add its code to `COMPLETE` locally and run the check.
 5. Run the check and look at the panels in the app (longer words must fit the right panel):
 
