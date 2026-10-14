@@ -265,6 +265,9 @@ pub struct Store {
     next_sweep: u64,
     /// Compactions so far (tests count them).
     compactions: u64,
+    /// Open files closed by a compaction cut short (their snapshot replaced, their log not):
+    /// reported at the next flush, so nothing appended after it is confirmed.
+    cut_short: Vec<String>,
     /// The free space last seen on the data directory's disk, and when.
     free: Option<(Instant, Option<u64>)>,
     _lock: File,
@@ -360,6 +363,7 @@ impl Store {
             gone_codes: VecDeque::new(),
             next_sweep: 0,
             compactions: 0,
+            cut_short: Vec::new(),
             free: None,
             _lock: lock,
         };
@@ -1124,7 +1128,7 @@ impl Store {
                 Log { generation, file: f, pending: Vec::new(), entries: kept, bytes, dirty: kept > 0 }
             }
             // A new snapshot and log of the next generation, so appends start clean.
-            _ => self.rewrite(file, generation + 1, &server)?,
+            _ => self.rewrite(file, generation + 1, &server).map_err(|e| e.why)?,
         };
         self.entry(file)?.log = Some(log);
         Ok(server)
@@ -1137,21 +1141,24 @@ impl Store {
     }
 
     /// Write `server`'s state as snapshot `generation` and start an empty log of it.
-    fn rewrite(&mut self, file: &str, generation: u64, server: &Server) -> Result<Log, String> {
+    fn rewrite(&mut self, file: &str, generation: u64, server: &Server) -> Result<Log, RewriteError> {
         let dir = self.dir(file);
-        let state = server.state().map_err(|e| e.to_string())?;
-        let bytes = disk::encode_snapshot(generation, &state)?;
+        let kept = |why: String| RewriteError { why, snapshot_replaced: false };
+        let state = server.state().map_err(|e| kept(e.to_string()))?;
+        let bytes = disk::encode_snapshot(generation, &state).map_err(kept)?;
         // Never replace a readable snapshot with one that can't be opened again: the old snapshot
         // and log still hold everything.
         if bytes.len() as u64 > self.snapshot_cap() {
-            return Err(format!("the snapshot would be {} MiB, more than can be opened again", bytes.len() >> 20));
+            return Err(kept(format!("the snapshot would be {} MiB, more than can be opened again", bytes.len() >> 20)));
         }
         if bytes.len() as u64 > self.cfg.max_file_bytes {
             log::warn!("file {file} is {} MiB, over the {} MiB cap (kept anyway)", bytes.len() >> 20, self.cfg.max_file_bytes >> 20);
         }
-        disk::write_atomic(&dir.join(SNAPSHOT), &bytes).map_err(|e| format!("couldn't write the snapshot: {e}"))?;
-        disk::write_atomic(&dir.join(LOG), &disk::log_header(generation)).map_err(|e| format!("couldn't start the log: {e}"))?;
-        let f = OpenOptions::new().append(true).open(dir.join(LOG)).map_err(|e| format!("couldn't open the log: {e}"))?;
+        disk::write_atomic(&dir.join(SNAPSHOT), &bytes).map_err(|e| kept(format!("couldn't write the snapshot: {e}")))?;
+        // From here the old log no longer goes with the snapshot on disk.
+        let replaced = |why: String| RewriteError { why, snapshot_replaced: true };
+        disk::write_atomic(&dir.join(LOG), &disk::log_header(generation)).map_err(|e| replaced(format!("couldn't start the log: {e}")))?;
+        let f = OpenOptions::new().append(true).open(dir.join(LOG)).map_err(|e| replaced(format!("couldn't open the log: {e}")))?;
         if let Ok(e) = self.entry(file) {
             e.bytes = (bytes.len() + LOG_HEADER) as u64;
             e.meta.seq = server.seq();
@@ -1204,8 +1211,19 @@ impl Store {
                 }
                 log::debug!("compacted file {file}");
             }
+            // The new snapshot holds everything, but a restart would drop whatever is appended to
+            // the old log now (its generation no longer matches): the file closes, the hub hears
+            // it at the next flush, and it opens again from the new snapshot.
+            Err(RewriteError { why, snapshot_replaced: true }) => {
+                self.note(format!("file {file}: compaction was cut short ({why}); it was closed"));
+                log::error!("file {file}: compaction was cut short: {why}");
+                if let Some(e) = self.files.get_mut(file) {
+                    e.log = None;
+                }
+                self.cut_short.push(file.to_string());
+            }
             // The old snapshot and log still hold everything: carry on appending.
-            Err(e) => log::error!("file {file}: compaction failed: {e}"),
+            Err(RewriteError { why, .. }) => log::error!("file {file}: compaction failed: {why}"),
         }
     }
 
@@ -1213,7 +1231,7 @@ impl Store {
     /// Those are closed here (their pending records dropped: nobody was told of them) and open
     /// again from what is on disk.
     fn flush_all(&mut self) -> Vec<String> {
-        let mut failed = Vec::new();
+        let mut failed = std::mem::take(&mut self.cut_short);
         for (id, e) in &mut self.files {
             if let Some(log) = e.log.as_mut() {
                 match flush_log(id, log) {
@@ -1227,6 +1245,13 @@ impl Store {
         }
         failed
     }
+}
+
+/// Why a snapshot and log couldn't be rewritten, and whether the snapshot on disk was replaced
+/// before it failed (then the old log no longer goes with it).
+struct RewriteError {
+    why: String,
+    snapshot_replaced: bool,
 }
 
 /// Write and sync a log's pending records: the bytes written, or `Err` when that failed (the log
@@ -1316,6 +1341,8 @@ impl Backend for Store {
         if dirty {
             self.compact(file, server);
         }
+        // It closes anyway, everything in its snapshot: a compaction cut short needs no report.
+        self.cut_short.retain(|f| f != file);
         if let Some(e) = self.files.get_mut(file) {
             e.log = None;
         }
