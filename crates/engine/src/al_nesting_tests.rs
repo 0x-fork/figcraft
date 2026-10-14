@@ -94,9 +94,9 @@ fn nest(s: &mut Session) -> Nest {
     let x = rect(s, Some(inner), 0.0, 0.0, 50.0, 50.0);
     let y = rect(s, Some(inner), 60.0, 0.0, 50.0, 50.0);
     s.execute("layout.add", &json!({"ids": [inner], "direction": "horizontal"})).unwrap();
-    set(s, inner, json!({"padding": 10, "gap": 10}));
+    set(s, inner, json!({"padding": 10, "gap": 10, "sizingH": "hug", "sizingV": "hug"}));
     s.execute("layout.add", &json!({"ids": [outer], "direction": "vertical"})).unwrap();
-    set(s, outer, json!({"padding": 10, "gap": 10, "sizingH": "fixed", "width": 300}));
+    set(s, outer, json!({"padding": 10, "gap": 10, "sizingH": "fixed", "sizingV": "hug", "width": 300}));
     s.execute("select.none", &json!({})).unwrap();
     Nest { outer, a, b, inner, x, y }
 }
@@ -311,7 +311,7 @@ fn fill_text_in_a_hugging_card_sets_the_height_in_one_step() {
         .execute("text.create", &json!({"text": "A fairly long line of text that has to wrap inside the card", "x": 0, "y": 0, "parent": card}))
         .unwrap());
     s.execute("layout.add", &json!({"ids": [card], "direction": "vertical"})).unwrap();
-    set(&mut s, card, json!({"padding": 10, "sizingH": "fixed", "width": 160}));
+    set(&mut s, card, json!({"padding": 10, "sizingH": "fixed", "sizingV": "hug", "width": 160}));
     set(&mut s, t, json!({"sizingH": "fill"}));
     let (tb, cb) = (bounds(&s, t), bounds(&s, card));
     assert_eq!(tb.width(), 140.0);

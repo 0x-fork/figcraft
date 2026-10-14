@@ -480,8 +480,11 @@ fn layout_add(s: &mut Session, p: &Value) -> Result<Value> {
         let n = doc.get_mut(*f)?;
         n.children = kids;
         n.layout = Some(al);
-        n.child_layout.sizing_h = Sizing::Hug;
-        n.child_layout.sizing_v = Sizing::Hug;
+        if !all_frames {
+            // A frame wrapped around the selection hugs it; an existing frame keeps its size.
+            n.child_layout.sizing_h = Sizing::Hug;
+            n.child_layout.sizing_v = Sizing::Hug;
+        }
     }
     s.set_selection(targets.clone());
     Ok(json!({"ids": targets}))
