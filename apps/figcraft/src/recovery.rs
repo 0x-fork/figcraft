@@ -125,13 +125,21 @@ impl Recovery {
             let path = self.dir.join(format!("{}.figcraft", d.uid));
             let note = path.with_extension(ONLINE);
             if !needs_copy(d) {
-                if self.written.remove(&d.uid).is_some() {
+                if let Some((_, writer)) = self.written.remove(&d.uid) {
+                    // A write still running would bring the copy back after it was removed.
+                    if let Some(h) = writer {
+                        let _ = h.join();
+                    }
                     let _ = std::fs::remove_file(&path);
                     let _ = std::fs::remove_file(&note);
                 }
                 continue;
             }
             let entry = self.written.entry(d.uid).or_insert((0, None));
+            // An emergency save must copy the newest revision: let the write in flight finish first.
+            if wait && let Some(h) = entry.1.take() {
+                let _ = h.join();
+            }
             let busy = entry.1.as_ref().is_some_and(|h| !h.is_finished());
             if entry.0 == d.revision || busy {
                 continue;
@@ -162,14 +170,23 @@ impl Recovery {
         // Closed documents.
         let open: Vec<u64> = s.docs.iter().map(|d| d.uid).collect();
         let dir = &self.dir;
-        self.written.retain(|uid, _| {
+        self.written.retain(|uid, w| {
             let keep = open.contains(uid);
             if !keep {
+                if let Some(h) = w.1.take() {
+                    let _ = h.join();
+                }
                 let _ = std::fs::remove_file(dir.join(format!("{uid}.figcraft")));
                 let _ = std::fs::remove_file(dir.join(format!("{uid}.{ONLINE}")));
             }
             keep
         });
+    }
+
+    /// Test hook: pretend a write of `uid` at `revision` is in flight in `writer`.
+    #[cfg(test)]
+    pub fn hold(&mut self, uid: u64, revision: u64, writer: JoinHandle<()>) {
+        self.written.insert(uid, (revision, Some(writer)));
     }
 
     /// A normal quit: the documents were saved or their changes discarded on purpose. (Earlier
