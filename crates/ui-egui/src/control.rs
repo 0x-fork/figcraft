@@ -139,25 +139,33 @@ pub fn drain(app: &mut FigApp, ctx: &Context) {
 /// Methods that need no frame drawn (#269): a hidden window answers them too.
 const NO_FRAME: &[&str] = &["engine.execute", "engine.commands", "document.inspect", "node.get", "window.list", "ui.render"];
 
-/// While the main window is hidden (minimised, or covered by other windows) it draws no frames,
-/// but the desktop app's `logic` still runs: it answers the requests for that window that need no
-/// frame, so an attached agent can edit, inspect and save. The rest (screenshots, input, the
-/// interface's own state) wait for the window to show.
+/// Whether window `id` draws no frames now: minimised, or covered by other windows (on macOS also
+/// on another Space).
+fn hidden(ctx: &Context, id: u64) -> bool {
+    ctx.input(|i| i.raw.viewports.get(&crate::windows::viewport(id)).and_then(egui::ViewportInfo::visible)) == Some(false)
+}
+
+/// A hidden window (minimised, or covered by other windows) draws no frames, but the desktop app's
+/// `logic` still runs, for the main window even while every window is hidden: it answers the
+/// requests for any hidden window that need no frame, in that window's file, so an attached agent
+/// can edit, inspect and save. The rest (screenshots, input, the interface's own state) wait for the
+/// window to show. A request for a window that doesn't exist is an error at once.
 pub fn drain_hidden(app: &mut FigApp, ctx: &Context) {
-    if ctx.input(|i| i.viewport().visible()) != Some(false) {
-        return;
-    }
     for r in std::mem::take(&mut app.control_queue) {
         if r.is_cancelled() {
             continue;
         }
-        let main = r.params.get("window").and_then(Value::as_u64).unwrap_or(app.windows.focused) == 0;
-        if !main || !NO_FRAME.contains(&r.method.as_str()) {
+        let target = r.params.get("window").and_then(Value::as_u64).unwrap_or(app.windows.focused);
+        if !app.windows.exists(target) {
+            let _ = r.reply.send(ControlReply { id: r.id, result: Err(format!("no window {target}")) });
+            continue;
+        }
+        if !hidden(ctx, target) || !NO_FRAME.contains(&r.method.as_str()) {
             app.control_queue.push(r);
             continue;
         }
-        let res = handle(app, ctx, &r.method, &r.params);
-        let _ = r.reply.send(ControlReply { id: r.id, result: res });
+        let res = crate::windows::as_window(app, target, |app| handle(app, ctx, &r.method, &r.params));
+        let _ = r.reply.send(ControlReply { id: r.id, result: res.unwrap_or_else(|| Err(format!("no window {target}"))) });
     }
 }
 
