@@ -218,8 +218,18 @@ impl Fit {
     }
 }
 
-/// Overrides and derived layout by id path; each entry says whether it's derived layout.
-type Overrides<'a> = BTreeMap<Vec<String>, Vec<(bool, &'a Kv<'a>)>>;
+/// Overrides and derived layout by id path.
+type Overrides<'a> = BTreeMap<Vec<String>, Vec<(Entry, &'a Kv<'a>)>>;
+
+/// Where an override entry comes from.
+#[derive(Clone, Copy, PartialEq)]
+enum Entry {
+    Override,
+    Derived,
+    /// Derived layout of a nested instance for a size it no longer has: its size and place no
+    /// longer hold, the rest (resolved colours, text) still does.
+    Stale,
+}
 
 /// Where an instance's expanded layers are: the overrides and derived layout of the outermost
 /// instance (by id path), the path of the instance being expanded, and the property values.
@@ -377,15 +387,19 @@ impl<'a> Mapper<'a> {
         // A layer of a resized instance the file gives no derived layout for follows its
         // constraints from the main's geometry, then takes the size and place overridden on it
         // (auto layout places the others, as in the editor).
-        let derived = entries.iter().any(|(d, l)| *d && (l.get("size").is_some() || l.get("transform").is_some()));
+        let derived = entries.iter().any(|(d, l)| *d == Entry::Derived && (l.get("size").is_some() || l.get("transform").is_some()));
         let stacked = parent.and_then(|p| p.str("stackMode")).is_some_and(|m| matches!(m, "HORIZONTAL" | "VERTICAL" | "GRID"))
             && view.str("stackPositioning") != Some("ABSOLUTE");
         let main = View::of(base);
+        let set = |k: &str| entries.iter().rev().filter(|e| e.0 != Entry::Stale).find_map(|(_, l)| l.get(k));
         if let (Some(f), false, false, Some((w, h))) = (fit, derived, stacked, main.size()) {
             let t = main.transform().unwrap_or_default();
             let (fw, ft) = f.apply(w, h, t, view.str("horizontalConstraint"), view.str("verticalConstraint"));
-            let set = |k: &str| entries.iter().rev().find_map(|(_, l)| l.get(k));
             view.fitted = Some((set("size").and_then(size).unwrap_or(fw), set("transform").and_then(matrix).unwrap_or(ft)));
+        } else if entries.iter().any(|(d, l)| *d == Entry::Stale && (l.get("size").is_some() || l.get("transform").is_some()))
+            && let Some(s) = set("size").and_then(size).or_else(|| main.size())
+        {
+            view.fitted = Some((s, set("transform").and_then(matrix).or_else(|| main.transform()).unwrap_or_default()));
         }
         let rest_id = match (inst, &path) {
             (Some(i), Some(p)) => format!("I{};{}", i.root, p.join(";")),
@@ -1011,14 +1025,16 @@ impl<'a> Mapper<'a> {
         // Overrides by id path below this instance (the instance itself is addressed by its main's id).
         let own_path: Vec<String> = outer.map(|i| [i.path.as_slice(), &[id.to_string()]].concat()).unwrap_or_default();
         let mut overrides: Overrides<'a> = outer.map(|i| (*i.overrides).clone()).unwrap_or_default();
-        // A nested instance's derived layout is for the size it has in its main: resized here, it
-        // no longer holds and its layers follow their constraints instead.
-        let resized = outer.is_some() && self.nodes.get(id).and_then(|b| View::of(b).size()) != v.size();
+        // A nested instance's derived layout is for the size it has in its main: resized here, the
+        // sizes and places in it no longer hold and its layers follow their constraints instead.
+        let differs = |a: f64, b: f64| (a - b).abs() > 1e-6 * a.abs().max(b.abs()).max(1.0);
+        let resized = outer.is_some()
+            && match (self.nodes.get(id).and_then(|b| View::of(b).size()), v.size()) {
+                (Some(a), Some(b)) => differs(a.0, b.0) || differs(a.1, b.1),
+                (a, b) => a.is_some() != b.is_some(),
+            };
         let lists = [sd.and_then(|s| s.get("symbolOverrides")).map(Kv::list).unwrap_or_default(), v.list("derivedSymbolData")];
         for (layer, list) in lists.into_iter().enumerate() {
-            if layer == 1 && resized {
-                continue;
-            }
             for ov in list {
                 let rel: Vec<String> =
                     ov.get("guidPath").and_then(|g| g.get("guids")).map(Kv::list).unwrap_or_default().iter().filter_map(guid).collect();
@@ -1028,9 +1044,16 @@ impl<'a> Mapper<'a> {
                 let e = overrides.entry([own_path.as_slice(), &rel].concat()).or_default();
                 // The outer instance's overrides win over this one's own; derived layout comes last.
                 if layer == 0 && outer.is_some() {
-                    e.insert(0, (false, ov));
+                    e.insert(0, (Entry::Override, ov));
                 } else {
-                    e.push((layer == 1, ov));
+                    e.push((
+                        match (layer, resized) {
+                            (0, _) => Entry::Override,
+                            (_, false) => Entry::Derived,
+                            (_, true) => Entry::Stale,
+                        },
+                        ov,
+                    ));
                 }
             }
         }

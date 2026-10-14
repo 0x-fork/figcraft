@@ -760,7 +760,14 @@ fn nested_instances_resized_again_drop_the_layout_derived_for_their_old_size() {
                     ("size", xy(150.0, 10.0)),
                     ("transform", at(0.0, 0.0)),
                     ("symbolData", o(vec![("symbolID", g(20))])),
-                    ("derivedSymbolData", arr(vec![o(vec![("guidPath", o(vec![("guids", arr(vec![g(21)]))])), ("size", xy(150.0, 10.0))])])),
+                    (
+                        "derivedSymbolData",
+                        arr(vec![o(vec![
+                            ("guidPath", o(vec![("guids", arr(vec![g(21)]))])),
+                            ("size", xy(150.0, 10.0)),
+                            ("fillPaints", arr(vec![solid(1.0, 0.0, 0.0)])),
+                        ])]),
+                    ),
                 ],
                 stretch(),
             ]
@@ -782,6 +789,9 @@ fn nested_instances_resized_again_drop_the_layout_derived_for_their_old_size() {
     // In its main the derived layout holds; stretched to 250 it no longer does.
     assert_eq!(width("Slider"), (150.0, 150.0));
     assert_eq!(width("Wide slider"), (250.0, 250.0));
+    // What else the derived data gives (the colour a variable resolves to, say) still holds.
+    let fill = doc.node(doc.node(named(&doc, "Wide slider").children[0]).unwrap().children[0]).unwrap();
+    assert!(matches!(fill.fills.first().map(|p| &p.kind), Some(figcraft_doc::color::PaintKind::Solid { color }) if color.r == 1.0 && color.g == 0.0));
 }
 
 #[path = "tail_tests.rs"]
