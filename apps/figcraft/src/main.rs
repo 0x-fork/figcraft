@@ -170,6 +170,7 @@ fn main() -> eframe::Result {
     let icon = services::window_icon();
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("FigCraft")
+        .with_app_id("ai.storyteller.figcraft")
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([800.0, 500.0])
         .with_drag_and_drop(true);
