@@ -22,7 +22,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
-use figcraft_engine::Session;
+use figcraft_engine::{DocState, Session};
+use figcraft_format::{Branch, Version};
 use serde_json::json;
 
 /// Seconds between copies of a document that keeps changing.
@@ -41,8 +42,8 @@ pub struct Recovery {
     dir: PathBuf,
     /// Held while the app runs: a free lock means the run that wrote the folder is gone.
     _lock: File,
-    /// The revision each document was last copied at, and the write in flight.
-    written: HashMap<u64, (u64, Option<JoinHandle<()>>)>,
+    /// The [`stamp`] each document was last copied at, and the write in flight.
+    written: HashMap<u64, (Vec<u64>, Option<JoinHandle<()>>)>,
     /// When (UI clock) the next copies are due.
     next: f64,
     /// Copies of online files from earlier runs, kept until their outcome is known.
@@ -88,7 +89,7 @@ impl Recovery {
         self.settle(s);
         // A join on its way settles within its timeouts: look again soon.
         let settling = (!self.waiting.is_empty()).then_some(0.5);
-        let pending = s.docs.iter().any(|d| needs_copy(d) && self.written.get(&d.uid).is_none_or(|w| w.0 != d.revision));
+        let pending = s.docs.iter().any(|d| needs_copy(s, d) && self.written.get(&d.uid).is_none_or(|w| w.0 != stamp(s, d)));
         if now < self.next {
             return pending.then_some(self.next - now).or(settling);
         }
@@ -124,26 +125,28 @@ impl Recovery {
         for d in &s.docs {
             let path = self.dir.join(format!("{}.figcraft", d.uid));
             let note = path.with_extension(ONLINE);
-            if !needs_copy(d) {
+            if !needs_copy(s, d) {
                 if self.written.remove(&d.uid).is_some() {
                     let _ = std::fs::remove_file(&path);
                     let _ = std::fs::remove_file(&note);
                 }
                 continue;
             }
-            let entry = self.written.entry(d.uid).or_insert((0, None));
+            let stamp = stamp(s, d);
+            let entry = self.written.entry(d.uid).or_insert((Vec::new(), None));
             let busy = entry.1.as_ref().is_some_and(|h| !h.is_finished());
-            if entry.0 == d.revision || busy {
+            if entry.0 == stamp || busy {
                 continue;
             }
             let doc = d.doc.clone();
+            let (versions, branches) = (d.versions.clone(), figcraft_engine::branches::current(s, d.uid));
             // Which online file it is and what of the server's this very copy has (a line each:
             // the server, the file's id, then the session, client id and last change), while it
             // is one. Written after the copy, never before: a note must not promise more of the
             // server's changes than its copy holds.
             let online = s.online_of(d.uid).map(|(server, file, at)| format!("{server}\n{file}\n{} {} {}", at.session, at.client_id, at.seq));
             let job = move || {
-                if !write_atomic(&path, &doc) {
+                if !write_atomic(&path, &doc, &versions, &branches) {
                     return;
                 }
                 let _ = match online {
@@ -157,7 +160,7 @@ impl Recovery {
             } else {
                 entry.1 = std::thread::Builder::new().name("recovery".into()).spawn(job).ok();
             }
-            entry.0 = d.revision;
+            entry.0 = stamp;
         }
         // Closed documents.
         let open: Vec<u64> = s.docs.iter().map(|d| d.uid).collect();
@@ -201,15 +204,27 @@ fn rejoin_online(file: &Path, s: &mut Session) -> Option<u64> {
     s.execute("collab.recoverFile", &params).ok()?.get("session")?.as_u64()
 }
 
-/// A document whose changes would be lost (a branch tab's edits are in its main file).
-fn needs_copy(d: &figcraft_engine::DocState) -> bool {
-    d.is_dirty() && d.branch_of.is_none()
+/// A file whose changes would be lost: in its document, its history or one of its branch tabs
+/// (a branch tab's edits are saved with its main file, so the tab has no copy of its own).
+fn needs_copy(s: &Session, d: &DocState) -> bool {
+    d.branch_of.is_none() && (d.is_dirty() || branch_tabs(s, d.uid).any(DocState::is_dirty))
 }
 
-/// Write `doc` to `path` through a temporary file; false when it couldn't be written (the copy
-/// before it is still there).
-fn write_atomic(path: &Path, doc: &figcraft_engine::doc::Document) -> bool {
-    let Ok(bytes) = figcraft_format::save_bytes(doc, None) else { return false };
+/// The tabs showing branches of the file in tab `uid`.
+fn branch_tabs(s: &Session, uid: u64) -> impl Iterator<Item = &DocState> {
+    s.docs.iter().filter(move |t| t.branch_of.as_ref().is_some_and(|(main, _)| *main == uid))
+}
+
+/// The revisions a copy of `d` is of: its own and its branch tabs' (a branch tab's edits change
+/// only its own revision). A new copy is due when they change.
+fn stamp(s: &Session, d: &DocState) -> Vec<u64> {
+    std::iter::once(d.revision).chain(branch_tabs(s, d.uid).map(|t| t.revision)).collect()
+}
+
+/// Write `doc` with its version history and branches to `path` through a temporary file; false
+/// when it couldn't be written (the copy before it is still there).
+fn write_atomic(path: &Path, doc: &figcraft_engine::doc::Document, versions: &[Version], branches: &[Branch]) -> bool {
+    let Ok(bytes) = figcraft_format::save_bytes_with_history(doc, None, versions, branches) else { return false };
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, path).is_ok()
 }

@@ -62,3 +62,68 @@ fn copies_follow_saves_and_a_normal_quit_leaves_nothing() {
     assert!(!dir.exists(), "a normal quit removes the copies");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// The rectangles in `doc`.
+fn rectangles(doc: &figcraft_engine::doc::Document) -> usize {
+    doc.nodes().filter(|n| matches!(n.kind, figcraft_engine::doc::NodeKind::Rectangle)).count()
+}
+
+/// The documents a crashed run's copies under `root` open as.
+fn crash_and_recover(r: Recovery, root: &std::path::Path) -> Session {
+    drop(r);
+    let mut next = Session::empty();
+    assert_eq!(recover(root, &mut next), 1);
+    next
+}
+
+#[test]
+fn copies_keep_the_version_history_and_branches() {
+    // #185: a copy has what a save would write, the latest edits on a branch tab included.
+    let root = root("history");
+    let mut s = edited();
+    s.execute("file.saveVersion", &json!({"name": "v1"})).unwrap();
+    s.execute("branch.create", &json!({"name": "Explore"})).unwrap();
+    s.execute("shape.rectangle", &json!({"x": 20, "y": 0, "width": 10, "height": 10})).unwrap();
+    let mut r = Recovery::start(&root).unwrap();
+    r.write(&s, true);
+    let next = crash_and_recover(r, &root);
+    let ds = next.docs.first().unwrap();
+    assert_eq!(ds.versions.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["v1"]);
+    assert_eq!(ds.branches.iter().map(|b| (b.name.as_str(), rectangles(&b.head))).collect::<Vec<_>>(), [("Explore", 2)]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The one copy under `root` (the run's folder), read back.
+fn copy(root: &std::path::Path) -> figcraft_format::Loaded {
+    let dir = std::fs::read_dir(root).unwrap().flatten().next().unwrap().path();
+    let file = std::fs::read_dir(dir).unwrap().flatten().map(|f| f.path()).find(|f| f.extension().is_some_and(|e| e == "figcraft")).unwrap();
+    figcraft_format::load_bytes_with_versions(&std::fs::read(file).unwrap()).unwrap()
+}
+
+#[test]
+fn a_change_only_on_a_branch_tab_or_to_the_history_is_copied() {
+    let root = root("history-only");
+    let mut s = edited();
+    s.execute("file.saveVersion", &json!({"name": "v1"})).unwrap();
+    s.execute("branch.create", &json!({"name": "Explore"})).unwrap();
+    for d in &mut s.docs {
+        d.mark_saved();
+    }
+    let mut r = Recovery::start(&root).unwrap();
+    // An edit on the branch tab only: the main file has no changes of its own yet.
+    s.execute("shape.rectangle", &json!({"x": 20, "y": 0, "width": 10, "height": 10})).unwrap();
+    r.write(&s, true);
+    assert_eq!(copy(&root).branches.iter().map(|b| rectangles(&b.head)).collect::<Vec<_>>(), [2]);
+    s.execute("shape.rectangle", &json!({"x": 40, "y": 0, "width": 10, "height": 10})).unwrap();
+    r.write(&s, true);
+    assert_eq!(copy(&root).branches.iter().map(|b| rectangles(&b.head)).collect::<Vec<_>>(), [3]);
+    // A version renamed on the main file leaves its document as it was.
+    s.execute("doc.switch", &json!({"index": 0})).unwrap();
+    r.write(&s, true);
+    let id = s.docs[0].versions[0].id.clone();
+    s.execute("version.rename", &json!({"id": id, "name": "v1 (renamed)"})).unwrap();
+    r.write(&s, true);
+    assert_eq!(copy(&root).versions.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["v1 (renamed)"]);
+    r.finish();
+    let _ = std::fs::remove_dir_all(&root);
+}
