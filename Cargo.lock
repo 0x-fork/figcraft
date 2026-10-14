@@ -1718,6 +1718,7 @@ dependencies = [
  "figcraft-collab-net",
  "figcraft-engine",
  "figcraft-ui-egui",
+ "js-sys",
  "log",
  "wasm-bindgen",
  "wasm-bindgen-futures",

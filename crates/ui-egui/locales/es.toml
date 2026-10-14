@@ -8,6 +8,7 @@ name = "Español"
 status = "draft — needs native review"
 
 [ui]
+"Couldn't download the variables" = "No se pudieron descargar las variables"
 
 "% of all commits" = "% del total de commits"
 "(no longer published)" = "(ya no publicado)"

@@ -69,14 +69,27 @@ impl eframe::App for WebShell {
     }
 }
 
-/// Browser services. File dialogs return nothing for now (the trait's defaults); the clipboard
-/// goes through egui's own web clipboard handling.
+/// Browser services. Open dialogs return nothing for now (the trait's defaults); files are saved
+/// as downloads; the clipboard goes through egui's own web clipboard handling.
 struct WebServices {
     /// `prefers-reduced-motion: reduce` (it follows the setting while the page is open).
     reduce_motion: Option<web_sys::MediaQueryList>,
 }
 
 impl Services for WebServices {
+    fn downloads(&self) -> bool {
+        true
+    }
+    /// A Blob behind a temporary `<a download>` link, clicked and removed.
+    fn download(&mut self, name: &str, bytes: &[u8]) -> bool {
+        match download(name, bytes) {
+            Ok(()) => true,
+            Err(e) => {
+                log::error!("couldn't download {name}: {e:?}");
+                false
+            }
+        }
+    }
     fn open_url(&mut self, url: &str) {
         let Some(window) = web_sys::window() else { return };
         if let Err(e) = window.open_with_url_and_target(url, "_blank") {
@@ -107,4 +120,23 @@ impl Services for WebServices {
         }
         held
     }
+}
+
+fn download(name: &str, bytes: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
+    let document = web_sys::window().and_then(|w| w.document()).ok_or("no document")?;
+    let body = document.body().ok_or("no body")?;
+    let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
+    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &{
+        let o = web_sys::BlobPropertyBag::new();
+        o.set_type("application/octet-stream");
+        o
+    })?;
+    let url = web_sys::Url::create_object_url_with_blob(&blob)?;
+    let a: web_sys::HtmlAnchorElement = document.create_element("a")?.dyn_into()?;
+    a.set_href(&url);
+    a.set_download(name);
+    body.append_child(&a)?;
+    a.click();
+    a.remove();
+    web_sys::Url::revoke_object_url(&url)
 }
