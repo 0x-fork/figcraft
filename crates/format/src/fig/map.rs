@@ -25,6 +25,8 @@ const MAX_DEPTH: usize = 256;
 const MAX_COMMANDS: usize = 200_000;
 /// Id of "no style".
 const NO_STYLE: &str = "4294967295:4294967295";
+/// Longest asset `key` or `version` kept for resolving references given as assets.
+const MAX_ASSET_PART: usize = 256;
 
 /// The REST API file JSON for message `msg`, with the warnings about what was skipped.
 pub(super) fn to_rest(msg: &Kv, name: &str) -> (Value, Vec<String>) {
@@ -165,6 +167,10 @@ struct Mapper<'a> {
     blobs: Vec<&'a [u8]>,
     /// Component property definitions: id → (REST name "Name#id", type).
     prop_defs: BTreeMap<String, (String, &'a str)>,
+    /// File nodes by asset `key` and `version`: references can name a collection, variable or
+    /// style as the asset instead of the guid, and the file carries the resources to resolve
+    /// them (the collection node itself says the same `key`).
+    assets: BTreeMap<String, BTreeMap<String, String>>,
     styles: Obj,
     /// Descriptions of components and component sets (REST `components` / `componentSets`).
     components: Obj,
@@ -203,7 +209,36 @@ impl<'a> Mapper<'a> {
         }
         let blobs =
             msg.get("blobs").map(Kv::list).unwrap_or_default().iter().map(|b| b.get("bytes").and_then(Kv::bytes).unwrap_or_default()).collect();
-        Self { nodes, kids, blobs, prop_defs, styles: Obj::new(), components: Obj::new(), sets: Obj::new(), warnings: Vec::new(), count: 0 }
+        let mut assets: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        for n in msg.get("nodeChanges").map(Kv::list).unwrap_or_default() {
+            let (Some(key), Some(id)) = (n.get("key").and_then(Kv::str), n.get("guid").and_then(guid)) else { continue };
+            if key.is_empty() || key.len() > MAX_ASSET_PART {
+                continue;
+            }
+            let version = n.get("version").and_then(Kv::str).filter(|v| !v.is_empty() && v.len() <= MAX_ASSET_PART).unwrap_or("");
+            assets.entry(key.to_string()).or_default().entry(version.to_string()).or_insert(id);
+        }
+        Self { nodes, kids, blobs, prop_defs, assets, styles: Obj::new(), components: Obj::new(), sets: Obj::new(), warnings: Vec::new(), count: 0 }
+    }
+
+    /// The id of the resource a `VariableSetID` (or `VariableID`, `StyleId`) names: its `guid`,
+    /// else the file node its asset `key` and `version` names (a collection from a library is
+    /// referenced as the asset, and the file's own node for it says the same `key`). `None` when
+    /// the reference has neither or the asset names nothing (or ambiguously) in the file.
+    fn resource_id(&self, v: &Kv) -> Option<String> {
+        if let Some(g) = v.get("guid").and_then(guid).filter(|g| *g != NO_STYLE) {
+            return Some(g);
+        }
+        let asset = v.get("assetRef")?;
+        let key = asset.get("key").and_then(Kv::str)?;
+        let versions = self.assets.get(key)?;
+        let version = asset.get("version").and_then(Kv::str);
+        match version {
+            Some(v) => versions.get(v),
+            // Without a version: an unversioned record, else the file's only one.
+            None => versions.get("").or_else(|| (versions.len() == 1).then(|| versions.values().next()).flatten()),
+        }
+        .cloned()
     }
 
     fn warn(&mut self, w: impl Into<String>) {
@@ -1105,10 +1140,20 @@ impl<'a> Mapper<'a> {
             o.insert("style".into(), json!({"boundVariables": text_bound}));
         }
         let mut modes = Obj::new();
+        let mut lost = false;
         for e in v.get("variableModeBySetMap").and_then(|m| m.get("entries")).map(Kv::list).unwrap_or_default() {
-            if let (Some(set), Some(mode)) = (e.get("variableSetID").and_then(ref_guid), e.get("variableModeID").and_then(guid)) {
-                modes.insert(set, json!(mode));
+            let (Some(set), Some(mode)) = (e.get("variableSetID"), e.get("variableModeID").and_then(guid)) else { continue };
+            match self.resource_id(set) {
+                Some(id) => {
+                    modes.insert(id, json!(mode));
+                }
+                // A mode of a collection neither named by guid nor resolvable in the file.
+                None if set.get("guid").is_some() || set.get("assetRef").is_some() => lost = true,
+                None => {}
             }
+        }
+        if lost {
+            self.warn("variable modes of collections that aren't in the file were skipped");
         }
         if !modes.is_empty() {
             o.insert("explicitVariableModes".into(), Value::Object(modes));
@@ -1174,7 +1219,7 @@ impl<'a> Mapper<'a> {
         let mut variable_order = Vec::new();
         let mut variables = Obj::new();
         for (id, n) in of_type("VARIABLE", "sortPosition") {
-            let Some(set) = n.get("variableSetID").and_then(ref_guid).filter(|s| collections.contains_key(s)) else { continue };
+            let Some(set) = n.get("variableSetID").and_then(|s| self.resource_id(s)).filter(|s| collections.contains_key(s)) else { continue };
             let ty = n.get("variableResolvedType").and_then(Kv::str).unwrap_or("");
             if !matches!(ty, "BOOLEAN" | "FLOAT" | "STRING" | "COLOR") {
                 continue;

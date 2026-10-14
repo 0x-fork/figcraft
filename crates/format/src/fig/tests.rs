@@ -38,12 +38,13 @@ struct Vector float x, float y
 struct Matrix float m00, float m01, float m02, float m10, float m11, float m12
 struct ColorStop Color color, float position
 message Image byte[] hash, string name
-message VariableID GUID guid
+message AssetRef string key, string version
+message VariableID GUID guid, AssetRef assetRef
 message PropRefValue GUID defId
 message AnyValue bool boolValue, float floatValue, VariableID alias, Color colorValue, PropRefValue propRefValue, TextData textDataValue, string textValue, Expression expressionValue
 message Expression ExpressionFunction expressionFunction, VariableData[] expressionArguments
 message VariableTarget VariableID id
-message VariableSetID GUID guid
+message VariableSetID GUID guid, AssetRef assetRef
 message ConditionalActions Action[] actions, VariableData condition
 message VectorData uint vectorNetworkBlob, Vector normalizedSize, NodeChange[] styleOverrideTable
 message ConnectorEndpoint GUID endpointNodeID, Vector position, Vector relativePosition
@@ -70,7 +71,7 @@ message Event InteractionType interactionType
 message Action GUID transitionNodeID, TransitionType transitionType, float transitionDuration, EasingType easingType, ConnectionType connectionType, NavigationType navigationType, VariableTarget targetVariable, VariableData targetVariableData, VariableSetID targetVariableSetID, GUID targetVariableModeID, ConditionalActions[] conditionalActions
 message Interaction Event event, Action[] actions
 message StartingPoint string name, string position
-message NodeChange GUID guid, ParentIndex parentIndex, NodeType type, string name, bool visible, float opacity, Vector size, Matrix transform, Paint[] fillPaints, Paint[] strokePaints, float strokeWeight, float cornerRadius, bool resizeToFit, bool internalOnly, float fontSize, FontName fontName, TextData textData, uint styleID, Path[] fillGeometry, Path[] strokeGeometry, StyleType styleType, StyleId styleIdForFill, SymbolData symbolData, PropDef[] componentPropDefs, PropAssignment[] componentPropAssignments, VariableDataMap parameterConsumptionMap, SetMode[] variableSetModes, VariableID variableSetID, ResolvedType variableResolvedType, Values variableDataValues, ModeMap variableModeBySetMap, Interaction[] prototypeInteractions, StartingPoint prototypeStartingPoint, GUIDPath guidPath, StackMode stackMode, float stackSpacing, float stackHorizontalPadding, float stackVerticalPadding, uint count, float starInnerScale, VectorData vectorData, StrokeCap strokeCap, StrokeJoin strokeJoin, VectorMirror handleMirroring, ShapeWithTextType shapeWithTextType, ConnectorEndpoint connectorStart, ConnectorEndpoint connectorEnd, StrokeCap connectorStartCap, StrokeCap connectorEndCap, ConnectorLineStyle connectorLineStyle
+message NodeChange GUID guid, ParentIndex parentIndex, NodeType type, string name, bool visible, float opacity, Vector size, Matrix transform, Paint[] fillPaints, Paint[] strokePaints, float strokeWeight, float cornerRadius, bool resizeToFit, bool internalOnly, float fontSize, FontName fontName, TextData textData, uint styleID, Path[] fillGeometry, Path[] strokeGeometry, StyleType styleType, StyleId styleIdForFill, SymbolData symbolData, PropDef[] componentPropDefs, PropAssignment[] componentPropAssignments, VariableDataMap parameterConsumptionMap, SetMode[] variableSetModes, VariableID variableSetID, ResolvedType variableResolvedType, Values variableDataValues, ModeMap variableModeBySetMap, Interaction[] prototypeInteractions, StartingPoint prototypeStartingPoint, GUIDPath guidPath, StackMode stackMode, float stackSpacing, float stackHorizontalPadding, float stackVerticalPadding, uint count, float starInnerScale, VectorData vectorData, StrokeCap strokeCap, StrokeJoin strokeJoin, VectorMirror handleMirroring, ShapeWithTextType shapeWithTextType, ConnectorEndpoint connectorStart, ConnectorEndpoint connectorEnd, StrokeCap connectorStartCap, StrokeCap connectorEndCap, ConnectorLineStyle connectorLineStyle, string key, string version
 message Blob byte[] bytes
 message Message NodeChange[] nodeChanges, Blob[] blobs
 ";
@@ -663,6 +664,81 @@ fn instances_inside_their_own_main_stop() {
     let doc_nodes = vec![node(0, None, "DOCUMENT", "D", vec![]), node(1, Some((0, "!")), "CANVAS", "P", vec![]), sym, inner];
     let (doc, _) = import(&canvas(&schema(), &o(vec![("nodeChanges", arr(doc_nodes))])), "x").unwrap();
     assert!(doc.nodes().any(|n| n.name == "Self"));
+}
+
+/// A collection from a library is named by its asset key, not a guid — also in the explicit mode
+/// map of the frames, components and instances set it on, and in the variables' collection link.
+#[test]
+fn modes_of_collections_named_by_asset_import() {
+    let modes = arr(vec![
+        o(vec![("id", g(90)), ("name", s("Dark")), ("sortPosition", s("!"))]),
+        o(vec![("id", g(91)), ("name", s("Light")), ("sortPosition", s("\""))]),
+    ]);
+    let color_value = |c| o(vec![("value", o(vec![("colorValue", c)])), ("dataType", e("COLOR"))]);
+    let values = o(vec![(
+        "entries",
+        arr(vec![
+            o(vec![("modeID", g(90)), ("variableData", color_value(rgb(0.0, 0.0, 0.0)))]),
+            o(vec![("modeID", g(91)), ("variableData", color_value(rgb(1.0, 1.0, 1.0)))]),
+        ]),
+    )]);
+    let by_asset = |key: &'static str, version: Option<&'static str>| {
+        let mut r = vec![("key", s(key))];
+        r.extend(version.map(|v| ("version", s(v))));
+        o(vec![("assetRef", o(r))])
+    };
+    let mode_map = |set: Kv<'static>| o(vec![("entries", arr(vec![o(vec![("variableSetID", set), ("variableModeID", g(91))])]))]);
+    let nodes = vec![
+        node(0, None, "DOCUMENT", "Document", vec![]),
+        node(1, Some((0, "!")), "CANVAS", "Page A", vec![]),
+        node(2, Some((0, "~")), "CANVAS", "Internal", vec![("internalOnly", Kv::Bool(true))]),
+        // The collection itself says the asset key its references name.
+        node(4, Some((2, "!")), "VARIABLE_SET", "Schema", vec![("variableSetModes", modes), ("key", s("schema-collection")), ("version", s("7"))]),
+        node(
+            5,
+            Some((2, "\"")),
+            "VARIABLE",
+            "surface",
+            vec![("variableSetID", by_asset("schema-collection", Some("7"))), ("variableResolvedType", e("COLOR")), ("variableDataValues", values)],
+        ),
+        node(
+            10,
+            Some((1, "!")),
+            "FRAME",
+            "Light section",
+            vec![("size", xy(400.0, 300.0)), ("variableModeBySetMap", mode_map(by_asset("schema-collection", Some("7"))))],
+        ),
+        node(
+            20,
+            Some((1, "\"")),
+            "SYMBOL",
+            "Button",
+            vec![("size", xy(100.0, 40.0)), ("variableModeBySetMap", mode_map(by_asset("schema-collection", None)))],
+        ),
+        node(
+            21,
+            Some((1, "#")),
+            "INSTANCE",
+            "Button copy",
+            vec![
+                ("size", xy(100.0, 40.0)),
+                ("symbolData", o(vec![("symbolID", g(20))])),
+                ("variableModeBySetMap", mode_map(by_asset("schema-collection", Some("7")))),
+            ],
+        ),
+        // One names a collection that isn't in the file: its mode is skipped, with a warning.
+        node(11, Some((1, "$")), "FRAME", "Gone", vec![("size", xy(400.0, 300.0)), ("variableModeBySetMap", mode_map(by_asset("gone", None)))]),
+    ];
+    let (doc, warnings) = import(&canvas(&schema(), &o(vec![("nodeChanges", arr(nodes))])), "x").unwrap();
+    assert_eq!(doc.variables.collections.len(), 1);
+    assert_eq!(doc.variables.variables.len(), 1);
+    assert_eq!(doc.variables.variables[0].collection, "1:4");
+    for name in ["Light section", "Button", "Button copy"] {
+        let n = named(&doc, name);
+        assert_eq!(n.var_modes.get("1:4").map(String::as_str), Some("1:91"), "{name}");
+    }
+    assert!(named(&doc, "Gone").var_modes.is_empty());
+    assert!(warnings.iter().any(|w| w.contains("variable modes of collections that aren't in the file")), "{warnings:?}");
 }
 
 #[path = "tail_tests.rs"]
