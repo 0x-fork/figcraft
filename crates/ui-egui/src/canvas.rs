@@ -204,9 +204,9 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         // Re-project the last render onto the current view.
         let tl = app.to_screen(v.origin.0, v.origin.1);
         let zoom = app.session.ds().map(|d| d.view.zoom).unwrap_or(1.0);
-        let w = (f64::from(v.width) / v.scale * zoom) as f32;
-        let h = (f64::from(v.height) / v.scale * zoom) as f32;
-        painter.image(tex.id(), Rect::from_min_size(tl, vec2(w, h)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        let pixel_preview = app.session.ds().ok().and_then(|ds| ds.view.pixel_preview_scale()) == Some(v.scale);
+        let image_rect = presented_image_rect(tl, v, zoom, ppp, pixel_preview);
+        painter.image(tex.id(), image_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
     app.session.tool.labels = overlays(app, &painter, &t);
     // The zoom tool's area.
@@ -236,6 +236,22 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         shown.show(&ctx, at);
         app.canvas.cursor = Some(shown);
     }
+}
+
+/// The image's screen rect; align native-density renders to device pixels to avoid linear filtering
+/// blending neighbouring texels. Stale and pixel-preview renders retain their original projection.
+fn presented_image_rect(tl: Pos2, view: &figcraft_render::View, zoom: f64, ppp: f32, pixel_preview: bool) -> Rect {
+    let w = (f64::from(view.width) / view.scale * zoom) as f32;
+    let h = (f64::from(view.height) / view.scale * zoom) as f32;
+    let native_density = !pixel_preview
+        && ppp.is_finite()
+        && ppp > 0.0
+        && zoom.is_finite()
+        && view.scale.is_finite()
+        && view.scale > 0.0
+        && (view.scale - zoom * f64::from(ppp)).abs() <= view.scale.abs().max(1.0) * 1e-9;
+    let min = if native_density { pos2((tl.x * ppp).round() / ppp, (tl.y * ppp).round() / ppp) } else { tl };
+    Rect::from_min_size(min, vec2(w, h))
 }
 
 /// What the canvas says to screen readers: the selected layer ("Rectangle 1, Rectangle, 120 by 80,
@@ -1341,4 +1357,122 @@ fn rulers(app: &FigApp, painter: &egui::Painter, t: &Tokens, doc: &Document, sel
 pub fn fmt(v: f64) -> String {
     let r = (v * 100.0).round() / 100.0;
     if (r - r.round()).abs() < 1e-9 { format!("{}", r.round() as i64) } else { format!("{r}") }
+}
+
+#[cfg(test)]
+mod canvas_image_rect_tests {
+    use super::presented_image_rect;
+    use egui::{Pos2, RawInput, Rect, pos2, vec2};
+    use figcraft_render::View;
+
+    fn resized_frame(ui: &mut crate::layers_drag_tests::Ui, worker: &mut crate::render_worker::Worker, size: [f32; 2], ppp: f32) -> egui::FullOutput {
+        let ctx = ui.ctx.clone();
+        let time = ctx.input(|i| i.time) + 1.0 / 60.0;
+        let mut input =
+            RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(size[0], size[1]))), time: Some(time), ..Default::default() };
+        input.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(ppp);
+        let mut output = ctx.run_ui(input, |egui_ui| super::show(&mut ui.app, egui_ui, worker));
+        output.textures_delta.clear();
+        output
+    }
+
+    #[test]
+    fn native_density_image_edges_align_to_device_pixels_without_changing_extent() {
+        for ppp in [1.0_f32, 1.25, 1.5, 2.0] {
+            for zoom in [0.37_f64, 0.67, 1.0, 1.3, 2.0] {
+                let scale = zoom * f64::from(ppp);
+                let view = View { origin: (-31.25, 18.75), scale, width: 375, height: 240 };
+                for (cx, cy, canvas_x, canvas_y) in [(-200.5, 74.25, 100.25, 50.5), (10.0, -20.5, 3.25, 9.75), (913.75, 481.125, 212.5, 77.125)] {
+                    let tl = pos2(canvas_x + ((view.origin.0 - cx) * zoom) as f32, canvas_y + ((view.origin.1 - cy) * zoom) as f32);
+                    let rect = presented_image_rect(tl, &view, zoom, ppp, false);
+                    assert!((rect.min.x - tl.x).abs() * ppp <= 0.5001, "x snap bound: ppp={ppp}, zoom={zoom}, tl={tl:?}, rect={rect:?}");
+                    assert!((rect.min.y - tl.y).abs() * ppp <= 0.5001, "y snap bound: ppp={ppp}, zoom={zoom}, tl={tl:?}, rect={rect:?}");
+                    assert!(((rect.min.x * ppp).round() - rect.min.x * ppp).abs() < 1e-4, "x edge: ppp={ppp}, zoom={zoom}, tl={tl:?}, rect={rect:?}");
+                    assert!(((rect.min.y * ppp).round() - rect.min.y * ppp).abs() < 1e-4, "y edge: ppp={ppp}, zoom={zoom}, tl={tl:?}, rect={rect:?}");
+                    assert!((rect.width() * ppp - view.width as f32).abs() < 1e-3, "width: ppp={ppp}, zoom={zoom}, rect={rect:?}");
+                    assert!((rect.height() * ppp - view.height as f32).abs() < 1e-3, "height: ppp={ppp}, zoom={zoom}, rect={rect:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stale_pixel_preview_and_invalid_density_keep_original_projection() {
+        let tl = Pos2::new(149.5, 91.25);
+        let view = View { origin: (0.0, 0.0), scale: 1.95, width: 300, height: 180 };
+        let original = egui::Rect::from_min_size(tl, egui::vec2(200.0, 120.0));
+
+        let stale = presented_image_rect(tl, &view, 1.2, 1.5, false);
+        assert_eq!(stale, egui::Rect::from_min_size(tl, egui::vec2(300.0 / 1.95 * 1.2, 180.0 / 1.95 * 1.2)));
+        let pixel_preview = presented_image_rect(tl, &view, 1.3, 1.5, true);
+        assert_eq!(pixel_preview, original);
+        for ppp in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(presented_image_rect(tl, &view, 1.3, ppp, false), original);
+        }
+        assert_eq!(tl, pos2(149.5, 91.25));
+    }
+
+    #[test]
+    fn canvas_mesh_stays_sharp_through_window_resizes() {
+        use std::time::{Duration, Instant};
+
+        use crate::live_tests::flat;
+        use figcraft_engine::Session;
+
+        for ppp in [1.0_f32, 1.25, 1.5] {
+            let mut ui = crate::layers_drag_tests::Ui::new(Session::new());
+            let mut worker = ui.app.worker.take().expect("worker from headless UI");
+            let (zoom, center) = {
+                let ds = ui.app.session.ds_mut().expect("document state");
+                ds.view.zoom = 1.3;
+                ds.view.cx = 123.5;
+                ds.view.cy = -87.25;
+                (ds.view.zoom, (ds.view.cx, ds.view.cy))
+            };
+            for size in [[1440.0, 900.0], [1000.0, 700.0], [800.0, 500.0], [1440.0, 900.0]] {
+                let start = Instant::now();
+                let mut output;
+                loop {
+                    output = resized_frame(&mut ui, &mut worker, size, ppp);
+                    let has_current_texture = ui.app.canvas.tex_view.as_ref().is_some_and(|v| {
+                        (v.scale - zoom * f64::from(ppp)).abs() < 1e-9
+                            && v.width == (ui.app.canvas.rect.width() * ppp).ceil() as u32 + 1
+                            && v.height == (ui.app.canvas.rect.height() * ppp).ceil() as u32 + 1
+                            && !worker.in_flight()
+                    });
+                    if has_current_texture {
+                        break;
+                    }
+                    assert!(start.elapsed() < Duration::from_secs(10), "render did not finish for size={size:?}, ppp={ppp}");
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+
+                let (ds_zoom, ds_center) = {
+                    let ds = ui.app.session.ds().expect("document state");
+                    (ds.view.zoom, (ds.view.cx, ds.view.cy))
+                };
+                assert_eq!(ds_zoom, zoom, "resize preserves zoom");
+                assert_eq!(ds_center, center, "resize preserves page centre");
+
+                let tex = ui.app.canvas.texture.as_ref().expect("canvas texture");
+                let mesh = flat(&output.shapes)
+                    .into_iter()
+                    .find_map(|shape| match shape {
+                        egui::Shape::Mesh(mesh) if mesh.texture_id == tex.id() => Some(mesh),
+                        _ => None,
+                    })
+                    .expect("canvas image mesh");
+                let min_x = mesh.vertices.iter().map(|v| v.pos.x).fold(f32::INFINITY, f32::min);
+                let min_y = mesh.vertices.iter().map(|v| v.pos.y).fold(f32::INFINITY, f32::min);
+                let max_x = mesh.vertices.iter().map(|v| v.pos.x).fold(f32::NEG_INFINITY, f32::max);
+                let max_y = mesh.vertices.iter().map(|v| v.pos.y).fold(f32::NEG_INFINITY, f32::max);
+                let view = ui.app.canvas.tex_view.as_ref().expect("canvas render view");
+                assert!((min_x * ppp - (min_x * ppp).round()).abs() < 1e-4, "mesh left edge: {min_x}, ppp={ppp}");
+                assert!((min_y * ppp - (min_y * ppp).round()).abs() < 1e-4, "mesh top edge: {min_y}, ppp={ppp}");
+                assert!(((max_x - min_x) * ppp - view.width as f32).abs() < 1e-3, "mesh width matches texture");
+                assert!(((max_y - min_y) * ppp - view.height as f32).abs() < 1e-3, "mesh height matches texture");
+            }
+            assert!(!worker.in_flight(), "last resize render finished");
+        }
+    }
 }
