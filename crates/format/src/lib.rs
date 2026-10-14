@@ -20,6 +20,7 @@
 pub mod fig;
 pub mod library;
 pub mod rest;
+pub mod thumbnail;
 
 pub use library::{is_valid_library_id, read_library, read_library_within};
 
@@ -675,6 +676,8 @@ mod branch_tests;
 mod image_tests;
 #[cfg(test)]
 mod large_tests;
+#[cfg(test)]
+mod thumbnail_tests;
 #[cfg(test)]
 mod version_tests;
 
