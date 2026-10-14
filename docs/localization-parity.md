@@ -1,10 +1,10 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (draft catalogs catch up: every draft translates every string again; Simplified Chinese draft catalog) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (Turkish draft catalog; draft catalogs catch up: every draft translates every string again; Simplified Chinese draft catalog) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft's interface has a localization layer with an English catalog and Spanish (with a Latin
-American overlay), French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese
-drafts (machine-drafted, waiting for native speakers' review). This page lists the twelve key
+American overlay), French, German, Brazilian Portuguese, Japanese, Korean, Simplified Chinese and
+Turkish drafts (machine-drafted, waiting for native speakers' review). This page lists the twelve key
 languages of the craftrules standard, then the other languages Figma ships. How to add a
 language: [`translating.md`](translating.md).
 
@@ -29,7 +29,7 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
   and 29 menu wordings by command id: 1,982 entries. Command ids, the CLI, MCP and the control
   channel stay English. Accessibility names come from the same strings.
 - **Language preference:** Preferences ▸ Language (System, English, Deutsch, Español, Español
-  (Latinoamérica), Français, 日本語, 한국어, Português (Brasil), 简体中文), applied at once without a
+  (Latinoamérica), Français, 日本語, 한국어, Português (Brasil), Türkçe, 简体中文), applied at once without a
   restart; System takes the first of the OS's preferred languages that has a catalog (Windows'
   language list, macOS AppleLanguages, `LANGUAGE` then the locale variables on Linux and BSD; a regional tag
   falls back to its language, pt-PT or pt to pt-BR, and es-419, es-MX, es-AR, es-CO and the other
