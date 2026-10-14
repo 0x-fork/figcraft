@@ -92,3 +92,19 @@ fn the_mode_switcher_ends_the_pen_path_too() {
         assert_eq!(layers(&u), finished, "{label}: the path is kept as Escape keeps it");
     }
 }
+
+#[test]
+fn a_press_on_the_mode_switcher_does_not_reach_the_canvas() {
+    // The switcher floats over the canvas: the pen must not place an anchor under it.
+    for label in ["Prototype", "Design"] {
+        let mut u = Ui::new(Session::new());
+        u.app.run("tool.set", json!({"tool": "pen"}));
+        let at = mode_button(&mut u, label);
+        u.button(at, true);
+        assert!(u.app.session.tool.pen.is_none(), "{label}: the press starts no path");
+        u.button(at, false);
+        u.frame(vec![]);
+        assert!(u.app.session.tool.pen.is_none(), "{label}: no path after the click");
+        assert_eq!(layers(&u), 0, "{label}: the click adds nothing");
+    }
+}
