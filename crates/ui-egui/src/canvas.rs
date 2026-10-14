@@ -11,16 +11,26 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::i18n::{tr, trf, trn};
-use crate::render_worker::{Job, Worker};
+use crate::render_worker::{Done, Job, Worker};
 use crate::theme::{ACCENT, COMPONENT, Tokens, doc_c32, regular, semibold};
 
 pub struct CanvasState {
     pub rect: Rect,
     texture: Option<egui::TextureHandle>,
     tex_view: Option<figcraft_render::View>,
+    /// The file ([`figcraft_engine::DocState::uid`]) and page the texture shows: it is drawn only
+    /// on them.
+    tex_of: Option<(u64, NodeId)>,
+    /// The texture is a coarse preview (see [`crate::render_worker`]).
+    pub tex_coarse: bool,
     submitted: Option<JobKey>,
+    /// The scale (device pixels per page unit) of the last render asked for.
+    want_scale: f64,
     /// What the last canvas render had to do (shown by `ui.inspect`).
     pub render_work: Option<figcraft_render::Work>,
+    /// From asking for a render to the frame that shows its preview, and its refined image (ms).
+    pub preview_latency_ms: Option<f64>,
+    pub refine_latency_ms: Option<f64>,
     dragging: bool,
     space_pan: bool,
     middle_pan: Option<(Pos2, f64, f64)>,
@@ -45,8 +55,13 @@ impl Default for CanvasState {
             rect: Rect::NOTHING,
             texture: None,
             tex_view: None,
+            tex_of: None,
+            tex_coarse: false,
             submitted: None,
+            want_scale: 0.0,
             render_work: None,
+            preview_latency_ms: None,
+            refine_latency_ms: None,
             dragging: false,
             space_pan: false,
             middle_pan: None,
@@ -169,10 +184,22 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     let own_cursor = input(app, ui, &resp);
     crate::live::track_pointer(app, &ctx);
     app.sync_preedit();
-    request_render(app, worker, ppp);
+    let now = ctx.input(|i| i.time);
+    request_render(app, worker, ppp, now);
     // Every finished render is shown, even when a newer one is already on its way: renders finish
     // in order, and an edit every frame (a drag) would otherwise never show until it stopped.
-    if let Some(done) = worker.poll() {
+    let shown = app.session.ds().map(|ds| (ds.uid, ds.page)).ok();
+    if let Some(done) = worker.poll()
+        && shows(&app.canvas, &done, shown)
+    {
+        let latency = Some((now - done.at).max(0.0) * 1000.0);
+        if done.coarse {
+            app.canvas.preview_latency_ms = latency;
+        } else {
+            app.canvas.refine_latency_ms = latency;
+            app.canvas.render_work = Some(done.work);
+            app.ui.render_ms = done.ms;
+        }
         // A pixel preview render is magnified with hard pixel edges.
         let filter = if app.session.ds().ok().and_then(|d| d.view.pixel_preview_scale()) == Some(done.view.scale) {
             egui::TextureOptions::NEAREST
@@ -184,8 +211,8 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
             None => app.canvas.texture = Some(ctx.load_texture("figcraft-canvas", done.image, filter)),
         }
         app.canvas.tex_view = Some(done.view);
-        app.canvas.render_work = Some(done.work);
-        app.ui.render_ms = done.ms;
+        app.canvas.tex_of = Some((done.uid, done.page));
+        app.canvas.tex_coarse = done.coarse;
     }
     let painter = ui.painter_at(rect);
     let t = Tokens::get(&ctx);
@@ -200,7 +227,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         })
         .unwrap_or(t.canvas);
     painter.rect_filled(rect, CornerRadius::ZERO, bg);
-    if let (Some(tex), Some(v)) = (&app.canvas.texture, &app.canvas.tex_view) {
+    if let (Some(tex), Some(v), true) = (&app.canvas.texture, &app.canvas.tex_view, shown.is_some() && app.canvas.tex_of == shown) {
         // Re-project the last render onto the current view.
         let tl = app.to_screen(v.origin.0, v.origin.1);
         let zoom = app.session.ds().map(|d| d.view.zoom).unwrap_or(1.0);
@@ -268,7 +295,17 @@ fn describe_box([x0, y0, x1, y1]: [f64; 4]) -> String {
     )
 }
 
-fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
+/// Whether a finished render goes on screen: an image of the file and page shown (`shown`), and
+/// not a coarse preview over a refined image already at the zoom asked for.
+fn shows(c: &CanvasState, done: &Done, shown: Option<(u64, NodeId)>) -> bool {
+    if shown != Some((done.uid, done.page)) {
+        return false;
+    }
+    let refined_here = !c.tex_coarse && c.tex_of == shown && c.tex_view.as_ref().is_some_and(|v| v.scale.to_bits() == c.want_scale.to_bits());
+    !(done.coarse && refined_here)
+}
+
+fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32, now: f64) {
     let Ok(ds) = app.session.ds() else { return };
     let rect = app.canvas.rect;
     let (mut ox, mut oy) = ds.view.origin();
@@ -313,7 +350,11 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
         skip: vec![],
         solo: key.solo,
         proof,
+        uid: ds.uid,
+        zoom_preview: ds.view.pixel_preview_scale().is_none(),
+        at: now,
     };
+    app.canvas.want_scale = scale;
     worker.submit(job);
     app.canvas.submitted = Some(key);
 }
@@ -1342,3 +1383,7 @@ pub fn fmt(v: f64) -> String {
     let r = (v * 100.0).round() / 100.0;
     if (r - r.round()).abs() < 1e-9 { format!("{}", r.round() as i64) } else { format!("{r}") }
 }
+
+#[cfg(test)]
+#[path = "zoom_preview_tests.rs"]
+mod zoom_preview_tests;

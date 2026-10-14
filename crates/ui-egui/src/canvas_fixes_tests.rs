@@ -62,6 +62,9 @@ fn big_job(doc: &Arc<figcraft_doc::Document>, page: figcraft_doc::NodeId, scale:
         skip: vec![],
         solo: None,
         proof: false,
+        uid: 0,
+        zoom_preview: false,
+        at: 0.0,
     }
 }
 
