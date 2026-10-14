@@ -371,6 +371,17 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
         }
     }
     let Some(pos) = hover_pos.filter(|p| app.canvas.rect.contains(*p)) else {
+        if app.canvas.dragging && ctx.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
+            app.canvas.dragging = false;
+            let pos = hover_pos.unwrap_or(app.canvas.rect.center());
+            let ev = pointer_event(app, PointerKind::Up, pos, &mods);
+            app.canvas.pressure = None;
+            app.canvas.last_pointer = Some(Point::new(ev.x, ev.y));
+            if let Err(e) = app.session.pointer(&ev) {
+                app.toast(e.to_string());
+            }
+            app.handle_ui_requests();
+        }
         // Leaving the canvas: nothing is hovered there any more.
         if !app.canvas.dragging && std::mem::take(&mut app.canvas.hovering) {
             app.session.vector_pointer_left();

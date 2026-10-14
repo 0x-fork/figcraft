@@ -59,3 +59,19 @@ fn a_drag_shows_on_the_canvas_while_it_moves() {
     assert!(u.app.worker.as_ref().is_some_and(|w| !w.in_flight()), "nothing left to render");
     u.button(p + vec2(30.0, 10.0), false);
 }
+
+#[test]
+fn releasing_a_canvas_drag_outside_finishes_the_interaction() {
+    let mut s = Session::new();
+    let r =
+        figcraft_engine::params::id_of(&s.execute("shape.rectangle", &json!({"x": 40, "y": 40, "width": 80, "height": 60})).unwrap()["id"]).unwrap();
+    s.execute("select.set", &json!({"ids": [r]})).unwrap();
+    let mut u = Ui::new(s);
+    let start = u.app.to_screen(80.0, 70.0);
+    let outside = egui::pos2(u.app.canvas.rect.max.x + 20.0, start.y);
+    u.button(start, true);
+    u.frame(vec![Event::PointerMoved(outside)]);
+    u.button(outside, false);
+
+    assert!(u.app.session.ds().unwrap().interaction.is_none(), "the document interaction is committed");
+}
