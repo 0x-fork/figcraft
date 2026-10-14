@@ -15,6 +15,7 @@ mod gamepad;
 mod graphics;
 mod recovery;
 mod services;
+mod startup;
 
 #[cfg(test)]
 mod args_tests;
@@ -26,6 +27,8 @@ mod recovery_online_tests;
 mod recovery_tests;
 #[cfg(test)]
 mod services_tests;
+#[cfg(test)]
+mod startup_tests;
 
 use std::sync::{Arc, Mutex};
 
@@ -188,5 +191,10 @@ fn main() -> eframe::Result {
     let mut options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, ..Default::default() };
     graphics::configure(&mut options.wgpu_options);
     figcraft_ui_egui::windows::install(fig);
-    eframe::run_native("FigCraft", options, Box::new(move |_cc| Ok(Box::new(App { queue, ctx_slot, title: String::new(), recovery }))))
+    let result = eframe::run_native("FigCraft", options, Box::new(move |_cc| Ok(Box::new(App { queue, ctx_slot, title: String::new(), recovery }))));
+    // Say why instead of quitting silently: release builds on Windows have no console.
+    if let Err(e) = &result {
+        startup::failed(e, port.is_some());
+    }
+    result
 }
