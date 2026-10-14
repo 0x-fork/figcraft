@@ -423,16 +423,15 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
     let shape = node_outline(ctx.doc, n);
     // Background blur and glass: the whole backdrop under the layer (every surface below this
     // one, composited), through the shape, under the content.
-    if backdrop::has_effects(n)
-        && let Some(sh) = &backdrop::outline(ctx.doc, n)
-    {
-        let pad = backdrop::pad(n, ctx.scale);
-        let p = i32::try_from(pad).unwrap_or(0);
-        if let Some(back) = backdrop::backdrop(pix, ctx.under, lx.saturating_sub(p), ly.saturating_sub(p), lw + pad * 2, lh + pad * 2)
-            && let Some(b) = backdrop::effects(n, sh, &back, pad, lw, lh, lxf, ctx.scale)
-        {
-            layer.draw_pixmap(0, 0, b.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
-        }
+    let back_shape = if backdrop::has_effects(n) { backdrop::outline(ctx.doc, n) } else { None };
+    let read_backdrop = |pix: &Pixmap| back_shape.as_ref().and_then(|sh| backdrop_layer(ctx, pix, n, sh, (lx, ly), (lw, lh), lxf));
+    // With drop shadows too, the layer casts them from what it paints, not from the backdrop, and
+    // the backdrop is read again once they lie under it (a shadow showing behind is seen through
+    // it). Until then, the layer's content sees the backdrop read first under it (#255).
+    let casts = back_shape.is_some() && n.effects.iter().any(|e| e.visible && matches!(e.kind, EffectKind::DropShadow(_)));
+    let first_back = read_backdrop(pix);
+    if !casts && let Some(b) = &first_back {
+        layer.draw_pixmap(0, 0, b.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
     }
     let op = n.opacity.clamp(0.0, 1.0);
     {
@@ -448,9 +447,12 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
             }
         };
         let has_inner = shape.is_some() && n.effects.iter().any(|e| e.visible && matches!(e.kind, EffectKind::InnerShadow(_)));
-        // Backdrops further down see this layer composited onto `pix`.
+        // Backdrops further down see this layer composited onto `pix` (over its backdrop, when
+        // that is kept apart for now).
         let under = Under { opacity: op, blend: n.blend, ..Under::new(pix, (lx, ly), ctx.under) };
-        draw_content(&Ctx { under: Some(&under), ..*ctx }, &mut layer, n, lxf, depth, has_inner.then_some(&inner as &dyn Fn(&mut Pixmap)));
+        let over_back = first_back.as_ref().filter(|_| casts).map(|b| Under::new(b, (0, 0), Some(&under)));
+        let content_under = over_back.as_ref().unwrap_or(&under);
+        draw_content(&Ctx { under: Some(content_under), ..*ctx }, &mut layer, n, lxf, depth, has_inner.then_some(&inner as &dyn Fn(&mut Pixmap)));
     }
     // A group is no outline of its own: its inner shadows are cast from around what its layers
     // draw together, over them.
@@ -465,24 +467,58 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
         }
     }
     // Layer blur, noise and texture, in list order, over everything else.
+    if !casts {
+        layer_effects(ctx, &mut layer, n, id, lxf);
+    }
+    // Drop shadows go under the layer, in effect-list order.
+    {
+        // Kept apart, the backdrop isn't in the layer yet: the shadows are cast from the content
+        // with the layer effects it will get.
+        let content = casts.then(|| {
+            let mut c = layer.clone();
+            layer_effects(ctx, &mut c, n, id, lxf);
+            c
+        });
+        let caster = shadow::Caster::new(ctx.doc, n, content.as_ref().unwrap_or(&layer), lxf, ctx.scale);
+        for e in n.effects.iter().filter(|e| e.visible) {
+            if let EffectKind::DropShadow(s) = &e.kind
+                && let Some(sh) = shadow::drop_shadow(&caster, s)
+            {
+                composite(pix, (lx, ly), &sh, op, s.blend);
+            }
+        }
+    }
+    if casts {
+        // The backdrop with the shadows under it, the content over it, then the layer effects.
+        if let Some(mut b) = read_backdrop(pix) {
+            b.draw_pixmap(0, 0, layer.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+            layer = b;
+        }
+        layer_effects(ctx, &mut layer, n, id, lxf);
+    }
+    composite(pix, (lx, ly), &layer, op, n.blend);
+}
+
+/// Node `n`'s backdrop effects through its backdrop outline `sh`, for its `size` layer at `at` on
+/// `pix` (local → layer pixels through `lxf`): what `pix` holds there now, over what lies under it.
+fn backdrop_layer(ctx: &Ctx, pix: &Pixmap, n: &Node, sh: &shadow::Outline, at: (i32, i32), size: (u32, u32), lxf: Affine) -> Option<Pixmap> {
+    let ((lx, ly), (lw, lh)) = (at, size);
+    let pad = backdrop::pad(n, ctx.scale);
+    let p = i32::try_from(pad).unwrap_or(0);
+    let back = backdrop::backdrop(pix, ctx.under, lx.saturating_sub(p), ly.saturating_sub(p), lw + pad * 2, lh + pad * 2)?;
+    backdrop::effects(n, sh, &back, pad, lw, lh, lxf, ctx.scale)
+}
+
+/// Node `n`'s layer blur, noise and texture on its `layer`, in list order.
+fn layer_effects(ctx: &Ctx, layer: &mut Pixmap, n: &Node, id: NodeId, lxf: Affine) {
     for e in n.effects.iter().filter(|e| e.visible) {
         match &e.kind {
-            EffectKind::LayerBlur(b) => blur::apply(&mut layer, b, (n.width, n.height), lxf, ctx.scale),
-            EffectKind::Noise(nz) => grain::noise(&mut layer, nz, lxf, id.0 as u32),
-            EffectKind::Texture(t) => grain::texture(&mut layer, t, lxf, ctx.scale, id.0 as u32),
+            EffectKind::LayerBlur(b) => blur::apply(layer, b, (n.width, n.height), lxf, ctx.scale),
+            EffectKind::Noise(nz) => grain::noise(layer, nz, lxf, id.0 as u32),
+            EffectKind::Texture(t) => grain::texture(layer, t, lxf, ctx.scale, id.0 as u32),
             _ => {}
         }
     }
-    // Drop shadows go under the layer, in effect-list order.
-    let caster = shadow::Caster::new(ctx.doc, n, &layer, lxf, ctx.scale);
-    for e in n.effects.iter().filter(|e| e.visible) {
-        if let EffectKind::DropShadow(s) = &e.kind
-            && let Some(sh) = shadow::drop_shadow(&caster, s)
-        {
-            composite(pix, (lx, ly), &sh, op, s.blend);
-        }
-    }
-    composite(pix, (lx, ly), &layer, op, n.blend);
 }
 
 fn draw_outline(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize) {
