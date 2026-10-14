@@ -251,11 +251,16 @@ it can handle):
 
 Limits per run, and again per panel callback: 1,000,000,000 fuel (about a second or two of plain
 WebAssembly in a debug build, far less in a release build), 64 MB of memory, 100,000 host calls
-(each also costs 10,000 fuel), 16 MB per string either way, 1,000 log lines, and modules up to
+(each also costs 10,000 fuel, including `reply_len`, `reply_read` and `set_output`), 16 MB per string either way, 1,000 log lines, and modules up to
 16 MB. A panel spec is at most 64 KB with 64 controls; settings are at most 64 KB per plugin (keys
 and JSON values), keys 1–128 characters. A widget callback gets the same limits; its description is
 at most 4 MB with 256 layers nested 16 deep, its state at most 16 KB (keys 1–128 characters), and
 its images 1 MB each, 2 MB together and 4096 pixels on a side.
+
+Copying a byte across the guest-memory boundary costs one additional fuel, reserved before the
+allocation or copy. This also applies when the configured per-call overhead is zero. A reply
+read is charged for the bytes actually returned, not the requested buffer size. `calls` counts
+every ABI import, including calls which only query the reply length.
 
 ## ABI (version 3)
 

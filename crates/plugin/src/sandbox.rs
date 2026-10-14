@@ -63,7 +63,8 @@ const IMPORTS: &[(&str, usize, usize)] = &[
 /// What a run may use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
-    /// Instruction budget (wasmi fuel). Each host call costs [`Limits::call_fuel`] more.
+    /// Instruction budget (wasmi fuel). Each host call costs [`Limits::call_fuel`] more,
+    /// plus one fuel per byte copied out of or into guest memory.
     pub fuel: u64,
     pub call_fuel: u64,
     /// Linear memory cap in bytes.
@@ -281,10 +282,10 @@ fn compile(engine: &Engine, bytes: &[u8], limits: &Limits) -> Result<Module, Plu
         }
     }
     let export = |name: &str| module.exports().find(|e| e.name() == name).map(|e| e.ty().clone());
-    if !export("memory").is_some_and(|t| t.memory().is_some()) {
+    if export("memory").is_none_or(|t| t.memory().is_none()) {
         return Err(PluginError::InvalidModule("it doesn't export its `memory`".into()));
     }
-    if !export(ENTRY).is_some_and(|t| t.func() == Some(&func_type(1, 1))) {
+    if export(ENTRY).is_none_or(|t| t.func() != Some(&func_type(1, 1))) {
         return Err(PluginError::InvalidModule(format!("it doesn't export `{ENTRY}(input_len: i32) -> i32`")));
     }
     Ok(module)
@@ -399,11 +400,7 @@ fn ask(caller: &mut Ctx<'_>, request: Request) -> wasmi::Error {
 /// Charge a host call: fuel and the call count.
 fn charge(caller: &mut Ctx<'_>) -> Result<(), wasmi::Error> {
     let cost = caller.data().limits.call_fuel;
-    let left = caller.get_fuel()?;
-    if left < cost {
-        return Err(abort(caller, PluginError::OutOfFuel));
-    }
-    caller.set_fuel(left - cost)?;
+    spend_fuel(caller, cost)?;
     let st = caller.data_mut();
     st.out.calls = st.out.calls.saturating_add(1);
     if st.out.calls > st.limits.max_calls {
@@ -413,12 +410,21 @@ fn charge(caller: &mut Ctx<'_>) -> Result<(), wasmi::Error> {
     Ok(())
 }
 
+/// Reserve work before copying or allocating, including when call overhead is disabled.
+fn spend_fuel(caller: &mut Ctx<'_>, cost: u64) -> Result<(), wasmi::Error> {
+    let Some(left) = caller.get_fuel()?.checked_sub(cost) else {
+        return Err(abort(caller, PluginError::OutOfFuel));
+    };
+    caller.set_fuel(left)
+}
+
 /// The bytes at `(ptr, len)` in the plugin's memory.
 fn read_bytes(caller: &mut Ctx<'_>, ptr: i32, len: i32) -> Result<Vec<u8>, wasmi::Error> {
     let (ptr, len) = (ptr as u32 as usize, len as u32 as usize);
     if len > caller.data().limits.max_message {
         return Err(abort(caller, PluginError::Limit(format!("a {len}-byte string is too long"))));
     }
+    spend_fuel(caller, len as u64)?;
     let Some(mem) = caller.get_export("memory").and_then(Extern::into_memory) else {
         return Err(abort(caller, PluginError::InvalidModule("no memory".into())));
     };
@@ -472,14 +478,20 @@ fn linker(engine: &Engine) -> Result<Linker<State>, PluginError> {
         Err(ask(&mut c, Request::Selection))
     })
     .map_err(err)?;
-    l.func_wrap(IMPORT_MODULE, "reply_len", |c: Ctx<'_>| -> i32 { i32::try_from(c.data().reply.len()).unwrap_or(i32::MAX) }).map_err(err)?;
+    l.func_wrap(IMPORT_MODULE, "reply_len", |mut c: Ctx<'_>| -> Result<i32, wasmi::Error> {
+        charge(&mut c)?;
+        Ok(i32::try_from(c.data().reply.len()).unwrap_or(i32::MAX))
+    })
+    .map_err(err)?;
     l.func_wrap(IMPORT_MODULE, "reply_read", |mut c: Ctx<'_>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
+        charge(&mut c)?;
         let (ptr, want) = (ptr as u32 as usize, len as u32 as usize);
+        let n = want.min(c.data().reply.len());
+        spend_fuel(&mut c, n as u64)?;
         let Some(mem) = c.get_export("memory").and_then(Extern::into_memory) else {
             return Err(abort(&mut c, PluginError::InvalidModule("no memory".into())));
         };
         let (data, st) = mem.data_and_store_mut(&mut c);
-        let n = want.min(st.reply.len());
         let src = st.reply.get(..n).ok_or(TrapCode::MemoryOutOfBounds)?;
         let dst = ptr.checked_add(n).and_then(|end| data.get_mut(ptr..end)).ok_or(TrapCode::MemoryOutOfBounds)?;
         dst.copy_from_slice(src);
@@ -500,6 +512,7 @@ fn linker(engine: &Engine) -> Result<Linker<State>, PluginError> {
     })
     .map_err(err)?;
     l.func_wrap(IMPORT_MODULE, "set_output", |mut c: Ctx<'_>, ptr: i32, len: i32| -> Result<(), wasmi::Error> {
+        charge(&mut c)?;
         let out = read_str(&mut c, ptr, len)?;
         c.data_mut().out.output = out;
         Ok(())

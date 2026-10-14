@@ -81,7 +81,7 @@ fn echoes_input_calls_commands_and_reads_replies() {
     assert_eq!(host.logs, out.logs);
     assert_eq!(host.calls, vec![("shape.rectangle".into(), r#"{"x":1}"#.into())]);
     assert_eq!(host.notes, vec!["made it".to_string()]);
-    assert_eq!(out.calls, 3);
+    assert_eq!(out.calls, 7);
     assert!(out.fuel > 0);
 }
 
@@ -142,7 +142,9 @@ fn logs_over_the_default_byte_budget_fail_before_forwarding() {
            (local.set $i (i32.add (local.get $i) (i32.const 1)))
            (br_if $logs (i32.lt_u (local.get $i) (i32.const 129)))) (i32.const 0)",
     );
-    let (result, host) = go(&m, "{}");
+    // The default fuel: copying a megabyte of log bytes out of the plugin is itself charged.
+    let mut host = Mock::default();
+    let result = run(&m, "{}", &Limits::default(), &mut host);
     assert!(matches!(result, Err(PluginError::Limit(_))), "logs over 1 MiB must fail the run");
     assert_eq!(host.logs.len(), 128);
     assert_eq!(host.logs.iter().map(String::len).sum::<usize>(), 1024 * 1024);
@@ -252,6 +254,41 @@ fn logs_still_observe_the_general_message_limit() {
     let mut host = Mock::default();
     assert_eq!(run(&m, "{}", &limits, &mut host), Err(PluginError::Limit("a 4-byte string is too long".into())));
     assert!(host.logs.is_empty());
+}
+
+#[test]
+fn reply_and_output_imports_obey_host_call_limit() {
+    for call in
+        ["(drop (call $reply_len))", "(drop (call $reply_read (i32.const 0) (i32.const 2)))", "(call $set_output (i32.const 0) (i32.const 2))"]
+    {
+        let m = module(r#"(data (i32.const 0) "ok")"#, &format!("{call} {call} (i32.const 0)"));
+        let limits = Limits { max_calls: 1, ..small() };
+        assert!(matches!(run(&m, "{}", &limits, &mut Mock::default()), Err(PluginError::Limit(_))), "{call}");
+        let limits = Limits { max_calls: 2, ..small() };
+        assert_eq!(run(&m, "{}", &limits, &mut Mock::default()).unwrap().calls, 2, "{call}");
+    }
+}
+
+#[test]
+fn repeated_bulk_imports_spend_fuel_for_bytes_even_without_call_overhead() {
+    for call in ["(drop (call $reply_read (i32.const 0) (i32.const 4096)))", "(call $set_output (i32.const 0) (i32.const 4096))"] {
+        let m = module("", &format!("{} (i32.const 0)", call.repeat(16)));
+        let limits = Limits { fuel: 40_000, call_fuel: 0, ..small() };
+        assert_eq!(run(&m, &"x".repeat(4096), &limits, &mut Mock::default()), Err(PluginError::OutOfFuel), "{call}");
+    }
+}
+
+#[test]
+fn reply_copy_charges_actual_bytes_and_each_callback_gets_fresh_limits() {
+    let m = module("", "(call $set_output (i32.const 0) (call $reply_read (i32.const 0) (i32.const 2147483647))) (i32.const 0)");
+    let limits = Limits { max_calls: 2, fuel: 1000, call_fuel: 0, ..small() };
+    let mut instance = crate::Instance::new(&m, &limits).unwrap();
+    assert_eq!(instance.call(&"x".repeat(2048), &mut Mock::default()), Err(PluginError::OutOfFuel));
+    for input in ["hello", "again"] {
+        let out = instance.call(input, &mut Mock::default()).unwrap();
+        assert_eq!(out.output, input);
+        assert_eq!(out.calls, 2);
+    }
 }
 
 #[test]

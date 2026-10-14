@@ -114,7 +114,7 @@ fn a_run_reads_the_selection_and_its_edits_are_one_undo_step() {
     let (layers, undo) = (layer_count(&s), undo_len(&s));
     let out = ex(&mut s, "plugin.run", json!({"id": "org.test.tidy"}));
     assert_eq!(out["output"], json!([a.0]), "the plugin read the selection");
-    assert_eq!(out["calls"], json!(4));
+    assert_eq!(out["calls"], json!(6));
     assert_eq!(node(&s, a).name, "Tidy");
     assert_eq!(layer_count(&s), layers + 1);
     assert_eq!(undo_len(&s), undo + 1, "one undo step for the whole run");
@@ -197,9 +197,11 @@ fn traps_endless_loops_and_memory_hogs_roll_back() {
     let a = rect(&mut s, 0.0);
     ex(&mut s, "select.set", json!({"ids": [a]}));
     let edit = [("shape.rectangle", json!({"x": 90, "y": 0, "width": 5, "height": 5})), ("object.rename", json!({"name": "Half done"}))];
+    let bulk_output = "(call $set_output (i32.const 0) (i32.const 65536))".repeat(32);
     let cases = [
         ("org.test.trap", "unreachable", "crashed"),
         ("org.test.loop", "(loop $l (br $l))", "instruction budget"),
+        ("org.test.bulk", bulk_output.as_str(), "instruction budget"),
         ("org.test.grow", "(if (i32.eq (memory.grow (i32.const 2000)) (i32.const -1)) (then unreachable))", "crashed"),
     ];
     for (id, tail, want) in cases {
