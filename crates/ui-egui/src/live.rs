@@ -444,7 +444,8 @@ fn follow_frame(painter: &egui::Painter, canvas: Rect, name: &str, fill: Color32
 }
 
 /// You and the others at the top of the right panel, within `area`: click someone to follow
-/// them (again to stop); the chevron lists everyone.
+/// them (again to stop); right-click them to remove them from the session (when you host it or
+/// own the file); the chevron lists everyone.
 pub fn people_bar(app: &mut FigApp, ui: &mut Ui, area: Rect) {
     let t = Tokens::get(ui.ctx());
     const R: f32 = 12.0;
@@ -459,6 +460,10 @@ pub fn people_bar(app: &mut FigApp, ui: &mut Ui, area: Rect) {
     let peers: Vec<(u32, String, Color32)> = live.peers.values().map(|p| (p.client_id, p.name.clone(), color(&p.color))).collect();
     let follow = live.follow;
     let (in_session, spotlighting) = (live.status == Status::Live, live.spotlighting);
+    // start feat: remove-from-session
+    let can_remove = figcraft_engine::live::can_remove_people(&app.session);
+    let mut remove = None;
+    // end feat: remove-from-session
     // Room for the avatars after yours and the chevron.
     let fit = (((area.width() - 2.0 * R - 18.0) / STEP).floor() as usize).max(1);
     let (show, more) = if peers.len() > fit { (fit - 1, peers.len() - (fit - 1)) } else { (peers.len(), 0) };
@@ -496,6 +501,16 @@ pub fn people_bar(app: &mut FigApp, ui: &mut Ui, area: Rect) {
         if resp.clicked() {
             clicked = Some(*id);
         }
+        // start feat: remove-from-session
+        if can_remove {
+            crate::right::context_popup(&resp).show(|ui| {
+                if menu_item(ui, &trf("Remove {name} from session", &[("name", name)]), "") {
+                    remove = Some(*id);
+                    ui.close();
+                }
+            });
+        }
+        // end feat: remove-from-session
     }
     if more > 0 {
         x += STEP;
@@ -539,6 +554,12 @@ pub fn people_bar(app: &mut FigApp, ui: &mut Ui, area: Rect) {
     if spotlight {
         app.run("collab.spotlight", json!({"on": !spotlighting}));
     }
+    // start feat: remove-from-session
+    // A server is asked without the window waiting for it.
+    if let Some(id) = remove {
+        app.run_background(&ui.ctx().clone(), "collab.removePerson", json!({"client": id}), Box::new(|_, _, _| {}));
+    }
+    // end feat: remove-from-session
 }
 
 /// The Share button's popover: the live session (start, invite link, stop or leave) and export.
