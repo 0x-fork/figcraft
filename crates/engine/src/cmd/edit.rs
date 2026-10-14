@@ -944,6 +944,16 @@ fn batch_rename(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"names": names.iter().map(|(i, n)| json!({"id": i, "name": n})).collect::<Vec<_>>()}))
 }
 
+/// Char index of the first case-insensitive occurrence of `needle` in `hay` at or after `from`.
+/// Works on char indices (what `replace_range` takes), so lowercasing never shifts offsets.
+fn find_ci(hay: &[char], needle: &[char], from: usize) -> Option<usize> {
+    if needle.is_empty() {
+        return None;
+    }
+    (from..hay.len())
+        .find(|&i| hay.get(i..i + needle.len()).is_some_and(|w| w.iter().zip(needle).all(|(a, b)| a == b || a.to_lowercase().eq(b.to_lowercase()))))
+}
+
 fn find_replace(s: &mut Session, p: &Value) -> Result<Value> {
     let find = req_string("edit.findReplace", p, "find")?;
     if find.is_empty() {
@@ -954,11 +964,11 @@ fn find_replace(s: &mut Session, p: &Value) -> Result<Value> {
     let page = s.page()?;
     let doc = s.doc_mut()?;
     let mut hits = Vec::new();
-    let lower = find.to_lowercase();
+    let needle: Vec<char> = find.chars().collect();
     for i in doc.subtree(page) {
         let Some(n) = doc.node(i) else { continue };
-        let text_hit = matches!(&n.kind, NodeKind::Text(t) if t.characters.to_lowercase().contains(&lower));
-        let name_hit = names && n.name.to_lowercase().contains(&lower);
+        let text_hit = matches!(&n.kind, NodeKind::Text(t) if find_ci(&t.characters.chars().collect::<Vec<_>>(), &needle, 0).is_some());
+        let name_hit = names && find_ci(&n.name.chars().collect::<Vec<_>>(), &needle, 0).is_some();
         if !(text_hit || name_hit) || n.is_page() {
             continue;
         }
@@ -966,17 +976,25 @@ fn find_replace(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(r) = &replace {
             let n = doc.get_mut(i)?;
             if names && name_hit {
-                n.name = n.name.replace(find.as_str(), r);
+                let chars: Vec<char> = n.name.chars().collect();
+                let mut out = String::new();
+                let mut at = 0;
+                while let Some(pos) = find_ci(&chars, &needle, at) {
+                    out.extend(chars.get(at..pos).unwrap_or_default());
+                    out.push_str(r);
+                    at = pos + needle.len();
+                }
+                out.extend(chars.get(at..).unwrap_or_default());
+                n.name = out;
             }
             if let NodeKind::Text(t) = &mut n.kind {
                 // Replace occurrence by occurrence so styles shift correctly.
+                let r_chars: Vec<char> = r.chars().collect();
                 let mut guard = 0;
-                while let Some(pos) = t.characters.find(find.as_str()) {
-                    let start = t.characters.get(..pos).map(|x| x.chars().count()).unwrap_or(0);
-                    let len = find.chars().count();
-                    t.replace_range(start, start + len, r);
+                while let Some(start) = find_ci(&t.characters.chars().collect::<Vec<_>>(), &needle, 0) {
+                    t.replace_range(start, start + needle.len(), r);
                     guard += 1;
-                    if guard > 10_000 || r.contains(find.as_str()) {
+                    if guard > 10_000 || find_ci(&r_chars, &needle, 0).is_some() {
                         break;
                     }
                 }
