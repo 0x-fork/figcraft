@@ -934,6 +934,12 @@ pub fn label(ui: &mut Ui, text: &str, color: Color32) {
     ui.label(egui::RichText::new(text).font(regular(11.0)).color(color));
 }
 
+/// Text that wraps at the width it is given, so a long hint never widens its panel (a wider
+/// panel would move the canvas under the pointer).
+pub fn label_wrapped(ui: &mut Ui, text: &str, color: Color32) {
+    ui.add(egui::Label::new(egui::RichText::new(text).font(regular(11.0)).color(color)).wrap());
+}
+
 /// Text shown in `rect` that turns into an editor on click (or when its editor has focus, e.g.
 /// after a double-click rename). Returns the new text on Enter / focus loss.
 pub fn text_field_inline(ui: &mut Ui, id: Id, value: &str, rect: Rect, font: egui::FontId) -> Option<String> {

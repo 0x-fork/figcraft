@@ -40,7 +40,7 @@ fn width_point(app: &mut FigApp, ui: &mut Ui, doc: &Document, ve: &VectorEdit) {
         let t = crate::theme::Tokens::get(ui.ctx());
         ui.horizontal(|ui| {
             ui.add_space(PAD);
-            widgets::label(ui, tr("Drag the stroke to add a width point"), t.text_secondary);
+            widgets::label_wrapped(ui, tr("Drag the stroke to add a width point"), t.text_secondary);
         });
         ui.add_space(8.0);
         return;
@@ -87,7 +87,7 @@ pub fn points(app: &mut FigApp, ui: &mut Ui, doc: &Document, ve: &VectorEdit) {
         let t = crate::theme::Tokens::get(ui.ctx());
         ui.horizontal(|ui| {
             ui.add_space(PAD);
-            widgets::label(ui, tr("Select points to edit their position, radius and mirroring"), t.text_secondary);
+            widgets::label_wrapped(ui, tr("Select points to edit their position, radius and mirroring"), t.text_secondary);
         });
         ui.add_space(8.0);
         return;
