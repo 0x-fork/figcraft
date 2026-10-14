@@ -32,6 +32,7 @@ enum ExpressionFunction ADDITION SUBTRACTION RESOLVE_VARIANT MULTIPLY DIVIDE EQU
 enum NavigationType NAVIGATE OVERLAY
 enum TransitionType INSTANT_TRANSITION DISSOLVE SMART_ANIMATE
 enum EasingType IN_CUBIC OUT_CUBIC
+enum ConstraintType MIN CENTER MAX STRETCH SCALE
 struct GUID uint sessionID, uint localID
 struct Color float r, float g, float b, float a
 struct Vector float x, float y
@@ -70,7 +71,7 @@ message Event InteractionType interactionType
 message Action GUID transitionNodeID, TransitionType transitionType, float transitionDuration, EasingType easingType, ConnectionType connectionType, NavigationType navigationType, VariableTarget targetVariable, VariableData targetVariableData, VariableSetID targetVariableSetID, GUID targetVariableModeID, ConditionalActions[] conditionalActions
 message Interaction Event event, Action[] actions
 message StartingPoint string name, string position
-message NodeChange GUID guid, ParentIndex parentIndex, NodeType type, string name, bool visible, float opacity, Vector size, Matrix transform, Paint[] fillPaints, Paint[] strokePaints, float strokeWeight, float cornerRadius, bool resizeToFit, bool internalOnly, float fontSize, FontName fontName, TextData textData, uint styleID, Path[] fillGeometry, Path[] strokeGeometry, StyleType styleType, StyleId styleIdForFill, SymbolData symbolData, PropDef[] componentPropDefs, PropAssignment[] componentPropAssignments, VariableDataMap parameterConsumptionMap, SetMode[] variableSetModes, VariableID variableSetID, ResolvedType variableResolvedType, Values variableDataValues, ModeMap variableModeBySetMap, Interaction[] prototypeInteractions, StartingPoint prototypeStartingPoint, GUIDPath guidPath, StackMode stackMode, float stackSpacing, float stackHorizontalPadding, float stackVerticalPadding, uint count, float starInnerScale, VectorData vectorData, StrokeCap strokeCap, StrokeJoin strokeJoin, VectorMirror handleMirroring, ShapeWithTextType shapeWithTextType, ConnectorEndpoint connectorStart, ConnectorEndpoint connectorEnd, StrokeCap connectorStartCap, StrokeCap connectorEndCap, ConnectorLineStyle connectorLineStyle
+message NodeChange GUID guid, ParentIndex parentIndex, NodeType type, string name, bool visible, float opacity, Vector size, Matrix transform, Paint[] fillPaints, Paint[] strokePaints, float strokeWeight, float cornerRadius, bool resizeToFit, bool internalOnly, float fontSize, FontName fontName, TextData textData, uint styleID, Path[] fillGeometry, Path[] strokeGeometry, StyleType styleType, StyleId styleIdForFill, SymbolData symbolData, PropDef[] componentPropDefs, PropAssignment[] componentPropAssignments, VariableDataMap parameterConsumptionMap, SetMode[] variableSetModes, VariableID variableSetID, ResolvedType variableResolvedType, Values variableDataValues, ModeMap variableModeBySetMap, Interaction[] prototypeInteractions, StartingPoint prototypeStartingPoint, GUIDPath guidPath, StackMode stackMode, float stackSpacing, float stackHorizontalPadding, float stackVerticalPadding, uint count, float starInnerScale, VectorData vectorData, StrokeCap strokeCap, StrokeJoin strokeJoin, VectorMirror handleMirroring, ShapeWithTextType shapeWithTextType, ConnectorEndpoint connectorStart, ConnectorEndpoint connectorEnd, StrokeCap connectorStartCap, StrokeCap connectorEndCap, ConnectorLineStyle connectorLineStyle, ConstraintType horizontalConstraint, ConstraintType verticalConstraint, NodeChange[] derivedSymbolData
 message Blob byte[] bytes
 message Message NodeChange[] nodeChanges, Blob[] blobs
 ";
@@ -663,6 +664,61 @@ fn instances_inside_their_own_main_stop() {
     let doc_nodes = vec![node(0, None, "DOCUMENT", "D", vec![]), node(1, Some((0, "!")), "CANVAS", "P", vec![]), sym, inner];
     let (doc, _) = import(&canvas(&schema(), &o(vec![("nodeChanges", arr(doc_nodes))])), "x").unwrap();
     assert!(doc.nodes().any(|n| n.name == "Self"));
+}
+
+#[test]
+fn resized_instances_lay_their_layers_out_by_their_constraints() {
+    let pin = |h: &'static str, v: &'static str| vec![("horizontalConstraint", e(h)), ("verticalConstraint", e(v))];
+    let layer = |id, pos, ty, name, w, h, x, y, c: Vec<(&'static str, Kv<'static>)>| {
+        node(id, Some((5, pos)), ty, name, [vec![("size", xy(w, h)), ("transform", at(x, y))], c].concat())
+    };
+    let nodes = vec![
+        node(0, None, "DOCUMENT", "D", vec![]),
+        node(1, Some((0, "!")), "CANVAS", "P", vec![]),
+        node(5, Some((1, "!")), "SYMBOL", "Logo", vec![("size", xy(132.0, 22.0)), ("transform", at(0.0, 0.0))]),
+        layer(6, "!", "ROUNDED_RECTANGLE", "Mark", 132.0, 22.0, 0.0, 0.0, pin("SCALE", "SCALE")),
+        layer(7, "\"", "ROUNDED_RECTANGLE", "Badge", 32.0, 10.0, 100.0, 12.0, pin("MAX", "MAX")),
+        layer(8, "#", "ROUNDED_RECTANGLE", "Bar", 112.0, 2.0, 10.0, 0.0, pin("STRETCH", "MIN")),
+        // A group scales its layers with it.
+        layer(11, "$", "FRAME", "Wordmark", 66.0, 22.0, 66.0, 0.0, [pin("SCALE", "SCALE"), vec![("resizeToFit", Kv::Bool(true))]].concat()),
+        node(12, Some((11, "!")), "ROUNDED_RECTANGLE", "Letter", vec![("size", xy(66.0, 22.0)), ("transform", at(0.0, 0.0))]),
+        node(
+            9,
+            Some((1, "\"")),
+            "INSTANCE",
+            "Small logo",
+            vec![("size", xy(90.0, 15.0)), ("transform", at(0.0, 100.0)), ("symbolData", o(vec![("symbolID", g(5))]))],
+        ),
+        // Derived layout the file gives wins over the constraints.
+        node(
+            10,
+            Some((1, "#")),
+            "INSTANCE",
+            "Derived logo",
+            vec![
+                ("size", xy(90.0, 15.0)),
+                ("transform", at(0.0, 200.0)),
+                ("symbolData", o(vec![("symbolID", g(5))])),
+                ("derivedSymbolData", arr(vec![o(vec![("guidPath", o(vec![("guids", arr(vec![g(6)]))])), ("size", xy(50.0, 5.0))])])),
+            ],
+        ),
+    ];
+    let (doc, _) = import(&canvas(&schema(), &o(vec![("nodeChanges", arr(nodes))])), "x").unwrap();
+    let box_of = |inst: &str, name: &str| {
+        let i = named(&doc, inst);
+        let n = i.children.iter().map(|c| doc.node(*c).unwrap()).find(|n| n.name == name).unwrap();
+        let t = n.transform.translation();
+        [t.x, t.y, n.width, n.height].map(|x| (x * 1e3).round() / 1e3)
+    };
+    assert_eq!(box_of("Small logo", "Mark"), [0.0, 0.0, 90.0, 15.0]);
+    assert_eq!(box_of("Small logo", "Badge"), [58.0, 5.0, 32.0, 10.0]);
+    assert_eq!(box_of("Small logo", "Bar"), [10.0, 0.0, 70.0, 2.0]);
+    // The main's own, then both instances'.
+    let mut letters: Vec<[f64; 2]> =
+        doc.nodes().filter(|n| n.name == "Letter").map(|n| [n.width, n.height].map(|x| (x * 1e3).round() / 1e3)).collect();
+    letters.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    assert_eq!(letters, [[45.0, 15.0], [45.0, 15.0], [66.0, 22.0]]);
+    assert_eq!(box_of("Derived logo", "Mark")[2..], [50.0, 5.0]);
 }
 
 #[path = "tail_tests.rs"]

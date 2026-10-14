@@ -113,11 +113,21 @@ fn copy_str(o: &mut Obj, n: &View, from: &str, to: &str) {
 #[derive(Clone)]
 struct View<'a> {
     layers: Vec<&'a Kv<'a>>,
+    /// Size and transform worked out from the constraints, over the layers' own.
+    fitted: Option<((f64, f64), Affine)>,
 }
 
 impl<'a> View<'a> {
     fn of(n: &'a Kv<'a>) -> Self {
-        Self { layers: vec![n] }
+        Self { layers: vec![n], fitted: None }
+    }
+
+    fn size(&self) -> Option<(f64, f64)> {
+        self.fitted.map(|f| f.0).or_else(|| self.get("size").and_then(|s| Some((num(s, "x")?, num(s, "y")?))))
+    }
+
+    fn transform(&self) -> Option<Affine> {
+        self.fitted.map(|f| f.1).or_else(|| self.get("transform").and_then(matrix))
     }
 
     fn with(&self, top: impl IntoIterator<Item = &'a Kv<'a>>) -> Self {
@@ -144,6 +154,61 @@ impl<'a> View<'a> {
 
     fn list(&self, k: &str) -> &'a [Kv<'a>] {
         self.get(k).map(Kv::list).unwrap_or_default()
+    }
+}
+
+/// How the layers of a resized container follow it when the file gives no derived layout for
+/// them: a frame's by their constraints, from its main's size to its own; a group's scale with it.
+#[derive(Clone, Copy)]
+enum Fit {
+    Frame { from: (f64, f64), to: (f64, f64) },
+    Scale(f64, f64),
+}
+
+impl Fit {
+    fn frame(from: Option<(f64, f64)>, to: Option<(f64, f64)>) -> Option<Self> {
+        let (from, to) = (from?, to?);
+        ((from.0 - to.0).abs() > 1e-9 || (from.1 - to.1).abs() > 1e-9).then_some(Fit::Frame { from, to })
+    }
+
+    fn scale(from: Option<(f64, f64)>, to: Option<(f64, f64)>) -> Option<Self> {
+        let (from, to) = (from?, to?);
+        let k = |a: f64, b: f64| if a > 1e-9 { b / a } else { 1.0 };
+        let (kx, ky) = (k(from.0, to.0), k(from.1, to.1));
+        ((kx - 1.0).abs() > 1e-9 || (ky - 1.0).abs() > 1e-9).then_some(Fit::Scale(kx, ky))
+    }
+
+    /// The size and transform (in the parent's coordinates) of a `w` × `h` layer at `t` with
+    /// constraints `h_con`, `v_con`. Like the editor's constraint solver, a layer keeps its
+    /// rotation and flip and stretches along its own axes.
+    fn apply(self, w: f64, h: f64, t: Affine, h_con: Option<&str>, v_con: Option<&str>) -> ((f64, f64), Affine) {
+        let [a, b, c, d, _, _] = t.as_coeffs();
+        let lin = Affine::new([a, b, c, d, 0.0, 0.0]);
+        let bb = figcraft_doc::geom::transform_rect_bbox(t, figcraft_doc::geom::Rect::new(0.0, 0.0, w, h));
+        let (kx, ky, x0, y0) = match self {
+            Fit::Frame { from, to } => {
+                let axis = |con: Option<&str>, lo: f64, hi: f64, old: f64, new: f64| match con {
+                    Some("MAX" | "FIXED_MAX") => (lo + new - old, hi + new - old),
+                    Some("STRETCH") => (lo, hi + new - old),
+                    Some("CENTER") => (lo + (new - old) / 2.0, hi + (new - old) / 2.0),
+                    Some("SCALE") if old > 1e-9 => (lo * new / old, hi * new / old),
+                    _ => (lo, hi),
+                };
+                let (x0, x1) = axis(h_con, bb.x0, bb.x1, from.0, to.0);
+                let (y0, y1) = axis(v_con, bb.y0, bb.y1, from.1, to.1);
+                let k = |new: f64, old: f64| if old > 1e-9 { (new / old).max(0.0) } else { 1.0 };
+                (k(x1 - x0, bb.width()), k(y1 - y0, bb.height()), x0, y0)
+            }
+            Fit::Scale(kx, ky) => (kx, ky, bb.x0 * kx, bb.y0 * ky),
+        };
+        let along = |x: f64, y: f64, fallback: f64| {
+            let len = x.hypot(y);
+            let k = (kx * x).hypot(ky * y) / len;
+            if len > 1e-12 && k.is_finite() { k } else { fallback }
+        };
+        let size = (w * along(a, b, kx), h * along(c, d, ky));
+        let nb = figcraft_doc::geom::transform_rect_bbox(lin, figcraft_doc::geom::Rect::new(0.0, 0.0, size.0, size.1));
+        (size, Affine::translate((x0 - nb.x0, y0 - nb.y0)) * lin)
     }
 }
 
@@ -263,7 +328,7 @@ impl<'a> Mapper<'a> {
                 let name = sp.get("name").and_then(Kv::str).filter(|s| !s.is_empty()).unwrap_or("Flow");
                 flows.push((sp.get("position").and_then(Kv::str).unwrap_or(""), json!({"nodeId": c, "name": name})));
             }
-            kids.extend(self.layer(&c, None, Affine::IDENTITY, None, 0));
+            kids.extend(self.layer(&c, None, Affine::IDENTITY, None, None, 0));
         }
         flows.sort_by(|a, b| a.0.cmp(b.0));
         if !flows.is_empty() {
@@ -276,7 +341,15 @@ impl<'a> Mapper<'a> {
     /// Layer `id` (inside instance `inst` when expanding one) and its subtree. `space`: from the
     /// parent's coordinates to the enclosing frame's (groups and booleans place their children in
     /// the frame's space, like the REST JSON). `parent`: the parent's view (grid tracks).
-    fn layer(&mut self, id: &str, inst: Option<&Inst<'a>>, space: Affine, parent: Option<&View<'a>>, depth: usize) -> Option<Value> {
+    fn layer(
+        &mut self,
+        id: &str,
+        inst: Option<&Inst<'a>>,
+        space: Affine,
+        parent: Option<&View<'a>>,
+        fit: Option<Fit>,
+        depth: usize,
+    ) -> Option<Value> {
         if depth > MAX_DEPTH {
             self.warn(format!("layers nested deeper than {MAX_DEPTH} levels were skipped"));
             return None;
@@ -287,10 +360,19 @@ impl<'a> Mapper<'a> {
         }
         let base = *self.nodes.get(id)?;
         let path = inst.map(|i| [i.path.as_slice(), &[id.to_string()]].concat());
-        let view = match (inst, &path) {
+        let mut view = match (inst, &path) {
             (Some(i), Some(p)) => View::of(base).with(i.overrides.get(p).into_iter().flatten().copied()),
             _ => View::of(base),
         };
+        // A layer of a resized instance the file gives no derived layout for follows its
+        // constraints (auto layout places the others, as in the editor).
+        let derived = view.layers.iter().skip(1).any(|l| l.get("size").is_some() || l.get("transform").is_some());
+        let stacked = parent.and_then(|p| p.str("stackMode")).is_some_and(|m| matches!(m, "HORIZONTAL" | "VERTICAL" | "GRID"))
+            && view.str("stackPositioning") != Some("ABSOLUTE");
+        if let (Some(f), false, false, Some((w, h))) = (fit, derived, stacked, view.size()) {
+            let t = view.transform().unwrap_or_default();
+            view.fitted = Some(f.apply(w, h, t, view.str("horizontalConstraint"), view.str("verticalConstraint")));
+        }
         let rest_id = match (inst, &path) {
             (Some(i), Some(p)) => format!("I{};{}", i.root, p.join(";")),
             _ => id.to_string(),
@@ -338,21 +420,26 @@ impl<'a> Mapper<'a> {
             self.component(&mut o, &view, &rest_id);
         }
         self.prop_refs(&mut o, &view, inst);
-        let child_space = if matches!(ty, "GROUP" | "BOOLEAN_OPERATION") {
-            space * view.get("transform").and_then(matrix).unwrap_or_default()
-        } else {
-            Affine::IDENTITY
-        };
+        let child_space = if matches!(ty, "GROUP" | "BOOLEAN_OPERATION") { space * view.transform().unwrap_or_default() } else { Affine::IDENTITY };
         let mut kids = Vec::new();
         if ty == "INSTANCE" {
             if let Some((sub, sym)) = self.instance(&mut o, &view, id, inst, &rest_id) {
+                let main = self.nodes.get(&sym).map(|m| View::of(m));
+                let fit = Fit::frame(main.and_then(|m| m.size()), view.size());
                 for c in self.children(&sym) {
-                    kids.extend(self.layer(&c, Some(&sub), child_space, Some(&view), depth + 1));
+                    kids.extend(self.layer(&c, Some(&sub), child_space, Some(&view), fit, depth + 1));
                 }
             }
         } else {
+            // Inside an instance a layer's children are its main's: they follow it from the main's
+            // size to its own.
+            let fit = match (inst, ty) {
+                (None, _) => None,
+                (Some(_), "GROUP" | "BOOLEAN_OPERATION") => Fit::scale(View::of(base).size(), view.size()),
+                (Some(_), _) => Fit::frame(View::of(base).size(), view.size()),
+            };
             for c in self.children(id) {
-                kids.extend(self.layer(&c, inst, child_space, Some(&view), depth + 1));
+                kids.extend(self.layer(&c, inst, child_space, Some(&view), fit, depth + 1));
             }
         }
         if stand.is_some_and(|s| s.0 == "FRAME") {
@@ -487,10 +574,10 @@ impl<'a> Mapper<'a> {
         if let Some(b) = v.str("blendMode").filter(|b| *b != "UNSET") {
             o.insert("blendMode".into(), json!(b));
         }
-        if let Some(s) = v.get("size").and_then(vec2) {
-            o.insert("size".into(), s);
+        if let Some((x, y)) = v.size() {
+            o.insert("size".into(), json!({"x": x, "y": y}));
         }
-        let t = v.get("transform").and_then(matrix).unwrap_or_default();
+        let t = v.transform().unwrap_or_default();
         o.insert("relativeTransform".into(), rows(space * t));
         // Paints, from the shared style when one is linked (the layer's own copy can be stale).
         let mut styles = Obj::new();
@@ -739,7 +826,8 @@ impl<'a> Mapper<'a> {
             vd.get("styleOverrideTable").map(Kv::list).unwrap_or_default().iter().filter_map(|s| Some((num(s, "styleID")? as u64, s))).collect();
         let style = |id: u32| styles.get(&u64::from(id)).copied().filter(|_| id != 0);
         let scale = |k: &str| {
-            let (size, norm) = (v.get("size").and_then(|s| num(s, k)), vd.get("normalizedSize").and_then(|s| num(s, k)));
+            let size = v.size().map(|s| if k == "x" { s.0 } else { s.1 });
+            let norm = vd.get("normalizedSize").and_then(|s| num(s, k));
             size.zip(norm).filter(|(s, n)| s.is_finite() && *n > 1e-9).map_or(1.0, |(s, n)| s / n)
         };
         let (sx, sy) = (scale("x"), scale("y"));
@@ -1128,7 +1216,7 @@ impl<'a> Mapper<'a> {
         found.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
         let mut out = Vec::new();
         for (_, id, n) in found {
-            let Some(node) = self.layer(&id, None, Affine::IDENTITY, None, 0) else { break };
+            let Some(node) = self.layer(&id, None, Affine::IDENTITY, None, None, 0) else { break };
             let name = n.get("name").and_then(Kv::str).unwrap_or("Style");
             let desc = n.get("styleDescription").or_else(|| n.get("description")).and_then(Kv::str).unwrap_or("");
             let ty = n.get("styleType").and_then(Kv::str).unwrap_or("");
