@@ -1406,6 +1406,12 @@ turned off 0°.
   With `pointer`, `alt: true` hovers measure (add `cmd` for nested layers, `shift` for padding) and
   `alt` drags show live distances to the neighbours; `inspect_ui` reports them under
   `tool.overlay` (`guides`, and `measure_box` for the box measured to).
+- **Duplicating at a spacing**: a copy Alt-dragged off a layer with `pointer` snaps to that layer
+  too (its edges, centres and equal spacing). `edit.duplicate {ids?, dx?, dy?}` without `dx`/`dy`
+  repeats the last duplicate's page offset while its copies are what it duplicates (and still the
+  selection), measured when it runs: Alt-drag or duplicate and move a copy, then each
+  `edit.duplicate` steps out the next one as far again. Copies placed by an auto layout set no
+  step; explicit `dx`/`dy` always win.
 - **Scale tool** (`tool.scale`, K): dragging a selection handle with `pointer` scales everything by
   one factor (sizes and positions whatever the constraints, strokes, effects, corner radii, auto
   layout spacing, min/max sizes, layout grids, guides, tiled images, text), one undo step per drag,

@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "edit.duplicate",
             "Duplicate",
-            "{ids?, dx?, dy? (offset; default 0 for frames-in-place... Figma offsets top-level frames to the right)}",
+            "{ids?, dx?, dy? (page offset; default: the offset of the last duplicate when ids are its copies, still selected; else top-level frames to the right with a 100 gap, everything else in place)}",
             true,
             duplicate
         ),
@@ -412,13 +412,48 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"deleted": ids}))
 }
 
+/// Layers duplicated last (Duplicate or Alt-drag) and their copies, in the same order. While the
+/// copies are the selection, Duplicate places the next copies as far from them as they are from
+/// their sources, measured then: so moving the copies first sets the step.
+#[derive(Clone, Debug)]
+pub struct Duplicated {
+    pub sources: Vec<NodeId>,
+    pub copies: Vec<NodeId>,
+}
+
+impl Duplicated {
+    pub fn is_selection(&self, sel: &[NodeId]) -> bool {
+        let set = |v: &[NodeId]| v.iter().copied().collect::<BTreeSet<_>>();
+        !self.copies.is_empty() && set(&self.copies) == set(sel)
+    }
+
+    /// The page offset from the sources to the copies, if both are still there and the copies move
+    /// freely (an auto layout places its own).
+    fn offset(&self, doc: &Document) -> Option<(f64, f64)> {
+        let free = self
+            .copies
+            .iter()
+            .all(|c| doc.node(*c).is_some_and(|n| n.child_layout.absolute || n.parent.and_then(|p| doc.node(p)).is_none_or(|p| p.layout.is_none())));
+        if !free || self.sources.iter().chain(&self.copies).any(|i| !doc.contains(*i)) {
+            return None;
+        }
+        let (a, b) = (doc.bounds_of(&self.sources)?, doc.bounds_of(&self.copies)?);
+        let d = (b.x0 - a.x0, b.y0 - a.y0);
+        (d.0.is_finite() && d.1.is_finite() && (d.0 != 0.0 || d.1 != 0.0)).then_some(d)
+    }
+}
+
 fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = req_targets("edit.duplicate", s, p)?;
     let rename = s.prefs.rename_duplicates;
+    let explicit = num(p, "dx").is_some() || num(p, "dy").is_some();
+    let ds = s.ds()?;
+    let roots_now = z_sorted(&ds.doc, &roots(&ds.doc, &ids));
+    let repeat = ds.last_duplicate.as_ref().filter(|d| !explicit && d.is_selection(&roots_now)).and_then(|d| d.offset(&ds.doc));
     let doc = s.doc_mut()?;
-    let ids = z_sorted(doc, &roots(doc, &ids));
+    let ids = roots_now;
     let mut out = Vec::new();
-    for i in ids {
+    for i in ids.iter().copied() {
         let n = doc.get(i)?;
         let parent = n.parent.ok_or_else(|| bad("edit.duplicate", "pages are duplicated with page.duplicate"))?;
         let top_frame = doc.node(parent).is_some_and(Node::is_page) && n.kind.is_frame_like();
@@ -432,14 +467,21 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
             _ if top_frame => (w + 100.0, 0.0),
             _ => (0.0, 0.0),
         };
-        let nn = doc.get_mut(nid)?;
-        nn.transform = Affine::translate((dx, dy)) * nn.transform;
+        match repeat {
+            Some((rx, ry)) => super::arrange::move_world(doc, nid, rx, ry)?,
+            None => {
+                let nn = doc.get_mut(nid)?;
+                nn.transform = Affine::translate((dx, dy)) * nn.transform;
+            }
+        }
         if rename {
+            let nn = doc.get_mut(nid)?;
             nn.name = bump_name(&nn.name);
         }
         out.push(nid);
     }
     s.set_selection(out.clone());
+    s.ds_mut()?.last_duplicate = Some(Duplicated { sources: ids, copies: out.clone() });
     Ok(json!({"ids": out}))
 }
 

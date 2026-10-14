@@ -328,6 +328,9 @@ pub struct DocState {
     pub guide: Option<(NodeId, usize)>,
     /// The selection's rotation origin, when moved or shown (see [`rotation_origin`]; not saved).
     pub(crate) rotation_origin: Option<rotation_origin::RotationOrigin>,
+    /// The last duplicate while its copies are the selection: Duplicate repeats its offset (see
+    /// [`cmd::edit::Duplicated`]; not saved).
+    pub(crate) last_duplicate: Option<cmd::edit::Duplicated>,
 }
 
 /// A version shown on the canvas in place of the document: read-only until it's restored or the
@@ -383,6 +386,7 @@ impl DocState {
             focus: None,
             guide: None,
             rotation_origin: None,
+            last_duplicate: None,
         };
         st.zoom_to_fit();
         st
@@ -537,6 +541,10 @@ impl DocState {
         // A moved rotation origin lasts as long as its selection.
         if self.rotation_origin.as_ref().is_some_and(|o| o.ids != self.selection) {
             self.rotation_origin = None;
+        }
+        // So does the last duplicate (undo reuses ids: a new layer could take a copy's).
+        if self.last_duplicate.as_ref().is_some_and(|d| !d.is_selection(&self.selection)) {
+            self.last_duplicate = None;
         }
     }
 }
@@ -1440,6 +1448,8 @@ mod devinspect_tests;
 mod double_click_tests;
 #[cfg(test)]
 mod draw_tools_tests;
+#[cfg(test)]
+mod duplicate_spacing_tests;
 #[cfg(test)]
 mod effects_tests;
 #[cfg(test)]
