@@ -702,6 +702,24 @@ fn resized_instances_lay_their_layers_out_by_their_constraints() {
                 ("derivedSymbolData", arr(vec![o(vec![("guidPath", o(vec![("guids", arr(vec![g(6)]))])), ("size", xy(50.0, 5.0))])])),
             ],
         ),
+        // A size the instance overrides: the place still follows the constraints.
+        node(
+            13,
+            Some((1, "$")),
+            "INSTANCE",
+            "Resized badge",
+            vec![
+                ("size", xy(90.0, 15.0)),
+                ("transform", at(0.0, 300.0)),
+                (
+                    "symbolData",
+                    o(vec![
+                        ("symbolID", g(5)),
+                        ("symbolOverrides", arr(vec![o(vec![("guidPath", o(vec![("guids", arr(vec![g(7)]))])), ("size", xy(20.0, 10.0))])])),
+                    ]),
+                ),
+            ],
+        ),
     ];
     let (doc, _) = import(&canvas(&schema(), &o(vec![("nodeChanges", arr(nodes))])), "x").unwrap();
     let box_of = |inst: &str, name: &str| {
@@ -713,12 +731,57 @@ fn resized_instances_lay_their_layers_out_by_their_constraints() {
     assert_eq!(box_of("Small logo", "Mark"), [0.0, 0.0, 90.0, 15.0]);
     assert_eq!(box_of("Small logo", "Badge"), [58.0, 5.0, 32.0, 10.0]);
     assert_eq!(box_of("Small logo", "Bar"), [10.0, 0.0, 70.0, 2.0]);
-    // The main's own, then both instances'.
+    // The main's own, then the instances'.
     let mut letters: Vec<[f64; 2]> =
         doc.nodes().filter(|n| n.name == "Letter").map(|n| [n.width, n.height].map(|x| (x * 1e3).round() / 1e3)).collect();
     letters.sort_by(|a, b| a[0].total_cmp(&b[0]));
-    assert_eq!(letters, [[45.0, 15.0], [45.0, 15.0], [66.0, 22.0]]);
+    assert_eq!(letters, [[45.0, 15.0], [45.0, 15.0], [45.0, 15.0], [66.0, 22.0]]);
     assert_eq!(box_of("Derived logo", "Mark")[2..], [50.0, 5.0]);
+    assert_eq!(box_of("Resized badge", "Badge"), [58.0, 5.0, 20.0, 10.0]);
+}
+
+#[test]
+fn nested_instances_resized_again_drop_the_layout_derived_for_their_old_size() {
+    let stretch = || vec![("horizontalConstraint", e("STRETCH")), ("verticalConstraint", e("MIN"))];
+    let nodes = vec![
+        node(0, None, "DOCUMENT", "D", vec![]),
+        node(1, Some((0, "!")), "CANVAS", "P", vec![]),
+        node(20, Some((1, "!")), "SYMBOL", "Track", vec![("size", xy(100.0, 10.0)), ("transform", at(0.0, 0.0))]),
+        node(21, Some((20, "!")), "ROUNDED_RECTANGLE", "Fill", [vec![("size", xy(100.0, 10.0)), ("transform", at(0.0, 0.0))], stretch()].concat()),
+        node(30, Some((1, "\"")), "SYMBOL", "Slider", vec![("size", xy(200.0, 50.0)), ("transform", at(0.0, 100.0))]),
+        // The nested instance is 150 wide in its main, with the layout derived for that.
+        node(
+            31,
+            Some((30, "!")),
+            "INSTANCE",
+            "Inner",
+            [
+                vec![
+                    ("size", xy(150.0, 10.0)),
+                    ("transform", at(0.0, 0.0)),
+                    ("symbolData", o(vec![("symbolID", g(20))])),
+                    ("derivedSymbolData", arr(vec![o(vec![("guidPath", o(vec![("guids", arr(vec![g(21)]))])), ("size", xy(150.0, 10.0))])])),
+                ],
+                stretch(),
+            ]
+            .concat(),
+        ),
+        node(
+            40,
+            Some((1, "#")),
+            "INSTANCE",
+            "Wide slider",
+            vec![("size", xy(300.0, 50.0)), ("transform", at(0.0, 200.0)), ("symbolData", o(vec![("symbolID", g(30))]))],
+        ),
+    ];
+    let (doc, _) = import(&canvas(&schema(), &o(vec![("nodeChanges", arr(nodes))])), "x").unwrap();
+    let width = |outer: &str| {
+        let inner = doc.node(named(&doc, outer).children[0]).unwrap();
+        (inner.width, doc.node(inner.children[0]).unwrap().width)
+    };
+    // In its main the derived layout holds; stretched to 250 it no longer does.
+    assert_eq!(width("Slider"), (150.0, 150.0));
+    assert_eq!(width("Wide slider"), (250.0, 250.0));
 }
 
 #[path = "tail_tests.rs"]

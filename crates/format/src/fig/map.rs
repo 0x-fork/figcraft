@@ -86,6 +86,10 @@ fn vec2(v: &Kv) -> Option<Value> {
     Some(json!({"x": num(v, "x")?, "y": num(v, "y")?}))
 }
 
+fn size(v: &Kv) -> Option<(f64, f64)> {
+    Some((num(v, "x")?, num(v, "y")?))
+}
+
 fn matrix(m: &Kv) -> Option<Affine> {
     let c = |k: &str| num(m, k);
     let a = Affine::new([c("m00")?, c("m10")?, c("m01")?, c("m11")?, c("m02")?, c("m12")?]);
@@ -123,7 +127,7 @@ impl<'a> View<'a> {
     }
 
     fn size(&self) -> Option<(f64, f64)> {
-        self.fitted.map(|f| f.0).or_else(|| self.get("size").and_then(|s| Some((num(s, "x")?, num(s, "y")?))))
+        self.fitted.map(|f| f.0).or_else(|| self.get("size").and_then(size))
     }
 
     fn transform(&self) -> Option<Affine> {
@@ -185,7 +189,8 @@ impl Fit {
         let [a, b, c, d, _, _] = t.as_coeffs();
         let lin = Affine::new([a, b, c, d, 0.0, 0.0]);
         let bb = figcraft_doc::geom::transform_rect_bbox(t, figcraft_doc::geom::Rect::new(0.0, 0.0, w, h));
-        let (kx, ky, x0, y0) = match self {
+        // Where the new box goes: its top-left (constraints) or its centre (a group's scale).
+        let (kx, ky, x0, y0, centred) = match self {
             Fit::Frame { from, to } => {
                 let axis = |con: Option<&str>, lo: f64, hi: f64, old: f64, new: f64| match con {
                     Some("MAX" | "FIXED_MAX") => (lo + new - old, hi + new - old),
@@ -197,9 +202,9 @@ impl Fit {
                 let (x0, x1) = axis(h_con, bb.x0, bb.x1, from.0, to.0);
                 let (y0, y1) = axis(v_con, bb.y0, bb.y1, from.1, to.1);
                 let k = |new: f64, old: f64| if old > 1e-9 { (new / old).max(0.0) } else { 1.0 };
-                (k(x1 - x0, bb.width()), k(y1 - y0, bb.height()), x0, y0)
+                (k(x1 - x0, bb.width()), k(y1 - y0, bb.height()), x0, y0, false)
             }
-            Fit::Scale(kx, ky) => (kx, ky, bb.x0 * kx, bb.y0 * ky),
+            Fit::Scale(kx, ky) => (kx, ky, bb.center().x * kx, bb.center().y * ky, true),
         };
         let along = |x: f64, y: f64, fallback: f64| {
             let len = x.hypot(y);
@@ -208,9 +213,13 @@ impl Fit {
         };
         let size = (w * along(a, b, kx), h * along(c, d, ky));
         let nb = figcraft_doc::geom::transform_rect_bbox(lin, figcraft_doc::geom::Rect::new(0.0, 0.0, size.0, size.1));
-        (size, Affine::translate((x0 - nb.x0, y0 - nb.y0)) * lin)
+        let at = if centred { nb.center() } else { figcraft_doc::geom::Point::new(nb.x0, nb.y0) };
+        (size, Affine::translate((x0 - at.x, y0 - at.y)) * lin)
     }
 }
+
+/// Overrides and derived layout by id path; each entry says whether it's derived layout.
+type Overrides<'a> = BTreeMap<Vec<String>, Vec<(bool, &'a Kv<'a>)>>;
 
 /// Where an instance's expanded layers are: the overrides and derived layout of the outermost
 /// instance (by id path), the path of the instance being expanded, and the property values.
@@ -218,7 +227,7 @@ impl Fit {
 struct Inst<'a> {
     root: String,
     path: Vec<String>,
-    overrides: Rc<BTreeMap<Vec<String>, Vec<&'a Kv<'a>>>>,
+    overrides: Rc<Overrides<'a>>,
     props: Rc<BTreeMap<String, &'a Kv<'a>>>,
     /// Mains being expanded (an instance inside its own main stops there).
     symbols: Vec<String>,
@@ -360,18 +369,23 @@ impl<'a> Mapper<'a> {
         }
         let base = *self.nodes.get(id)?;
         let path = inst.map(|i| [i.path.as_slice(), &[id.to_string()]].concat());
-        let mut view = match (inst, &path) {
-            (Some(i), Some(p)) => View::of(base).with(i.overrides.get(p).into_iter().flatten().copied()),
-            _ => View::of(base),
+        let entries = match (inst, &path) {
+            (Some(i), Some(p)) => i.overrides.get(p).map(Vec::as_slice).unwrap_or_default(),
+            _ => &[],
         };
+        let mut view = View::of(base).with(entries.iter().map(|e| e.1));
         // A layer of a resized instance the file gives no derived layout for follows its
-        // constraints (auto layout places the others, as in the editor).
-        let derived = view.layers.iter().skip(1).any(|l| l.get("size").is_some() || l.get("transform").is_some());
+        // constraints from the main's geometry, then takes the size and place overridden on it
+        // (auto layout places the others, as in the editor).
+        let derived = entries.iter().any(|(d, l)| *d && (l.get("size").is_some() || l.get("transform").is_some()));
         let stacked = parent.and_then(|p| p.str("stackMode")).is_some_and(|m| matches!(m, "HORIZONTAL" | "VERTICAL" | "GRID"))
             && view.str("stackPositioning") != Some("ABSOLUTE");
-        if let (Some(f), false, false, Some((w, h))) = (fit, derived, stacked, view.size()) {
-            let t = view.transform().unwrap_or_default();
-            view.fitted = Some(f.apply(w, h, t, view.str("horizontalConstraint"), view.str("verticalConstraint")));
+        let main = View::of(base);
+        if let (Some(f), false, false, Some((w, h))) = (fit, derived, stacked, main.size()) {
+            let t = main.transform().unwrap_or_default();
+            let (fw, ft) = f.apply(w, h, t, view.str("horizontalConstraint"), view.str("verticalConstraint"));
+            let set = |k: &str| entries.iter().rev().find_map(|(_, l)| l.get(k));
+            view.fitted = Some((set("size").and_then(size).unwrap_or(fw), set("transform").and_then(matrix).unwrap_or(ft)));
         }
         let rest_id = match (inst, &path) {
             (Some(i), Some(p)) => format!("I{};{}", i.root, p.join(";")),
@@ -996,9 +1010,15 @@ impl<'a> Mapper<'a> {
         }
         // Overrides by id path below this instance (the instance itself is addressed by its main's id).
         let own_path: Vec<String> = outer.map(|i| [i.path.as_slice(), &[id.to_string()]].concat()).unwrap_or_default();
-        let mut overrides: BTreeMap<Vec<String>, Vec<&'a Kv<'a>>> = outer.map(|i| (*i.overrides).clone()).unwrap_or_default();
+        let mut overrides: Overrides<'a> = outer.map(|i| (*i.overrides).clone()).unwrap_or_default();
+        // A nested instance's derived layout is for the size it has in its main: resized here, it
+        // no longer holds and its layers follow their constraints instead.
+        let resized = outer.is_some() && self.nodes.get(id).and_then(|b| View::of(b).size()) != v.size();
         let lists = [sd.and_then(|s| s.get("symbolOverrides")).map(Kv::list).unwrap_or_default(), v.list("derivedSymbolData")];
         for (layer, list) in lists.into_iter().enumerate() {
+            if layer == 1 && resized {
+                continue;
+            }
             for ov in list {
                 let rel: Vec<String> =
                     ov.get("guidPath").and_then(|g| g.get("guids")).map(Kv::list).unwrap_or_default().iter().filter_map(guid).collect();
@@ -1008,9 +1028,9 @@ impl<'a> Mapper<'a> {
                 let e = overrides.entry([own_path.as_slice(), &rel].concat()).or_default();
                 // The outer instance's overrides win over this one's own; derived layout comes last.
                 if layer == 0 && outer.is_some() {
-                    e.insert(0, ov);
+                    e.insert(0, (false, ov));
                 } else {
-                    e.push(ov);
+                    e.push((layer == 1, ov));
                 }
             }
         }
