@@ -136,9 +136,10 @@ impl Face {
         made
     }
 
-    /// Read a strike bitmap and place it. The formula is the one Skia (and CoreText behind it)
-    /// uses: bearings are in font units and scale with the em, the origin offsets and the image
-    /// with the strike's ppem, and an sbix image is measured from its lower-left corner.
+    /// Read a strike bitmap and place it the way Skia's fontations port does
+    /// (`src/ports/fontations/src/bitmap.rs`): the outer bearings are in font units and scale with
+    /// the em, the inner ones are pixels at the strike's ppem, and an sbix image is measured from
+    /// its lower-left corner (the spec places the graphic's origin at the glyph box's xMin, yMin).
     fn read_bitmap(&self, gid: u32, size: f64) -> Option<ColorBitmap> {
         let gid = GlyphId::new(gid);
         let font = FontRef::from_index(self.bytes.data(), self.index).ok()?;

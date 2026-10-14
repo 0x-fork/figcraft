@@ -328,7 +328,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
     for s in &styles {
         faces.push(dbw.find(&s.font_family, &s.font_style).or_else(|| dbw.default_face()));
     }
-    // Colour emoji are their own, large faces (Apple Color Emoji is ~190 MB): they are read only
+    // Colour emoji are their own, large faces (Apple Color Emoji is ~180 MB): they are read only
     // for a text whose characters nothing above covers.
     let covered = |c: char| c == '\n' || faces.iter().flatten().any(|f| f.has_char(c)) || fallbacks.iter().any(|f| f.has_char(c));
     if chars.iter().any(|c| !covered(*c)) {

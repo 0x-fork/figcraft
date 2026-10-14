@@ -639,7 +639,7 @@ impl FontDb {
     }
 
     /// Colour emoji faces, for characters no other fallback covers. Kept out of
-    /// [`fallbacks`](Self::fallbacks) because the files are large (Apple Color Emoji is ~190 MB)
+    /// [`fallbacks`](Self::fallbacks) because the files are large (Apple Color Emoji is ~180 MB)
     /// and only texts that actually show emoji need them; each family reads one face.
     pub fn emoji_fallbacks(&mut self) -> Vec<Arc<Face>> {
         let mut out = Vec::new();
@@ -725,7 +725,7 @@ fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (Str
         if !matches!(ext.as_str(), "ttf" | "otf" | "ttc" | "otc") {
             continue;
         }
-        // Very large files are indexed all the same (Apple Color Emoji is ~190 MB, and its faces
+        // Very large files are indexed all the same (Apple Color Emoji is ~180 MB, and its faces
         // are the colour emoji themselves): `index_bytes` reads headers and name tables out of a
         // zeroed buffer, so only those parts are ever touched.
         let Some(bytes) = usize::try_from(meta.len()).ok().filter(|l| *l <= 256 * 1024 * 1024).and_then(|l| index_bytes(&path, l)) else { continue };
