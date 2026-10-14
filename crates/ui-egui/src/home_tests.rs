@@ -22,8 +22,18 @@ fn shapes(u: &mut Ui) -> Vec<Shape> {
     flat(&u.frame_output(vec![]).shapes)
 }
 
-/// Enough frames for every thumbnail in view (they render one a frame) and what follows a click.
+/// Enough frames for every thumbnail in view (they render one a frame) and what follows a click,
+/// after every recent file has been looked at (the reader is a thread of its own, and a card
+/// shows no name until it has answered).
 fn settle(u: &mut Ui) -> Vec<Shape> {
+    for _ in 0..400 {
+        u.frame(vec![]);
+        let files = u.app.inspect()["homeRecents"]["files"].as_array().cloned().unwrap_or_default();
+        if files.iter().all(|f| !f["exists"].is_null()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     for _ in 0..12 {
         u.frame(vec![]);
     }
