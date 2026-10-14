@@ -10,6 +10,7 @@ use figcraft_doc::{
 use figcraft_geom::{Affine, BezPath, Rect};
 use harfrust::{Direction, Feature, ShapeOptions, ShaperInstance, Tag, UnicodeBuffer, Variation};
 
+use crate::color::{ColorInk, MAX_PX_PER_EM};
 use crate::fontdb::{Coords, Face, db, no_coords};
 
 /// A positioned glyph (pen position on the baseline, layout coordinates, y down).
@@ -37,10 +38,33 @@ pub struct Glyph {
 impl Glyph {
     /// The glyph outline placed in layout coordinates.
     pub fn path(&self) -> BezPath {
+        self.layer_path(self.gid)
+    }
+
+    /// The outline of one of the face's glyphs (a COLR layer), placed like this glyph.
+    pub fn layer_path(&self, gid: u32) -> BezPath {
         let s = self.size / self.face.upem;
-        let mut p = (*self.face.outline_at(self.gid, &self.coords)).clone();
+        let mut p = (*self.face.outline_at(gid, &self.coords)).clone();
         p.apply_affine(self.warp * Affine::new([s, 0.0, 0.0, s, self.x, self.y]));
         p
+    }
+
+    /// The glyph's colour ink at `scale` device pixels per layout unit, placed in layout
+    /// coordinates (a bitmap's pixels map through the affine; COLR layers are drawn like the
+    /// outline). `None` — the usual case — means the outline is what draws.
+    pub fn color(&self, scale: f64) -> Option<ColorInk> {
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        if let Some(layers) = self.face.color_layers(self.gid) {
+            return Some(ColorInk::Layers(layers));
+        }
+        // Whole device pixels per em: rasters stay on the pixel grid and the cache stays small.
+        let px = (self.size * scale).round().clamp(1.0, MAX_PX_PER_EM);
+        let bitmap = self.face.color_bitmap(self.gid, &self.coords, px)?;
+        let s = px / self.size;
+        let place = self.warp * Affine::translate((self.x + bitmap.left / s, self.y + bitmap.top / s)) * Affine::scale(1.0 / s);
+        Some(ColorInk::Bitmap(bitmap, place))
     }
 }
 
@@ -299,10 +323,16 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         span_style.push(idx);
     }
     let mut dbw = db().write().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let fallbacks = dbw.fallbacks();
+    let mut fallbacks = dbw.fallbacks();
     let mut faces: Vec<Option<Arc<Face>>> = Vec::with_capacity(styles.len());
     for s in &styles {
         faces.push(dbw.find(&s.font_family, &s.font_style).or_else(|| dbw.default_face()));
+    }
+    // Colour emoji are their own, large faces (Apple Color Emoji is ~190 MB): they are read only
+    // for a text whose characters nothing above covers.
+    let covered = |c: char| c == '\n' || faces.iter().flatten().any(|f| f.has_char(c)) || fallbacks.iter().any(|f| f.has_char(c));
+    if chars.iter().any(|c| !covered(*c)) {
+        fallbacks.extend(dbw.emoji_fallbacks());
     }
     drop(dbw);
 

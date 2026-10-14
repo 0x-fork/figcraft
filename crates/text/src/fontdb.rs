@@ -11,6 +11,8 @@ use skrifa::raw::{FileRef, TableProvider};
 use skrifa::string::StringId;
 use skrifa::{GlyphId, MetadataProvider};
 
+use crate::color::{ColorLayer, Rasters};
+
 /// A font from the optional craft-fonts build input (empty unless built with `CRAFT_FONTS_DIR`).
 pub struct CraftFont {
     pub family: &'static str,
@@ -107,6 +109,11 @@ pub struct Face {
     charmap: HashMap<u32, u32>,
     outlines: Mutex<HashMap<(u32, Coords), Arc<BezPath>>>,
     advances: Mutex<HashMap<(u32, Coords), f64>>,
+    /// Colour glyph tables (see [`crate::color`]): bitmap strikes and/or COLR layers.
+    pub(crate) bitmap_strikes: bool,
+    pub(crate) colr: bool,
+    pub(crate) rasters: Mutex<Rasters>,
+    pub(crate) layers: Mutex<HashMap<u32, Option<Arc<Vec<ColorLayer>>>>>,
 }
 
 impl std::fmt::Debug for Face {
@@ -139,6 +146,9 @@ impl Face {
         gsub_features.dedup();
         let charmap: HashMap<u32, u32> = f.charmap().mappings().map(|(c, g)| (c, g.to_u32())).collect();
         let (axes, instances) = variation_info(&f);
+        let has_table = |tag: &[u8; 4]| f.data_for_tag(skrifa::Tag::new(tag)).is_some();
+        let bitmap_strikes = has_table(b"sbix") || has_table(b"CBDT") || has_table(b"EBDT");
+        let colr = has_table(b"COLR");
         let under = m.underline.map(|d| (f64::from(d.offset), f64::from(d.thickness))).unwrap_or((-upem * 0.1, upem * 0.06));
         let strike = m.strikeout.map(|d| f64::from(d.offset)).unwrap_or(ascent * 0.3);
         let weight = {
@@ -169,6 +179,10 @@ impl Face {
             bytes,
             outlines: Mutex::new(HashMap::new()),
             advances: Mutex::new(HashMap::new()),
+            bitmap_strikes,
+            colr,
+            rasters: Mutex::new(Rasters::default()),
+            layers: Mutex::new(HashMap::new()),
         })
     }
 
@@ -613,12 +627,24 @@ impl FontDb {
             "PingFang SC",
             "Noto Sans CJK SC",
             "Microsoft YaHei",
-            "Apple Color Emoji",
             "Noto Sans Arabic",
             "Apple Symbols",
             "Segoe UI Symbol",
         ] {
             if let Some(f) = self.find(fam, "Regular") {
+                out.push(f);
+            }
+        }
+        out
+    }
+
+    /// Colour emoji faces, for characters no other fallback covers. Kept out of
+    /// [`fallbacks`](Self::fallbacks) because the files are large (Apple Color Emoji is ~190 MB)
+    /// and only texts that actually show emoji need them; each family reads one face.
+    pub fn emoji_fallbacks(&mut self) -> Vec<Arc<Face>> {
+        let mut out = Vec::new();
+        for fam in ["Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"] {
+            if let Some(f) = self.find_one(fam, "Regular") {
                 out.push(f);
             }
         }
@@ -699,8 +725,10 @@ fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (Str
         if !matches!(ext.as_str(), "ttf" | "otf" | "ttc" | "otc") {
             continue;
         }
-        // Skip very large files (colour emoji); they are not outline fonts we can draw anyway.
-        let Some(bytes) = usize::try_from(meta.len()).ok().filter(|l| *l <= 64 * 1024 * 1024).and_then(|l| index_bytes(&path, l)) else { continue };
+        // Very large files are indexed all the same (Apple Color Emoji is ~190 MB, and its faces
+        // are the colour emoji themselves): `index_bytes` reads headers and name tables out of a
+        // zeroed buffer, so only those parts are ever touched.
+        let Some(bytes) = usize::try_from(meta.len()).ok().filter(|l| *l <= 256 * 1024 * 1024).and_then(|l| index_bytes(&path, l)) else { continue };
         for (index, family, style) in faces_in(&bytes) {
             out.entry(family.to_lowercase()).or_insert_with(|| (family.clone(), Vec::new())).1.push(Pending { path: path.clone(), index, style });
         }
@@ -743,7 +771,8 @@ fn index_bytes(path: &std::path::Path, len: usize) -> Option<Vec<u8>> {
     Some(buf)
 }
 
-/// (index, family, style) of each outline face (one we can draw) in a font file.
+/// (index, family, style) of each face in a font file: outline fonts and colour fonts (Apple Color
+/// Emoji has placeholder outlines, Noto Color Emoji has none at all).
 fn faces_in(bytes: &[u8]) -> Vec<(u32, String, String)> {
     let count = match FileRef::new(bytes) {
         Ok(FileRef::Collection(c)) => c.len(),
@@ -753,7 +782,10 @@ fn faces_in(bytes: &[u8]) -> Vec<(u32, String, String)> {
     (0..count.min(64))
         .filter_map(|i| {
             let f = skrifa::FontRef::from_index(bytes, i).ok()?;
-            [b"glyf", b"CFF ", b"CFF2"].iter().any(|t| f.data_for_tag(skrifa::Tag::new(t)).is_some()).then_some(())?;
+            [b"glyf", b"CFF ", b"CFF2", b"sbix", b"CBDT", b"EBDT", b"COLR"]
+                .iter()
+                .any(|t| f.data_for_tag(skrifa::Tag::new(t)).is_some())
+                .then_some(())?;
             let (family, style) = names(&f);
             let family = family.filter(|f| !f.starts_with('.'))?;
             Some((i, family, style.unwrap_or_else(|| "Regular".into())))
