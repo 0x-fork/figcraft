@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (draft catalogs catch up: every draft translates every string again; Simplified Chinese draft catalog) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (Japanese draft catches up with templates, recent files and editor commands) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft's interface has a localization layer with an English catalog and Spanish (with a Latin
 American overlay), French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese
@@ -17,16 +17,16 @@ browser's page translation. The `.lproj` folders in `/Applications/Figma.app` (6
 Electron/Chromium locale packs, not Figma's own UI languages. Text *content* in any script is
 supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no vertical text.
 
-## What FigCraft has (measured 2026-10-12, from source)
+## What FigCraft has (measured 2026-10-14, from source)
 
 - **Layer:** one TOML catalog per language in `crates/ui-egui/locales/`, baked into the binary by
   the UI crate's build script (desktop and web; nothing read at run time). Keys are the English text
   (`tr("Fill")`, `trf` for `{named}` placeholders, `trn` for counts with one/other plural forms), so
   a missing translation shows English, never a raw key. One English text that needs two
   translations takes a context (`"Fill|sizing"`).
-- **Strings:** 1,417 UI keys in `en.toml` (36 with plural forms; ~110 are labels from engine and
-  document data, such as tool names, blend modes and Dev Mode properties) plus 536 command labels
-  and 29 menu wordings by command id: 1,982 entries. Command ids, the CLI, MCP and the control
+- **Strings:** 1,577 UI keys in `en.toml` (38 with plural forms; some are labels from engine and
+  document data, such as tool names, blend modes and Dev Mode properties) plus 557 command labels
+  and 31 menu wordings by command id: 2,165 entries. Command ids, the CLI, MCP and the control
   channel stay English. Accessibility names come from the same strings.
 - **Language preference:** Preferences ▸ Language (System, English, Deutsch, Español, Español
   (Latinoamérica), Français, 日本語, 한국어, Português (Brasil), 简体中文), applied at once without a
@@ -44,8 +44,9 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
   lacks, keys no code uses, unknown command ids, placeholders that differ from English, overlay
   entries that read as in their base language and, for complete languages (Spanish), anything
   untranslated. The other drafts are not held to it: a string added later shows English there
-  until someone translates it. Every draft translates every string as of 2026-10-12 (checked by
-  adding each to `COMPLETE` locally and running the check).
+  until someone translates it. Japanese and Spanish contain all 2,165 current catalog entries;
+  the other drafts contain 2,077 (88 newer entries still read English). Japanese remains a draft
+  awaiting native review; its catalog coverage does not include the unlocalized engine messages.
 - **Not yet localized:** messages the engine writes (errors, a few toasts, Dev Mode property values
   such as "inside"), number formatting (decimal points stay `.`), and plural forms beyond one/other
   (French and Brazilian Portuguese take the singular for 0 as well; Japanese, Korean and Chinese
@@ -78,17 +79,17 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
 
 | Language | Code | UI strings translated | Dialogs / tooltips / help | Script support | Native review | Status | Hours to full |
 |---|---|---|---|---|---|---|---|
-| English | en | 2,076 / 2,076 (100%, source) | yes | Latin | yes (source) | full | 0 |
-| Simplified Chinese (Mandarin) | zh-Hans | 2,076 / 2,076 (100%, draft) | yes | CJK text and IME in documents; UI text in an installed Chinese face, ahead of Japanese ones (web: the `FIGCRAFT_EMBED_CJK` build); no Traditional Chinese catalog (zh-TW, zh-HK read English) | no | draft | 1–2 (after native review) |
-| Spanish | es, es-419 | 2,076 / 2,076 (100%, draft); es-419 overlays 98 Latin American wordings (draft) | yes | Latin | no | draft | 0–1 (after native review) |
+| English | en | 2,165 / 2,165 (100%, source) | yes | Latin | yes (source) | full | 0 |
+| Simplified Chinese (Mandarin) | zh-Hans | 2,077 / 2,165 (96%, draft) | partial | CJK text and IME in documents; UI text in an installed Chinese face, ahead of Japanese ones (web: the `FIGCRAFT_EMBED_CJK` build); no Traditional Chinese catalog (zh-TW, zh-HK read English) | no | draft | 1–2 (after native review) |
+| Spanish | es, es-419 | 2,165 / 2,165 (100%, draft); es-419 overlays 98 Latin American wordings (draft) | yes | Latin | no | draft | 0–1 (after native review) |
 | Hindi | hi | 0 (0%) | no | Devanagari shaping works in documents; UI font fallback to check | no | none | 4–7 |
 | Arabic | ar | 0 (0%) | no | Bidi, shaping and RTL names work; the UI does not mirror | no | none | 9–15 |
-| French | fr | 2,076 / 2,076 (100%, draft) | yes | Latin | no | draft | 1–2 (after native review) |
-| Portuguese | pt-BR | 2,076 / 2,076 (100%, draft) | yes | Latin | no | draft | 1–2 (after native review) |
+| French | fr | 2,077 / 2,165 (96%, draft) | partial | Latin | no | draft | 1–2 (after native review) |
+| Portuguese | pt-BR | 2,077 / 2,165 (96%, draft) | partial | Latin | no | draft | 1–2 (after native review) |
 | Indonesian | id | 0 (0%) | no | Latin | no | none | 3–5 |
-| Japanese | ja | 2,076 / 2,076 (100%, draft) | yes | CJK text and IME in documents; UI text in an installed Japanese face (web: the `FIGCRAFT_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
-| German | de | 2,076 / 2,076 (100%, draft) | yes | Latin; long words elide in narrow fields | no | draft | 1–2 (after native review) |
-| Korean | ko | 2,076 / 2,076 (100%, draft) | yes | Hangul text and IME in documents; UI text in an installed Korean face (web: the `FIGCRAFT_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
+| Japanese | ja | 2,165 / 2,165 (100%, draft) | yes | CJK text and IME in documents; UI text in an installed Japanese face (web: the `FIGCRAFT_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
+| German | de | 2,077 / 2,165 (96%, draft) | partial | Latin; long words elide in narrow fields | no | draft | 1–2 (after native review) |
+| Korean | ko | 2,077 / 2,165 (96%, draft) | partial | Hangul text and IME in documents; UI text in an installed Korean face (web: the `FIGCRAFT_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
 | Vietnamese | vi | 0 (0%) | no | Latin with stacked diacritics | no | none | 3–5 |
 
 Other languages: none shipped (Figma ships none beyond the eight above).
@@ -107,6 +108,7 @@ Vietnamese and Arabic. Traditional Chinese is not planned (no catalog; its users
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Japanese draft catches up with 75 UI strings (template names, descriptions and tips; recent-file sorting, dates and actions; component playground and variable hints), 11 command labels and 2 menu wordings. Existing entries and placeholders are preserved; Japanese dates use the already translated month. 2,165 entries (1,577 UI, 557 commands, 31 menu); native review is still pending. Other drafts retain 2,077 entries; localization grade and estimates unchanged |
 | 2026-10-12 | minor | Drafts catch up again, and the counts with them: French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese translate the 71 UI strings and 5 command labels they lacked since sharing with a join code and open hosting (the Share popover, join codes, owner tokens, reports, the .fig export notes), and with Spanish the 26 strings and 3 command labels of your online files (Home ▸ Online, its menu and dialogs, the marks on tabs); machine-drafted in each file's conventions, still drafts. The Latin American overlay adds computadora and agrega where the new Spanish says ordenador and añade (98 entries). 2,076 entries per catalog (1,503 UI strings, 544 command labels, 29 menu wordings) |
 | 2026-10-12 | minor | Draft catalogs catch up: French, German, Brazilian Portuguese, Japanese and Korean translate the 66 UI strings and 17 command labels added since they were drafted (cursor chat and spotlight, the plugin directory, Rename layers, presentation and snapping keys, list levels, the rotation origin, placing with Enter…), Simplified Chinese the 46 and 12 it lacked; machine-drafted from the English in each file's conventions, still drafts (not in `COMPLETE`). The Latin American overlay adds Control for a gamepad controller and presiona in the plugin directory hint (90 entries, with Enter for the keycap). String counts re-measured: 1,417 UI keys, 536 command labels and 29 menu wordings (1,982 entries), every draft at 100%. Localization grade unchanged |
 | 2026-10-12 | minor | Simplified Chinese draft catalog (gap 5): `zh-Hans.toml` translates every UI string (1,371 keys; plurals give only `other`, and `plural_one` never picks "one"), command label (524) and menu wording (29), machine-drafted in a concise UI style with full-width punctuation and marked as a draft awaiting native review; Preferences ▸ Language lists 简体中文, System maps zh, zh-CN, zh-SG and zh-Hans to it, and Traditional Chinese (zh-Hant, zh-TW, zh-HK, zh-MO) has no catalog and stays English (or the next OS language), never Simplified. A Chinese UI draws Han in a Chinese face first (Microsoft YaHei, PingFang SC, Noto Sans CJK SC), ahead of the craft-fonts build's Japanese BIZ UDPGothic, and changing the UI language lays the CJK faces out again (switching from Japanese to Chinese no longer keeps the Japanese face in front). String counts re-measured: 1,371 UI keys, 524 command labels and 29 menu wordings (1,924 entries); the French, German, Brazilian Portuguese, Japanese and Korean drafts have 1,899 of them (the 25 newer strings read English). Localization 36% → 39%, 31–54 h → 29–51 h |
