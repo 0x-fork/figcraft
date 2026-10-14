@@ -94,6 +94,8 @@ mod export_preview_tests;
 #[cfg(test)]
 mod field_tests;
 #[cfg(test)]
+mod figma_paste_tests;
+#[cfg(test)]
 mod frame_label_tests;
 #[cfg(test)]
 mod gap_handle_tests;
@@ -224,6 +226,9 @@ pub trait Services {
     }
     fn clipboard_set_text(&mut self, _s: &str) {}
     fn clipboard_get_text(&mut self) -> Option<String> {
+        None
+    }
+    fn clipboard_get_html(&mut self) -> Option<String> {
         None
     }
     fn clipboard_set_png(&mut self, _w: u32, _h: u32, _rgba: &[u8]) {}

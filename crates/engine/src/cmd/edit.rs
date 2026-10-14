@@ -25,6 +25,13 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("edit.copy", "Copy", "{ids?}", false, copy),
         spec!("edit.cut", "Cut", "{ids?}", true, cut),
         spec!("edit.paste", "Paste", "{parent?, x?, y? (page coordinates of the pasted top-left)}", true, paste),
+        spec!(
+            "edit.pasteFromFigma",
+            "Paste from Figma",
+            "{html (the clipboard's HTML) | data (base64 of the copied buffer), parent?, x?, y?}  layers copied in Figma, read like a .fig file (best effort, with `warnings`), pasted as edit.paste pastes",
+            true,
+            paste_from_figma
+        ),
         spec!("edit.pasteOver", "Paste over selection", "{}", true, paste_over),
         spec!("edit.pasteReplace", "Paste to replace", "{ids?}", true, paste_replace),
         spec!("edit.copyProperties", "Copy properties", "{id?}", false, copy_props),
@@ -498,7 +505,20 @@ fn bump_name(n: &str) -> String {
 /// The copied form of the selection.
 pub fn copy_to_clipboard(s: &mut Session, ids: &[NodeId]) -> Result<()> {
     let ds = s.ds()?;
-    let doc = &ds.doc;
+    let (nodes, images, bounds) = copied(&ds.doc, ids);
+    let (source, source_path, uid) = (ds.doc.clone(), ds.path.clone(), ds.uid);
+    s.clipboard.source = Some(source);
+    s.clipboard.source_path = source_path;
+    s.clipboard.source_doc = uid;
+    s.clipboard.nodes = nodes;
+    s.clipboard.images = images;
+    s.clipboard.bounds = bounds;
+    Ok(())
+}
+
+type Copied = (Vec<(NodeId, Vec<Node>)>, BTreeMap<String, ImageData>, Option<figcraft_geom::Rect>);
+
+fn copied(doc: &Document, ids: &[NodeId]) -> Copied {
     let ids = z_sorted(doc, &roots(doc, ids));
     let mut nodes = Vec::new();
     let mut images = BTreeMap::new();
@@ -521,16 +541,52 @@ pub fn copy_to_clipboard(s: &mut Session, ids: &[NodeId]) -> Result<()> {
         nodes.push((*i, sub));
     }
     let bounds = doc.bounds_of(&ids);
-    let uid = ds.uid;
-    let source = Some(ds.doc.clone());
-    let source_path = ds.path.clone();
-    s.clipboard.source = source;
-    s.clipboard.source_path = source_path;
-    s.clipboard.nodes = nodes;
-    s.clipboard.images = images;
-    s.clipboard.bounds = bounds;
-    s.clipboard.source_doc = uid;
-    Ok(())
+    (nodes, images, bounds)
+}
+
+const MAX_FIGMA_CLIP: usize = 512 * 1024 * 1024;
+
+/// Figma puts the copied layers in the HTML as `(figma)<base64>(/figma)`. This gives those bytes.
+pub fn figma_clipboard_buffer(html: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    const OPEN: &str = "(figma)";
+    let start = html.find(OPEN)? + OPEN.len();
+    let len = html.get(start..)?.find("(/figma)")?;
+    let text = html.get(start..start + len)?;
+    if text.len() > MAX_FIGMA_CLIP {
+        return None;
+    }
+    let b64: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    let bytes =
+        base64::engine::general_purpose::STANDARD.decode(&b64).or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(&b64)).ok()?;
+    figcraft_format::fig::is_fig(&bytes).then_some(bytes)
+}
+
+fn paste_from_figma(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "edit.pasteFromFigma";
+    let bytes = match (string(p, "html"), string(p, "data")) {
+        (Some(html), _) => figma_clipboard_buffer(&html).ok_or_else(|| bad(CMD, "the HTML holds no layers copied in Figma"))?,
+        (None, Some(d)) => {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD.decode(d.trim()).map_err(|e| bad(CMD, e.to_string()))?
+        }
+        (None, None) => return Err(bad(CMD, "pass `html` or `data`")),
+    };
+    let other = super::file::load_fig(&bytes, "Pasted from Figma").ok_or_else(|| bad(CMD, "the data is not layers copied in Figma"))??;
+    let doc = std::sync::Arc::new(other.doc);
+    let tops: Vec<NodeId> = doc.pages.iter().filter_map(|pg| doc.node(*pg)).flat_map(|pg| pg.children.iter().copied()).collect();
+    if tops.is_empty() {
+        return Err(EngineError::Disabled(CMD.into(), "the copied layers came in empty".into()));
+    }
+    let (nodes, images, bounds) = copied(&doc, &tops);
+    let props = s.clipboard.props.take();
+    // No open file has id 0. So paste treats this copy as a copy from a different file.
+    s.clipboard = crate::Clipboard { nodes, images, props, bounds, source_doc: 0, source: Some(doc), source_path: None };
+    let mut out = paste(s, p)?;
+    if !other.issues.is_empty() {
+        out["warnings"] = json!(other.issues);
+    }
+    Ok(out)
 }
 
 fn copy(s: &mut Session, p: &Value) -> Result<Value> {
