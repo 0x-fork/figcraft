@@ -16,3 +16,7 @@
 #
 # To remove your names, delete your entry (or set fields empty) in a PR. The next
 # contributors.py run, and the next build, drop them.
+
+[people.Silvertree2010]
+display_name = "Netter"
+sync_github_name = false
