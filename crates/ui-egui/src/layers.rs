@@ -111,7 +111,8 @@ pub fn rail(app: &mut FigApp, ui: &mut Ui) {
             ui.painter().rect_filled(ir, CornerRadius::same(6), t.hover);
         }
         icons::paint(ui.painter(), Rect::from_center_size(ir.center(), vec2(16.0, 16.0)), icon, if active { t.accent_text } else { t.icon });
-        ui.painter().text(pos2(r.center().x, y + 38.0), Align2::CENTER_CENTER, label, regular(10.0), t.text);
+        let shown = crate::widgets::elide_font(ui, label, (r.width() - 6.0).max(0.0), regular(10.0));
+        ui.painter().text(pos2(r.center().x, y + 38.0), Align2::CENTER_CENTER, shown, regular(10.0), t.text);
         if resp.clicked() {
             match tab {
                 Some(tb) => {
@@ -677,7 +678,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 ui.add_space(16.0);
                 let hint = if filter.is_empty() { tr("Add a frame (F) or a shape (R) to get started") } else { tr("No matching layers") };
-                crate::widgets::label(ui, hint, t.text_secondary);
+                ui.add(egui::Label::new(egui::RichText::new(hint).font(regular(11.0)).color(t.text_secondary)).wrap());
             });
         }
         // Dragging near the list's top or bottom edge scrolls it, faster closer to the edge.

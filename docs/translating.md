@@ -15,6 +15,8 @@ Simplified.
 The catalogs: English (`en`, the source), and Spanish (`es`, with the Latin American overlay
 `es-419`), French (`fr`), German (`de`), Brazilian Portuguese (`pt-BR`), Japanese (`ja`), Korean (`ko`)
 and Simplified Chinese (`zh-Hans`), machine-drafted and waiting for native speakers' review.
+Russian (`ru`, Русский) was reviewed and approved by VanTan; its catalog keeps Frame, Dev Mode
+and Smart animate as familiar tool names and uses « » quotes.
 
 ## The catalogs
 
@@ -59,12 +61,15 @@ language also needs its script in `cjk::language`.
 2. Translate every value; keep the keys. Keep `{placeholders}` exactly, "…" where English has it,
    brand names and keyboard glyphs. English labels of commands: `figcraft-cli commands`.
 3. Plurals: give `one` only if the language has a singular form (Japanese, Korean and Chinese give
-   only `other`, and `plural_one` returns false for them). `trn` picks `one` for a count of 1, and
-   also for 0 in French and Brazilian Portuguese (keep `{n}` in their `one` forms); a language with other rules needs its rule in
-   `plural_one` in [`crates/ui-egui/src/i18n.rs`](../crates/ui-egui/src/i18n.rs).
+   only `other`). `other` is required; `one`, `few` and `many` are optional. `trn` picks `one` for
+   1 (also 0 in French and Brazilian Portuguese). Russian uses `one` for 1, 21, 31… except 11;
+   `few` for 2–4, 22–24… except 12–14; and `many` for the other integers, including 0. Keep `{n}`
+   in all Russian forms. Add new rules to `plural` in
+   [`crates/ui-egui/src/i18n.rs`](../crates/ui-egui/src/i18n.rs). A missing form reads `other`;
+   a missing key uses the fallback catalog's own plural rule.
 4. To require full coverage, add the code to `COMPLETE` in
    [`crates/ui-egui/src/i18n_tests.rs`](../crates/ui-egui/src/i18n_tests.rs). Every later PR that
-   adds a string then has to translate it into each complete language, so only Spanish is there:
+   adds a string then has to translate it into each complete language: Spanish and Russian are there.
    French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese are registered as
    drafts, and a string added later shows English in them until it is translated. To list what a draft lacks,
    add its code to `COMPLETE` locally and run the check.
@@ -86,7 +91,7 @@ Wrap every string a user sees or a screen reader hears: `tr` for plain text, `tr
 placeholders, `trn` for counts, `tr_noop` for literals in `const` tables that are looked up later
 with `tr(label)`. The key must be a string literal as the first argument (the check reads the
 source). Don't wrap ids, command ids, JSON, log messages, file extensions or document content. Then
-add the key to `en.toml` and to each complete language (Spanish); the drafts may follow later.
+add the key to `en.toml` and to each complete language (Spanish and Russian); the drafts may follow later.
 
 Labels from the engine and document crates (tool names, blend modes, easing curves…) are looked up
 at display with `tr(x.label())`; they are listed in `dynamic_labels` in `i18n_tests.rs`.
