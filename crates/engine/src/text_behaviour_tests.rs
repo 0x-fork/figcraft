@@ -192,3 +192,38 @@ fn paragraph_indent_only_moves_left_aligned_text() {
     let (x, w2) = first_x(&s);
     assert!((w2 - (w - 30.0)).abs() < 1e-6 && x.abs() < 1e-6, "centered auto-width text: no indent, the box shrinks by it");
 }
+
+/// A new text made with the Text tool by a press at `from`, a drag to `to` and a release, holding
+/// `chars`: its box and resize mode.
+fn text_tool(from: (f64, f64), to: (f64, f64), chars: &str) -> (figcraft_geom::Rect, figcraft_doc::TextAutoResize) {
+    use crate::tools::{PointerEvent, PointerKind, ToolId};
+    let mut s = Session::new();
+    s.set_tool(ToolId::Text);
+    s.pointer(&PointerEvent::at(PointerKind::Down, from.0, from.1, 1.0)).unwrap();
+    s.pointer(&PointerEvent::at(PointerKind::Move, to.0, to.1, 1.0)).unwrap();
+    s.pointer(&PointerEvent::at(PointerKind::Up, to.0, to.1, 1.0)).unwrap();
+    crate::textedit::insert(&mut s, chars).unwrap();
+    let t = s.ds().unwrap().text_edit.as_ref().unwrap().id;
+    let doc = s.doc().unwrap();
+    let NodeKind::Text(td) = &doc.node(t).unwrap().kind else { panic!("not a text") };
+    (doc.world_bounds(t).unwrap(), td.auto_resize)
+}
+
+#[test]
+fn a_drag_with_the_text_tool_makes_a_fixed_width_box() {
+    // #360: as wide as the drag, its top-left where the drag started, and its text wraps in it; a
+    // click, or a drag within a few pixels, still makes auto-width text.
+    use figcraft_doc::TextAutoResize;
+    figcraft_text::scan_system_fonts();
+    let long = "A sentence much longer than eighty pixels";
+    let (line, auto) = text_tool((100.0, 100.0), (100.0, 100.0), long);
+    assert_eq!(auto, TextAutoResize::WidthAndHeight);
+    assert_eq!(text_tool((100.0, 100.0), (101.0, 101.0), long).1, TextAutoResize::WidthAndHeight, "a slip of the hand is a click");
+    let (b, auto) = text_tool((100.0, 100.0), (180.0, 160.0), long);
+    assert_eq!(auto, TextAutoResize::Height);
+    assert_eq!((b.x0, b.y0, b.width()), (100.0, 100.0, 80.0));
+    assert!(b.height() > line.height(), "the text wraps: {} vs one line {}", b.height(), line.height());
+    // Dragged up and to the left, the box is the same.
+    let (b2, _) = text_tool((180.0, 160.0), (100.0, 100.0), long);
+    assert_eq!((b2.x0, b2.y0, b2.width()), (100.0, 100.0, 80.0));
+}

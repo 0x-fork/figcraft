@@ -370,6 +370,11 @@ pub(crate) enum Gesture {
     TextSelect {
         id: NodeId,
     },
+    /// A new text from the Text tool, still pressed: a drag makes it a box as wide as the drag.
+    TextBox {
+        id: NodeId,
+        start: Point,
+    },
     PenDrag {
         anchor: Point,
     },
@@ -1347,6 +1352,11 @@ impl Session {
                 self.tool.gesture = g;
                 return self.draw_drag(ev, start, id, parent, &targets);
             }
+            Gesture::TextBox { id, start } => {
+                let (id, start) = (*id, *start);
+                self.tool.gesture = g;
+                return self.text_box_drag(ev, id, start);
+            }
             Gesture::Arc { id, handle, arc } => {
                 let (id, handle, arc) = (*id, *handle, *arc);
                 self.tool.gesture = g;
@@ -1760,7 +1770,7 @@ impl Session {
                 self.tool.overlay.pen.clear();
                 self.pencil_finish(&points, &pressure)?;
             }
-            Gesture::TextSelect { .. } | Gesture::Marquee { .. } | Gesture::None => {}
+            Gesture::TextSelect { .. } | Gesture::TextBox { .. } | Gesture::Marquee { .. } | Gesture::None => {}
             Gesture::PenDrag { .. } | Gesture::ShapeBuild { .. } | Gesture::Origin => {}
             Gesture::Vector(_) => self.commit_interaction()?,
         }
@@ -1888,9 +1898,33 @@ impl Session {
         d.insert(n, parent, None)?;
         ds.selection = vec![id];
         textedit::begin(self, id, Some(0), true)?;
+        self.tool.gesture = Gesture::TextBox { id, start: ev.p() };
         if !self.prefs.keep_tool {
             self.tool.tool = ToolId::Move;
         }
+        Ok(())
+    }
+
+    /// Drag out a new text (Figma's text box): past the drag slop it is as wide as the drag, its
+    /// top-left at the drag's, and its height follows its text.
+    fn text_box_drag(&mut self, ev: &PointerEvent, id: NodeId, start: Point) -> Result<()> {
+        if within_slop(ev, start) {
+            return Ok(());
+        }
+        let r = Rect::from_points(start, ev.p());
+        let d = self.ds_mut()?.doc_mut();
+        let pw = d.node(id).and_then(|n| n.parent).map(|p| d.world_transform(p)).unwrap_or_default();
+        let n = d.get_mut(id)?;
+        n.transform = pw.inverse() * Affine::translate((r.x0.round(), r.y0.round()));
+        n.width = r.width().round().max(1.0);
+        n.child_layout.sizing_h = Sizing::Fixed;
+        if let NodeKind::Text(t) = &mut n.kind {
+            t.auto_resize = TextAutoResize::Height;
+        }
+        if let Some((_, h)) = figcraft_text::auto_size(n) {
+            n.height = h;
+        }
+        self.ds_mut()?.revision += 1;
         Ok(())
     }
 
