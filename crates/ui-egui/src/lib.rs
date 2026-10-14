@@ -122,6 +122,8 @@ mod panel_reorder_tests;
 #[cfg(test)]
 mod panel_width_tests;
 #[cfg(test)]
+mod pen_mode_tests;
+#[cfg(test)]
 mod perf_tests;
 #[cfg(test)]
 mod plugin_panel_tests;
@@ -280,6 +282,8 @@ pub struct UiState {
     pub left_width: f32,
     pub right_width: f32,
     pub right_tab: RightTab,
+    /// The tab of the previous frame, to see the right panel change mode.
+    pub last_right_tab: RightTab,
     pub left_tab: LeftTab,
     pub pages_open: bool,
     pub expanded: BTreeSet<NodeId>,
@@ -400,6 +404,7 @@ impl Default for UiState {
             left_width: PANEL_DEFAULT,
             right_width: PANEL_DEFAULT,
             right_tab: RightTab::Design,
+            last_right_tab: RightTab::Design,
             left_tab: LeftTab::File,
             pages_open: true,
             expanded: BTreeSet::new(),
@@ -607,6 +612,19 @@ impl FigApp {
         if self.ui.text_preview.take().is_some() {
             let _ = self.session.execute("text.endPreview", &json!({}));
             ctx.request_repaint();
+        }
+    }
+
+    /// Leaving Design ends a pen path as Escape does and goes back to Move: Prototype and Inspect
+    /// don't draw (#307). Checked as the frame starts (the control channel) and after the panels
+    /// and shortcuts (the mode switcher, the tabs, Shift+E/Shift+D), before the canvas sees more.
+    fn end_pen_outside_design(&mut self) {
+        if self.ui.right_tab == self.ui.last_right_tab {
+            return;
+        }
+        self.ui.last_right_tab = self.ui.right_tab;
+        if self.ui.right_tab != RightTab::Design && self.session.tool.tool == figcraft_engine::tools::ToolId::Pen {
+            self.run("tool.set", json!({"tool": "move"}));
         }
     }
 
@@ -984,6 +1002,7 @@ impl FigApp {
         widgets::set_nudge(&ctx, self.session.prefs.nudge_small, self.session.prefs.nudge_big);
         // The Inspect tab measures on hover without Alt.
         self.session.tool.redlines = self.ui.right_tab == RightTab::Inspect;
+        self.end_pen_outside_design();
         if self.ui.present.is_some() {
             present::show(self, ui);
             // What went wrong while presenting (a widget's plugin failing) shows over it.
@@ -1086,6 +1105,7 @@ impl FigApp {
         variable_ui::picker(self, &ctx);
         style_picker::show(self, &ctx);
         self.end_unwanted_text_preview(&ctx);
+        self.end_pen_outside_design();
         dialogs::show(self, &ctx);
         self.toast_ui(&ctx);
         // A rename started after the layers panel drew (Cmd/Ctrl+R, a double-click) opens its field

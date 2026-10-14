@@ -174,7 +174,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
                 }
                 1 => {
                     app.ui.right_tab = crate::RightTab::Design;
-                    if app.session.tool.tool == ToolId::Pencil {
+                    if matches!(app.session.tool.tool, ToolId::Pencil | ToolId::Pen) {
                         app.run("tool.set", json!({"tool": "move"}));
                     }
                 }
