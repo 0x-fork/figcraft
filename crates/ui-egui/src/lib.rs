@@ -64,6 +64,9 @@ pub mod widgets;
 pub mod windows;
 
 #[cfg(test)]
+mod theme_startup_tests;
+
+#[cfg(test)]
 mod a11y_tests;
 #[cfg(test)]
 mod branch_ui_tests;
@@ -888,7 +891,9 @@ impl FigApp {
         }
         let dark = match self.session.prefs.theme.as_str() {
             "dark" => true,
-            "system" => ctx.global_style().visuals.dark_mode,
+            // The active visuals were set by us last frame (possibly for a manual theme).
+            // Read the integration's OS theme instead; without one, keep the light fallback.
+            "system" => ctx.system_theme() == Some(egui::Theme::Dark),
             _ => false,
         };
         self.ui.dark = dark;
