@@ -24,11 +24,12 @@ pub struct CanvasState {
     /// The texture is a coarse preview (see [`crate::render_worker`]).
     pub tex_coarse: bool,
     submitted: Option<JobKey>,
-    /// The scale (device pixels per page unit) of the last render asked for.
-    want_scale: f64,
+    /// The view of the last render asked for.
+    want_view: Option<figcraft_render::View>,
     /// What the last canvas render had to do (shown by `ui.inspect`).
     pub render_work: Option<figcraft_render::Work>,
-    /// From asking for a render to the frame that shows its preview, and its refined image (ms).
+    /// From asking for a render to its preview, and its refined image, handed to egui as the
+    /// canvas texture (ms; the texture is uploaded when that frame is painted).
     pub preview_latency_ms: Option<f64>,
     pub refine_latency_ms: Option<f64>,
     dragging: bool,
@@ -58,7 +59,7 @@ impl Default for CanvasState {
             tex_of: None,
             tex_coarse: false,
             submitted: None,
-            want_scale: 0.0,
+            want_view: None,
             render_work: None,
             preview_latency_ms: None,
             refine_latency_ms: None,
@@ -184,19 +185,14 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     let own_cursor = input(app, ui, &resp);
     crate::live::track_pointer(app, &ctx);
     app.sync_preedit();
-    let now = ctx.input(|i| i.time);
-    request_render(app, worker, ppp, now);
+    request_render(app, worker, ppp);
     // Every finished render is shown, even when a newer one is already on its way: renders finish
     // in order, and an edit every frame (a drag) would otherwise never show until it stopped.
     let shown = app.session.ds().map(|ds| (ds.uid, ds.page)).ok();
     if let Some(done) = worker.poll()
         && shows(&app.canvas, &done, shown)
     {
-        let latency = Some((now - done.at).max(0.0) * 1000.0);
-        if done.coarse {
-            app.canvas.preview_latency_ms = latency;
-        } else {
-            app.canvas.refine_latency_ms = latency;
+        if !done.coarse {
             app.canvas.render_work = Some(done.work);
             app.ui.render_ms = done.ms;
         }
@@ -209,6 +205,12 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         match &mut app.canvas.texture {
             Some(t) => t.set(done.image, filter),
             None => app.canvas.texture = Some(ctx.load_texture("figcraft-canvas", done.image, filter)),
+        }
+        let latency = Some(done.at.elapsed().as_secs_f64() * 1000.0);
+        if done.coarse {
+            app.canvas.preview_latency_ms = latency;
+        } else {
+            app.canvas.refine_latency_ms = latency;
         }
         app.canvas.tex_view = Some(done.view);
         app.canvas.tex_of = Some((done.uid, done.page));
@@ -296,16 +298,30 @@ fn describe_box([x0, y0, x1, y1]: [f64; 4]) -> String {
 }
 
 /// Whether a finished render goes on screen: an image of the file and page shown (`shown`), and
-/// not a coarse preview over a refined image already at the zoom asked for.
+/// not a coarse preview over a refined image that already shows the whole view asked for at its
+/// zoom (the same zoom elsewhere on the page is no such image).
 fn shows(c: &CanvasState, done: &Done, shown: Option<(u64, NodeId)>) -> bool {
     if shown != Some((done.uid, done.page)) {
         return false;
     }
-    let refined_here = !c.tex_coarse && c.tex_of == shown && c.tex_view.as_ref().is_some_and(|v| v.scale.to_bits() == c.want_scale.to_bits());
+    let refined_here = !c.tex_coarse
+        && c.tex_of == shown
+        && c.tex_view
+            .as_ref()
+            .zip(c.want_view.as_ref())
+            .is_some_and(|(have, want)| have.scale.to_bits() == want.scale.to_bits() && covers(have, want));
     !(done.coarse && refined_here)
 }
 
-fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32, now: f64) {
+/// Whether `outer` shows all of the page that `inner` does.
+fn covers(outer: &figcraft_render::View, inner: &figcraft_render::View) -> bool {
+    let (o, i) = (outer.page_rect(), inner.page_rect());
+    // Rounding in the snapped origin, well under a device pixel.
+    let eps = 1e-6 / inner.scale.max(1e-9);
+    o.x0 <= i.x0 + eps && o.y0 <= i.y0 + eps && o.x1 >= i.x1 - eps && o.y1 >= i.y1 - eps
+}
+
+fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
     let Ok(ds) = app.session.ds() else { return };
     let rect = app.canvas.rect;
     let (mut ox, mut oy) = ds.view.origin();
@@ -352,9 +368,9 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32, now: f64) {
         proof,
         uid: ds.uid,
         zoom_preview: ds.view.pixel_preview_scale().is_none(),
-        at: now,
+        at: web_time::Instant::now(),
     };
-    app.canvas.want_scale = scale;
+    app.canvas.want_view = Some(job.view.clone());
     worker.submit(job);
     app.canvas.submitted = Some(key);
 }

@@ -1,7 +1,8 @@
 //! Coarse previews while the zoom changes (#295): a new zoom first shows the whole view coarsely,
 //! then the refined image, which matches a render from scratch; pans and edits still build on the
-//! kept image; previews never replace a refined image already at the zoom asked for, and no image
-//! of another file or page goes on screen.
+//! kept image; previews never replace a refined image that already shows the whole view asked
+//! for, and no image of another file or page goes on screen. The browser's inline worker previews
+//! by the same measure as the render thread.
 
 use std::sync::Arc;
 
@@ -12,7 +13,7 @@ use figcraft_render::{View, Work};
 use serde_json::json;
 
 use super::{CanvasState, shows};
-use crate::render_worker::{Done, Job, PREVIEW_FACTOR, Renders, coarse_view, render_now};
+use crate::render_worker::{Done, Inline, Job, PREVIEW_FACTOR, Renders, coarse_view, render_now};
 
 /// A page of ellipses with a rectangle on top; the session and the rectangle.
 fn document() -> (Session, NodeId) {
@@ -44,7 +45,7 @@ fn job(doc: &Arc<Document>, page: NodeId, uid: u64, view: View) -> Job {
         proof: false,
         uid,
         zoom_preview: true,
-        at: 0.0,
+        at: web_time::Instant::now(),
     }
 }
 
@@ -189,7 +190,7 @@ fn outline_mode_proofing_and_glass_preview_and_settle_like_fresh_renders() {
 }
 
 #[test]
-fn the_canvas_shows_images_of_its_own_page_and_never_a_coarser_one_at_its_zoom() {
+fn the_canvas_shows_images_of_its_own_page_and_never_a_coarser_one_of_its_view() {
     let (s, _) = document();
     let ds = s.ds().unwrap();
     let here = Some((ds.uid, ds.page));
@@ -199,21 +200,85 @@ fn the_canvas_shows_images_of_its_own_page_and_never_a_coarser_one_at_its_zoom()
     let far = job(&ds.doc, ds.page, ds.uid, view_at((300.0, 200.0), 0.5, 200, 150));
     let preview = r.preview(&far).unwrap();
 
-    let mut c = CanvasState { want_scale: near.view.scale, ..Default::default() };
+    let mut c = CanvasState { want_view: Some(near.view.clone()), ..Default::default() };
     assert!(shows(&c, &refined, here));
     assert!(!shows(&c, &refined, Some((ds.uid + 1, ds.page))), "another file");
     assert!(!shows(&c, &refined, Some((ds.uid, NodeId(ds.page.0 + 1)))), "another page");
     assert!(!shows(&c, &refined, None), "no file open");
-    // Showing the refined image at the zoom asked for: a preview arriving late stays off.
+    // Showing the refined image of the view asked for: a preview arriving late stays off.
     (c.tex_view, c.tex_of, c.tex_coarse) = (Some(refined.view.clone()), here, false);
     assert!(!shows(&c, &preview, here));
-    // Once the zoom asked for moves on, the preview is the better match.
-    c.want_scale = far.view.scale;
+    // Once the view asked for moves on, the preview is the better match.
+    c.want_view = Some(far.view.clone());
     assert!(shows(&c, &preview, here));
     // Over another preview, or a refined image of another page, it goes on.
-    c.want_scale = near.view.scale;
+    c.want_view = Some(near.view.clone());
     c.tex_coarse = true;
     assert!(shows(&c, &preview, here));
     (c.tex_coarse, c.tex_of) = (false, Some((ds.uid, NodeId(ds.page.0 + 1))));
     assert!(shows(&c, &preview, here));
+}
+
+#[test]
+fn a_preview_replaces_a_refined_image_of_the_same_zoom_elsewhere_on_the_page() {
+    // 800 × 600: A at 100% from the page origin, B at 800% about its top-left, A' back at 100%
+    // about B's bottom-right corner. A shows 100 × 75 of A', 1/64 of it.
+    let (s, _) = document();
+    let ds = s.ds().unwrap();
+    let here = Some((ds.uid, ds.page));
+    let view = |origin, scale| View { origin, scale, width: 800, height: 600 };
+    let a = job(&ds.doc, ds.page, ds.uid, view((0.0, 0.0), 1.0));
+    let b = job(&ds.doc, ds.page, ds.uid, view((0.0, 0.0), 8.0));
+    let a2 = job(&ds.doc, ds.page, ds.uid, view((-700.0, -525.0), 1.0));
+    let mut r = Renders::with_threshold(0.0);
+    let refined_a = r.refine(&a).unwrap();
+    // The canvas shows A; B is asked for, then A' while B renders. The thread finishes B, then
+    // previews A' before the canvas polls: the queue holds [refined B, preview A'], and a poll
+    // takes the last.
+    let queue = [r.refine(&b).unwrap(), r.preview(&a2).expect("A' is a new zoom for the thread")];
+    let polled = queue.last().unwrap();
+    assert!(polled.coarse && covers(&polled.view, &a2.view));
+    let c = CanvasState {
+        tex_view: Some(refined_a.view.clone()),
+        tex_of: here,
+        tex_coarse: false,
+        want_view: Some(a2.view.clone()),
+        ..Default::default()
+    };
+    assert!(shows(&c, polled, here), "A at the same zoom shows 1/64 of A': the preview of all of it goes on");
+    // Once A' itself is refined on screen, a preview of it would be a step down.
+    let refined_a2 = r.refine(&a2).unwrap();
+    let c = CanvasState { tex_view: Some(refined_a2.view.clone()), ..c };
+    assert!(!shows(&c, polled, here));
+}
+
+#[test]
+fn the_browser_worker_previews_by_measured_render_time_then_refines_the_next_frame() {
+    // Big enough that a render from scratch takes well over a frame: blurs and glass on 2400².
+    let (mut s, rect) = document();
+    s.execute("effect.add", &json!({"ids": [rect], "type": "GLASS"})).unwrap();
+    s.execute("effect.add", &json!({"ids": [rect], "type": "BACKGROUND_BLUR"})).unwrap();
+    let ds = s.ds().unwrap();
+    let at = |scale| job(&ds.doc, ds.page, ds.uid, view_at((300.0, 200.0), scale, 2400, 2400));
+    // The production threshold, as the browser has it.
+    let mut w = Inline::new(egui::Context::default());
+    w.submit(at(2.0));
+    let first = w.poll().expect("the first image");
+    assert!(!first.coarse && !w.in_flight(), "the first render has no measure to preview by");
+    assert!(first.ms >= 12.0, "renders are timed in the browser worker too (and this one is slow): {} ms", first.ms);
+    // A new zoom: the preview this frame, the refined image the next.
+    w.submit(at(1.0));
+    let p = w.poll().expect("a preview");
+    assert!(p.coarse && w.in_flight());
+    let d = w.poll().expect("the refined image");
+    assert!(!d.coarse && !w.in_flight());
+    assert!(same_pixels(&d, &render_now(&at(1.0)).unwrap()));
+    // A newer request before the refinement: refining the old one is skipped.
+    w.submit(at(0.5));
+    assert!(w.poll().is_some_and(|d| d.coarse));
+    w.submit(at(0.25));
+    let p = w.poll().expect("the newer one's preview");
+    assert!(p.coarse && (p.view.scale - 0.25 / PREVIEW_FACTOR).abs() < 1e-12);
+    assert!(w.poll().is_some_and(|d| !d.coarse && d.view.scale == 0.25));
+    assert!(w.poll().is_none() && !w.in_flight());
 }

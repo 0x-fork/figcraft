@@ -214,7 +214,7 @@ fn a_finished_background_render_wakes_the_ui() {
         proof: false,
         uid: 0,
         zoom_preview: false,
-        at: 0.0,
+        at: web_time::Instant::now(),
     });
     let start = Instant::now();
     while wakes.load(Ordering::SeqCst) == 0 {

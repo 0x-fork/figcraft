@@ -14,6 +14,8 @@ use std::sync::Arc;
 use figcraft_color::ColorProfile;
 use figcraft_doc::{Document, NodeId};
 use figcraft_render::{Pixmap, Retained, View, Work};
+// A monotonic clock in the browser too: preview decisions rest on how long renders take there.
+use web_time::Instant;
 
 /// A preview has this many times fewer pixels each way than the view it stands in for.
 pub const PREVIEW_FACTOR: f64 = 4.0;
@@ -40,8 +42,8 @@ pub struct Job {
     /// A coarse preview may come first when the zoom changes (not in pixel preview, whose pixels
     /// are the point).
     pub zoom_preview: bool,
-    /// When the UI asked for it (`egui` input time, seconds): how long the image took to show.
-    pub at: f64,
+    /// When the UI asked for it: how long the image took to reach the screen.
+    pub at: Instant,
 }
 
 pub struct Done {
@@ -57,7 +59,7 @@ pub struct Done {
     /// A coarse preview, refined by a later image unless a newer request replaced it.
     pub coarse: bool,
     /// [`Job::at`].
-    pub at: f64,
+    pub at: Instant,
 }
 
 /// A render of a document in `profile` as a texture image for the screen (sRGB).
@@ -84,8 +86,7 @@ fn mark_outside_srgb(image: &mut egui::ColorImage, pix: &Pixmap, profile: ColorP
 
 /// Render `view` of the job (its own view, or the coarse one standing in for it).
 fn run(job: &Job, view: &View, retained: &mut Retained, coarse: bool) -> Option<Done> {
-    #[cfg(not(target_arch = "wasm32"))]
-    let t0 = std::time::Instant::now();
+    let t0 = Instant::now();
     // The canvas is a preview: what's too small to see in detail at this zoom is approximated.
     let opts = figcraft_render::Options {
         outline_mode: job.outline,
@@ -101,10 +102,7 @@ fn run(job: &Job, view: &View, retained: &mut Retained, coarse: bool) -> Option<
     if job.proof {
         mark_outside_srgb(&mut image, pix, job.doc.color_profile);
     }
-    #[cfg(not(target_arch = "wasm32"))]
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
-    #[cfg(target_arch = "wasm32")]
-    let ms = 0.0;
     Some(Done { image, view, ms, work, uid: job.uid, page: job.page, coarse, at: job.at })
 }
 
@@ -257,10 +255,10 @@ impl Worker {
     }
 }
 
-/// Renders inline, one image a frame: a preview first when one is due, the refined image in the
-/// next frame unless a newer request replaced the job.
-#[cfg(target_arch = "wasm32")]
-pub struct Worker {
+/// The browser's worker: renders inline, one image a frame: a preview first when one is due, the
+/// refined image in the next frame unless a newer request replaced the job. Built everywhere so
+/// tests run it.
+pub struct Inline {
     ctx: egui::Context,
     pending: Option<Job>,
     previewed: bool,
@@ -268,7 +266,9 @@ pub struct Worker {
 }
 
 #[cfg(target_arch = "wasm32")]
-impl Worker {
+pub type Worker = Inline;
+
+impl Inline {
     pub fn new(ctx: egui::Context) -> Self {
         Self { ctx, pending: None, previewed: false, renders: Renders::default() }
     }
