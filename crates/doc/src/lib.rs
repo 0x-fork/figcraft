@@ -21,6 +21,7 @@ pub mod styles;
 pub mod text;
 pub mod vector;
 pub mod vector_faces;
+pub mod vector_regions;
 
 pub use colors::*;
 pub use comments::*;
@@ -1151,6 +1152,8 @@ mod proto_expr_parse_tests;
 mod proto_expr_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod vector_regions_tests;
 #[cfg(test)]
 mod width_sides_tests;
 #[cfg(test)]
