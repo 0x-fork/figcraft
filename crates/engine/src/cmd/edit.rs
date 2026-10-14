@@ -970,13 +970,20 @@ fn find_replace(s: &mut Session, p: &Value) -> Result<Value> {
             }
             if let NodeKind::Text(t) = &mut n.kind {
                 // Replace occurrence by occurrence so styles shift correctly.
+                // The search resumes after each inserted replacement, so a replacement that
+                // contains `find` neither loops forever nor stops the other occurrences.
                 let mut guard = 0;
-                while let Some(pos) = t.characters.find(find.as_str()) {
-                    let start = t.characters.get(..pos).map(|x| x.chars().count()).unwrap_or(0);
-                    let len = find.chars().count();
+                let mut cursor = 0;
+                let len = find.chars().count();
+                let r_len = r.chars().count();
+                loop {
+                    let from = t.characters.char_indices().nth(cursor).map_or(t.characters.len(), |(b, _)| b);
+                    let Some(pos) = t.characters.get(from..).and_then(|tail| tail.find(find.as_str())) else { break };
+                    let start = cursor + t.characters.get(from..from + pos).map_or(0, |x| x.chars().count());
                     t.replace_range(start, start + len, r);
+                    cursor = start + r_len;
                     guard += 1;
-                    if guard > 10_000 || r.contains(find.as_str()) {
+                    if guard > 10_000 {
                         break;
                     }
                 }
