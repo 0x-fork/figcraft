@@ -1517,6 +1517,8 @@ mod panels_behaviour_tests;
 #[cfg(test)]
 mod pdf_print_tests;
 #[cfg(test)]
+mod pen_overlay_tests;
+#[cfg(test)]
 mod pixel_preview_tests;
 #[cfg(test)]
 mod playground_tests;
