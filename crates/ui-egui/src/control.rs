@@ -149,7 +149,8 @@ fn hidden(ctx: &Context, id: u64) -> bool {
 /// `logic` still runs, for the main window even while every window is hidden: it answers the
 /// requests for any hidden window that need no frame, in that window's file, so an attached agent
 /// can edit, inspect and save. The rest (screenshots, input, the interface's own state) wait for the
-/// window to show. A request for a window that doesn't exist is an error at once.
+/// window to show; another window on screen is asked to draw, which the main window's frame would
+/// do but doesn't while it is hidden. A request for a window that doesn't exist is an error at once.
 pub fn drain_hidden(app: &mut FigApp, ctx: &Context) {
     for r in std::mem::take(&mut app.control_queue) {
         if r.is_cancelled() {
@@ -161,6 +162,11 @@ pub fn drain_hidden(app: &mut FigApp, ctx: &Context) {
             continue;
         }
         if !hidden(ctx, target) || !NO_FRAME.contains(&r.method.as_str()) {
+            // Another window on screen draws only when asked: while the main window is hidden no
+            // frame of it does that (`drain`), so ask here.
+            if target != app.windows.current && !hidden(ctx, target) {
+                ctx.request_repaint_of(crate::windows::viewport(target));
+            }
             app.control_queue.push(r);
             continue;
         }
