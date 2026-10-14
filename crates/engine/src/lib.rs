@@ -564,6 +564,9 @@ pub struct Prefs {
     /// Reduce motion: the interface's own animations are off (the system's setting turns them off
     /// too). Prototype transitions still play.
     pub reduce_motion: bool,
+    /// Files that have a path are saved by themselves a few seconds after they change (the app's
+    /// timer; off: only File ▸ Save writes them).
+    pub auto_save: bool,
     /// `figcraft://` invite links open this app (`collab.registerLinks`); `None`: on for installed
     /// builds, off for development builds.
     pub invite_links: Option<bool>,
@@ -616,6 +619,7 @@ impl Default for Prefs {
             language: "system".into(),
             user_name: cmd::comment::DEFAULT_AUTHOR.into(),
             reduce_motion: false,
+            auto_save: false,
             invite_links: None,
             plugins: Vec::new(),
             plugin_settings: BTreeMap::new(),

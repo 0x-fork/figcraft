@@ -288,3 +288,26 @@ fn an_animated_gif_wakes_only_the_presenter_and_only_at_its_frames() {
     h.app.ui.present = None;
     h.assert_idle("the presenter closed");
 }
+
+#[test]
+fn auto_save_writes_a_changed_file_then_rests() {
+    let dir = std::env::temp_dir().join(format!("figcraft-auto-save-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("auto.figcraft").to_string_lossy().to_string();
+    let (mut h, _) = document();
+    h.run("file.save", json!({"path": path}));
+    h.run("pref.autoSave", json!({"on": true}));
+    h.assert_idle("a saved file");
+    h.run("shape.rectangle", json!({"x": 500, "y": 300, "width": 40, "height": 40}));
+    assert!(h.frame(vec![]) <= Duration::from_secs_f64(crate::AUTO_SAVE_SECS), "wakes up to save it");
+    assert!(h.app.session.ds().unwrap().is_dirty(), "not saved at once");
+    h.time += crate::AUTO_SAVE_SECS;
+    h.frame(vec![]);
+    assert!(!h.app.session.ds().unwrap().is_dirty(), "saved");
+    let mut t = Session::empty();
+    t.execute("file.open", &json!({"path": path})).unwrap();
+    let ds = t.ds().unwrap();
+    assert!(ds.doc.page_content_bounds(ds.page).unwrap().x1 >= 540.0, "the new rectangle is in the file");
+    h.assert_idle("an auto-saved file");
+    let _ = std::fs::remove_dir_all(&dir);
+}

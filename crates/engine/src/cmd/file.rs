@@ -195,7 +195,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "version.autosave",
             "Autosave version",
-            "{}  save an automatic checkpoint when the document has unsaved changes since the last version (the app does this every 30 minutes); keeps the newest 20 autosaves → {saved, version?}",
+            "{}  save an automatic checkpoint when the document has unsaved changes since the last version (with `pref.autoSave` on: changes made since it was opened); the app does this every 30 minutes; keeps the newest 20 autosaves → {saved, version?}",
             false,
             autosave
         ),
@@ -257,8 +257,11 @@ pub const MAX_AUTOSAVES: usize = 20;
 
 /// `version.autosave`: a checkpoint of a document with unsaved changes since the last version.
 fn autosave(s: &mut Session, _: &Value) -> Result<Value> {
+    let auto_save = s.prefs.auto_save;
     let ds = s.ds_mut()?;
-    if ds.preview.is_some() || !ds.is_dirty() || !ds.changed_since_checkpoint() {
+    // A file that saves itself is rarely unsaved: edits since it was opened count then.
+    let edited = ds.is_dirty() || (auto_save && !ds.history.undo.is_empty());
+    if ds.preview.is_some() || !edited || !ds.changed_since_checkpoint() {
         return Ok(json!({"saved": false}));
     }
     Ok(match add_version(ds, AUTOSAVE, "", true) {

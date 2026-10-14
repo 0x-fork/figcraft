@@ -241,6 +241,11 @@ pub enum TitleBar {
 /// How often open documents get an autosave checkpoint (seconds).
 pub const AUTOSAVE_SECS: f64 = 30.0 * 60.0;
 
+/// With auto-save on: how long after a file changes it is saved, and how long a failed save waits
+/// before trying again (seconds).
+pub const AUTO_SAVE_SECS: f64 = 3.0;
+const AUTO_SAVE_RETRY_SECS: f64 = 60.0;
+
 /// How long a toast shows (seconds).
 const TOAST_SECS: f64 = 3.0;
 
@@ -376,6 +381,8 @@ pub struct UiState {
     pub last_copy: Option<String>,
     /// When (UI clock, seconds) open documents next get an autosave checkpoint.
     pub next_autosave: f64,
+    /// With auto-save on: when (UI clock, seconds) files with unsaved changes are next saved.
+    pub auto_save_at: Option<f64>,
     /// The Assets panel shows the libraries view (publish this file, enabled libraries).
     pub libraries: bool,
     /// Keyboard navigation: the region with the keyboard, keyboard mode (F6, Tab).
@@ -460,6 +467,7 @@ impl Default for UiState {
 
             last_copy: None,
             next_autosave: 0.0,
+            auto_save_at: None,
             libraries: false,
             nav: a11y::Nav::default(),
             plugins_window: false,
@@ -921,6 +929,39 @@ impl FigApp {
         repaint_in(ctx, AUTOSAVE_SECS);
     }
 
+    /// With auto-save on, files that have a path are saved [`AUTO_SAVE_SECS`] after they change
+    /// (not during a gesture, a live preview or while a version is shown).
+    fn auto_save_tick(&mut self, ctx: &egui::Context) {
+        let s = &self.session;
+        let unsaved = |d: &figcraft_engine::DocState| d.path.is_some() && d.branch_of.is_none() && d.preview.is_none() && d.is_dirty();
+        let due: Vec<usize> = s.docs.iter().enumerate().filter(|(_, d)| unsaved(d)).map(|(i, _)| i).collect();
+        if !s.prefs.auto_save || due.is_empty() {
+            self.ui.auto_save_at = None;
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+        let at = *self.ui.auto_save_at.get_or_insert(now + AUTO_SAVE_SECS);
+        if now < at || s.docs.iter().any(|d| d.interaction.is_some() || d.text_preview.is_some()) {
+            // Due but busy: look again in a second.
+            repaint_in(ctx, if now < at { at - now } else { 1.0 });
+            return;
+        }
+        let active = self.session.active;
+        let mut failed = None;
+        for i in due {
+            self.session.active = i;
+            if let Err(e) = self.session.execute("file.save", &json!({})) {
+                failed.get_or_insert(e.to_string());
+            }
+        }
+        self.session.active = active;
+        if let Some(e) = failed {
+            self.ui.auto_save_at = Some(now + AUTO_SAVE_RETRY_SECS);
+            repaint_in(ctx, AUTO_SAVE_RETRY_SECS);
+            self.toast(i18n::trf("Couldn't save automatically: {error}", &[("error", &e)]));
+        }
+    }
+
     /// Draw the whole UI: the main window (the other windows draw themselves).
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -930,6 +971,7 @@ impl FigApp {
         let first = !self.fonts_installed;
         self.logic(&ctx);
         self.autosave_tick(&ctx);
+        self.auto_save_tick(&ctx);
         if first {
             // New fonts apply from the next frame; draw nothing until then.
             ctx.request_repaint();

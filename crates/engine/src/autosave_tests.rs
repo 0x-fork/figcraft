@@ -73,3 +73,22 @@ fn autosaves_keep_their_flag_in_the_file() {
     assert!(!autosave(&mut t));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn files_that_save_themselves_still_get_checkpoints() {
+    let dir = std::env::temp_dir().join(format!("figcraft-autosave-on-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("auto.figcraft").to_string_lossy().to_string();
+    let mut s = Session::new();
+    s.execute("pref.autoSave", &json!({"on": true})).unwrap();
+    rect(&mut s, 0.0);
+    s.execute("file.save", &json!({"path": path})).unwrap();
+    assert!(autosave(&mut s), "saved, but changed since the last version");
+    assert!(!autosave(&mut s), "no change since the checkpoint");
+    // Just opened: nothing to checkpoint.
+    let mut t = Session::empty();
+    t.execute("pref.autoSave", &json!({"on": true})).unwrap();
+    t.execute("file.open", &json!({"path": path})).unwrap();
+    assert!(!autosave(&mut t));
+    let _ = std::fs::remove_dir_all(&dir);
+}
