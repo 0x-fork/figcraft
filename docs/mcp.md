@@ -301,9 +301,9 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   given, are or are in; default the selection) out of the library the file publishes, or let them
   back in (`on: false`; without `on` it toggles). The sign of it is the name: hiding puts a `.`
   before it, showing takes the leading `.` and `_` away. Returns `{ids, hidden}`; one undo step.
-- New files and pages: `file.new` and `page.add` give a page the colour `#F5F5F5`. Only the app
-  with its dark theme showing makes them `#1E1E1E`; headless sessions (the CLI, this server) have
-  no theme. Text made with `text.create` or `node.create` is black whatever the page here; in the
+- New files and pages: `file.new` gives its page the colour `#F5F5F5`. Only the app with its dark
+  theme showing makes it `#1E1E1E`; headless sessions (the CLI, this server) have no theme.
+  `page.add` gives the new page the current page's colour, wherever it runs. Text made with `text.create` or `node.create` is black whatever the page here; in the
   app (the control channel, `--attach`) it is white on a dark page unless `props` name a `fill`,
   as the Text tool (`pointer` with `tool.text`) makes it everywhere.
 - `transform.rotationOrigin {on?}` (`Alt+R`): show or hide the selection's rotation origin handle

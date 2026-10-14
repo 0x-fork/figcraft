@@ -663,8 +663,8 @@ pub struct Session {
     pub prefs: Prefs,
     pub tool: tools::ToolState,
     pub ui_requests: Vec<UiRequest>,
-    /// The interface's theme once the UI knows it ([`Session::set_ui_dark`]): new files and pages
-    /// get the dark page colour while it is dark. Headless sessions (CLI, MCP, exports) have no
+    /// The interface's theme once the UI knows it ([`Session::set_ui_dark`]): new files get the
+    /// dark page colour while it is dark (added pages take the current page's). Headless sessions (CLI, MCP, exports) have no
     /// theme, so what scripts make is the same everywhere.
     pub ui_dark: Option<bool>,
     /// Command log (id + params) for actions/automation.
@@ -721,7 +721,7 @@ impl Session {
         }
     }
 
-    /// The background new pages get: the dark page colour while the interface is dark.
+    /// The background a new file's page gets: the dark page colour while the interface is dark.
     pub fn new_page_background(&self) -> figcraft_color::Color {
         if self.ui_dark == Some(true) { figcraft_color::Color::DARK_PAGE } else { figcraft_color::Color::DEFAULT_PAGE }
     }
