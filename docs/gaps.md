@@ -193,7 +193,9 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 ### 7. CPU canvas where Figma uses the GPU
 - **Missing:** GPU rendering of the canvas. FigCraft renders with tiny-skia on the CPU (banded,
-  parallel, retained) and shows the image through wgpu.
+  parallel, retained) and shows the image through wgpu. A new zoom can't reuse the retained
+  image; when renders from scratch take a frame or more, the whole view is previewed with a
+  sixteenth of the pixels first, then refined.
 - **Evidence (measured, `cargo xtask bench`):** a 50k-layer page ~8 ms zoomed out with levels of
   detail, single-layer edits at 10k layers ~0.2 ms; full 1440×900 renders 7–15 ms at 10k layers.
   Heavy effects (glass, background blur, noise) and 4K/5K canvases at 2x are where CPU time grows.

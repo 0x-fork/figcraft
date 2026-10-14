@@ -93,7 +93,10 @@ ellipse, its arc handles `arcHandles`, for a selected rectangle, frame, polygon 
 an idle window draws none) with the most frequent repaint requests behind them (`repaintCauses`:
 `[{at: "file:line", count}]`, every request made in the frame before each one, delayed ones such as
 the autosave deadline included; egui's `context.rs` begin-pass line means input events) and what the last canvas render had to do (`canvas.renderWork`: `full`, `partial` with
-the `pixels` re-rendered after a pan or an edit, or `reused`). While a prototype plays, `presenter`
+the `pixels` re-rendered after a pan or an edit, or `reused`), whether the canvas shows a coarse
+zoom preview or the refined image (`canvas.quality`: `preview` or `refined`) and the time from
+asking for a render to the frame showing its preview and its refined image (`canvas.previewLatencyMs`,
+`canvas.refineLatencyMs`; `null` until there was one). While a prototype plays, `presenter`
 (full window) and `preview` (the preview pane) hold the player's state: the `current` frame and its
 `name`, `start`, `history`, open `overlays`, how many delayed mouse triggers are `waiting`, the screen's `scroll` offset and `scrollRange`, the
 `device` (and whether it is turned to `landscape`, its `deviceColor`) and the `viewport` of the frame
