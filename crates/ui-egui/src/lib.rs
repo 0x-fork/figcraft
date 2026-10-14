@@ -66,6 +66,8 @@ pub mod windows;
 #[cfg(test)]
 mod a11y_tests;
 #[cfg(test)]
+mod async_dialog_tests;
+#[cfg(test)]
 mod branch_ui_tests;
 #[cfg(test)]
 mod canvas_drag_tests;
@@ -155,7 +157,11 @@ mod windows_qa_tests;
 mod windows_tests;
 
 use std::collections::BTreeSet;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll, Wake, Waker};
 
 use figcraft_doc::NodeId;
 use figcraft_engine::Session;
@@ -165,15 +171,15 @@ pub use control::{ControlReply, ControlRequest};
 
 /// Platform services the app crate provides (file dialogs, clipboard, URLs).
 pub trait Services {
-    fn pick_open(&mut self, _title: &str, _exts: &[&str]) -> Option<PathBuf> {
-        None
+    fn pick_open(&mut self, _title: &str, _exts: &[&str]) -> DialogFuture {
+        Box::pin(std::future::ready(None))
     }
-    fn pick_save(&mut self, _title: &str, _name: &str, _exts: &[&str]) -> Option<PathBuf> {
-        None
+    fn pick_save(&mut self, _title: &str, _name: &str, _exts: &[&str]) -> DialogFuture {
+        Box::pin(std::future::ready(None))
     }
     /// A folder to write several files into.
-    fn pick_folder(&mut self, _title: &str) -> Option<PathBuf> {
-        None
+    fn pick_folder(&mut self, _title: &str) -> DialogFuture {
+        Box::pin(std::future::ready(None))
     }
     fn clipboard_set_text(&mut self, _s: &str) {}
     fn clipboard_get_text(&mut self) -> Option<String> {
@@ -206,6 +212,20 @@ pub trait Services {
     /// player asks every frame while its prototype has gamepad triggers.
     fn gamepad_held(&mut self) -> u32 {
         0
+    }
+}
+
+pub type DialogFuture = Pin<Box<dyn Future<Output = Option<PathBuf>>>>;
+type DialogDone = Box<dyn FnOnce(&mut FigApp, PathBuf)>;
+
+struct RepaintWaker(egui::Context);
+impl Wake for RepaintWaker {
+    fn wake(self: Arc<Self>) {
+        self.0.request_repaint();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.request_repaint();
     }
 }
 
@@ -503,6 +523,10 @@ pub struct FigApp {
     window_requests: Vec<figcraft_engine::UiRequest>,
     /// Commands waiting for a server ([`FigApp::run_background`]) and what to do with their results.
     waiting: Vec<(String, Done)>,
+    /// Native dialogs complete asynchronously so their modal event loop never re-enters winit.
+    pending_dialog: Option<(DialogFuture, DialogDone)>,
+    /// The latest UI context schedules the first poll and wakes the app when a dialog completes.
+    ui_context: Option<egui::Context>,
 }
 
 /// What to do with the result of a command run in the background.
@@ -530,6 +554,8 @@ impl FigApp {
             windows: windows::Windows::default(),
             window_requests: Vec::new(),
             waiting: Vec::new(),
+            pending_dialog: None,
+            ui_context: None,
         }
     }
 
@@ -790,12 +816,12 @@ impl FigApp {
 
     pub fn save_as_dialog(&mut self) {
         let name = self.session.doc().map(|d| d.name.clone()).unwrap_or_else(|_| "Untitled".into());
-        if let Some(p) = self.services.pick_save(i18n::tr("Save as"), &format!("{name}.figcraft"), &["figcraft"]) {
+        self.pick_save(i18n::tr("Save as"), &format!("{name}.figcraft"), &["figcraft"], |app, p| {
             let ps = p.to_string_lossy().to_string();
-            if self.run("file.saveAs", json!({"path": ps})).is_some() {
-                self.toast(i18n::trf("Saved {name}", &[("name", &p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())]));
+            if app.run("file.saveAs", json!({"path": ps})).is_some() {
+                app.toast(i18n::trf("Saved {name}", &[("name", &p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())]));
             }
-        }
+        });
     }
 
     pub fn save(&mut self) {
@@ -811,14 +837,12 @@ impl FigApp {
     }
 
     pub fn open_dialog(&mut self) {
-        if let Some(p) =
-            self.services.pick_open(i18n::tr("Open"), &["figcraft", "fig", "json", "svg", "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"])
-        {
+        self.pick_open(i18n::tr("Open"), &["figcraft", "fig", "json", "svg", "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"], |app, p| {
             let ps = p.to_string_lossy().to_string();
-            if self.run("file.open", json!({"path": ps})).is_some() {
-                self.ui.home = false;
+            if app.run("file.open", json!({"path": ps})).is_some() {
+                app.ui.home = false;
             }
-        }
+        });
     }
 
     pub fn import_dialog(&mut self, place: bool) {
@@ -827,9 +851,44 @@ impl FigApp {
         } else {
             &["svg", "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff", "figcraft", "fig"]
         };
-        if let Some(p) = self.services.pick_open(if place { i18n::tr("Place image") } else { i18n::tr("Import") }, exts) {
+        let title = if place { i18n::tr("Place image") } else { i18n::tr("Import") };
+        self.pick_open(title, exts, move |app, p| {
             let ps = p.to_string_lossy().to_string();
-            self.run("file.import", json!({"path": ps}));
+            app.run("file.import", json!({"path": ps}));
+        });
+    }
+
+    pub fn pick_open(&mut self, title: &str, exts: &[&str], done: impl FnOnce(&mut FigApp, PathBuf) + 'static) {
+        self.start_dialog(|services| services.pick_open(title, exts), done);
+    }
+
+    pub fn pick_save(&mut self, title: &str, name: &str, exts: &[&str], done: impl FnOnce(&mut FigApp, PathBuf) + 'static) {
+        self.start_dialog(|services| services.pick_save(title, name, exts), done);
+    }
+
+    pub fn pick_folder(&mut self, title: &str, done: impl FnOnce(&mut FigApp, PathBuf) + 'static) {
+        self.start_dialog(|services| services.pick_folder(title), done);
+    }
+
+    fn start_dialog(&mut self, start: impl FnOnce(&mut dyn Services) -> DialogFuture, done: impl FnOnce(&mut FigApp, PathBuf) + 'static) {
+        if self.pending_dialog.is_some() {
+            return;
+        }
+        self.pending_dialog = Some((start(self.services.as_mut()), Box::new(done)));
+        if let Some(ctx) = &self.ui_context {
+            ctx.request_repaint();
+        }
+    }
+
+    fn poll_dialog(&mut self, ctx: &egui::Context) {
+        let Some((future, _)) = &mut self.pending_dialog else { return };
+        let waker = Waker::from(Arc::new(RepaintWaker(ctx.clone())));
+        let mut task = TaskContext::from_waker(&waker);
+        let Poll::Ready(path) = future.as_mut().poll(&mut task) else { return };
+        if let Some((_, done)) = self.pending_dialog.take()
+            && let Some(path) = path
+        {
+            done(self, path);
         }
     }
 
@@ -926,8 +985,10 @@ impl FigApp {
         #[cfg(not(target_arch = "wasm32"))]
         let t0 = std::time::Instant::now();
         let ctx = ui.ctx().clone();
+        self.ui_context = Some(ctx.clone());
         self.frame_stats.record(&ctx);
         let first = !self.fonts_installed;
+        self.poll_dialog(&ctx);
         self.logic(&ctx);
         self.autosave_tick(&ctx);
         if first {

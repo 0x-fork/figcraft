@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use figcraft_engine::{Prefs, Session};
-use figcraft_ui_egui::{FigApp, Services};
+use figcraft_ui_egui::{DialogFuture, FigApp, Services};
 use serde_json::{Value, json};
 
 pub struct Desktop {
@@ -195,14 +195,29 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 impl Services for Desktop {
-    fn pick_open(&mut self, title: &str, exts: &[&str]) -> Option<PathBuf> {
-        rfd::FileDialog::new().set_title(title).add_filter("Supported files", exts).pick_file()
+    fn pick_open(&mut self, title: &str, exts: &[&str]) -> DialogFuture {
+        let title = title.to_owned();
+        let exts: Vec<String> = exts.iter().map(|ext| (*ext).to_owned()).collect();
+        Box::pin(async move {
+            rfd::AsyncFileDialog::new().set_title(title).add_filter("Supported files", &exts).pick_file().await.map(|file| file.path().to_path_buf())
+        })
     }
-    fn pick_save(&mut self, title: &str, name: &str, exts: &[&str]) -> Option<PathBuf> {
-        rfd::FileDialog::new().set_title(title).set_file_name(name).add_filter("File", exts).save_file()
+    fn pick_save(&mut self, title: &str, name: &str, exts: &[&str]) -> DialogFuture {
+        let (title, name) = (title.to_owned(), name.to_owned());
+        let exts: Vec<String> = exts.iter().map(|ext| (*ext).to_owned()).collect();
+        Box::pin(async move {
+            rfd::AsyncFileDialog::new()
+                .set_title(title)
+                .set_file_name(name)
+                .add_filter("File", &exts)
+                .save_file()
+                .await
+                .map(|file| file.path().to_path_buf())
+        })
     }
-    fn pick_folder(&mut self, title: &str) -> Option<PathBuf> {
-        rfd::FileDialog::new().set_title(title).pick_folder()
+    fn pick_folder(&mut self, title: &str) -> DialogFuture {
+        let title = title.to_owned();
+        Box::pin(async move { rfd::AsyncFileDialog::new().set_title(title).pick_folder().await.map(|file| file.path().to_path_buf()) })
     }
     fn clipboard_set_text(&mut self, s: &str) {
         if let Some(c) = self.clipboard.as_mut() {
