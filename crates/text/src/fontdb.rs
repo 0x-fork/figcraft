@@ -725,9 +725,9 @@ fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (Str
         if !matches!(ext.as_str(), "ttf" | "otf" | "ttc" | "otc") {
             continue;
         }
-        // Very large files are indexed all the same (Apple Color Emoji is ~180 MB, and its faces
-        // are the colour emoji themselves): `index_bytes` reads headers and name tables out of a
-        // zeroed buffer, so only those parts are ever touched.
+        // Very large files are indexed all the same (Apple Color Emoji is ~180 MB and is where the
+        // system's colour emoji live): `index_bytes` reads headers and name tables out of a zeroed
+        // buffer, so only those parts are ever touched.
         let Some(bytes) = usize::try_from(meta.len()).ok().filter(|l| *l <= 256 * 1024 * 1024).and_then(|l| index_bytes(&path, l)) else { continue };
         for (index, family, style) in faces_in(&bytes) {
             out.entry(family.to_lowercase()).or_insert_with(|| (family.clone(), Vec::new())).1.push(Pending { path: path.clone(), index, style });
@@ -772,7 +772,7 @@ fn index_bytes(path: &std::path::Path, len: usize) -> Option<Vec<u8>> {
 }
 
 /// (index, family, style) of each face in a font file: outline fonts and colour fonts (Apple Color
-/// Emoji has placeholder outlines, Noto Color Emoji has none at all).
+/// Emoji draws most emoji from `sbix`, Noto Color Emoji has no outlines at all).
 fn faces_in(bytes: &[u8]) -> Vec<(u32, String, String)> {
     let count = match FileRef::new(bytes) {
         Ok(FileRef::Collection(c)) => c.len(),

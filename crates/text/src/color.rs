@@ -1,11 +1,12 @@
 //! Colour glyphs: embedded bitmap strikes (sbix, CBDT/EBDT) and COLR v0 layers.
 //!
-//! Colour emoji fonts don't draw like other glyphs: their outlines are placeholder rectangles
-//! (Apple Color Emoji) or missing altogether (Noto Color Emoji), and the picture itself lives in a
-//! bitmap strike or in a stack of coloured layers. This module gives the renderer either a
+//! Colour emoji fonts don't draw like other glyphs: the picture itself lives in a bitmap strike
+//! (sbix, CBDT/EBDT) or in a stack of coloured layers, not in the glyph's outline — in Apple Color
+//! Emoji most emoji are `sbix` bitmaps while the flags are drawn from outlines, and Noto Color
+//! Emoji has no outlines at all. This module gives the renderer either a
 //! premultiplied RGBA raster at the size it asked for, or the layer glyphs and the palette colours
 //! to fill with its own outlines. Anything else (COLR v1's paint graphs, alpha-only strikes) is
-//! left to the outline pipeline, which draws the placeholders as before.
+//! left to the outline pipeline, which draws whatever outlines the face has, as before.
 
 use std::collections::HashMap;
 use std::sync::Arc;
