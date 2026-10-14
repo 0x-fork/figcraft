@@ -442,6 +442,8 @@ mod grain_tests;
 #[cfg(test)]
 mod group_effects_tests;
 #[cfg(test)]
+mod image_budget_tests;
+#[cfg(test)]
 mod image_profile_tests;
 #[cfg(test)]
 mod lod_tests;
