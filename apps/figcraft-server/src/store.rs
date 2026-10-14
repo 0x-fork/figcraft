@@ -10,7 +10,8 @@
 //!                                and a join code's hash and wrapped token (see `codes`)
 //! <data>/files/<id>/snapshot.bin the session state at the last compaction
 //! <data>/files/<id>/log.bin      what changed since (see `disk`)
-//! <data>/files/<id>/library.bin  its team library, when one was published (a `.figcraft` archive)
+//! <data>/files/<id>/library-<version>.bin  its team library, when one was published (a `.figcraft`
+//!                                archive; `library.bin` from servers before versioned names)
 //! <data>/files/<id>/usage.json   how other files use that library, as their apps report it
 //! <data>/plugins/                the plugin directory (see `directory`)
 //! <data>/blocked.json            addresses the operator blocked
@@ -179,7 +180,7 @@ impl Meta {
     }
 }
 
-/// What a file's team library is (`library.bin` holds it).
+/// What a file's team library is ([`library_file`] holds it).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct LibraryMeta {
     id: String,
@@ -919,11 +920,12 @@ impl Store {
     /// A file's team library for `ip`, unless its version is `have`; within what one address and
     /// everyone may download (the size is known before anything is read).
     fn fetch_library(&mut self, ip: IpAddr, file: &str, have: Option<u64>) -> Result<LibraryReply, String> {
-        let (path, max) = (self.dir(file).join(LIBRARY), self.cfg.max_file_bytes);
+        let (dir, max) = (self.dir(file), self.cfg.max_file_bytes);
         let Some(lib) = self.entry(file)?.meta.library.clone() else { return Ok(LibraryReply::Empty) };
         if have == Some(lib.version) {
             return Ok(LibraryReply::Unchanged { version: lib.version });
         }
+        let path = library_file(&dir, lib.version);
         let size = fs::metadata(&path).map_or(0, |m| m.len());
         let now = Instant::now();
         if !self.abuse.allow(ip, Action::Download(usize::try_from(size).unwrap_or(usize::MAX)), now) || !self.served.take_n(now, size as f64) {
@@ -965,13 +967,23 @@ impl Store {
                 return Err(format!("version {} is on the server already: publish again to follow it", old.version));
             }
         }
-        // The archive first: a description never names a version whose library isn't there (a
-        // failed description write leaves the older number, which the next publish follows).
-        disk::write_atomic(&dir.join(LIBRARY), archive).map_err(|e| format!("couldn't keep the library: {e}"))?;
+        // Each version has a file of its own, written before the description names it: a failed
+        // description write or a crash in between leaves the previous version served whole, never
+        // the new bytes under the old number.
+        let path = dir.join(library_name(m.version));
+        disk::write_atomic(&path, archive).map_err(|e| format!("couldn't keep the library: {e}"))?;
         let before = entry.meta.library.replace(LibraryMeta { id: m.id.clone(), name: m.name.clone(), version: m.version });
         if let Err(e) = write_json(&dir.join(META), &entry.meta) {
+            // Never served (the description doesn't name it); the next publish of it replaces it.
+            if let Err(r) = fs::remove_file(&path) {
+                log::warn!("file {file}: an unpublished library version couldn't be deleted: {r}");
+            }
             entry.meta.library = before;
             return Err(format!("couldn't keep the library: {e}"));
+        }
+        // The previous version isn't served any more.
+        if let Some(Err(e)) = before.map(|old| fs::remove_file(library_file(&dir, old.version))) {
+            log::warn!("file {file}: the previous library version couldn't be deleted: {e}");
         }
         log::info!("file {file}: published library version {} ({} bytes)", m.version, archive.len());
         Ok(m.version)
@@ -1247,6 +1259,18 @@ fn flush_log(id: &str, log: &mut Log) -> Result<u64, ()> {
             Err(())
         }
     }
+}
+
+/// The name of the file holding version `version` of a file's team library.
+pub fn library_name(version: u64) -> String {
+    format!("library-{version}.bin")
+}
+
+/// Where version `version` of the team library in `dir` is: its own file, or `library.bin` for a
+/// version published before each version had one.
+fn library_file(dir: &Path, version: u64) -> PathBuf {
+    let path = dir.join(library_name(version));
+    if path.exists() { path } else { dir.join(LIBRARY) }
 }
 
 fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(), String> {
