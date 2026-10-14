@@ -254,6 +254,27 @@ fn align_distribute_zorder() {
 }
 
 #[test]
+fn a_layer_alone_on_the_page_has_nothing_to_align_to() {
+    use crate::cmd::arrange::can_align;
+    let mut s = sess();
+    let f = id(&s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 200, "height": 100})).unwrap());
+    let inner = id(&s.execute("shape.rectangle", &json!({"x": 20, "y": 30, "width": 10, "height": 10, "parent": f})).unwrap());
+    let loose = id(&s.execute("shape.rectangle", &json!({"x": 300, "y": 5, "width": 10, "height": 10})).unwrap());
+    let doc = s.doc().unwrap();
+    assert!(!can_align(doc, &[]));
+    assert!(!can_align(doc, &[loose]), "alone on the page");
+    assert!(!can_align(doc, &[f, inner]), "a frame with its own child is the frame alone");
+    assert!(can_align(doc, &[inner]), "one in a frame aligns to it");
+    assert!(can_align(doc, &[f, loose]), "two align to each other");
+    // Where the buttons are off, the command still does nothing (and no harm).
+    let before = doc.world_bounds(loose);
+    s.execute("align.right", &json!({"ids": [loose]})).unwrap();
+    assert_eq!(s.doc().unwrap().world_bounds(loose), before);
+    s.execute("align.right", &json!({"ids": [inner]})).unwrap();
+    assert_eq!(s.doc().unwrap().world_bounds(inner).unwrap().x1, 200.0);
+}
+
+#[test]
 fn copy_paste_and_duplicate() {
     let mut s = sess();
     let a = id(&s.execute("shape.rectangle", &json!({"x": 5, "y": 5, "width": 10, "height": 10})).unwrap());
