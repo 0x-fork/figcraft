@@ -338,6 +338,17 @@ fn pages_by_the_documented_rules() {
 }
 
 #[test]
+fn page_move_refuses_what_is_not_a_page() {
+    let mut s = Session::new();
+    let r = rect(&mut s, "r", 30.0, 40.0, None);
+    let before = pages(&mut s);
+    assert!(s.execute("page.move", &json!({"id": r, "index": 0})).is_err(), "a layer id is not a page");
+    assert!(s.execute("page.move", &json!({"id": 999999, "index": 0})).is_err(), "a page that isn't there is not a page");
+    assert_eq!(pages(&mut s), before, "the page list is untouched");
+    assert!(s.doc().unwrap().validate().is_empty(), "the document still checks out");
+}
+
+#[test]
 fn assets_panel_lists_files_and_drops_by_the_documented_rules() {
     let mut s = Session::new();
     let page = s.page().unwrap();
