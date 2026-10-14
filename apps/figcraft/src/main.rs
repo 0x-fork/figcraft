@@ -17,6 +17,7 @@ mod gamepad;
 mod graphics;
 mod recovery;
 mod services;
+mod startup;
 
 #[cfg(all(test, target_os = "macos"))]
 mod apple_events_tests;
@@ -30,6 +31,8 @@ mod recovery_online_tests;
 mod recovery_tests;
 #[cfg(test)]
 mod services_tests;
+#[cfg(test)]
+mod startup_tests;
 
 use std::sync::{Arc, Mutex};
 
@@ -203,7 +206,7 @@ fn main() -> eframe::Result {
     let apple_events = apple_events::AppleEvents::install();
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
-    eframe::run_native(
+    let result = eframe::run_native(
         "FigCraft",
         options,
         Box::new(move |_cc| {
@@ -216,5 +219,10 @@ fn main() -> eframe::Result {
                 apple_events: apple_events.connect(&_cc.egui_ctx),
             }))
         }),
-    )
+    );
+    // Say why instead of quitting silently: release builds on Windows have no console.
+    if let Err(e) = &result {
+        startup::failed(e, port.is_some());
+    }
+    result
 }
