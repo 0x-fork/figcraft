@@ -1,9 +1,9 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (draft catalogs catch up: every draft translates every string again; Simplified Chinese draft catalog) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (Indonesian draft catalog; draft catalogs catch up: every draft translates every string again; Simplified Chinese draft catalog) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft's interface has a localization layer with an English catalog and Spanish (with a Latin
-American overlay), French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese
+American overlay), French, German, Brazilian Portuguese, Japanese, Korean, Simplified Chinese and Indonesian
 drafts (machine-drafted, waiting for native speakers' review). This page lists the twelve key
 languages of the craftrules standard, then the other languages Figma ships. How to add a
 language: [`translating.md`](translating.md).
@@ -28,7 +28,7 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
   document data, such as tool names, blend modes and Dev Mode properties) plus 536 command labels
   and 29 menu wordings by command id: 1,982 entries. Command ids, the CLI, MCP and the control
   channel stay English. Accessibility names come from the same strings.
-- **Language preference:** Preferences ▸ Language (System, English, Deutsch, Español, Español
+- **Language preference:** Preferences ▸ Language (System, English, Bahasa Indonesia, Deutsch, Español, Español
   (Latinoamérica), Français, 日本語, 한국어, Português (Brasil), 简体中文), applied at once without a
   restart; System takes the first of the OS's preferred languages that has a catalog (Windows'
   language list, macOS AppleLanguages, `LANGUAGE` then the locale variables on Linux and BSD; a regional tag
@@ -85,7 +85,7 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
 | Arabic | ar | 0 (0%) | no | Bidi, shaping and RTL names work; the UI does not mirror | no | none | 9–15 |
 | French | fr | 2,076 / 2,076 (100%, draft) | yes | Latin | no | draft | 1–2 (after native review) |
 | Portuguese | pt-BR | 2,076 / 2,076 (100%, draft) | yes | Latin | no | draft | 1–2 (after native review) |
-| Indonesian | id | 0 (0%) | no | Latin | no | none | 3–5 |
+| Indonesian | id | 2,165 / 2,165 (100%, draft) | yes | Latin | no | draft | 1–2 (after native review) |
 | Japanese | ja | 2,076 / 2,076 (100%, draft) | yes | CJK text and IME in documents; UI text in an installed Japanese face (web: the `FIGCRAFT_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
 | German | de | 2,076 / 2,076 (100%, draft) | yes | Latin; long words elide in narrow fields | no | draft | 1–2 (after native review) |
 | Korean | ko | 2,076 / 2,076 (100%, draft) | yes | Hangul text and IME in documents; UI text in an installed Korean face (web: the `FIGCRAFT_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
@@ -99,8 +99,8 @@ it isn't one/other; every language also needs a native speaker's review (human).
 parity besides the languages: localizing engine messages and number formatting (4–6 h);
 right-to-left mirroring of the panels is in Arabic's hours. Total: **29–51 h**.
 
-Priority: native reviews of the seven drafts and the es-419 overlay (every one of Figma's languages
-and variants has one, plus Simplified Chinese, which Figma doesn't ship), then Hindi, Indonesian,
+Priority: native reviews of the eight drafts and the es-419 overlay (every one of Figma's languages
+and variants has one, plus Simplified Chinese, which Figma doesn't ship), then Hindi,
 Vietnamese and Arabic. Traditional Chinese is not planned (no catalog; its users see English).
 
 ## Revision history

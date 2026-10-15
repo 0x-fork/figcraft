@@ -63,7 +63,7 @@ native speakers' reviews of the six language drafts need people.
 | Stability | 55% | 20–40 | [gaps](docs/gaps.md) |
 | Performance | 60% | 30–60 | [hardware-parity](docs/hardware-parity.md) |
 | Hardware | 60% | 10–21 | [hardware-parity](docs/hardware-parity.md) |
-| Localization | 39% (layer; English; Spanish with a Latin American overlay, French, German, Brazilian Portuguese, Japanese, Korean, Simplified Chinese drafts; CJK UI fonts) | 29–51 | [localization-parity](docs/localization-parity.md) |
+| Localization | 39% (layer; English; Spanish with a Latin American overlay, French, German, Brazilian Portuguese, Japanese, Korean, Simplified Chinese, Indonesian drafts; CJK UI fonts) | 29–51 | [localization-parity](docs/localization-parity.md) |
 | Platforms | 75% | 10–20 | [hardware-parity](docs/hardware-parity.md) |
 | Ecosystem / plugins | 38% (own WASM plugins with panels, settings and widgets; a self-hosted plugin directory) | 8–26 | [gaps](docs/gaps.md) |
 | AI features | 0% | 30–60 | [gaps](docs/gaps.md) |
@@ -105,7 +105,7 @@ native speakers' reviews of the six language drafts need people.
 | Arabic | ar | 0% | none |
 | French | fr | 100% | draft (needs native review) |
 | Portuguese (Brazil) | pt-BR | 100% | draft (needs native review) |
-| Indonesian | id | 0% | none |
+| Indonesian | id | 100% | draft (needs native review) |
 | Japanese | ja | 100% | draft (needs native review) |
 | German | de | 100% | draft (needs native review) |
 | Korean | ko | 100% | draft (needs native review) |
@@ -113,7 +113,7 @@ native speakers' reviews of the six language drafts need people.
 
 No other languages. Figma ships English, Japanese, Korean, French, German, Spanish and Portuguese
 (Brazil); FigCraft has the localization layer, English and Spanish (Spain and Latin America),
-French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese drafts (Preferences ▸
+French, German, Brazilian Portuguese, Japanese, Korean, Simplified Chinese and Indonesian drafts (Preferences ▸
 Language; Traditional Chinese has no catalog; CJK UI
 text uses an installed CJK font, loaded only when needed; adding a language:
 [`docs/translating.md`](docs/translating.md)). Document text in any script (bidi, Arabic shaping,
@@ -312,6 +312,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Indonesian draft catalog: `id.toml` translates every UI string (1,577 keys; Indonesian keeps a noun unchanged after a count, so plurals give only `other`), command label (557) and menu wording (31), machine-drafted and marked as a draft awaiting native review (bare imperatives on buttons, formal Anda, established design terms such as frame, layer, component and auto layout kept in English); Preferences ▸ Language lists Bahasa Indonesia and System maps id and id-ID to it. Numbers unchanged |
 | 2026-10-14 | minor | Home screen recent files as cards (M7): each card shows the picture its file carries on its first page's colour, the file's icon, name and "Edited ... ago"; sort by name, creation or last change either way; a table view; a click selects, a double-click or Enter opens, arrow keys move; Open, Show in folder and Remove from recents on right-click. Numbers unchanged. |
 | 2026-10-14 | minor | Lost images reported on loading (#207): a `.figcraft` file whose image member is damaged, too large or missing no longer loads in silence; each lost image (up to 20, then a count) is listed in `repairs` on `file.open` with its hash and the reason, and the app shows it as a toast. Saving still writes the file without the lost images. Numbers unchanged |
 | 2026-10-14 | minor | SVG import budgets (#190): gzipped SVG is unpacked by FigCraft within 64 MiB before parsing (it was unpacked without a limit), so the nesting check sees the real document; SVG documents embedded in `<image>` data URIs share one 32 MiB budget and at most 4 levels, and one past a budget is left out. Linked files stay unread. Numbers unchanged |

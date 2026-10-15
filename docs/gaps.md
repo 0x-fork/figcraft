@@ -144,8 +144,8 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 ### 5. Localization: English plus unreviewed drafts
 - **Missing:** native reviews of the Spanish, French, German, Brazilian Portuguese, Japanese,
-  Korean and Simplified Chinese drafts and the Latin American Spanish overlay, the 25 newest strings
-  in five drafts, Hindi, Arabic, Indonesian and Vietnamese, localized engine messages and number
+  Korean, Simplified Chinese and Indonesian drafts and the Latin American Spanish overlay, the 25 newest strings
+  in five drafts, Hindi, Arabic and Vietnamese, localized engine messages and number
   formatting; CJK UI text on the web without the craft-fonts CJK build.
 - **Evidence (measured from source):** the layer landed 2026-10-11: catalogs in
   `crates/ui-egui/locales/` (1,371 UI keys plus 524 command labels and 29 menu wordings),
