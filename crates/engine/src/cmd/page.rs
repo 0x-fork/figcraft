@@ -23,6 +23,15 @@ fn settle(s: &mut Session, cmd: &str) -> crate::Result<()> {
     Ok(())
 }
 
+/// The page a command targets: the explicit `id` (which must be a page) or the open page.
+fn page_target(s: &Session, cmd: &str, p: &Value) -> crate::Result<NodeId> {
+    let Some(target) = id(p, "id") else { return s.page() };
+    if !s.doc()?.pages.contains(&target) {
+        return Err(bad(cmd, format!("{target} is not a page")));
+    }
+    Ok(target)
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!("page.add", "Add page", "{name?} (a name starting with a hyphen adds a divider)", true, |s, p| {
@@ -71,13 +80,13 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         spec!("page.rename", "Rename page", "{id?, name} (an empty page named with a leading hyphen becomes a divider)", true, |s, p| {
             let name = req_string("page.rename", p, "name")?;
-            let id = id(p, "id").unwrap_or(s.page()?);
+            let id = page_target(s, "page.rename", p)?;
             s.doc_mut()?.get_mut(id)?.name = name;
             settle(s, "page.rename")?;
             ok()
         }),
         spec!("page.delete", "Delete page", "{id?}", true, |s, p| {
-            let id = id(p, "id").unwrap_or(s.page()?);
+            let id = page_target(s, "page.delete", p)?;
             s.doc_mut()?.remove(id)?;
             settle(s, "page.delete")?;
             ok()
@@ -117,7 +126,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         spec!("page.setBackground", "Page background", "{id?, color}", true, |s, p| {
             let c = color(p, "color").ok_or_else(|| bad("page.setBackground", "`color` required"))?;
-            let id = id(p, "id").unwrap_or(s.page()?);
+            let id = page_target(s, "page.setBackground", p)?;
             if let NodeKind::Page { background, .. } = &mut s.doc_mut()?.get_mut(id)?.kind {
                 *background = c;
             }
