@@ -309,6 +309,7 @@ impl<'a> Mapper<'a> {
     /// else the file node its asset `key` and `version` names (a collection from a library is
     /// referenced as the asset, and the file's own node for it says the same `key`). `None` when
     /// the reference has neither or the asset names nothing (or ambiguously) in the file.
+    /// Original code for this importer: the field names are those of the schema each file embeds.
     fn resource_id(&self, v: &Kv) -> Option<String> {
         if let Some(g) = v.get("guid").and_then(guid).filter(|g| *g != NO_STYLE) {
             return Some(g);
