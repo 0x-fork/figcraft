@@ -1,7 +1,7 @@
 //! The message shown when the window can't open: it carries the error, a next step and where to
 //! report it, instead of the app quitting silently (#261).
 
-use crate::startup::message;
+use figcraft_ui_egui::dialogs::window_failed as message;
 
 const ERROR: &str = "WGPU error: Failed to create surface for any enabled backend: {}";
 
