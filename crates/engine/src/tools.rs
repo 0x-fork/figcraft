@@ -530,12 +530,16 @@ pub fn anchor_name(a: (u8, u8)) -> &'static str {
     ANCHORS.get(usize::from(a.1.min(2)) * 3 + usize::from(a.0.min(2))).copied().unwrap_or("tl")
 }
 
-/// The fill new text takes to be readable where it is drawn: white on a dark `page` (None: the
-/// model's default, black). For text made in the app: by the Text tool, or by a command that
-/// names no fill while the interface is up.
-pub(crate) fn readable_text_fills(doc: &Document, page: NodeId) -> Option<Vec<figcraft_color::Paint>> {
-    matches!(doc.node(page).map(|p| &p.kind), Some(NodeKind::Page { background, .. }) if background.is_dark())
-        .then(|| vec![figcraft_color::Paint::solid(figcraft_color::Color::WHITE)])
+/// The fill new text takes to be readable where it is drawn, in `parent`: white on a dark
+/// background (None: the model's default, black). The background is the nearest layer from `parent`
+/// out whose top visible fill is a mostly opaque solid colour, else the page (#362). For text made
+/// in the app: by the Text tool, or by a command that names no fill while the interface is up.
+pub(crate) fn readable_text_fills(doc: &Document, parent: NodeId) -> Option<Vec<figcraft_color::Paint>> {
+    let dark = std::iter::once(parent).chain(doc.ancestors(parent)).filter_map(|id| doc.node(id)).find_map(|n| match &n.kind {
+        NodeKind::Page { background, .. } => Some(background.is_dark()),
+        _ => n.fills.iter().rev().find(|p| p.visible).and_then(|p| p.solid_color()).filter(|c| c.a >= 0.5).map(|c| c.is_dark()),
+    });
+    dark.unwrap_or(false).then(|| vec![figcraft_color::Paint::solid(figcraft_color::Color::WHITE)])
 }
 
 const ANCHORS: [&str; 9] = ["tl", "t", "tr", "l", "c", "r", "bl", "b", "br"];
@@ -1895,7 +1899,7 @@ impl Session {
         let at = Point::new(ev.x.round(), (ev.y - 7.0).round());
         n.transform = pw.inverse() * Affine::translate(at.to_vec2());
         n.name = String::new();
-        if let Some(fills) = readable_text_fills(d, page) {
+        if let Some(fills) = readable_text_fills(d, parent) {
             n.fills = fills;
         }
         if let Some((w, h)) = figcraft_text::auto_size(&n) {

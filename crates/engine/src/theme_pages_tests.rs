@@ -118,13 +118,14 @@ fn text_drawn_on_a_dark_page_is_white_and_on_a_light_page_black() {
         let t = draw_text(&mut s, 40.0, 40.0);
         assert_eq!(s.doc().unwrap().node(t).unwrap().fills, vec![Paint::solid(want)], "text drawn on {page}");
     }
-    // In a frame on a dark page too; so is text a command makes in the app (`dark_page_text_tests`).
+    // In a (white) frame on a dark page, readable on the frame (#362); so is text a command makes
+    // in the app (`dark_page_text_tests`).
     let mut s = Session::empty();
     s.set_ui_dark(true);
     ex(&mut s, "file.new", json!({}));
     ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 200, "height": 200}));
     let t = draw_text(&mut s, 50.0, 50.0);
-    assert_eq!(s.doc().unwrap().node(t).unwrap().fills, vec![Paint::solid(Color::WHITE)]);
+    assert_eq!(s.doc().unwrap().node(t).unwrap().fills, vec![Paint::solid(Color::BLACK)]);
     let made = id_of(&ex(&mut s, "text.create", json!({"text": "Hi", "x": 0, "y": 300}))["id"]).unwrap();
     assert_eq!(s.doc().unwrap().node(made).unwrap().fills, vec![Paint::solid(Color::WHITE)]);
 }
