@@ -1500,6 +1500,8 @@ mod invite_links_tests;
 #[cfg(test)]
 mod keymap_tests;
 #[cfg(test)]
+mod library_range_styles_tests;
+#[cfg(test)]
 mod library_variables_tests;
 #[cfg(test)]
 mod live_access_tests;
