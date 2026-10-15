@@ -439,6 +439,10 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
         if !app.canvas.dragging && std::mem::take(&mut app.canvas.hovering) {
             app.session.vector_pointer_left();
         }
+        // A pan whose button was released off the canvas is over.
+        if !ctx.input(|i| i.pointer.button_down(egui::PointerButton::Middle) || i.pointer.primary_down()) {
+            app.canvas.middle_pan = None;
+        }
         return true;
     };
     // A press on the canvas gives the keyboard back to it (arrows nudge again).
