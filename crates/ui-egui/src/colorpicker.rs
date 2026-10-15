@@ -154,11 +154,17 @@ fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
     if let Err(e) = r {
         app.toast(e.to_string());
     }
-    if let Some(c) = paint.solid_color() {
-        app.session.recent_colors.retain(|x| *x != c);
-        app.session.recent_colors.insert(0, c);
-        app.session.recent_colors.truncate(16);
+    // Drag previews are not choices: a drag records only the colour it ends on, in `finish`.
+    let dragging = app.session.ds().map(|d| d.interaction.is_some()).unwrap_or(false);
+    if !dragging && let Some(c) = paint.solid_color() {
+        remember_recent(app, c);
     }
+}
+
+fn remember_recent(app: &mut FigApp, c: Color) {
+    app.session.recent_colors.retain(|x| *x != c);
+    app.session.recent_colors.insert(0, c);
+    app.session.recent_colors.truncate(16);
 }
 
 fn finish(app: &mut FigApp) {
@@ -167,6 +173,12 @@ fn finish(app: &mut FigApp) {
         app.ui.picker = Some(PickerTarget::PluginField { plugin, control, pending: None });
     }
     if app.session.ds().map(|d| d.interaction.is_some()).unwrap_or(false) {
+        if let Some(t) = app.ui.picker.clone()
+            && !matches!(t, PickerTarget::PluginField { .. })
+            && let Some(c) = current_paint(app, &t).and_then(|p| p.solid_color())
+        {
+            remember_recent(app, c);
+        }
         let _ = app.session.commit_interaction();
     }
 }
@@ -1092,5 +1104,50 @@ impl WithStops for Gradient {
             self.stops = stops;
         }
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layers_drag_tests::Ui;
+    use figcraft_engine::Session;
+
+    #[test]
+    fn dragging_records_only_the_final_colour_in_recent_colors() {
+        let mut u = Ui::new(Session::new());
+        let target = PickerTarget::PageBackground;
+        u.app.ui.picker = Some(target.clone());
+        for hex in ["#110000", "#220000", "#330000"] {
+            let c = Color::from_hex(hex).unwrap();
+            write(&mut u.app, &target, &Paint::solid(c), true);
+        }
+        assert!(u.app.session.recent_colors.is_empty(), "previews must not be recorded: {:?}", u.app.session.recent_colors);
+        finish(&mut u.app);
+        let last = Color::from_hex("#330000").unwrap();
+        assert_eq!(u.app.session.recent_colors, vec![last]);
+    }
+
+    #[test]
+    fn a_drag_released_with_a_final_write_records_one_colour() {
+        let mut u = Ui::new(Session::new());
+        let target = PickerTarget::PageBackground;
+        u.app.ui.picker = Some(target.clone());
+        // Not a whole 8-bit value: the page stores it rounded, so recording both would add two near-identical swatches.
+        let c = Color::new(0.3, 0.0, 0.0, 1.0);
+        write(&mut u.app, &target, &Paint::solid(Color::new(0.1, 0.0, 0.0, 1.0)), true);
+        write(&mut u.app, &target, &Paint::solid(c), false);
+        finish(&mut u.app);
+        assert_eq!(u.app.session.recent_colors.len(), 1, "{:?}", u.app.session.recent_colors);
+    }
+
+    #[test]
+    fn a_click_outside_a_drag_still_records_the_colour() {
+        let mut u = Ui::new(Session::new());
+        let target = PickerTarget::PageBackground;
+        u.app.ui.picker = Some(target.clone());
+        let c = Color::from_hex("#445566").unwrap();
+        write(&mut u.app, &target, &Paint::solid(c), false);
+        assert_eq!(u.app.session.recent_colors, vec![c]);
     }
 }
