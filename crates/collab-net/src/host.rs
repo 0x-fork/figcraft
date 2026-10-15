@@ -11,12 +11,10 @@ use figcraft_collab::{Outgoing, Server, same_secret};
 use figcraft_doc::Document;
 use figcraft_engine::live::{Event, PEOPLE};
 
+pub use crate::hub::REMOVED;
 use crate::hub::{Admission, Backend, Closing, Hosting, Local, clean_name, to_local};
 use crate::inbox::Inbox;
 pub use crate::join::ENDED;
-// start feat: remove-from-session
-pub use crate::hub::REMOVED;
-// end feat: remove-from-session
 use crate::net::NetLimits;
 
 /// What a hosted session needs.
@@ -132,13 +130,11 @@ impl Host {
         self.hosting.send(msg);
     }
 
-    // start feat: remove-from-session
     /// Remove client `id` from the session: they are disconnected and can't join again from
     /// their address while it runs. The host can't remove themselves.
     pub fn remove(&self, id: u32) {
         self.hosting.remove(id);
     }
-    // end feat: remove-from-session
 
     /// Cut every connection as a network failure would (no close frame).
     #[cfg(test)]

@@ -413,10 +413,8 @@ enum HubIn {
     },
     Local(Presence),
     LocalMsg(ClientMsg),
-    // start feat: remove-from-session
     /// The person hosting removes client `id` from their file (app sessions).
     Remove(u32),
-    // end feat: remove-from-session
     /// Cut every connection without a word (tests: a network failure).
     #[cfg(test)]
     Cut,
@@ -563,13 +561,11 @@ impl Hosting {
         let _ = self.hub.send(HubIn::LocalMsg(msg));
     }
 
-    // start feat: remove-from-session
     /// The hosting person removes client `id` from their file (app sessions; see
     /// [`HubIn::Remove`]).
     pub(crate) fn remove(&self, id: u32) {
         let _ = self.hub.send(HubIn::Remove(id));
     }
-    // end feat: remove-from-session
 
     /// Cut every connection as a network failure would (no close frame).
     #[cfg(test)]
@@ -1128,7 +1124,6 @@ fn unsupported(protocol: u32) -> String {
 /// sharing): the session's end for them.
 pub const STOPPED: &str = "Sharing was stopped: the link you joined with no longer works. Your copy stays open";
 
-// start feat: remove-from-session
 /// What someone removed from a file is told: the session's end for them (they keep their copy;
 /// nothing retries).
 pub const REMOVED: &str = "You were removed from this session. Your copy stays open";
@@ -1138,7 +1133,6 @@ const BARRED: &str = "you were removed from this session";
 
 /// The most addresses one file keeps barred.
 const MAX_BARRED: usize = 256;
-// end feat: remove-from-session
 
 /// What everyone in a file is told when its changes couldn't be saved (they reconnect).
 const UNSAVED: &str = "The server couldn't save the latest changes; reconnecting";
@@ -1153,10 +1147,8 @@ struct Hub<B> {
     local: Option<String>,
     /// What the servers said, sent once the backend made what changed durable.
     outbox: Vec<(String, Outgoing)>,
-    // start feat: remove-from-session
     /// Addresses ([`ip_key`]) removed from each file: they can't join it again while the hub runs.
     barred: HashMap<String, HashSet<IpAddr>>,
-    // end feat: remove-from-session
 }
 
 impl<B: Backend> Hub<B> {
@@ -1244,7 +1236,6 @@ impl<B: Backend> Hub<B> {
                     self.client_message(&file, id, msg, None);
                 }
             }
-            // start feat: remove-from-session
             HubIn::Remove(id) => {
                 if let Some(file) = self.local.clone()
                     && let Err(why) = self.remove_peer(&file, id)
@@ -1252,7 +1243,6 @@ impl<B: Backend> Hub<B> {
                     log::info!("live session: couldn't remove client {id}: {why}");
                 }
             }
-            // end feat: remove-from-session
             #[cfg(test)]
             HubIn::Cut => {
                 for c in self.conns.values() {
@@ -1277,7 +1267,6 @@ impl<B: Backend> Hub<B> {
                 self.client_message(&file, id, msg, Some(bytes));
             }
             Some(Kind::Hosting { owns }) => match msg {
-                // start feat: remove-from-session
                 ClientMsg::Admin(Admin::RemovePeer { file, client }) => {
                     let reply = if owns.as_deref() == Some(file.as_str()) {
                         self.removed_reply(&file, client)
@@ -1286,7 +1275,6 @@ impl<B: Backend> Hub<B> {
                     };
                     self.answer(conn, &ServerMsg::Admin(Box::new(reply)));
                 }
-                // end feat: remove-from-session
                 ClientMsg::Admin(req) => {
                     let owns = owns.clone();
                     let rooms = &self.rooms;
@@ -1298,12 +1286,10 @@ impl<B: Backend> Hub<B> {
                 _ => self.kick(&[conn], "only publishing and managing your own files are spoken on this connection"),
             },
             Some(Kind::Managing) => match msg {
-                // start feat: remove-from-session
                 ClientMsg::Admin(Admin::RemovePeer { file, client }) => {
                     let reply = self.removed_reply(&file, client);
                     self.answer(conn, &ServerMsg::Admin(Box::new(reply)));
                 }
-                // end feat: remove-from-session
                 ClientMsg::Admin(req) => self.admin(conn, req),
                 ClientMsg::Ping => self.answer(conn, &ServerMsg::Pong),
                 _ => self.kick(&[conn], "only requests to manage files are spoken on this connection"),
@@ -1366,12 +1352,10 @@ impl<B: Backend> Hub<B> {
             Ok(a) => a,
             Err(why) => return refuse(&c.out, &why),
         };
-        // start feat: remove-from-session
         if self.barred.get(&hello.file).is_some_and(|b| b.contains(&c.ip)) {
             log::info!("event=refused ip={} reason=removed", c.ip);
             return refuse(&c.out, BARRED);
         }
-        // end feat: remove-from-session
         let hosting = reads_hosting(&hello.client_version);
         // The backend checked the secret: the sessions don't keep it.
         hello.token.clear();
@@ -1429,7 +1413,6 @@ impl<B: Backend> Hub<B> {
         }
     }
 
-    // start feat: remove-from-session
     /// Remove client `id` from `file`: they are told the session is over for them and
     /// disconnected, and their address can't join the file again while the hub runs. The person
     /// hosting can't be removed.
@@ -1457,7 +1440,6 @@ impl<B: Backend> Hub<B> {
             Err(reason) => AdminReply::Failed { reason },
         }
     }
-    // end feat: remove-from-session
 
     /// Take in connection `c` as `kind` and send it `first`.
     fn take_in(&mut self, conn: u64, c: Pending, kind: Kind, first: &ServerMsg) {

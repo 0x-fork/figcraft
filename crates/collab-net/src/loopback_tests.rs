@@ -612,7 +612,6 @@ fn until_presence_or_pong(r: &mut Raw) -> Option<ServerMsg> {
     }
 }
 
-// start feat: remove-from-session
 #[test]
 fn the_host_removes_someone_and_they_cant_come_back() {
     let (mut host, mut hp, invite) = start();
@@ -643,4 +642,3 @@ fn the_host_removes_someone_and_they_cant_come_back() {
     host.stop();
     assert_eq!(host.connections(), 0);
 }
-// end feat: remove-from-session

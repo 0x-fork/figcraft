@@ -28,10 +28,8 @@ pub(crate) struct Script {
     /// The session each presence in `sent` and each message in `msgs` was for.
     pub(crate) sent_to: Vec<u64>,
     pub(crate) msgs_to: Vec<u64>,
-    // start feat: remove-from-session
     /// The people removed: `(session, client)`.
     pub(crate) removed: Vec<(u64, u32)>,
-    // end feat: remove-from-session
 }
 
 pub(crate) struct Mock(pub(crate) Arc<Mutex<Script>>);
@@ -66,12 +64,10 @@ impl LiveLink for Mock {
         s.published.push(opts);
         Ok(())
     }
-    // start feat: remove-from-session
     fn remove(&mut self, session: u64, client: u32) -> Result<(), String> {
         self.0.lock().unwrap().removed.push((session, client));
         Ok(())
     }
-    // end feat: remove-from-session
     fn leave(&mut self, session: u64) {
         let mut s = self.0.lock().unwrap();
         s.left += 1;
@@ -324,7 +320,6 @@ fn the_host_ending_resets_everything() {
     assert_eq!(s.message.as_deref(), Some("The host ended the session"));
 }
 
-// start feat: remove-from-session
 #[test]
 fn the_host_removes_people_and_guests_cant() {
     let (mut s, script) = session();
@@ -361,7 +356,6 @@ fn the_host_removes_people_and_guests_cant() {
     assert!(e.contains("only the person hosting"), "{e}");
     assert!(script.lock().unwrap().removed.is_empty());
 }
-// end feat: remove-from-session
 
 #[test]
 fn collab_commands_survive_junk() {

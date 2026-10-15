@@ -517,13 +517,11 @@ pub trait LiveLink: Send {
     fn background(&mut self, _job: u64, _req: NetRequest) -> bool {
         false
     }
-    // start feat: remove-from-session
     /// Remove client `client` from session `session`, which this link hosts: they are
     /// disconnected and can't join again from their address while it runs. Returns at once.
     fn remove(&mut self, _session: SessionId, _client: u32) -> std::result::Result<(), String> {
         Err("removing people needs the desktop app or the MCP server".into())
     }
-    // end feat: remove-from-session
     /// End session `session` (stop hosting or leave); the others go on. Nothing for a session
     /// that is over already.
     fn leave(&mut self, session: SessionId);
@@ -1896,7 +1894,6 @@ fn follow(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"follow": s.live().follow}))
 }
 
-// start feat: remove-from-session
 /// Remove someone from the open file's session: in a session this app hosts, the hub drops them;
 /// in a file of yours on a server, the server does (with the file's owner token). They are told
 /// the session is over for them, keep their copy, and can't join again from their address while
@@ -1949,7 +1946,6 @@ pub fn can_remove_people(s: &Session) -> bool {
             None => false,
         }
 }
-// end feat: remove-from-session
 
 fn cursor(s: &mut Session, p: &Value) -> Result<Value> {
     let at = match (num(p, "x"), num(p, "y")) {
@@ -2059,7 +2055,6 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, _| Ok(s.live_summary())
         ),
         spec!("collab.follow", "Follow", "{client? (a peer's id; omit to stop following)} → {follow}", false, follow),
-        // start feat: remove-from-session
         spec!(
             "collab.removePerson",
             "Remove from session",
@@ -2067,7 +2062,6 @@ pub fn specs() -> Vec<CommandSpec> {
             false,
             remove_person
         ),
-        // end feat: remove-from-session
         spec!(
             "collab.cursor",
             "Show cursor at",

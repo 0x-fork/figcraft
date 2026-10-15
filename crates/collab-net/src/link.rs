@@ -243,7 +243,6 @@ impl LiveLink for NetLink {
         }
     }
 
-    // start feat: remove-from-session
     fn remove(&mut self, session: SessionId, client: u32) -> Result<(), String> {
         match self.sessions.get(session) {
             Some(Active::Host(h)) if h.me().client_id == client => Err("you can't remove yourself: stop the session instead".into()),
@@ -255,7 +254,6 @@ impl LiveLink for NetLink {
             None => Err("this session is over".into()),
         }
     }
-    // end feat: remove-from-session
 
     fn leave(&mut self, session: SessionId) {
         if let Some(active) = self.sessions.remove(session) {
