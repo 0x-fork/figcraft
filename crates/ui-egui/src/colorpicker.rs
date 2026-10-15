@@ -411,7 +411,15 @@ fn alpha_slider(ui: &mut Ui, rect: Rect, color: Color) -> Option<(f32, bool)> {
 
 pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     let Some(target) = app.ui.picker.clone() else { return };
-    let Some(mut paint) = current_paint(app, &target) else {
+    // A layer's picker belongs to the selection it was opened for: once that changes, close it
+    // rather than keep editing layers that are no longer selected.
+    let stale = match &target {
+        PickerTarget::Paint { ids, .. } | PickerTarget::Effect { ids, .. } => *ids != app.session.selection(),
+        PickerTarget::TextRange { id, .. } => !app.session.selection().contains(id),
+        _ => false,
+    };
+    let current = if stale { None } else { current_paint(app, &target) };
+    let Some(mut paint) = current else {
         app.ui.picker = None;
         return;
     };
