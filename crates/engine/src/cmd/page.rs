@@ -92,9 +92,8 @@ pub fn specs() -> Vec<CommandSpec> {
             {
                 *b = background;
             }
-            for c in doc.get(src)?.children.clone() {
-                doc.duplicate_into(c, np, None)?;
-            }
+            let children = doc.get(src)?.children.clone();
+            doc.duplicate_all_into(&children, np)?;
             // Keep the new page right after the source.
             if let Some(si) = doc.pages.iter().position(|x| *x == src) {
                 doc.pages.retain(|x| *x != np);
