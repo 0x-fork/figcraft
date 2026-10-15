@@ -67,3 +67,18 @@ fn the_scan_reads_names_like_a_whole_file_read() {
         assert_eq!(faces_in(&index_bytes(&p, whole.len()).unwrap()), faces_in(&whole), "{}", p.display());
     }
 }
+
+#[test]
+fn fallback_faces_follow_the_runs_style() {
+    // A bold run's missing characters come from each fallback family's face nearest Bold, not its
+    // Regular, so Hangul or kana in a bold Latin run come out bold too. Same families, same order.
+    scan_system_fonts();
+    let mut w = db().write().unwrap();
+    let regular = w.fallbacks();
+    let bold = w.fallbacks_for("Bold");
+    let families = |v: &[Arc<Face>]| v.iter().map(|f| f.family.clone()).collect::<Vec<_>>();
+    assert_eq!(families(&regular), families(&bold));
+    for (r, b) in regular.iter().zip(&bold) {
+        assert!(b.weight >= r.weight, "{}: {} is lighter than {}", b.family, b.style, r.style);
+    }
+}
