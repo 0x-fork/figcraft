@@ -149,6 +149,28 @@ fn a_loop_that_does_not_close_is_closed_implicitly() {
 }
 
 #[test]
+fn missing_segments_are_skipped_wherever_they_sit_in_a_loop() {
+    use figcraft_geom::Shape;
+    let mut n = VectorNetwork::default();
+    square(&mut n, 0.0, 0.0, 200.0);
+    n.regions = vec![region(vec![vec![0, 1, 2]], WindingRule::NonZero)];
+    let control = n.region_path(0).unwrap();
+    let control_walk = n.loop_walk(&[0, 1, 2]);
+    for lp in [vec![99, 0, 1, 2], vec![0, 99, 1, 2], vec![99, 98, 0, 1, 2]] {
+        n.regions = vec![region(vec![lp.clone()], WindingRule::NonZero)];
+        assert_eq!(n.loop_walk(&lp), control_walk, "{lp:?}");
+        assert_eq!(n.region_at(p(100.0, 100.0)), Some(0), "{lp:?}");
+        assert!(n.region_contains(0, p(100.0, 100.0)), "{lp:?}");
+        let path = n.region_path(0).unwrap();
+        assert_eq!(path.elements().len(), control.elements().len(), "{lp:?}");
+        assert!((path.area().abs() - control.area().abs()).abs() < 1e-6, "{lp:?}");
+    }
+    n.regions = vec![region(vec![vec![99]], WindingRule::NonZero)];
+    assert!(n.region_path(0).is_none());
+    assert!(!n.region_contains(0, p(100.0, 100.0)));
+}
+
+#[test]
 fn a_regions_points_are_listed_once() {
     let mut n = nested();
     n.regions = vec![region(vec![vec![0, 1, 2, 3], vec![4, 5, 6, 7]], WindingRule::NonZero)];
