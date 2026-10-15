@@ -334,6 +334,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("pref.showDimensions", "Show dimensions on objects", "{on?}", false, |s, p| pref(s, p, |x| &mut x.show_dimensions)),
         spec!("pref.numberKeysOpacity", "Use number keys for opacity", "{on?}", false, |s, p| pref(s, p, |x| &mut x.number_keys_opacity)),
         spec!("pref.reduceMotion", "Reduce motion", "{on?}", false, |s, p| pref(s, p, |x| &mut x.reduce_motion)),
+        spec!("pref.autoSave", "Save files automatically", "{on?}", false, |s, p| pref(s, p, |x| &mut x.auto_save)),
         spec!("pref.nudge", "Nudge amount", "{small?, big?}", false, |s, p| {
             s.prefs.nudge_small = num(p, "small").unwrap_or(s.prefs.nudge_small).clamp(0.01, 1000.0);
             s.prefs.nudge_big = num(p, "big").unwrap_or(s.prefs.nudge_big).clamp(0.01, 10000.0);
@@ -369,18 +370,24 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"url": s.prefs.publish_server, "default": crate::live::DEFAULT_SERVER}))
             }
         ),
-        spec!("pref.language", "Interface language", "{language: system|en|es|es-419|fr|de|pt-BR|ja|ko|zh-Hans|…; else English}", false, |s, p| {
-            let lang = req_string("pref.language", p, "language")?;
-            let lang = lang.trim();
-            // A BCP 47-style tag ("es", "pt-BR", "zh_Hans") or "system".
-            let tag = lang.len() <= 35
-                && lang.split(['-', '_']).all(|part| !part.is_empty() && part.len() <= 8 && part.chars().all(|c| c.is_ascii_alphanumeric()));
-            if !tag {
-                return Err(bad("pref.language", format!("`{lang}` is not a language code")));
+        spec!(
+            "pref.language",
+            "Interface language",
+            "{language: system|en|cs|ru|es|es-419|fr|de|pt-BR|ja|ko|zh-Hans|…; else English}",
+            false,
+            |s, p| {
+                let lang = req_string("pref.language", p, "language")?;
+                let lang = lang.trim();
+                // A BCP 47-style tag ("es", "pt-BR", "zh_Hans") or "system".
+                let tag = lang.len() <= 35
+                    && lang.split(['-', '_']).all(|part| !part.is_empty() && part.len() <= 8 && part.chars().all(|c| c.is_ascii_alphanumeric()));
+                if !tag {
+                    return Err(bad("pref.language", format!("`{lang}` is not a language code")));
+                }
+                s.prefs.language = lang.to_string();
+                Ok(json!({"language": s.prefs.language}))
             }
-            s.prefs.language = lang.to_string();
-            Ok(json!({"language": s.prefs.language}))
-        }),
+        ),
         spec!("app.preferences", "Preferences", "{}", false, |s, _| ui(s, "dialog.preferences")),
         spec!("app.actions", "Actions", "{}", false, |s, _| ui(s, "palette.actions")),
         spec!("help.shortcuts", "Keyboard shortcuts", "{}", false, |s, _| ui(s, "panel.shortcuts")),

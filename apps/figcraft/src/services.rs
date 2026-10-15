@@ -1,11 +1,12 @@
 //! Desktop services: native file dialogs, clipboard, URLs, persisted preferences.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use figcraft_engine::{Prefs, Session};
-use figcraft_ui_egui::{FigApp, Services};
+use figcraft_ui_egui::{DialogFuture, FigApp, Services};
 use serde_json::{Value, json};
 
 pub struct Desktop {
@@ -59,12 +60,16 @@ impl Desktop {
 
 /// The system's preferred interface languages, most preferred first, comma-separated
 /// ("nl-NL,de-DE,en-US"): Windows' language list, macOS's AppleLanguages, `LANGUAGE` and the
-/// locale variables elsewhere. The UI shows the first one it has a catalog for.
+/// locale variables elsewhere. The UI shows the first language in the list that has a catalog.
+/// Windows keeps only its first preferred language (and English when it has no catalog): that
+/// list is also the input-language list, so a language added for a keyboard (Deutsch on a Polish
+/// system) must not decide the interface language.
 fn system_language() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         windows::System::UserProfile::GlobalizationPreferences::Languages()
-            .map(|l| l.into_iter().map(|s| s.to_string()).collect::<Vec<_>>().join(","))
+            .and_then(|l| l.GetAt(0))
+            .map(|s| s.to_string())
             .inspect_err(|e| log::info!("language: can't read the system languages: {e}"))
             .ok()
     }
@@ -194,15 +199,39 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     f.write_all(bytes)
 }
 
+thread_local! {
+    /// While the main window draws: a dialog parented to it, so a dialog opened from it stays in
+    /// front of it (a sheet on macOS). eframe gives other windows no handle: theirs have no parent.
+    static PARENT: RefCell<Option<rfd::AsyncFileDialog>> = const { RefCell::new(None) };
+}
+
+/// Run the main window's frame `f` with the dialogs it opens parented to `frame`'s window.
+pub fn parented<R>(frame: &eframe::Frame, f: impl FnOnce() -> R) -> R {
+    PARENT.with(|p| p.replace(Some(rfd::AsyncFileDialog::new().set_parent(frame))));
+    let r = f();
+    PARENT.with(|p| p.replace(None));
+    r
+}
+
+/// A dialog with `title`, parented to the main window while it draws.
+fn dialog(title: &str) -> rfd::AsyncFileDialog {
+    PARENT.with(|p| p.borrow().clone()).unwrap_or_default().set_title(title)
+}
+
+/// The dialog opens now; its future gives the path picked.
+fn picked(pick: impl Future<Output = Option<rfd::FileHandle>> + 'static) -> DialogFuture {
+    Box::pin(async move { pick.await.map(|f| f.path().to_path_buf()) })
+}
+
 impl Services for Desktop {
-    fn pick_open(&mut self, title: &str, exts: &[&str]) -> Option<PathBuf> {
-        rfd::FileDialog::new().set_title(title).add_filter("Supported files", exts).pick_file()
+    fn pick_open(&mut self, title: &str, exts: &[&str]) -> DialogFuture {
+        picked(dialog(title).add_filter("Supported files", exts).pick_file())
     }
-    fn pick_save(&mut self, title: &str, name: &str, exts: &[&str]) -> Option<PathBuf> {
-        rfd::FileDialog::new().set_title(title).set_file_name(name).add_filter("File", exts).save_file()
+    fn pick_save(&mut self, title: &str, name: &str, exts: &[&str]) -> DialogFuture {
+        picked(dialog(title).set_file_name(name).add_filter("File", exts).save_file())
     }
-    fn pick_folder(&mut self, title: &str) -> Option<PathBuf> {
-        rfd::FileDialog::new().set_title(title).pick_folder()
+    fn pick_folder(&mut self, title: &str) -> DialogFuture {
+        picked(dialog(title).pick_folder())
     }
     fn clipboard_set_text(&mut self, s: &str) {
         if let Some(c) = self.clipboard.as_mut() {
@@ -242,6 +271,8 @@ impl Services for Desktop {
     fn emergency_save(&mut self, session: &Session) {
         if let Some(r) = crate::recovery::lock(&self.recovery).as_mut() {
             r.write(session, true);
+            // Earlier runs' copies now covered go, so the next start doesn't open them twice.
+            r.settle(session);
         }
     }
     fn reduce_motion(&self) -> bool {

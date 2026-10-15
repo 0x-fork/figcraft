@@ -11,16 +11,27 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::i18n::{tr, trf, trn};
-use crate::render_worker::{Job, Worker};
+use crate::render_worker::{Done, Job, Worker};
 use crate::theme::{ACCENT, COMPONENT, Tokens, doc_c32, regular, semibold};
 
 pub struct CanvasState {
     pub rect: Rect,
     texture: Option<egui::TextureHandle>,
     tex_view: Option<figcraft_render::View>,
+    /// The file ([`figcraft_engine::DocState::uid`]) and page the texture shows: it is drawn only
+    /// on them.
+    tex_of: Option<(u64, NodeId)>,
+    /// The texture is a coarse preview (see [`crate::render_worker`]).
+    pub tex_coarse: bool,
     submitted: Option<JobKey>,
+    /// The view of the last render asked for.
+    want_view: Option<figcraft_render::View>,
     /// What the last canvas render had to do (shown by `ui.inspect`).
     pub render_work: Option<figcraft_render::Work>,
+    /// From asking for a render to its preview, and its refined image, handed to egui as the
+    /// canvas texture (ms; the texture is uploaded when that frame is painted).
+    pub preview_latency_ms: Option<f64>,
+    pub refine_latency_ms: Option<f64>,
     dragging: bool,
     space_pan: bool,
     middle_pan: Option<(Pos2, f64, f64)>,
@@ -45,8 +56,13 @@ impl Default for CanvasState {
             rect: Rect::NOTHING,
             texture: None,
             tex_view: None,
+            tex_of: None,
+            tex_coarse: false,
             submitted: None,
+            want_view: None,
             render_work: None,
+            preview_latency_ms: None,
+            refine_latency_ms: None,
             dragging: false,
             space_pan: false,
             middle_pan: None,
@@ -172,7 +188,14 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     request_render(app, worker, ppp);
     // Every finished render is shown, even when a newer one is already on its way: renders finish
     // in order, and an edit every frame (a drag) would otherwise never show until it stopped.
-    if let Some(done) = worker.poll() {
+    let shown = app.session.ds().map(|ds| (ds.uid, ds.page)).ok();
+    if let Some(done) = worker.poll()
+        && shows(&app.canvas, &done, shown)
+    {
+        if !done.coarse {
+            app.canvas.render_work = Some(done.work);
+            app.ui.render_ms = done.ms;
+        }
         // A pixel preview render is magnified with hard pixel edges.
         let filter = if app.session.ds().ok().and_then(|d| d.view.pixel_preview_scale()) == Some(done.view.scale) {
             egui::TextureOptions::NEAREST
@@ -183,9 +206,15 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
             Some(t) => t.set(done.image, filter),
             None => app.canvas.texture = Some(ctx.load_texture("figcraft-canvas", done.image, filter)),
         }
+        let latency = Some(done.at.elapsed().as_secs_f64() * 1000.0);
+        if done.coarse {
+            app.canvas.preview_latency_ms = latency;
+        } else {
+            app.canvas.refine_latency_ms = latency;
+        }
         app.canvas.tex_view = Some(done.view);
-        app.canvas.render_work = Some(done.work);
-        app.ui.render_ms = done.ms;
+        app.canvas.tex_of = Some((done.uid, done.page));
+        app.canvas.tex_coarse = done.coarse;
     }
     let painter = ui.painter_at(rect);
     let t = Tokens::get(&ctx);
@@ -200,7 +229,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         })
         .unwrap_or(t.canvas);
     painter.rect_filled(rect, CornerRadius::ZERO, bg);
-    if let (Some(tex), Some(v)) = (&app.canvas.texture, &app.canvas.tex_view) {
+    if let (Some(tex), Some(v), true) = (&app.canvas.texture, &app.canvas.tex_view, shown.is_some() && app.canvas.tex_of == shown) {
         // Re-project the last render onto the current view.
         let tl = app.to_screen(v.origin.0, v.origin.1);
         let zoom = app.session.ds().map(|d| d.view.zoom).unwrap_or(1.0);
@@ -240,7 +269,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
 
 /// The image's screen rect; align native-density renders to device pixels to avoid linear filtering
 /// blending neighbouring texels. Stale and pixel-preview renders retain their original projection.
-fn presented_image_rect(tl: Pos2, view: &figcraft_render::View, zoom: f64, ppp: f32, pixel_preview: bool) -> Rect {
+pub(super) fn presented_image_rect(tl: Pos2, view: &figcraft_render::View, zoom: f64, ppp: f32, pixel_preview: bool) -> Rect {
     let w = (f64::from(view.width) / view.scale * zoom) as f32;
     let h = (f64::from(view.height) / view.scale * zoom) as f32;
     let native_density = !pixel_preview
@@ -282,6 +311,30 @@ fn describe_box([x0, y0, x1, y1]: [f64; 4]) -> String {
         "Selection box, {w} by {h} at {x}, {y}: arrows move it, Shift+arrows or {cmd}+arrows size it, Enter selects, Escape cancels",
         &[("w", &w), ("h", &h), ("x", &x), ("y", &y), ("cmd", &cmd)],
     )
+}
+
+/// Whether a finished render goes on screen: an image of the file and page shown (`shown`), and
+/// not a coarse preview over a refined image that already shows the whole view asked for at its
+/// zoom (the same zoom elsewhere on the page is no such image).
+fn shows(c: &CanvasState, done: &Done, shown: Option<(u64, NodeId)>) -> bool {
+    if shown != Some((done.uid, done.page)) {
+        return false;
+    }
+    let refined_here = !c.tex_coarse
+        && c.tex_of == shown
+        && c.tex_view
+            .as_ref()
+            .zip(c.want_view.as_ref())
+            .is_some_and(|(have, want)| have.scale.to_bits() == want.scale.to_bits() && covers(have, want));
+    !(done.coarse && refined_here)
+}
+
+/// Whether `outer` shows all of the page that `inner` does.
+fn covers(outer: &figcraft_render::View, inner: &figcraft_render::View) -> bool {
+    let (o, i) = (outer.page_rect(), inner.page_rect());
+    // Rounding in the snapped origin, well under a device pixel.
+    let eps = 1e-6 / inner.scale.max(1e-9);
+    o.x0 <= i.x0 + eps && o.y0 <= i.y0 + eps && o.x1 >= i.x1 - eps && o.y1 >= i.y1 - eps
 }
 
 fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
@@ -329,7 +382,11 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
         skip: vec![],
         solo: key.solo,
         proof,
+        uid: ds.uid,
+        zoom_preview: ds.view.pixel_preview_scale().is_none(),
+        at: web_time::Instant::now(),
     };
+    app.canvas.want_view = Some(job.view.clone());
     worker.submit(job);
     app.canvas.submitted = Some(key);
 }
@@ -387,6 +444,13 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
         }
     }
     let Some(pos) = hover_pos.filter(|p| app.canvas.rect.contains(*p)) else {
+        // A drag released off the canvas, or off the window, ends where the pointer was last seen.
+        if app.canvas.dragging && !ctx.input(|i| i.pointer.primary_down()) {
+            app.canvas.dragging = false;
+            if let Some(at) = hover_pos.or_else(|| app.canvas.last_pointer.map(|p| app.to_screen(p.x, p.y))) {
+                send(app, PointerKind::Up, at, &mods);
+            }
+        }
         // Leaving the canvas: nothing is hovered there any more.
         if !app.canvas.dragging && std::mem::take(&mut app.canvas.hovering) {
             app.session.vector_pointer_left();
@@ -498,17 +562,22 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
         app.canvas.pressure = force;
     }
     if let Some(k) = kind {
-        let ev = pointer_event(app, k, pos, &mods);
-        if k == PointerKind::Up {
-            app.canvas.pressure = None;
-        }
-        app.canvas.last_pointer = Some(Point::new(ev.x, ev.y));
-        if let Err(e) = app.session.pointer(&ev) {
-            app.toast(e.to_string());
-        }
-        app.handle_ui_requests();
+        send(app, k, pos, &mods);
     }
     true
+}
+
+/// Pointer event `kind` at screen point `pos`, to the tools.
+fn send(app: &mut FigApp, kind: PointerKind, pos: Pos2, m: &egui::Modifiers) {
+    let ev = pointer_event(app, kind, pos, m);
+    if kind == PointerKind::Up {
+        app.canvas.pressure = None;
+    }
+    app.canvas.last_pointer = Some(Point::new(ev.x, ev.y));
+    if let Err(e) = app.session.pointer(&ev) {
+        app.toast(e.to_string());
+    }
+    app.handle_ui_requests();
 }
 
 /// Right-click at screen `pos`: select what's under the pointer (`deep`: the nested layer), then
@@ -989,12 +1058,30 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
         if app.session.tool.tool == ToolId::Pencil {
             painter.add(Shape::line(pts, stroke(t.text, 2.0)));
         } else {
+            for [x0, y0, x1, y1] in &ov.pen_handles {
+                bezier_handle(painter, app.to_screen(*x0, *y0), app.to_screen(*x1, *y1), 3.5, Color32::WHITE);
+            }
             for p in &pts {
                 painter.circle_filled(*p, 3.5, Color32::WHITE);
                 painter.circle_stroke(*p, 3.5, stroke(ACCENT, 1.0));
             }
             if let Some([x0, y0, x1, y1]) = ov.rubber {
-                painter.line_segment([app.to_screen(x0, y0), app.to_screen(x1, y1)], stroke(ACCENT, 1.0));
+                let (a, b) = (app.to_screen(x0, y0), app.to_screen(x1, y1));
+                // The segment a click would make: along the last anchor's out handle, if it has one.
+                match ov.rubber_handle {
+                    Some([hx, hy]) => {
+                        let h = app.to_screen(hx, hy);
+                        painter.add(egui::epaint::CubicBezierShape::from_points_stroke(
+                            [a, h, b, b],
+                            false,
+                            Color32::TRANSPARENT,
+                            stroke(ACCENT, 1.0),
+                        ));
+                    }
+                    None => {
+                        painter.line_segment([a, b], stroke(ACCENT, 1.0));
+                    }
+                }
             }
         }
     }
@@ -1127,6 +1214,14 @@ fn width_overlay(app: &FigApp, painter: &egui::Painter, doc: &Document, ve: &fig
     }
 }
 
+/// A bezier handle from its anchor `v` to its end `e` (screen points): the line, and a dot of
+/// radius `r` filled with `fill` (vector edit mode and the Pen draw them alike).
+fn bezier_handle(painter: &egui::Painter, v: Pos2, e: Pos2, r: f32, fill: Color32) {
+    painter.line_segment([v, e], stroke(ACCENT, 1.0));
+    painter.circle_filled(e, r, fill);
+    painter.circle_stroke(e, r, stroke(ACCENT, 1.0));
+}
+
 /// Vector edit mode: a layer's segments, handles and points (`points`) with its `hover`ed part, and
 /// for the `active` layer the closed area under the paint bucket and the pen's rubber band.
 fn vector_overlay(
@@ -1167,13 +1262,9 @@ fn vector_overlay(
         return;
     }
     for h in &o.handles {
-        let (v, e) = (sp(&h.vertex), sp(&h.handle));
-        painter.line_segment([v, e], stroke(ACCENT, 1.0));
         let hovered = hover == Some(VHit::Handle { seg: h.seg, start: h.start });
-        let r = if hovered { 4.5 } else { 3.5 };
         let on = o.selected_handles.contains(&(h.seg, h.start));
-        painter.circle_filled(e, r, if on { ACCENT } else { Color32::WHITE });
-        painter.circle_stroke(e, r, stroke(ACCENT, 1.0));
+        bezier_handle(painter, sp(&h.vertex), sp(&h.handle), if hovered { 4.5 } else { 3.5 }, if on { ACCENT } else { Color32::WHITE });
     }
     for (i, v) in o.vertices.iter().enumerate() {
         let p = sp(v);
@@ -1360,119 +1451,5 @@ pub fn fmt(v: f64) -> String {
 }
 
 #[cfg(test)]
-mod canvas_image_rect_tests {
-    use super::presented_image_rect;
-    use egui::{Pos2, RawInput, Rect, pos2, vec2};
-    use figcraft_render::View;
-
-    fn resized_frame(ui: &mut crate::layers_drag_tests::Ui, worker: &mut crate::render_worker::Worker, size: [f32; 2], ppp: f32) -> egui::FullOutput {
-        let ctx = ui.ctx.clone();
-        let time = ctx.input(|i| i.time) + 1.0 / 60.0;
-        let mut input =
-            RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(size[0], size[1]))), time: Some(time), ..Default::default() };
-        input.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(ppp);
-        let mut output = ctx.run_ui(input, |egui_ui| super::show(&mut ui.app, egui_ui, worker));
-        output.textures_delta.clear();
-        output
-    }
-
-    #[test]
-    fn native_density_image_edges_align_to_device_pixels_without_changing_extent() {
-        for ppp in [1.0_f32, 1.25, 1.5, 2.0] {
-            for zoom in [0.37_f64, 0.67, 1.0, 1.3, 2.0] {
-                let scale = zoom * f64::from(ppp);
-                let view = View { origin: (-31.25, 18.75), scale, width: 375, height: 240 };
-                for (cx, cy, canvas_x, canvas_y) in [(-200.5, 74.25, 100.25, 50.5), (10.0, -20.5, 3.25, 9.75), (913.75, 481.125, 212.5, 77.125)] {
-                    let tl = pos2(canvas_x + ((view.origin.0 - cx) * zoom) as f32, canvas_y + ((view.origin.1 - cy) * zoom) as f32);
-                    let rect = presented_image_rect(tl, &view, zoom, ppp, false);
-                    assert!((rect.min.x - tl.x).abs() * ppp <= 0.5001, "x snap bound: ppp={ppp}, zoom={zoom}, tl={tl:?}, rect={rect:?}");
-                    assert!((rect.min.y - tl.y).abs() * ppp <= 0.5001, "y snap bound: ppp={ppp}, zoom={zoom}, tl={tl:?}, rect={rect:?}");
-                    assert!(((rect.min.x * ppp).round() - rect.min.x * ppp).abs() < 1e-4, "x edge: ppp={ppp}, zoom={zoom}, tl={tl:?}, rect={rect:?}");
-                    assert!(((rect.min.y * ppp).round() - rect.min.y * ppp).abs() < 1e-4, "y edge: ppp={ppp}, zoom={zoom}, tl={tl:?}, rect={rect:?}");
-                    assert!((rect.width() * ppp - view.width as f32).abs() < 1e-3, "width: ppp={ppp}, zoom={zoom}, rect={rect:?}");
-                    assert!((rect.height() * ppp - view.height as f32).abs() < 1e-3, "height: ppp={ppp}, zoom={zoom}, rect={rect:?}");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn stale_pixel_preview_and_invalid_density_keep_original_projection() {
-        let tl = Pos2::new(149.5, 91.25);
-        let view = View { origin: (0.0, 0.0), scale: 1.95, width: 300, height: 180 };
-        let original = egui::Rect::from_min_size(tl, egui::vec2(200.0, 120.0));
-
-        let stale = presented_image_rect(tl, &view, 1.2, 1.5, false);
-        assert_eq!(stale, egui::Rect::from_min_size(tl, egui::vec2(300.0 / 1.95 * 1.2, 180.0 / 1.95 * 1.2)));
-        let pixel_preview = presented_image_rect(tl, &view, 1.3, 1.5, true);
-        assert_eq!(pixel_preview, original);
-        for ppp in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-            assert_eq!(presented_image_rect(tl, &view, 1.3, ppp, false), original);
-        }
-        assert_eq!(tl, pos2(149.5, 91.25));
-    }
-
-    #[test]
-    fn canvas_mesh_stays_sharp_through_window_resizes() {
-        use std::time::{Duration, Instant};
-
-        use crate::live_tests::flat;
-        use figcraft_engine::Session;
-
-        for ppp in [1.0_f32, 1.25, 1.5] {
-            let mut ui = crate::layers_drag_tests::Ui::new(Session::new());
-            let mut worker = ui.app.worker.take().expect("worker from headless UI");
-            let (zoom, center) = {
-                let ds = ui.app.session.ds_mut().expect("document state");
-                ds.view.zoom = 1.3;
-                ds.view.cx = 123.5;
-                ds.view.cy = -87.25;
-                (ds.view.zoom, (ds.view.cx, ds.view.cy))
-            };
-            for size in [[1440.0, 900.0], [1000.0, 700.0], [800.0, 500.0], [1440.0, 900.0]] {
-                let start = Instant::now();
-                let mut output;
-                loop {
-                    output = resized_frame(&mut ui, &mut worker, size, ppp);
-                    let has_current_texture = ui.app.canvas.tex_view.as_ref().is_some_and(|v| {
-                        (v.scale - zoom * f64::from(ppp)).abs() < 1e-9
-                            && v.width == (ui.app.canvas.rect.width() * ppp).ceil() as u32 + 1
-                            && v.height == (ui.app.canvas.rect.height() * ppp).ceil() as u32 + 1
-                            && !worker.in_flight()
-                    });
-                    if has_current_texture {
-                        break;
-                    }
-                    assert!(start.elapsed() < Duration::from_secs(10), "render did not finish for size={size:?}, ppp={ppp}");
-                    std::thread::sleep(Duration::from_millis(2));
-                }
-
-                let (ds_zoom, ds_center) = {
-                    let ds = ui.app.session.ds().expect("document state");
-                    (ds.view.zoom, (ds.view.cx, ds.view.cy))
-                };
-                assert_eq!(ds_zoom, zoom, "resize preserves zoom");
-                assert_eq!(ds_center, center, "resize preserves page centre");
-
-                let tex = ui.app.canvas.texture.as_ref().expect("canvas texture");
-                let mesh = flat(&output.shapes)
-                    .into_iter()
-                    .find_map(|shape| match shape {
-                        egui::Shape::Mesh(mesh) if mesh.texture_id == tex.id() => Some(mesh),
-                        _ => None,
-                    })
-                    .expect("canvas image mesh");
-                let min_x = mesh.vertices.iter().map(|v| v.pos.x).fold(f32::INFINITY, f32::min);
-                let min_y = mesh.vertices.iter().map(|v| v.pos.y).fold(f32::INFINITY, f32::min);
-                let max_x = mesh.vertices.iter().map(|v| v.pos.x).fold(f32::NEG_INFINITY, f32::max);
-                let max_y = mesh.vertices.iter().map(|v| v.pos.y).fold(f32::NEG_INFINITY, f32::max);
-                let view = ui.app.canvas.tex_view.as_ref().expect("canvas render view");
-                assert!((min_x * ppp - (min_x * ppp).round()).abs() < 1e-4, "mesh left edge: {min_x}, ppp={ppp}");
-                assert!((min_y * ppp - (min_y * ppp).round()).abs() < 1e-4, "mesh top edge: {min_y}, ppp={ppp}");
-                assert!(((max_x - min_x) * ppp - view.width as f32).abs() < 1e-3, "mesh width matches texture");
-                assert!(((max_y - min_y) * ppp - view.height as f32).abs() < 1e-3, "mesh height matches texture");
-            }
-            assert!(!worker.in_flight(), "last resize render finished");
-        }
-    }
-}
+#[path = "zoom_preview_tests.rs"]
+mod zoom_preview_tests;
