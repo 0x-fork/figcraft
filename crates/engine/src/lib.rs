@@ -846,10 +846,11 @@ impl Session {
                 }
             }
             Err(_) => {
-                // Roll back any partial edit.
+                // Roll back any partial edit — also during an interaction, where `before` is the
+                // interaction's last valid preview: restore it and leave the gesture itself (its
+                // own snapshot) alone.
                 if let Some((doc, sel, page, uid)) = before
                     && let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid)
-                    && ds.interaction.is_none()
                 {
                     ds.doc = doc;
                     ds.selection = sel;
@@ -1091,6 +1092,8 @@ impl Session {
         self.ds()?;
         let before: Vec<_> =
             self.docs.iter().map(|ds| (ds.uid, ds.doc.clone(), ds.selection.clone(), ds.page, ds.history.undo.len(), ds.history.limit)).collect();
+        // An edit inside clears the redo steps; a failed group has to bring them back.
+        let redo_before: Vec<_> = self.docs.iter().map(|ds| ds.history.redo.clone()).collect();
         let active = self.active;
         let journal_len = self.journal.len();
 
@@ -1108,8 +1111,9 @@ impl Session {
 
         if result.is_err() {
             self.docs.retain(|ds| before.iter().any(|(uid, _, _, _, _, _)| *uid == ds.uid));
-            for (uid, doc, selection, page, undo_len, limit) in &before {
+            for ((uid, doc, selection, page, undo_len, limit), redo) in before.iter().zip(redo_before) {
                 if let Some(ds) = self.docs.iter_mut().find(|ds| ds.uid == *uid) {
+                    ds.history.redo = redo;
                     ds.doc = doc.clone();
                     ds.selection = selection.clone();
                     ds.page = *page;
@@ -1478,6 +1482,8 @@ mod fx_behaviour_tests;
 #[cfg(test)]
 mod gesture_preview_tests;
 #[cfg(test)]
+mod gradient_shorthand_tests;
+#[cfg(test)]
 mod hide_publishing_tests;
 #[cfg(test)]
 mod history_behaviour_tests;
@@ -1487,6 +1493,8 @@ mod html_codegen_tests;
 mod import_export_tests;
 #[cfg(test)]
 mod inspect_behaviour_tests;
+#[cfg(test)]
+mod interaction_rollback_tests;
 #[cfg(test)]
 mod invite_links_tests;
 #[cfg(test)]

@@ -89,6 +89,8 @@ mod frame_label_tests;
 #[cfg(test)]
 mod gap_handle_tests;
 #[cfg(test)]
+mod gradient_shorthand_tests;
+#[cfg(test)]
 mod home_recents_tests;
 #[cfg(test)]
 mod home_tests;
@@ -149,9 +151,13 @@ mod shortcut_keys_tests;
 #[cfg(test)]
 mod shortcuts_tests;
 #[cfg(test)]
+mod style_folder_rename_tests;
+#[cfg(test)]
 mod text_enter_tests;
 #[cfg(test)]
 mod titlebar_tests;
+#[cfg(test)]
+mod variables_rename_tests;
 #[cfg(test)]
 mod vector_tail_ui_tests;
 #[cfg(test)]

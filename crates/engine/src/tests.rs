@@ -162,6 +162,28 @@ fn text_create_autosize_and_edit() {
 }
 
 #[test]
+fn find_replace_replaces_every_occurrence_when_replacement_contains_find() {
+    for (text, find, replace, want) in [
+        ("cat and cat", "cat", "cats", "cats and cats"),
+        ("cat and cat", "cat", "category", "category and category"),
+        ("banana", "a", "aa", "baanaanaa"),
+    ] {
+        let mut s = sess();
+        let t = id(&s.execute("text.create", &json!({"text": text, "x": 0, "y": 0})).unwrap());
+        s.execute("edit.findReplace", &json!({"find": find, "replace": replace})).unwrap();
+        assert_eq!(s.doc().unwrap().node(t).unwrap().kind.text().unwrap().characters, want, "{text}: {find} -> {replace}");
+    }
+}
+
+#[test]
+fn find_replace_rejects_empty_find() {
+    let mut s = sess();
+    let t = id(&s.execute("text.create", &json!({"text": "cat", "x": 0, "y": 0})).unwrap());
+    assert!(s.execute("edit.findReplace", &json!({"find": "", "replace": "x"})).is_err());
+    assert_eq!(s.doc().unwrap().node(t).unwrap().kind.text().unwrap().characters, "cat");
+}
+
+#[test]
 fn components_and_instances_sync() {
     let mut s = sess();
     let f = id(&s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 100, "height": 50, "name": "Button"})).unwrap());

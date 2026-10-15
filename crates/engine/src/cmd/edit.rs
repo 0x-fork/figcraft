@@ -253,7 +253,7 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         spec!("effect.set", "Set effect", "{ids?, index, effect {..}}", true, |s, p| {
-            let i = req_num("effect.set", p, "index")? as usize;
+            let i = req_index("effect.set", p, "index")?;
             let e: Effect = parse("effect.set", p, "effect")?.ok_or_else(|| bad("effect.set", "`effect` required"))?;
             for id in req_targets("effect.set", s, p)? {
                 let n = s.doc_mut()?.get_mut(id)?;
@@ -302,7 +302,7 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             |s, p| {
                 let cmd = "export.update";
-                let i = req_num(cmd, p, "index")? as usize;
+                let i = req_index(cmd, p, "index")?;
                 super::file::export_setting(cmd, ExportSetting::default(), p)?;
                 for id in req_targets(cmd, s, p)? {
                     let n = s.doc_mut()?.get_mut(id)?;
@@ -314,7 +314,7 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         spec!("export.remove", "Remove export setting", "{ids?, index}", true, |s, p| {
-            let i = req_num("export.remove", p, "index")? as usize;
+            let i = req_index("export.remove", p, "index")?;
             for id in req_targets("export.remove", s, p)? {
                 let n = s.doc_mut()?.get_mut(id)?;
                 if i < n.exports.len() {
@@ -488,8 +488,9 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
 fn bump_name(n: &str) -> String {
     if let Some((base, num)) = n.rsplit_once(' ')
         && let Ok(k) = num.parse::<u64>()
+        && let Some(next) = k.checked_add(1)
     {
-        return format!("{base} {}", k + 1);
+        return format!("{base} {next}");
     }
     format!("{n} 2")
 }
@@ -845,7 +846,8 @@ pub fn opacity_from_digits(digits: &str) -> Option<f32> {
     let mut n = 0u32;
     let mut count = 0;
     for c in digits.chars() {
-        n = n * 10 + c.to_digit(10)?;
+        // Input-derived: a number that outgrows `u32` stops the scan (None); it never wraps.
+        n = n.checked_mul(10)?.checked_add(c.to_digit(10)?)?;
         count += 1;
     }
     match count {
@@ -1012,13 +1014,20 @@ fn find_replace(s: &mut Session, p: &Value) -> Result<Value> {
             }
             if let NodeKind::Text(t) = &mut n.kind {
                 // Replace occurrence by occurrence so styles shift correctly.
+                // The search resumes after each inserted replacement, so a replacement that
+                // contains `find` neither loops forever nor stops the other occurrences.
                 let mut guard = 0;
-                while let Some(pos) = t.characters.find(find.as_str()) {
-                    let start = t.characters.get(..pos).map(|x| x.chars().count()).unwrap_or(0);
-                    let len = find.chars().count();
+                let mut cursor = 0;
+                let len = find.chars().count();
+                let r_len = r.chars().count();
+                loop {
+                    let from = t.characters.char_indices().nth(cursor).map_or(t.characters.len(), |(b, _)| b);
+                    let Some(pos) = t.characters.get(from..).and_then(|tail| tail.find(find.as_str())) else { break };
+                    let start = cursor + t.characters.get(from..from + pos).map_or(0, |x| x.chars().count());
                     t.replace_range(start, start + len, r);
+                    cursor = start + r_len;
                     guard += 1;
-                    if guard > 10_000 || r.contains(find.as_str()) {
+                    if guard > 10_000 {
                         break;
                     }
                 }
