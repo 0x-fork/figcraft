@@ -170,7 +170,13 @@ pub fn drain_hidden(app: &mut FigApp, ctx: &Context) {
             app.control_queue.push(r);
             continue;
         }
-        let res = crate::windows::as_window(app, target, |app| handle(app, ctx, &r.method, &r.params));
+        // Outside a frame, so outside the frame's guard: within the window's swap, a panic still
+        // ends in recovery copies and leaves every window its own state.
+        let res = crate::windows::as_window(app, target, |app| {
+            let mut res = Err("internal error".to_string());
+            crate::windows::guard(app, ctx, |app| res = handle(app, ctx, &r.method, &r.params));
+            res
+        });
         let _ = r.reply.send(ControlReply { id: r.id, result: res.unwrap_or_else(|| Err(format!("no window {target}"))) });
     }
 }
