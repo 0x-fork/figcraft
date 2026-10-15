@@ -77,9 +77,31 @@ fn guid(v: &Kv) -> Option<String> {
     Some(format!("{}:{}", num(v, "sessionID")? as u64, num(v, "localID")? as u64))
 }
 
+/// An override row names a layer of the main by its current GUID or by the `overrideKey` the
+/// layer had when the row was written: the key becomes the current GUID, unless the layer is
+/// current already or the key is ambiguous.
+fn normalize_override_segment(path: &mut [String], index: usize, scope: &OverrideScope) {
+    let Some(segment) = path.get(index) else { return };
+    if scope.current.contains(segment) {
+        return;
+    }
+    if let Some(Some(current)) = scope.aliases.get(segment) {
+        path[index] = current.clone();
+    }
+}
+
 /// A `GUID`-holding reference (`StyleId`, `VariableID`, …): its `guid`.
 fn ref_guid(v: &Kv) -> Option<String> {
     v.get("guid").and_then(guid).filter(|g| g != NO_STYLE)
+}
+
+/// The style a layer links in `key`, or in the older `legacy` field when `key` names none. An
+/// explicit NO_STYLE in `key` is a detach and wins over the legacy field.
+fn style_link(v: &View, key: &str, legacy: &str) -> Option<String> {
+    match v.get(key).and_then(|r| r.get("guid")).and_then(guid) {
+        Some(id) => Some(id).filter(|g| g != NO_STYLE),
+        None => v.get(legacy).and_then(guid).filter(|g| g != NO_STYLE),
+    }
 }
 
 fn color(c: &Kv) -> Value {
@@ -224,7 +246,7 @@ impl Fit {
 }
 
 /// Overrides and derived layout by id path.
-type Overrides<'a> = BTreeMap<Vec<String>, Vec<(Entry, &'a Kv<'a>)>>;
+type Overrides<'a> = BTreeMap<Vec<String>, Vec<OverrideRow<'a>>>;
 
 /// Where an override entry comes from.
 #[derive(Clone, Copy, PartialEq)]
@@ -234,6 +256,25 @@ enum Entry {
     /// Derived layout of a nested instance for a size it no longer has: its size and place no
     /// longer hold, the rest (resolved colours, text) still does.
     Stale,
+}
+
+/// One override or derived-layout row addressed to a layer.
+#[derive(Clone)]
+struct OverrideRow<'a> {
+    row: &'a Kv<'a>,
+    entry: Entry,
+    /// How many mains are being expanded around the instance that wrote the row: the rows of
+    /// the enclosing (outer) instances win over those of the inner ones.
+    source_depth: usize,
+    /// Position among the rows of the instance that wrote it; later rows win.
+    ordinal: usize,
+}
+
+/// The layers of a main by current GUID, and the old `overrideKey` of each that has one
+/// (`None` when two layers claim the same key).
+struct OverrideScope {
+    current: BTreeSet<String>,
+    aliases: BTreeMap<String, Option<String>>,
 }
 
 /// Where an instance's expanded layers are: the overrides and derived layout of the outermost
@@ -262,6 +303,10 @@ struct Mapper<'a> {
     /// Descriptions of components and component sets (REST `components` / `componentSets`).
     components: Obj,
     sets: Obj,
+    /// Layers and keys of each main, built when an instance of it first needs them.
+    override_scopes: BTreeMap<String, Rc<OverrideScope>>,
+    /// Entries held by `override_scopes` (bounded by [`MAX_NODES`] together).
+    override_scope_entries: usize,
     /// Component-bearing branches of the file's internal canvases (cached library definitions).
     library_contexts: Vec<Value>,
     /// Layers visited while scanning internal canvases, across all of them.
@@ -329,6 +374,8 @@ impl<'a> Mapper<'a> {
             styles: Obj::new(),
             components: Obj::new(),
             sets: Obj::new(),
+            override_scopes: BTreeMap::new(),
+            override_scope_entries: 0,
             library_contexts: Vec::new(),
             library_scan_count: 0,
             max_nodes: MAX_NODES,
@@ -367,6 +414,50 @@ impl<'a> Mapper<'a> {
 
     fn children(&self, id: &str) -> Vec<String> {
         self.kids.get(id).map(|k| k.iter().map(|(_, c)| c.clone()).collect()).unwrap_or_default()
+    }
+
+    /// The layers of main `main` by current GUID and by `overrideKey`. An instance nested in the
+    /// main is not entered: its layers belong to another main.
+    fn override_scope(&mut self, main: &str) -> Rc<OverrideScope> {
+        if let Some(scope) = self.override_scopes.get(main) {
+            return Rc::clone(scope);
+        }
+        let mut current = BTreeSet::new();
+        let mut aliases: BTreeMap<String, Option<String>> = BTreeMap::new();
+        let mut visited = BTreeSet::new();
+        let mut pending: Vec<(String, usize)> = self.children(main).into_iter().map(|id| (id, 1)).collect();
+        let mut complete = true;
+        while let Some((id, depth)) = pending.pop() {
+            if depth > MAX_DEPTH || visited.len() >= MAX_NODES {
+                complete = false;
+                break;
+            }
+            if !visited.insert(id.clone()) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(&id) else { continue };
+            current.insert(id.clone());
+            if let Some(alias) = node.get("overrideKey").and_then(guid) {
+                let target = aliases.entry(alias).or_insert_with(|| Some(id.clone()));
+                if target.as_deref().is_some_and(|target| target != id) {
+                    *target = None;
+                }
+            }
+            if node.get("type").and_then(Kv::str) != Some("INSTANCE") {
+                pending.extend(self.children(&id).into_iter().map(|child| (child, depth + 1)));
+            }
+        }
+        // A scope cut short could name the wrong layer for a key: use none of the keys.
+        if !complete {
+            aliases.clear();
+        }
+        let scope = Rc::new(OverrideScope { current, aliases });
+        let cost = scope.current.len() + scope.aliases.len();
+        if cost <= MAX_NODES.saturating_sub(self.override_scope_entries) {
+            self.override_scope_entries += cost;
+            self.override_scopes.insert(main.to_string(), Rc::clone(&scope));
+        }
+        scope
     }
 
     /// The DOCUMENT with its pages.
@@ -622,24 +713,24 @@ impl<'a> Mapper<'a> {
         }
         let base = *self.nodes.get(id)?;
         let path = inst.map(|i| [i.path.as_slice(), &[id.to_string()]].concat());
-        let entries = match (inst, &path) {
+        let entries: &[OverrideRow<'a>] = match (inst, &path) {
             (Some(i), Some(p)) => i.overrides.get(p).map(Vec::as_slice).unwrap_or_default(),
             _ => &[],
         };
-        let mut view = View::of(base).with(entries.iter().map(|e| e.1));
+        let mut view = View::of(base).with(entries.iter().map(|e| e.row));
         // A layer of a resized instance the file gives no derived layout for follows its
         // constraints from the main's geometry, then takes the size and place overridden on it
         // (auto layout places the others, as in the editor).
-        let derived = entries.iter().any(|(d, l)| *d == Entry::Derived && (l.get("size").is_some() || l.get("transform").is_some()));
+        let derived = entries.iter().any(|e| e.entry == Entry::Derived && (e.row.get("size").is_some() || e.row.get("transform").is_some()));
         let stacked = parent.and_then(|p| p.str("stackMode")).is_some_and(|m| matches!(m, "HORIZONTAL" | "VERTICAL" | "GRID"))
             && view.str("stackPositioning") != Some("ABSOLUTE");
         let main = View::of(base);
-        let set = |k: &str| entries.iter().rev().filter(|e| e.0 != Entry::Stale).find_map(|(_, l)| l.get(k));
+        let set = |k: &str| entries.iter().rev().filter(|e| e.entry != Entry::Stale).find_map(|e| e.row.get(k));
         if let (Some(f), false, false, Some((w, h))) = (fit, derived, stacked, main.size()) {
             let t = main.transform().unwrap_or_default();
             let (fw, ft) = f.apply(w, h, t, view.str("horizontalConstraint"), view.str("verticalConstraint"));
             view.fitted = Some((set("size").and_then(size).unwrap_or(fw), set("transform").and_then(matrix).unwrap_or(ft)));
-        } else if entries.iter().any(|(d, l)| *d == Entry::Stale && (l.get("size").is_some() || l.get("transform").is_some()))
+        } else if entries.iter().any(|e| e.entry == Entry::Stale && (e.row.get("size").is_some() || e.row.get("transform").is_some()))
             && let Some(s) = set("size").and_then(size).or_else(|| main.size())
         {
             view.fitted = Some((s, set("transform").and_then(matrix).or_else(|| main.transform()).unwrap_or_default()));
@@ -932,7 +1023,7 @@ impl<'a> Mapper<'a> {
     /// The style node a layer links in `key` (or the older `legacy` field), recorded for the REST
     /// `styles` map under `slot`.
     fn style(&mut self, v: &View<'a>, key: &str, legacy: &str, slot: &str, out: &mut Obj) -> Option<&'a Kv<'a>> {
-        let id = v.get(key).and_then(ref_guid).or_else(|| v.get(legacy).and_then(guid).filter(|g| g != NO_STYLE))?;
+        let id = style_link(v, key, legacy)?;
         let node = *self.nodes.get(&id)?;
         node.get("styleType").and_then(Kv::str)?;
         out.insert(slot.into(), json!(id));
@@ -1093,10 +1184,13 @@ impl<'a> Mapper<'a> {
     fn network(&mut self, o: &mut Obj, v: &View<'a>) -> bool {
         let Some(vd) = v.get("vectorData") else { return false };
         let Some(blob) = num(vd, "vectorNetworkBlob").and_then(|i| self.blobs.get(i as usize)).copied() else { return false };
-        let Some(net) = network::decode(blob) else {
+        let Some((net, styled_segments)) = network::decode_styled(blob) else {
             self.warn("damaged vector networks import as outlines");
             return false;
         };
+        if styled_segments > 0 {
+            self.warn("stroke styles of single vector network segments were left out");
+        }
         // An open path shows its fill, which regions can't hold: the outline keeps the look.
         let fills_shown =
             o.get("fills").and_then(Value::as_array).is_some_and(|f| f.iter().any(|p| p.get("visible").and_then(Value::as_bool) != Some(false)));
@@ -1277,7 +1371,18 @@ impl<'a> Mapper<'a> {
         }
         // Overrides by id path below this instance (the instance itself is addressed by its main's id).
         let own_path: Vec<String> = outer.map(|i| [i.path.as_slice(), &[id.to_string()]].concat()).unwrap_or_default();
-        let mut overrides: Overrides<'a> = outer.map(|i| (*i.overrides).clone()).unwrap_or_default();
+        let scope = self.override_scope(&sym);
+        let mut overrides: Overrides<'a> = BTreeMap::new();
+        if let Some(inherited) = outer {
+            for (path, rows) in inherited.overrides.iter() {
+                let mut path = path.clone();
+                // Rows an outer instance wrote for this instance's layers may use their old keys.
+                if path.starts_with(&own_path) && path.len() > own_path.len() {
+                    normalize_override_segment(&mut path, own_path.len(), &scope);
+                }
+                overrides.entry(path).or_default().extend(rows.iter().cloned());
+            }
+        }
         // A nested instance's derived layout is for the size it has in its main: resized here, the
         // sizes and places in it no longer hold and its layers follow their constraints instead.
         let differs = |a: f64, b: f64| (a - b).abs() > 1e-6 * a.abs().max(b.abs()).max(1.0);
@@ -1286,29 +1391,40 @@ impl<'a> Mapper<'a> {
                 (Some(a), Some(b)) => differs(a.0, b.0) || differs(a.1, b.1),
                 (a, b) => a.is_some() != b.is_some(),
             };
+        let mut local: Overrides<'a> = BTreeMap::new();
         let lists = [sd.and_then(|s| s.get("symbolOverrides")).map(Kv::list).unwrap_or_default(), v.list("derivedSymbolData")];
+        let source_depth = outer.map_or(0, |i| i.symbols.len());
+        let mut ordinal = 0;
         for (layer, list) in lists.into_iter().enumerate() {
             for ov in list {
-                let rel: Vec<String> =
+                let row_ordinal = ordinal;
+                ordinal += 1;
+                let mut rel: Vec<String> =
                     ov.get("guidPath").and_then(|g| g.get("guids")).map(Kv::list).unwrap_or_default().iter().filter_map(guid).collect();
                 if rel.is_empty() || rel == [sym.clone()] {
                     continue;
                 }
-                let e = overrides.entry([own_path.as_slice(), &rel].concat()).or_default();
-                // The outer instance's overrides win over this one's own; derived layout comes last.
-                if layer == 0 && outer.is_some() {
-                    e.insert(0, (Entry::Override, ov));
-                } else {
-                    e.push((
-                        match (layer, resized) {
-                            (0, _) => Entry::Override,
-                            (_, false) => Entry::Derived,
-                            (_, true) => Entry::Stale,
-                        },
-                        ov,
-                    ));
-                }
+                normalize_override_segment(&mut rel, 0, &scope);
+                // Explicit overrides, then derived layout (stale once the instance is resized).
+                let entry = match (layer, resized) {
+                    (0, _) => Entry::Override,
+                    (_, false) => Entry::Derived,
+                    (_, true) => Entry::Stale,
+                };
+                local.entry([own_path.as_slice(), &rel].concat()).or_default().push(OverrideRow {
+                    row: ov,
+                    entry,
+                    source_depth,
+                    ordinal: row_ordinal,
+                });
             }
+        }
+        for (path, rows) in local {
+            overrides.entry(path).or_default().extend(rows);
+        }
+        for rows in overrides.values_mut() {
+            // Deeper source rows apply first; outer rows win, with wire order preserved per source.
+            rows.sort_by_key(|row| (std::cmp::Reverse(row.source_depth), row.ordinal));
         }
         let mut all_props: BTreeMap<String, &'a Kv<'a>> = outer.map(|i| (*i.props).clone()).unwrap_or_default();
         for a in assignments {

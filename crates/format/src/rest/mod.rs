@@ -28,6 +28,8 @@ mod effects_tests;
 mod fig_sources;
 #[cfg(test)]
 mod gamepad_tests;
+#[cfg(test)]
+mod import_regression_tests;
 pub(crate) mod props;
 pub(crate) mod proto;
 #[cfg(test)]
@@ -232,7 +234,7 @@ fn style_binding(slot: &str, key: &str) -> Option<String> {
 /// Put back the shape a layer was before the `.fig` export wrote it as the outline of its stroke
 /// (`outlinedStroke`: `{kind, fills, strokes, stroke}` as the document holds them). Anything that
 /// isn't such a shape is ignored.
-fn restore_stroke(n: &mut Node, original: &Value) {
+fn restore_stroke(n: &mut Node, original: &Value) -> bool {
     #[derive(serde::Deserialize)]
     struct Original {
         kind: NodeKind,
@@ -240,16 +242,16 @@ fn restore_stroke(n: &mut Node, original: &Value) {
         strokes: Vec<figcraft_doc::color::Paint>,
         stroke: figcraft_doc::StrokeProps,
     }
-    let Ok(mut o) = serde_json::from_value::<Original>(original.clone()) else { return };
+    let Ok(mut o) = serde_json::from_value::<Original>(original.clone()) else { return false };
     match &mut o.kind {
         NodeKind::Vector { network } => {
             if network.vertices.len() + network.segments.len() > MAX_PATH_ELEMENTS {
-                return;
+                return false;
             }
             network.sanitize();
         }
         NodeKind::Line | NodeKind::Ellipse { .. } | NodeKind::Polygon { .. } | NodeKind::Star { .. } | NodeKind::Rectangle => {}
-        _ => return,
+        _ => return false,
     }
     let sp = &mut o.stroke;
     sp.weight = sp.weight.clamp(0.0, props::MAX_SIZE);
@@ -259,6 +261,28 @@ fn restore_stroke(n: &mut Node, original: &Value) {
     o.fills.truncate(64);
     o.strokes.truncate(64);
     (n.kind, n.fills, n.strokes, n.stroke) = (o.kind, o.fills, o.strokes, o.stroke);
+    true
+}
+
+/// A stroke-only vector imported as the outline of its stroke: the stroke paints fill the
+/// outline, and the stroke's shared style and colour variables move with them. The hidden fills
+/// it replaces go, with their style and bindings.
+fn outline_stroke(n: &mut Node) {
+    n.fills = std::mem::take(&mut n.strokes);
+    n.styles.fill = n.styles.stroke.take();
+    let bound = std::mem::take(&mut n.bound);
+    for (key, var) in bound {
+        let moved = match key.as_str() {
+            "fill" => continue,
+            k if k.starts_with("fills/") => continue,
+            "stroke" => "fill".to_string(),
+            k => match k.strip_prefix("strokes/") {
+                Some(rest) => format!("fills/{rest}"),
+                None => key,
+            },
+        };
+        n.bound.insert(moved, var);
+    }
 }
 
 fn children(v: &Value) -> &[Value] {
@@ -585,9 +609,7 @@ impl<'a> Ctx<'a> {
                 n.prop_refs.insert(field.clone(), p.to_string());
             }
         }
-        if matches!(n.kind, NodeKind::Vector { .. }) {
-            self.vector(n, j);
-        }
+        let outlined = matches!(n.kind, NodeKind::Vector { .. }) && self.vector(n, j);
         if matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. }) {
             let defs = self.prop_defs(n.id, j);
             match &mut n.kind {
@@ -608,20 +630,24 @@ impl<'a> Ctx<'a> {
             self.overlay_meta.entry(rid).or_insert(j);
         }
         self.bindings(n, j);
-        if let Some(original) = j.get("outlinedStroke") {
-            restore_stroke(n, original);
+        let restored = j.get("outlinedStroke").is_some_and(|original| restore_stroke(n, original));
+        // Styles and bindings were read against the stroke: they follow its paints to the fill.
+        if outlined && !restored {
+            outline_stroke(n);
         }
     }
 
     /// A vector's network: the editable one when the JSON carries it (`vectorNetwork`, our
     /// extension, written by the `.fig` import), else from its geometry. A stroke-only vector
-    /// uses the stroke outline, painted with the stroke paints (exact look, editable as a shape).
-    fn vector(&mut self, n: &mut Node, j: &Value) {
+    /// uses the stroke outline, painted with the stroke paints (exact look, editable as a shape):
+    /// returns whether it does, and the caller moves the paints with [`outline_stroke`] once the
+    /// styles and variables of the stroke are read.
+    fn vector(&mut self, n: &mut Node, j: &Value) -> bool {
         if let Some(net) = j.get("vectorNetwork") {
             match network(net) {
                 Some(network) => {
                     n.kind = NodeKind::Vector { network };
-                    return;
+                    return false;
                 }
                 None => self.warn("invalid or oversized vector networks import as outlines"),
             }
@@ -636,17 +662,15 @@ impl<'a> Ctx<'a> {
             (None, Some(s)) => (s, true),
             (None, None) => {
                 self.warn("vectors without geometry are empty (export the file JSON with geometry=paths)");
-                return;
+                return false;
             }
         };
         let mut network = VectorNetwork::from_path(&path);
         for r in &mut network.regions {
             r.winding = winding;
         }
-        if outline {
-            n.fills = std::mem::take(&mut n.strokes);
-        }
         n.kind = NodeKind::Vector { network };
+        outline
     }
 
     /// The paths of a `fillGeometry` / `strokeGeometry` list (node-local SVG path data).

@@ -520,6 +520,7 @@ fn load_with(
             if loaded.doc.name.is_empty() {
                 loaded.doc.name = file_stem(name_hint);
             }
+            super::styles::apply_paint_bindings_on_load(&mut loaded.doc);
             Ok((loaded, false))
         }
     }
@@ -529,6 +530,7 @@ fn load_with(
 /// innermost first so outer instances settle last.
 fn link_instances(doc: &mut Document) {
     crate::style_vars::after_load(doc);
+    super::styles::apply_paint_bindings_on_load(doc);
     let mut insts: Vec<(usize, NodeId)> =
         doc.nodes().filter(|n| matches!(n.kind, NodeKind::Instance { .. })).map(|n| (doc.ancestors(n.id).len(), n.id)).collect();
     insts.sort_by_key(|a| std::cmp::Reverse(a.0));

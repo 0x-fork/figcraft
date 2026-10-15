@@ -263,6 +263,25 @@ fn vectors_import_as_editable_networks() {
 }
 
 #[test]
+fn per_segment_stroke_styles_are_reported() {
+    let mut blob = square_blob();
+    // The first segment's style id follows the counts and the vertices (12 bytes each).
+    blob[12 + 4 * 12..12 + 4 * 12 + 4].copy_from_slice(&7u32.to_le_bytes());
+    let (net, styled) = network::decode_styled(&blob).unwrap();
+    assert_eq!((net.segments.len(), styled), (4, 1));
+    assert_eq!(network::decode_styled(&square_blob()).unwrap().1, 0);
+    let plain = import(&tail_canvas(), "Tail").unwrap().1;
+    assert!(!plain.iter().any(|w| w.contains("stroke styles of single")), "{plain:?}");
+    let mut message = tail_message();
+    let Kv::Object(fields) = &mut message else { panic!() };
+    let Kv::Array(blobs) = &mut fields.iter_mut().find(|(key, _)| *key == "blobs").unwrap().1 else { panic!() };
+    blobs[1] = o(vec![("bytes", Kv::Bytes(blob))]);
+    let (doc, warnings) = import(&canvas(&schema(), &message), "Tail").unwrap();
+    assert!(warnings.iter().any(|w| w.contains("stroke styles of single vector network segments were left out")), "{warnings:?}");
+    assert_eq!(network_of(&doc, "Wave").segments.len(), 4);
+}
+
+#[test]
 fn other_layer_kinds_import_as_the_closest_layers() {
     let (doc, warnings) = import(&tail_canvas(), "Tail").unwrap();
     let text_of = |id| match &doc.node(id).unwrap().kind {
