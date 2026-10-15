@@ -1016,6 +1016,7 @@ fn find_replace(s: &mut Session, p: &Value) -> Result<Value> {
                 // Replace occurrence by occurrence so styles shift correctly.
                 // The search resumes after each inserted replacement, so a replacement that
                 // contains `find` neither loops forever nor stops the other occurrences.
+                let r = &super::props::normalize_line_endings(r);
                 let mut guard = 0;
                 let mut cursor = 0;
                 let len = find.chars().count();
