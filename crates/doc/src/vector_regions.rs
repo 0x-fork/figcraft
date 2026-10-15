@@ -102,10 +102,18 @@ impl VectorNetwork {
         (0..self.regions.len()).rev().find(|r| self.region_contains(*r, p))
     }
 
-    /// Every point on region `r`'s loops (holes' too), each once, sorted.
+    /// Every point on region `r`'s loops (holes' too), each once, sorted (segments or points that
+    /// don't exist are left out).
     pub fn region_points(&self, r: usize) -> Vec<usize> {
         let Some(region) = self.regions.get(r) else { return Vec::new() };
-        let mut out: Vec<usize> = region.loops.iter().flatten().filter_map(|i| self.segments.get(*i)).flat_map(|s| [s.a, s.b]).collect();
+        let mut out: Vec<usize> = region
+            .loops
+            .iter()
+            .flatten()
+            .filter_map(|i| self.segments.get(*i))
+            .flat_map(|s| [s.a, s.b])
+            .filter(|v| *v < self.vertices.len())
+            .collect();
         out.sort_unstable();
         out.dedup();
         out

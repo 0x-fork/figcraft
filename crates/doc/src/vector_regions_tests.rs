@@ -187,6 +187,19 @@ fn empty_and_damaged_networks_have_no_regions_and_never_panic() {
 }
 
 #[test]
+fn region_points_leave_out_segment_ends_that_do_not_exist() {
+    let mut n = VectorNetwork::default();
+    let ring = square(&mut n, 0.0, 0.0, 100.0);
+    n.regions = vec![region(vec![ring], WindingRule::NonZero)];
+    assert_eq!(n.region_points(0), vec![0, 1, 2, 3]);
+    n.segments[3] = Segment::line(3, 9);
+    assert_eq!(n.region_points(0), vec![0, 1, 2, 3]);
+    assert!(n.region_path(0).is_some());
+    n.regions = vec![region(vec![vec![99]], WindingRule::NonZero)];
+    assert!(n.region_points(0).is_empty());
+}
+
+#[test]
 fn the_topology_key_ignores_moved_points_but_not_new_segments() {
     let mut n = nested();
     n.regions = vec![region(vec![vec![0, 1, 2, 3]], WindingRule::NonZero)];
