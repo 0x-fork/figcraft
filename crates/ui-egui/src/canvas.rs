@@ -167,6 +167,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         }
     }
     let own_cursor = input(app, ui, &resp);
+    crate::guides::end_released(&ctx);
     crate::live::track_pointer(app, &ctx);
     app.sync_preedit();
     request_render(app, worker, ppp);
