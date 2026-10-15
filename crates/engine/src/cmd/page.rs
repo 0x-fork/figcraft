@@ -160,8 +160,11 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             guides.remove(k);
             let ds = s.ds_mut()?;
-            if ds.guide == Some((owner, k)) {
-                ds.guide = None;
+            match ds.guide {
+                Some((o, i)) if o == owner && i == k => ds.guide = None,
+                // A later guide of the same owner moves up one place; keep the selection on it.
+                Some((o, i)) if o == owner && i > k => ds.guide = Some((o, i - 1)),
+                _ => {}
             }
             ok()
         }),

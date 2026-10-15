@@ -1383,7 +1383,8 @@ siblings and the frame's edges) along those axes, keeping whole pixels in the fr
 
 `guide.select {index, frame? | page?}` selects a guide (and deselects the layers; `{}` deselects
 it), as clicking one does in the app; `guide.remove {}` without an index removes the selected one
-(the context menu's Remove guide). While a guide is selected and no layer is, Delete removes it,
+(the context menu's Remove guide), and removing another guide keeps the selected one selected.
+While a guide is selected and no layer is, Delete removes it,
 the arrows across it nudge it (Shift: the big nudge) and Escape deselects it. In the app, a guide
 dragged out of a ruler and dropped on a frame becomes the guide of the top-level frame there, along
 the frame's axis nearer the ruler's; Alt-dragging a guide drops a copy, and holding Alt while
