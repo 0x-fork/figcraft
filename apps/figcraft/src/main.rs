@@ -62,6 +62,7 @@ impl eframe::App for App {
         }
         let title = with_app(|fig| {
             control_server::drain_queue(&self.queue, &mut fig.control_queue);
+            figcraft_ui_egui::control::drain_hidden(fig, ctx);
             #[cfg(target_os = "macos")]
             apple_events::poll(&self.apple_events, fig, ctx);
             // Closing the window asks about unsaved changes (and keeps the app running while other

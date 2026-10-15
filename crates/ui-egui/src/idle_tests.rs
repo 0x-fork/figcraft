@@ -291,3 +291,36 @@ fn an_animated_gif_wakes_only_the_presenter_and_only_at_its_frames() {
     h.app.ui.present = None;
     h.assert_idle("the presenter closed");
 }
+
+#[test]
+fn a_hidden_window_answers_requests_that_need_no_frame() {
+    // #269: minimised or covered, the window draws no frames, but the app's logic still runs: it
+    // answers edits, inspection and saves; what needs a frame waits for the window to show.
+    let dir = std::env::temp_dir().join(format!("figcraft-hidden-save-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("hidden.figcraft");
+    let (mut h, _) = document();
+    h.settle();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let request = |id: u64, method: &str, params: Value| ControlRequest {
+        id: json!(id),
+        method: method.into(),
+        params,
+        reply: tx.clone(),
+        cancelled: Default::default(),
+    };
+    h.app.control_queue.push(request(1, "engine.execute", json!({"command": "file.save", "params": {"path": path.to_string_lossy()}})));
+    h.app.control_queue.push(request(2, "ui.inspect", json!({})));
+    let mut hidden = RawInput::default();
+    hidden.viewports.insert(ViewportId::ROOT, egui::ViewportInfo { minimized: Some(true), ..Default::default() });
+    let app = &mut h.app;
+    let _ = h.ctx.run_logic(&hidden, |ctx| crate::control::drain_hidden(app, ctx));
+    let saved = rx.try_recv().unwrap();
+    assert_eq!(saved.id, json!(1));
+    assert!(saved.result.is_ok() && path.exists(), "saved while hidden: {:?}", saved.result);
+    assert!(rx.try_recv().is_err(), "the interface's state waits for a frame");
+    // Shown again: the next frame answers it.
+    h.frame(vec![]);
+    assert_eq!(rx.try_recv().unwrap().id, json!(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}

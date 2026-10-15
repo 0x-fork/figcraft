@@ -136,6 +136,33 @@ pub fn drain(app: &mut FigApp, ctx: &Context) {
     }
 }
 
+/// Methods that need no frame drawn (#269): a hidden window answers them too.
+const NO_FRAME: &[&str] = &["engine.execute", "engine.commands", "document.inspect", "node.get", "window.list", "ui.render"];
+
+/// While the main window is hidden (minimised, or covered by other windows) it draws no frames,
+/// but the desktop app's `logic` still runs: it answers the requests for that window that need no
+/// frame, so an attached agent can edit, inspect and save. The rest (screenshots, input, the
+/// interface's own state) wait for the window to show.
+pub fn drain_hidden(app: &mut FigApp, ctx: &Context) {
+    if ctx.input(|i| i.viewport().visible()) != Some(false) {
+        return;
+    }
+    for r in std::mem::take(&mut app.control_queue) {
+        if r.is_cancelled() {
+            continue;
+        }
+        let main = r.params.get("window").and_then(Value::as_u64).unwrap_or(app.windows.focused) == 0;
+        if !main || !NO_FRAME.contains(&r.method.as_str()) {
+            app.control_queue.push(r);
+            continue;
+        }
+        // Outside a frame, so outside the frame's guard: a panic still ends in recovery copies.
+        let mut res = Err("internal error".to_string());
+        crate::windows::guard(app, ctx, |app| res = handle(app, ctx, &r.method, &r.params));
+        let _ = r.reply.send(ControlReply { id: r.id, result: res });
+    }
+}
+
 fn save_color_image(img: &egui::ColorImage, path: &str) -> Result<(), String> {
     let [w, h] = img.size;
     let mut rgba = Vec::with_capacity(w * h * 4);
