@@ -764,10 +764,12 @@ skipped. The result's `opened.warnings` list what was approximated or skipped.
 ending in `.fig`) writes the whole document as a `.fig` file, from the same public format notes the
 import uses: the layer tree, geometry, paints with image bytes, strokes, effects, text with styled
 runs, vector networks, auto layout, constraints, components, sets, instances with their overrides
-and property values, and prototype interactions. `warnings` lists what was left out (shared style
-links, variables, comments, Dev Mode data and the like). Only round trips through FigCraft's own
-importer are verified; other apps may not open every file. Without `path` the file comes back as
-base64 `data`. Check one by opening it again:
+and property values, variable collections with their modes, variables and bindings, shared styles
+with their layer links, and prototype interactions. `warnings` lists what was left out (comments,
+Dev Mode data, some bindings and settings and the like). Round trips through FigCraft's own
+importer are tested, and the example documents and small test files were opened in other software
+(`docs/file-format-parity.md` says what was checked); other apps may not open every file. Without
+`path` the file comes back as base64 `data`. Check one by opening it again:
 
 ```text
 {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"export","arguments":{"format":"fig","path":"/tmp/handoff.fig"}}}
