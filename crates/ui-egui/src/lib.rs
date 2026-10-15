@@ -159,6 +159,8 @@ mod text_enter_tests;
 #[cfg(test)]
 mod titlebar_tests;
 #[cfg(test)]
+mod variables_export_ui_tests;
+#[cfg(test)]
 mod variables_rename_tests;
 #[cfg(test)]
 mod vector_tail_ui_tests;
@@ -189,6 +191,15 @@ pub trait Services {
     }
     fn pick_save(&mut self, _title: &str, _name: &str, _exts: &[&str]) -> DialogFuture {
         Box::pin(std::future::ready(None))
+    }
+    /// The platform saves files by handing them over as downloads (the browser), not through
+    /// save dialogs.
+    fn downloads(&self) -> bool {
+        false
+    }
+    /// Hand `bytes` over as a download named `name`; false when nothing was delivered.
+    fn download(&mut self, _name: &str, _bytes: &[u8]) -> bool {
+        false
     }
     /// A folder to write several files into.
     fn pick_folder(&mut self, _title: &str) -> DialogFuture {
