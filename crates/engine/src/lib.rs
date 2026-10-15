@@ -721,7 +721,8 @@ pub struct Session {
     /// dark page colour while it is dark (added pages take the current page's). Headless sessions (CLI, MCP, exports) have no
     /// theme, so what scripts make is the same everywhere.
     pub ui_dark: Option<bool>,
-    /// Command log (id + params) for actions/automation.
+    /// Command log (id + params) for actions/automation. File imports that carry the file bytes
+    /// (`file.import` with `data`) are not logged, so the log never holds a copy of a pasted file.
     pub journal: Vec<(String, Value)>,
     /// Recently used colours.
     pub recent_colors: Vec<figcraft_color::Color>,
@@ -743,6 +744,19 @@ pub struct Session {
 impl Default for Session {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Whether a command, or a batch wrapping one, imports a file passed as Base64 `data`.
+fn command_carries_import_bytes(id: &str, params: &Value) -> bool {
+    match id {
+        "file.import" => params::get(params, "data").is_some(),
+        "command.batch" => params.get("commands").and_then(Value::as_array).is_some_and(|commands| {
+            commands.iter().any(|c| {
+                c.get("command").and_then(Value::as_str).zip(c.get("params")).is_some_and(|(id, params)| command_carries_import_bytes(id, params))
+            })
+        }),
+        _ => false,
     }
 }
 
@@ -885,9 +899,13 @@ impl Session {
                 if spec.history && id != "edit.repeat" {
                     self.last_command = Some((id.to_string(), params.clone()));
                 }
-                self.journal.push((id.to_string(), params.clone()));
-                if self.journal.len() > 5000 {
-                    self.journal.drain(..1000);
+                // Imported bytes already live in the document: a Base64 copy in the log would stay
+                // for the whole session.
+                if !command_carries_import_bytes(id, params) {
+                    self.journal.push((id.to_string(), params.clone()));
+                    if self.journal.len() > 5000 {
+                        self.journal.drain(..1000);
+                    }
                 }
             }
             Err(_) => {
@@ -1549,6 +1567,8 @@ mod history_behaviour_tests;
 mod html_codegen_tests;
 #[cfg(test)]
 mod import_export_tests;
+#[cfg(test)]
+mod import_journal_tests;
 #[cfg(test)]
 mod inspect_behaviour_tests;
 #[cfg(test)]
