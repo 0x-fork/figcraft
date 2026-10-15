@@ -68,6 +68,8 @@ mod a11y_tests;
 #[cfg(test)]
 mod branch_ui_tests;
 #[cfg(test)]
+mod canvas_double_click_tests;
+#[cfg(test)]
 mod canvas_drag_tests;
 #[cfg(test)]
 mod canvas_fixes_tests;
