@@ -540,6 +540,7 @@ fn listing(app: &FigApp, ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut 
     }
     ui.add_space(4.0);
     let r = ui.add(egui::TextEdit::singleline(&mut p.query).hint_text(tr("Search")).font(regular(11.0)).desired_width(W));
+    crate::widgets::select_all_on_focus(ui, &r, &p.query);
     if !r.has_focus() && !crate::a11y::field_focused(ui.ctx()) {
         r.request_focus();
     }
@@ -799,6 +800,7 @@ fn editor(ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut Frame) {
         egui::TextEdit::store_state(ui.ctx(), r.id, state);
         e.focus = false;
     }
+    crate::widgets::select_all_on_focus(ui, &r, &e.name);
     ui.add_space(6.0);
     caption(ui, tr("Description"));
     ui.add(egui::TextEdit::multiline(&mut e.description).font(regular(11.0)).desired_width(W).desired_rows(2));

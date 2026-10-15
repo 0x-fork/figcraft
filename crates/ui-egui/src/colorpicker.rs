@@ -1030,6 +1030,7 @@ fn image_presets(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint: &m
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             let r = ui.add(egui::TextEdit::singleline(name).font(regular(11.0)).desired_width(136.0));
+            crate::widgets::select_all_on_focus(ui, &r, name);
             if !r.has_focus() && !crate::a11y::field_focused(ui.ctx()) {
                 r.request_focus();
             }

@@ -627,6 +627,7 @@ fn palette(app: &mut FigApp, ctx: &egui::Context) {
                             .frame(egui::Frame::NONE.inner_margin(egui::Margin::same(8))),
                     );
                     r.request_focus();
+                    crate::widgets::select_all_on_focus(ui, &r, &q);
                     ui.add_space(4.0);
                     let ql = q.to_lowercase();
                     // Labels match in the UI language and in English.

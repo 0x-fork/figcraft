@@ -494,6 +494,7 @@ fn text_field_in(ui: &mut Ui, id: Id, value: &str, rect: Rect, placeholder: &str
     if started {
         editing = Some(value.to_string());
         ui.memory_mut(|m| m.request_focus(id.with("te")));
+        select_all_next(ui, id.with("te"));
     }
     let mut out = None;
     match editing {
@@ -527,14 +528,16 @@ fn text_field_in(ui: &mut Ui, id: Id, value: &str, rect: Rect, placeholder: &str
 fn field_editor(ui: &mut Ui, rect: Rect, id: Id, text: &mut String, hint: &str) -> Response {
     let t = Tokens::get(ui.ctx());
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(8.0, 4.0))));
-    child.add(
+    let r = child.add(
         egui::TextEdit::singleline(text)
             .id(id)
             .frame(egui::Frame::NONE)
             .font(regular(11.0))
             .hint_text(egui::RichText::new(hint).font(regular(11.0)).color(t.text_tertiary))
             .desired_width(rect.width() - 16.0),
-    )
+    );
+    select_all_on_focus(ui, &r, text);
+    r
 }
 
 /// A text field that is typed into in place: `text` changes as it is typed (the caller decides
@@ -560,6 +563,48 @@ fn keep_focus(r: &Response, started: bool) {
     if started && !r.has_focus() {
         r.request_focus();
     }
+}
+
+/// Selects all of a one-line editor's `text` when it gains the keyboard (a click, Tab or a focus
+/// request), so what is typed replaces the value, as in Figma's fields. Call it after adding the
+/// editor (`r` is its response). egui puts the caret where the press landed, so the selection is
+/// laid again until the button is released; a drag from the press selects what it covers instead.
+pub fn select_all_on_focus(ui: &Ui, r: &Response, text: &str) {
+    let pending = select_all_id(r.id);
+    if r.gained_focus() {
+        ui.data_mut(|d| d.insert_temp(pending, true));
+    }
+    if !ui.data(|d| d.get_temp::<bool>(pending)).unwrap_or(false) {
+        return;
+    }
+    // Not focused yet (the click that starts an edit can land before the editor exists): wait.
+    if !r.has_focus() {
+        return;
+    }
+    let (down, dragged) = ui.input(|i| (i.pointer.any_down(), i.pointer.total_drag_delta().is_some_and(|d| d.length() > 6.0)));
+    if down && dragged {
+        ui.data_mut(|d| d.remove::<bool>(pending));
+        return;
+    }
+    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), r.id) {
+        let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
+        state.cursor.set_char_range(Some(all));
+        state.store(ui.ctx(), r.id);
+        ui.ctx().request_repaint();
+    }
+    if !down {
+        ui.data_mut(|d| d.remove::<bool>(pending));
+    }
+}
+
+/// Has [`select_all_on_focus`] select all of editor `te_id` from now on (an edit that starts
+/// with the editor already focused, which then gains no focus).
+fn select_all_next(ui: &Ui, te_id: Id) {
+    ui.data_mut(|d| d.insert_temp(select_all_id(te_id), true));
+}
+
+fn select_all_id(te_id: Id) -> Id {
+    te_id.with("select_all_on_focus")
 }
 
 /// What a dropdown shows before its label.
@@ -963,11 +1008,7 @@ pub fn text_field_inline(ui: &mut Ui, id: Id, value: &str, rect: Rect, font: egu
     if started {
         buf = Some(value.to_string());
         ui.memory_mut(|m| m.request_focus(te_id));
-        // A rename starts with the whole name selected.
-        let mut state = egui::TextEdit::load_state(ui.ctx(), te_id).unwrap_or_default();
-        let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(value.chars().count()));
-        state.cursor.set_char_range(Some(all));
-        state.store(ui.ctx(), te_id);
+        select_all_next(ui, te_id);
     }
     match buf {
         Some(mut text) => {
@@ -976,6 +1017,9 @@ pub fn text_field_inline(ui: &mut Ui, id: Id, value: &str, rect: Rect, font: egu
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
             let r = crate::bidi::single_line(&mut child, te_id, &mut text, font, rect.width());
             a11y::own_focus(&r);
+            keep_focus(&r, started);
+            // A rename or a hex edit starts with the whole text selected.
+            select_all_on_focus(ui, &r, &text);
             // The Enter that started the edit (from the keyboard) doesn't end it.
             let enter = !started && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
