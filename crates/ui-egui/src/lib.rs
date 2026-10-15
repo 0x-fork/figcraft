@@ -153,6 +153,8 @@ mod text_enter_tests;
 #[cfg(test)]
 mod titlebar_tests;
 #[cfg(test)]
+mod variables_rename_tests;
+#[cfg(test)]
 mod vector_tail_ui_tests;
 #[cfg(test)]
 mod web_clipboard_tests;
