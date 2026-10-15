@@ -1196,7 +1196,13 @@ impl Session {
                 if ids.is_empty() {
                     return Ok(());
                 }
-                let targets = Targets::gather(&doc, page, &ids);
+                let mut targets = Targets::gather(&doc, page, &ids);
+                // A copy dragged out with Alt snaps to the layers it came from too (they stay put).
+                if ev.alt
+                    && let Some(b) = targets.moving
+                {
+                    targets.add_box(b);
+                }
                 self.begin_interaction(if ev.alt { "Duplicate" } else { "Move" })?;
                 self.tool.gesture = Gesture::Move { start: ev.p(), ids, targets, duplicate: ev.alt, moved: false };
                 self.tool.overlay.cursor = if ev.alt { Cursor::Copy } else { Cursor::Default };
@@ -1707,6 +1713,7 @@ impl Session {
                     // dropped; layers in an auto layout frame already sit in their slot.
                     let page = self.page()?;
                     let sel = self.selection();
+                    let sources = if duplicate { ids.clone() } else { Vec::new() };
                     let moving = if duplicate { sel } else { ids };
                     let doc = self.doc()?.clone();
                     let in_al =
@@ -1735,6 +1742,10 @@ impl Session {
                         self.cancel_interaction()?;
                     } else {
                         self.commit_interaction()?;
+                        // Duplicate repeats a free Alt-drag's step (an auto layout places its own).
+                        if duplicate && !in_al && moving.len() == sources.len() {
+                            self.ds_mut()?.last_duplicate = Some(crate::cmd::edit::Duplicated { sources, copies: moving });
+                        }
                     }
                 } else {
                     self.cancel_interaction()?;
