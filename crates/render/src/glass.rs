@@ -213,6 +213,10 @@ pub fn glass(g: &Glass, shape: &Outline, back: &Pixmap, pad: u32, w: u32, h: u32
     let fringe = (g.dispersion * 0.25) as f32;
     let power = (6.0 - 5.0 * g.splay) as f32;
     let (band, reach) = (band as f32, reach as f32);
+    // The falloff, lowered by its value at `reach` and scaled back to 1 at the edge, so the light
+    // fades out to 0 at `reach` instead of stopping there.
+    let floor = (-reach / band).exp();
+    let fall = 1.0 - floor;
     let intensity = g.light_intensity as f32;
     let depth = depth as f32;
     let mut out = Pixmap::new(w, h)?;
@@ -242,12 +246,12 @@ pub fn glass(g: &Glass, shape: &Outline, back: &Pixmap, pad: u32, w: u32, h: u32
                 let a = rs[3].max(gs[3]).max(bs[3]);
                 [rs[0].min(a), gs[1].min(a), bs[2].min(a), a]
             };
-            // The rim catches the light where it faces it, and half as much opposite. Past `reach`
-            // the light is under half a level: none, wherever the layer is cut.
-            let hl = if d < reach {
+            // The rim catches the light where it faces it, and half as much opposite. It fades out
+            // by `reach` and is none past it, wherever the layer is cut.
+            let hl = if d < reach && fall > 0.0 {
                 let facing = -(inward.0 * light.0 + inward.1 * light.1);
                 let spec = facing.max(0.0).powf(power) + 0.5 * (-facing).max(0.0).powf(power);
-                (intensity * spec * (-d / band).exp()).clamp(0.0, 1.0)
+                (intensity * spec * ((-d / band).exp() - floor) / fall).clamp(0.0, 1.0)
             } else {
                 0.0
             };

@@ -8,8 +8,8 @@ use tiny_skia::Pixmap;
 
 use crate::{Options, View, render_view_single};
 
-/// Stripes under a 600 × 360 pane at (300, 220) with corner `radius` and `g`: (document, page).
-fn pane_over_stripes(g: Glass, radius: f64) -> (Document, NodeId) {
+/// Stripes under a 600 × 360 pane at (300, 220) with corner `radius` and `g`: (document, page, pane).
+fn pane_over_stripes(g: Glass, radius: f64) -> (Document, NodeId, NodeId) {
     let mut d = Document::new("glass");
     let p = d.first_page().unwrap();
     let colours = ["E03030", "2040E0", "20C060", "F0C830"].map(|h| Color::from_hex(h).unwrap());
@@ -23,7 +23,7 @@ fn pane_over_stripes(g: Glass, radius: f64) -> (Document, NodeId) {
     n.corners.radii = [radius; 4];
     n.fills = vec![Paint::solid(Color { a: 0.1, ..Color::WHITE })];
     n.effects = vec![Effect { kind: EffectKind::Glass(g), visible: true }];
-    (d, p)
+    (d, p, pane)
 }
 
 /// Rows `y0..` of `full` (as wide as `part`) equal `part`, byte for byte: the largest channel
@@ -59,6 +59,27 @@ fn cut_diffs(d: &Document, p: NodeId) -> Vec<(u32, (u8, usize))> {
         .collect()
 }
 
+/// A pane deeper than the light may reach, over black and lit from the left: across its middle row
+/// each pixel is the light alone. It fades out smoothly where it stops, with no ring.
+#[test]
+fn the_light_fades_out_where_it_stops() {
+    let mut d = Document::new("glass");
+    let p = d.first_page().unwrap();
+    let back = d.create(p, NodeKind::Rectangle, "Back", 0.0, 0.0, 700.0, 700.0).unwrap();
+    d.get_mut(back).unwrap().fills = vec![Paint::solid(Color::BLACK)];
+    let pane = d.create(p, NodeKind::Rectangle, "Glass", 50.0, 50.0, 600.0, 600.0).unwrap();
+    let g = Glass { depth: 300.0, splay: 1.0, light_angle: -90.0, light_intensity: 1.0, frost: 0.0, refraction: 0.0, ..Glass::default() };
+    let n = d.get_mut(pane).unwrap();
+    n.fills.clear();
+    n.effects = vec![Effect { kind: EffectKind::Glass(g), visible: true }];
+    let full = render_view_single(&d, p, &View { origin: (0.0, 0.0), scale: 2.0, width: 1400, height: 1400 }, &Options::default()).unwrap();
+    let row = &full.data()[700 * 1400 * 4..][..1400 * 4];
+    let red: Vec<u8> = row.chunks(4).map(|px| px[0]).skip(101).take(598).collect();
+    let step = red.windows(2).map(|w| w[0].abs_diff(w[1])).max().unwrap();
+    assert!(step <= 2, "the light jumps {step} levels between neighbouring pixels");
+    assert!(red[0] > 200 && red[597] < red[0], "lit at the edge, fading in: {} … {}", red[0], red[597]);
+}
+
 /// Digests of glass renders over a spread of settings, scales and corners: compare two builds'
 /// output with `cargo test --release -p figcraft-render --lib glass_digests -- --ignored --nocapture`.
 #[test]
@@ -75,7 +96,7 @@ fn glass_digests() {
     let mut all = DefaultHasher::new();
     for (i, g) in looks.into_iter().enumerate() {
         for radius in [0.0, 40.0] {
-            let (d, p) = pane_over_stripes(g.clone(), radius);
+            let (d, p, _) = pane_over_stripes(g.clone(), radius);
             for scale in [1.0, 1.37, 2.0] {
                 let v = View { origin: (100.0, 100.0), scale, width: (1000.0 * scale) as u32, height: (700.0 * scale) as u32 };
                 let pix = render_view_single(&d, p, &v, &Options::default()).unwrap();
@@ -91,11 +112,24 @@ fn glass_digests() {
 
 #[test]
 fn a_cut_through_the_pane_matches_the_whole_render() {
-    // Square corners: straight edges on whole pixels raster the same in any cut.
-    for g in [wide_light(), Glass::default(), Glass { splay: 0.5, frost: 0.0, refraction: 0.0, ..Glass::default() }] {
-        let (d, p) = pane_over_stripes(g.clone(), 0.0);
-        for (cut, diff) in cut_diffs(&d, p) {
-            assert_eq!(diff, (0, 0), "cut at {cut} px with {g:?}");
+    // The last look is deep enough that the light is held to `MAX_LIGHT_PX`.
+    let looks = [
+        wide_light(),
+        Glass::default(),
+        Glass { splay: 0.5, frost: 0.0, refraction: 0.0, ..Glass::default() },
+        Glass { depth: 300.0, ..wide_light() },
+    ];
+    // Rounded corners without the pane's fill: a fill's curved edge rasters 1–2 levels apart in a
+    // cut, and that is the fill, not the glass.
+    for radius in [0.0, 40.0] {
+        for g in &looks {
+            let (mut d, p, pane) = pane_over_stripes(g.clone(), radius);
+            if radius > 0.0 {
+                d.get_mut(pane).unwrap().fills.clear();
+            }
+            for (cut, diff) in cut_diffs(&d, p) {
+                assert_eq!(diff, (0, 0), "cut at {cut} px, radius {radius}, with {g:?}");
+            }
         }
     }
 }
