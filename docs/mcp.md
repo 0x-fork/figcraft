@@ -128,10 +128,10 @@ Or in a project's `.mcp.json`:
     resolved `gridCell`.
 - **Every menu action is a command** (`list_commands`), and most commands act on `ids` when given,
   else on the selection. New layers become the selection.
-- Colours are `"#RRGGBB"` or `"#RRGGBBAA"`. Inside fills, strokes and effects passed through the MCP
-  tools, `color` may also be a hex string and gradients can be written
-  `{"type": "linearGradient", "stops": ["#7048E8", "#1098AD"]}`; the server converts them to the
-  engine's paint JSON.
+- Colours are `"#RRGGBB"` or `"#RRGGBBAA"`. Inside fills and strokes, `color` may also be a hex
+  string and gradients can be written `{"type": "linearGradient", "stops": ["#7048E8", "#1098AD"]}`;
+  the engine reads them as its paint JSON, so `run_command`, `figcraft-cli run` and the control
+  channel take them too. Effects passed through the MCP tools may use hex `color` strings as well.
 - **Blend modes**: `blend` on a layer (`node.set`) or a paint (`fill.set` / `stroke.set`) is a
   menu label or CSS keyword (`"Normal"`, `"pass through"`, `"multiply"`, `"plusDarker"`, ...;
   `normal` is Normal). Groups and frames start as pass-through: their children blend with what is

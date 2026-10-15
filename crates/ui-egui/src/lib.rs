@@ -89,6 +89,8 @@ mod frame_label_tests;
 #[cfg(test)]
 mod gap_handle_tests;
 #[cfg(test)]
+mod gradient_shorthand_tests;
+#[cfg(test)]
 mod home_recents_tests;
 #[cfg(test)]
 mod home_tests;
