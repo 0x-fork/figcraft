@@ -428,6 +428,13 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
         }
     }
     let Some(pos) = hover_pos.filter(|p| app.canvas.rect.contains(*p)) else {
+        // A drag released off the canvas, or off the window, ends where the pointer was last seen.
+        if app.canvas.dragging && !ctx.input(|i| i.pointer.primary_down()) {
+            app.canvas.dragging = false;
+            if let Some(at) = hover_pos.or_else(|| app.canvas.last_pointer.map(|p| app.to_screen(p.x, p.y))) {
+                send(app, PointerKind::Up, at, &mods);
+            }
+        }
         // Leaving the canvas: nothing is hovered there any more.
         if !app.canvas.dragging && std::mem::take(&mut app.canvas.hovering) {
             app.session.vector_pointer_left();
@@ -539,17 +546,22 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
         app.canvas.pressure = force;
     }
     if let Some(k) = kind {
-        let ev = pointer_event(app, k, pos, &mods);
-        if k == PointerKind::Up {
-            app.canvas.pressure = None;
-        }
-        app.canvas.last_pointer = Some(Point::new(ev.x, ev.y));
-        if let Err(e) = app.session.pointer(&ev) {
-            app.toast(e.to_string());
-        }
-        app.handle_ui_requests();
+        send(app, k, pos, &mods);
     }
     true
+}
+
+/// Pointer event `kind` at screen point `pos`, to the tools.
+fn send(app: &mut FigApp, kind: PointerKind, pos: Pos2, m: &egui::Modifiers) {
+    let ev = pointer_event(app, kind, pos, m);
+    if kind == PointerKind::Up {
+        app.canvas.pressure = None;
+    }
+    app.canvas.last_pointer = Some(Point::new(ev.x, ev.y));
+    if let Err(e) = app.session.pointer(&ev) {
+        app.toast(e.to_string());
+    }
+    app.handle_ui_requests();
 }
 
 /// Right-click at screen `pos`: select what's under the pointer (`deep`: the nested layer), then
