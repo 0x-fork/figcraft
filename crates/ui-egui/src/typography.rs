@@ -1046,6 +1046,7 @@ fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, ti
                     .desired_width(text_rect.width() - 6.0),
             );
             crate::a11y::own_focus(&r);
+            crate::widgets::select_all_on_focus(ui, &r, &text);
             // The Enter that started the edit (from the keyboard) doesn't end it.
             let enter = !started && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
@@ -1179,6 +1180,7 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
             - i.count_and_consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) as i64
     });
     let search = ui.add(egui::TextEdit::singleline(&mut q).hint_text(tr("Search fonts")).desired_width(ui.available_width()).font(regular(11.5)));
+    crate::widgets::select_all_on_focus(ui, &search, &q);
     if just_opened {
         search.request_focus();
     }

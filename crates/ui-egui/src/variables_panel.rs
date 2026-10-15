@@ -538,13 +538,14 @@ fn table(app: &mut FigApp, ui: &mut Ui, view: &View, st: &mut Editor) {
     let mut child = ui.new_child(
         UiBuilder::new().max_rect(Rect::from_min_max(pos2(field.min.x + 24.0, field.min.y + 4.0), pos2(field.max.x - 4.0, field.max.y - 4.0))),
     );
-    child.add(
+    let r = child.add(
         egui::TextEdit::singleline(&mut st.query)
             .frame(egui::Frame::NONE)
             .hint_text(tr("Search"))
             .font(regular(11.0))
             .vertical_align(egui::Align::Center),
     );
+    crate::widgets::select_all_on_focus(ui, &r, &st.query);
     let note = Rect::from_min_max(pos2(field.max.x + 16.0, sr.min.y + 8.0), pos2(sr.max.x - 16.0, sr.max.y - 8.0));
     let mut bar = ui.new_child(UiBuilder::new().max_rect(note).layout(egui::Layout::right_to_left(egui::Align::Center)));
     let text = match (view.library, coll.extends.as_deref().and_then(|p| view.vars.collection(p))) {
