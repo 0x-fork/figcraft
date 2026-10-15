@@ -168,6 +168,27 @@ fn text_runs_restyle_and_replace() {
     assert_eq!(t.characters, "");
 }
 
+/// A run that reaches past the text (a file can carry one: nothing clamps `runs` on load)
+/// must not overflow the arithmetic that shifts the runs along, and must not leave the
+/// text unwritable.
+#[test]
+fn text_runs_past_the_text_never_overflow() {
+    let style = || TextStyle { font_style: "Bold".into(), ..Default::default() };
+    for end in [usize::MAX, usize::MAX - 1, 1_000_000] {
+        let mut t = TextData::new("hi");
+        t.runs = vec![StyleRun { start: 0, end, style: style() }];
+        // Typing at the caret, and replacing a selection: both shift `end`.
+        t.replace_range(0, 0, "x");
+        assert_eq!(t.characters, "xhi", "end {end}");
+        t.replace_range(0, 3, "yo");
+        assert_eq!(t.characters, "yo", "end {end}");
+        // The text is still writable and the runs are back inside it.
+        t.replace_range(0, 0, "!");
+        assert_eq!(t.characters, "!yo", "end {end}");
+        assert!(t.runs.iter().all(|r| r.start < r.end && r.end <= t.char_count()), "end {end}: {:?}", t.runs);
+    }
+}
+
 #[test]
 fn text_case() {
     assert_eq!(TextCase::Title.apply("hello big world"), "Hello Big World");

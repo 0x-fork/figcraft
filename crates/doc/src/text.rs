@@ -602,7 +602,9 @@ impl TextData {
                 if p <= start {
                     p
                 } else if p >= end {
-                    p - removed + inserted
+                    // Runs of a file that reach past the text (nothing clamps them on load)
+                    // would otherwise overflow here; `normalize` below drops what is left.
+                    p.saturating_sub(removed).saturating_add(inserted)
                 } else {
                     start + inserted
                 }
