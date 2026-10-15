@@ -3,7 +3,7 @@
 //! `vectoredit.rs` re-fit the node afterwards.
 
 use figcraft_doc::*;
-use figcraft_geom::kurbo::{CubicBez, ParamCurve};
+use figcraft_geom::kurbo::{CubicBez, ParamCurve, ParamCurveNearest};
 use figcraft_geom::{Affine, Point, Vec2};
 
 fn tvec(t: (f64, f64)) -> Vec2 {
@@ -766,6 +766,19 @@ fn inside_ranges(net: &VectorNetwork, seg: usize, c: Point, r: f64) -> Vec<(f64,
         if ia { b } else { a }
     };
     let n = 64;
+    // Upper bound on the curve's speed: no point of a sample interval is farther than the whole
+    // interval length from either end, so only intervals that come that close need a closer look.
+    let speed = 3.0 * [(cb.p1 - cb.p0).hypot(), (cb.p2 - cb.p1).hypot(), (cb.p3 - cb.p2).hypot()].into_iter().fold(0.0, f64::max);
+    let reach = speed / f64::from(n);
+    // A crossing narrower than an interval whose ends are both outside: the closest point.
+    let dip = |a: f64, b: f64| -> Option<f64> {
+        if (cb.eval(a) - c).hypot().min((cb.eval(b) - c).hypot()) > r + reach {
+            return None;
+        }
+        let near = cb.subsegment(a..b).nearest(c, 1e-12);
+        let m = a + (b - a) * near.t;
+        (m > a && m < b && inside(m)).then_some(m)
+    };
     let mut out = Vec::new();
     let mut start: Option<f64> = if inside(0.0) { Some(0.0) } else { None };
     let mut prev = 0.0;
@@ -773,6 +786,11 @@ fn inside_ranges(net: &VectorNetwork, seg: usize, c: Point, r: f64) -> Vec<(f64,
         let t = f64::from(i) / f64::from(n);
         match (start, inside(t)) {
             (None, true) => start = Some(edge(prev, t)),
+            (None, false) => {
+                if let Some(m) = dip(prev, t) {
+                    out.push((edge(prev, m), edge(m, t)));
+                }
+            }
             (Some(s0), false) => {
                 out.push((s0, edge(prev, t)));
                 start = None;
@@ -998,5 +1016,39 @@ mod tests {
         // Junk.
         assert!(!erase(&mut m, Point::new(f64::NAN, 0.0), 5.0));
         assert!(!erase(&mut m, Point::new(0.0, 0.0), -1.0));
+    }
+
+    #[test]
+    fn eraser_catches_narrow_crossing_between_samples() {
+        // A radius-1 brush on a long line: the crossing fits between the sampled parameters.
+        let mut n = VectorNetwork::from_points(&[Point::new(0.0, 0.0), Point::new(6400.0, 0.0)], false);
+        assert!(erase(&mut n, Point::new(5050.0, 0.0), 1.0));
+        assert_eq!(n.segments.len(), 2);
+        let ends: Vec<f64> = n.vertices.iter().map(|v| v.x).collect();
+        assert!(ends.iter().any(|x| (x - 5049.0).abs() < 0.01) && ends.iter().any(|x| (x - 5051.0).abs() < 0.01), "{ends:?}");
+        assert!(ends.iter().any(|x| x.abs() < 1e-9) && ends.iter().any(|x| (x - 6400.0).abs() < 1e-9), "{ends:?}");
+        // A curved segment that only grazes the brush between samples.
+        let mut c = VectorNetwork::from_points(&[Point::new(0.0, 0.0), Point::new(6400.0, 0.0)], false);
+        c.segments[0].ta = (0.0, 3000.0);
+        c.segments[0].tb = (0.0, 3000.0);
+        let cb = c.cubic(0).unwrap();
+        let t = 0.7039;
+        let p = cb.eval(t);
+        let d = figcraft_geom::kurbo::ParamCurveDeriv::deriv(&cb).eval(t).to_vec2().normalize();
+        let normal = Vec2::new(-d.y, d.x);
+        assert!(erase(&mut c, p + normal * 0.5, 1.0));
+        assert_eq!(c.segments.len(), 2);
+    }
+
+    #[test]
+    fn eraser_catches_crossing_at_full_speed_between_samples() {
+        // The line moves fastest at t = 0.5; centre a tiny brush halfway between two samples there.
+        let mut n = VectorNetwork::from_points(&[Point::new(0.0, 0.0), Point::new(6400.0, 0.0)], false);
+        let centre = n.cubic(0).unwrap().eval(32.5 / 64.0);
+        assert!(erase(&mut n, centre, 0.5));
+        assert_eq!(n.segments.len(), 2);
+        let ends: Vec<f64> = n.vertices.iter().map(|v| v.x).collect();
+        assert!(ends.iter().any(|x| (x - (centre.x - 0.5)).abs() < 0.01), "{ends:?}");
+        assert!(ends.iter().any(|x| (x - (centre.x + 0.5)).abs() < 0.01), "{ends:?}");
     }
 }
