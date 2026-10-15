@@ -1,5 +1,6 @@
 //! Desktop services: native file dialogs, clipboard, URLs, persisted preferences.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -198,30 +199,39 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     f.write_all(bytes)
 }
 
+thread_local! {
+    /// While the main window draws: a dialog parented to it, so a dialog opened from it stays in
+    /// front of it (a sheet on macOS). eframe gives other windows no handle: theirs have no parent.
+    static PARENT: RefCell<Option<rfd::AsyncFileDialog>> = const { RefCell::new(None) };
+}
+
+/// Run the main window's frame `f` with the dialogs it opens parented to `frame`'s window.
+pub fn parented<R>(frame: &eframe::Frame, f: impl FnOnce() -> R) -> R {
+    PARENT.with(|p| p.replace(Some(rfd::AsyncFileDialog::new().set_parent(frame))));
+    let r = f();
+    PARENT.with(|p| p.replace(None));
+    r
+}
+
+/// A dialog with `title`, parented to the main window while it draws.
+fn dialog(title: &str) -> rfd::AsyncFileDialog {
+    PARENT.with(|p| p.borrow().clone()).unwrap_or_default().set_title(title)
+}
+
+/// The dialog opens now; its future gives the path picked.
+fn picked(pick: impl Future<Output = Option<rfd::FileHandle>> + 'static) -> DialogFuture {
+    Box::pin(async move { pick.await.map(|f| f.path().to_path_buf()) })
+}
+
 impl Services for Desktop {
     fn pick_open(&mut self, title: &str, exts: &[&str]) -> DialogFuture {
-        let title = title.to_owned();
-        let exts: Vec<String> = exts.iter().map(|ext| (*ext).to_owned()).collect();
-        Box::pin(async move {
-            rfd::AsyncFileDialog::new().set_title(title).add_filter("Supported files", &exts).pick_file().await.map(|file| file.path().to_path_buf())
-        })
+        picked(dialog(title).add_filter("Supported files", exts).pick_file())
     }
     fn pick_save(&mut self, title: &str, name: &str, exts: &[&str]) -> DialogFuture {
-        let (title, name) = (title.to_owned(), name.to_owned());
-        let exts: Vec<String> = exts.iter().map(|ext| (*ext).to_owned()).collect();
-        Box::pin(async move {
-            rfd::AsyncFileDialog::new()
-                .set_title(title)
-                .set_file_name(name)
-                .add_filter("File", &exts)
-                .save_file()
-                .await
-                .map(|file| file.path().to_path_buf())
-        })
+        picked(dialog(title).set_file_name(name).add_filter("File", exts).save_file())
     }
     fn pick_folder(&mut self, title: &str) -> DialogFuture {
-        let title = title.to_owned();
-        Box::pin(async move { rfd::AsyncFileDialog::new().set_title(title).pick_folder().await.map(|file| file.path().to_path_buf()) })
+        picked(dialog(title).pick_folder())
     }
     fn clipboard_set_text(&mut self, s: &str) {
         if let Some(c) = self.clipboard.as_mut() {
