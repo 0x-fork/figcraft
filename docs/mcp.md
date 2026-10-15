@@ -333,7 +333,8 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   `$$` a dollar sign. Layers are numbered in stacking order, bottom first. Returns `{names}`.
 - Pages: `page.add {name?}` (a name starting with `-` adds a divider: an empty page shown as a line
   in the pages list, never opened and holding no layers), `page.list` (each page's `divider`),
-  `page.rename`, `page.move {id, index}`, `page.duplicate` ("Copy of …", after its source),
+  `page.rename`, `page.move {id, index}`, `page.duplicate` ("Copy of …", after its source, with its colour,
+  flows (starting at the copied frames), prototype settings and guides),
   `page.delete` (the last page that isn't a divider stays).
 - `component.list`: each component's `folder` (the Assets panel's folders: its page, the frames
   holding it, then its name's slash parts) and `label` (the name on its tile).

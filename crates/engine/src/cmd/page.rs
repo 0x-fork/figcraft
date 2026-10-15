@@ -1,5 +1,6 @@
 //! Pages.
 
+use figcraft_doc::proto::Flow;
 use figcraft_doc::*;
 use serde_json::{Value, json};
 
@@ -96,13 +97,23 @@ pub fn specs() -> Vec<CommandSpec> {
             let doc = s.doc_mut()?;
             let name = format!("Copy of {}", doc.get(src)?.name);
             let np = doc.add_page(&name);
-            if let NodeKind::Page { background, .. } = doc.get(src)?.kind.clone()
-                && let NodeKind::Page { background: b, .. } = &mut doc.get_mut(np)?.kind
+            // Each layer and its copy (also those in sections), so flows can follow their start frames.
+            let mut copies = Vec::new();
+            for c in doc.get(src)?.children.clone() {
+                let copy = doc.duplicate_into(c, np, None)?;
+                copies.extend(doc.subtree(c).into_iter().zip(doc.subtree(copy)));
+            }
+            // The copy keeps the page's colour, flows (pointing at the copied frames), prototype settings and guides.
+            if let NodeKind::Page { background, flows, prototype, guides } = doc.get(src)?.kind.clone()
+                && let NodeKind::Page { background: b, flows: f, prototype: pr, guides: g } = &mut doc.get_mut(np)?.kind
             {
                 *b = background;
-            }
-            for c in doc.get(src)?.children.clone() {
-                doc.duplicate_into(c, np, None)?;
+                *f = flows
+                    .into_iter()
+                    .filter_map(|fl| copies.iter().find(|(old, _)| *old == fl.start).map(|(_, new)| Flow { start: *new, ..fl }))
+                    .collect();
+                *pr = prototype;
+                *g = guides;
             }
             // Keep the new page right after the source.
             if let Some(si) = doc.pages.iter().position(|x| *x == src) {
