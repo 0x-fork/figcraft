@@ -429,7 +429,10 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
     // the backdrop is read again once they lie under it (a shadow showing behind is seen through
     // it). Until then, the layer's content sees the backdrop read first under it (#255).
     let casts = back_shape.is_some() && n.effects.iter().any(|e| e.visible && matches!(e.kind, EffectKind::DropShadow(_)));
-    let first_back = read_backdrop(pix);
+    // Kept apart, the first read is only what backdrop effects inside the content see: without
+    // any, the backdrop (blur or glass, the costly part) is computed once, after the shadows.
+    let nested = || ctx.doc.subtree(id).iter().skip(1).any(|c| ctx.doc.node(*c).is_some_and(backdrop::has_effects));
+    let first_back = if !casts || nested() { read_backdrop(pix) } else { None };
     if !casts && let Some(b) = &first_back {
         layer.draw_pixmap(0, 0, b.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
     }
@@ -473,8 +476,10 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
     // Drop shadows go under the layer, in effect-list order.
     {
         // Kept apart, the backdrop isn't in the layer yet: the shadows are cast from the content
-        // with the layer effects it will get.
-        let content = casts.then(|| {
+        // with the layer effects it will get (a copy only when it gets some).
+        let layer_fx =
+            n.effects.iter().any(|e| e.visible && matches!(e.kind, EffectKind::LayerBlur(_) | EffectKind::Noise(_) | EffectKind::Texture(_)));
+        let content = (casts && layer_fx).then(|| {
             let mut c = layer.clone();
             layer_effects(ctx, &mut c, n, id, lxf);
             c
