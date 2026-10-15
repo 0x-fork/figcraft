@@ -219,7 +219,7 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         spec!("doc.switch", "Switch document", "{index}", false, |s, p| {
-            let i = req_num("doc.switch", p, "index")? as usize;
+            let i = req_index("doc.switch", p, "index")?;
             if i >= s.docs.len() {
                 return Err(bad("doc.switch", "no such document"));
             }
