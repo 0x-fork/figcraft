@@ -379,6 +379,30 @@ fn smart_guides_snap_to_edges_centres_and_equal_spacing() {
 }
 
 #[test]
+fn corner_cursors_stay_diagonal_whatever_the_proportions() {
+    let mut s = session();
+    let mod180 = |a: f64, b: f64| near((a - b).rem_euclid(180.0).min((b - a).rem_euclid(180.0)), 0.0);
+    for (w, h) in [(65.0, 15.0), (100.0, 100.0), (60.0, 200.0), (200.0, 50.0)] {
+        let r = rect(&mut s, 0.0, 0.0, w, h, None);
+        let doc = s.doc().unwrap().clone();
+        let q = selection_box(&doc, &[r]).unwrap();
+        for (i, want) in [(0u8, 45.0), (1, 135.0), (2, 45.0), (3, 135.0)] {
+            let Cursor::Resize(a) = handle_cursor(&q, Handle::Corner(i)) else { panic!() };
+            assert!(mod180(a, want), "{w}x{h} corner {i}: {a}, want {want}");
+        }
+        // Turned, the corner cursors turn with the layer's own axes.
+        set(&mut s, &[r], json!({"rotation": 30}));
+        let doc = s.doc().unwrap().clone();
+        let q = selection_box(&doc, &[r]).unwrap();
+        let axis = (q[1] - q[0]).atan2().to_degrees();
+        for (i, off) in [(0u8, 45.0), (1, 135.0), (2, 45.0), (3, 135.0)] {
+            let Cursor::Resize(a) = handle_cursor(&q, Handle::Corner(i)) else { panic!() };
+            assert!(mod180(a, axis + off), "{w}x{h} turned corner {i}: {a}, want {}", axis + off);
+        }
+    }
+}
+
+#[test]
 fn the_transform_box_and_its_handles() {
     let mut s = session();
     let r = rect(&mut s, 0.0, 0.0, 100.0, 100.0, None);
