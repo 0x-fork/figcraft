@@ -279,6 +279,19 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Pos2) -> bool {
     false
 }
 
+/// Ends a guide drag whose button is up by the end of the frame without [`input`] taking the
+/// release (released off the canvas, or over something on it): the gesture is dropped, so a later
+/// click doesn't add or move a guide.
+pub fn end_released(ctx: &egui::Context) {
+    if ctx.input(|i| i.pointer.primary_down()) {
+        return;
+    }
+    ctx.data_mut(|d| {
+        d.remove::<GuideDrag>(drag_id());
+        d.remove::<Placed>(preview_id());
+    });
+}
+
 /// Draw the page's and its frames' guides (under the rulers) and the one being dragged with its
 /// position.
 pub fn draw(app: &FigApp, painter: &egui::Painter) {
