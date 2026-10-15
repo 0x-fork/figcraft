@@ -83,3 +83,13 @@ fn a_font_style_draws_in_the_nearest_face_and_says_so_when_it_differs() {
     let out = ex(&mut s, "node.set", json!({"ids": [t], "props": {"fontFamily": "No Such Family 7f3a", "fontStyle": "Hairline"}}));
     assert!(out.get("warnings").is_none(), "{out}");
 }
+
+#[test]
+fn a_refused_call_changes_nothing() {
+    let mut s = Session::new();
+    let t = id(&ex(&mut s, "node.create", json!({"type": "text", "text": "Hi"}))["id"]);
+    let before = s.doc().unwrap().node(t).unwrap().fills.clone();
+    // `fill` comes before `gap` (keys apply in order), so this checks the rollback.
+    assert!(s.execute("node.set", &json!({"ids": [t], "props": {"fill": "#FF0000", "gap": 8}})).is_err());
+    assert_eq!(s.doc().unwrap().node(t).unwrap().fills, before);
+}
