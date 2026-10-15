@@ -69,17 +69,24 @@ fn copy_count(root: &std::path::Path) -> usize {
     std::fs::read_dir(dir).unwrap().flatten().filter(|f| f.path().extension().is_some_and(|e| e == "figcraft")).count()
 }
 
+/// A folder at the path of `s`'s first document's copy in the run folder under `root`.
+fn blocked_copy(root: &std::path::Path, s: &Session) -> std::path::PathBuf {
+    let dir = std::fs::read_dir(root).unwrap().flatten().next().unwrap().path();
+    let blocker = dir.join(format!("{}.figcraft", s.docs[0].uid));
+    std::fs::create_dir(&blocker).unwrap();
+    blocker
+}
+
 #[test]
 fn a_copy_that_failed_is_tried_again_without_another_edit() {
     let root = root("retry");
     let s = edited();
     let mut r = Recovery::start(&root).unwrap();
-    let dir = std::fs::read_dir(&root).unwrap().flatten().next().unwrap().path();
-    let moved = root.join("moved");
-    // The run folder is gone while the copy is written: it fails.
-    std::fs::rename(&dir, &moved).unwrap();
+    // A folder where the copy goes makes its write fail on every platform (renaming the run folder
+    // away fails on Windows, where the run's lock file keeps it open).
+    let blocker = blocked_copy(&root, &s);
     r.write(&s, true);
-    std::fs::rename(&moved, &dir).unwrap();
+    std::fs::remove_dir(&blocker).unwrap();
     // Nothing was edited since: the same revision still has to be copied.
     r.write(&s, true);
     assert_eq!(copy_count(&root), 1, "the failed revision was copied again");
@@ -92,13 +99,11 @@ fn a_background_copy_that_failed_is_tried_again_without_another_edit() {
     let root = root("retry-bg");
     let s = edited();
     let mut r = Recovery::start(&root).unwrap();
-    let dir = std::fs::read_dir(&root).unwrap().flatten().next().unwrap().path();
-    let moved = root.join("moved");
-    std::fs::rename(&dir, &moved).unwrap();
+    let blocker = blocked_copy(&root, &s);
     r.write(&s, false);
-    // Let the failing write end before the folder comes back.
+    // Let the failing write end before the way is clear again.
     std::thread::sleep(std::time::Duration::from_millis(300));
-    std::fs::rename(&moved, &dir).unwrap();
+    std::fs::remove_dir(&blocker).unwrap();
     for _ in 0..50 {
         r.write(&s, false);
         if copy_count(&root) == 1 {
