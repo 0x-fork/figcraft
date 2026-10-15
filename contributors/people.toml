@@ -34,3 +34,6 @@ sync_github_name = false
 [people.yyamandevrim]
 real_name = "Yaman Devrim"
 sync_github_name = true
+
+[people.justinjohn0306]
+real_name = "Justin John"

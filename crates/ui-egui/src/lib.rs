@@ -69,6 +69,8 @@ mod theme_startup_tests;
 #[cfg(test)]
 mod a11y_tests;
 #[cfg(test)]
+mod async_dialog_tests;
+#[cfg(test)]
 mod branch_ui_tests;
 #[cfg(test)]
 mod canvas_drag_tests;
@@ -168,7 +170,11 @@ mod windows_qa_tests;
 mod windows_tests;
 
 use std::collections::BTreeSet;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll, Wake, Waker};
 
 use figcraft_doc::NodeId;
 use figcraft_engine::Session;
@@ -178,15 +184,15 @@ pub use control::{ControlReply, ControlRequest};
 
 /// Platform services the app crate provides (file dialogs, clipboard, URLs).
 pub trait Services {
-    fn pick_open(&mut self, _title: &str, _exts: &[&str]) -> Option<PathBuf> {
-        None
+    fn pick_open(&mut self, _title: &str, _exts: &[&str]) -> DialogFuture {
+        Box::pin(std::future::ready(None))
     }
-    fn pick_save(&mut self, _title: &str, _name: &str, _exts: &[&str]) -> Option<PathBuf> {
-        None
+    fn pick_save(&mut self, _title: &str, _name: &str, _exts: &[&str]) -> DialogFuture {
+        Box::pin(std::future::ready(None))
     }
     /// A folder to write several files into.
-    fn pick_folder(&mut self, _title: &str) -> Option<PathBuf> {
-        None
+    fn pick_folder(&mut self, _title: &str) -> DialogFuture {
+        Box::pin(std::future::ready(None))
     }
     fn clipboard_set_text(&mut self, _s: &str) {}
     fn clipboard_get_text(&mut self) -> Option<String> {
@@ -219,6 +225,34 @@ pub trait Services {
     /// player asks every frame while its prototype has gamepad triggers.
     fn gamepad_held(&mut self) -> u32 {
         0
+    }
+}
+
+pub type DialogFuture = Pin<Box<dyn Future<Output = Option<PathBuf>>>>;
+type DialogDone = Box<dyn FnOnce(&mut FigApp, PathBuf)>;
+
+/// A native dialog in flight. The app keeps working while it is open, so its result goes to the
+/// file and window it was opened for, not to whichever is in front when it closes.
+struct PendingDialog {
+    future: DialogFuture,
+    /// The path picked, kept until the window that holds `doc` draws.
+    path: Option<PathBuf>,
+    done: DialogDone,
+    /// The file it acts on (`None`: none, such as Open).
+    doc: Option<u64>,
+    /// The window it was opened from.
+    window: u64,
+}
+
+/// Wakes the main window, which hands the result on to the window it belongs to.
+struct RepaintWaker(egui::Context);
+impl Wake for RepaintWaker {
+    fn wake(self: Arc<Self>) {
+        self.0.request_repaint_of(egui::ViewportId::ROOT);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.request_repaint_of(egui::ViewportId::ROOT);
     }
 }
 
@@ -533,6 +567,10 @@ pub struct FigApp {
     window_requests: Vec<figcraft_engine::UiRequest>,
     /// Commands waiting for a server ([`FigApp::run_background`]) and what to do with their results.
     waiting: Vec<(String, Done)>,
+    /// Native dialogs complete asynchronously so their modal event loop never re-enters winit.
+    pending_dialog: Option<PendingDialog>,
+    /// The latest UI context schedules the first poll and wakes the app when a dialog completes.
+    ui_context: Option<egui::Context>,
 }
 
 /// What to do with the result of a command run in the background.
@@ -560,6 +598,8 @@ impl FigApp {
             windows: windows::Windows::default(),
             window_requests: Vec::new(),
             waiting: Vec::new(),
+            pending_dialog: None,
+            ui_context: None,
         }
     }
 
@@ -820,12 +860,12 @@ impl FigApp {
 
     pub fn save_as_dialog(&mut self) {
         let name = self.session.doc().map(|d| d.name.clone()).unwrap_or_else(|_| "Untitled".into());
-        if let Some(p) = self.services.pick_save(i18n::tr("Save as"), &format!("{name}.figcraft"), &["figcraft"]) {
+        self.pick_save(i18n::tr("Save as"), &format!("{name}.figcraft"), &["figcraft"], |app, p| {
             let ps = p.to_string_lossy().to_string();
-            if self.run("file.saveAs", json!({"path": ps})).is_some() {
-                self.toast(i18n::trf("Saved {name}", &[("name", &p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())]));
+            if app.run("file.saveAs", json!({"path": ps})).is_some() {
+                app.toast(i18n::trf("Saved {name}", &[("name", &p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())]));
             }
-        }
+        });
     }
 
     pub fn save(&mut self) {
@@ -841,14 +881,18 @@ impl FigApp {
     }
 
     pub fn open_dialog(&mut self) {
-        if let Some(p) =
-            self.services.pick_open(i18n::tr("Open"), &["figcraft", "fig", "json", "svg", "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"])
-        {
-            let ps = p.to_string_lossy().to_string();
-            if self.run("file.open", json!({"path": ps})).is_some() {
-                self.ui.home = false;
-            }
-        }
+        let exts = ["figcraft", "fig", "json", "svg", "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"];
+        // Opening needs no file in front: it goes ahead even if that file closed meanwhile.
+        self.start_dialog(
+            |services| services.pick_open(i18n::tr("Open"), &exts),
+            false,
+            |app, p| {
+                let ps = p.to_string_lossy().to_string();
+                if app.run("file.open", json!({"path": ps})).is_some() {
+                    app.ui.home = false;
+                }
+            },
+        );
     }
 
     pub fn import_dialog(&mut self, place: bool) {
@@ -857,9 +901,78 @@ impl FigApp {
         } else {
             &["svg", "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff", "figcraft", "fig"]
         };
-        if let Some(p) = self.services.pick_open(if place { i18n::tr("Place image") } else { i18n::tr("Import") }, exts) {
+        let title = if place { i18n::tr("Place image") } else { i18n::tr("Import") };
+        self.pick_open(title, exts, move |app, p| {
             let ps = p.to_string_lossy().to_string();
-            self.run("file.import", json!({"path": ps}));
+            app.run("file.import", json!({"path": ps}));
+        });
+    }
+
+    /// Pick a file to open. `done` runs with the file in front now back in front (and not at all
+    /// if that file closed meanwhile).
+    pub fn pick_open(&mut self, title: &str, exts: &[&str], done: impl FnOnce(&mut FigApp, PathBuf) + 'static) {
+        self.start_dialog(|services| services.pick_open(title, exts), true, done);
+    }
+
+    /// Pick where to save; `done` runs as [`FigApp::pick_open`]'s does.
+    pub fn pick_save(&mut self, title: &str, name: &str, exts: &[&str], done: impl FnOnce(&mut FigApp, PathBuf) + 'static) {
+        self.start_dialog(|services| services.pick_save(title, name, exts), true, done);
+    }
+
+    /// Pick a folder; `done` runs as [`FigApp::pick_open`]'s does.
+    pub fn pick_folder(&mut self, title: &str, done: impl FnOnce(&mut FigApp, PathBuf) + 'static) {
+        self.start_dialog(|services| services.pick_folder(title), true, done);
+    }
+
+    /// Open a native dialog from the window drawing now, for the file in front (`pin`).
+    fn start_dialog(&mut self, start: impl FnOnce(&mut dyn Services) -> DialogFuture, pin: bool, done: impl FnOnce(&mut FigApp, PathBuf) + 'static) {
+        if self.pending_dialog.is_some() {
+            return;
+        }
+        let doc = if pin { self.session.ds().ok().filter(|d| self.shows(d.uid)).map(|d| d.uid) } else { None };
+        let future = start(self.services.as_mut());
+        self.pending_dialog = Some(PendingDialog { future, path: None, done: Box::new(done), doc, window: self.windows.current });
+        if let Some(ctx) = &self.ui_context {
+            ctx.request_repaint();
+        }
+    }
+
+    /// Once the dialog has a path, its continuation runs in the window that holds its file, with
+    /// that file in front; then the tab in front before comes back (unless the dialog opened a file).
+    fn poll_dialog(&mut self, ctx: &egui::Context) {
+        let Some(d) = &mut self.pending_dialog else { return };
+        if d.path.is_none() {
+            let waker = Waker::from(Arc::new(RepaintWaker(ctx.clone())));
+            let Poll::Ready(path) = d.future.as_mut().poll(&mut TaskContext::from_waker(&waker)) else { return };
+            d.path = path;
+        }
+        let (doc, origin, picked) = (d.doc, d.window, d.path.is_some());
+        let index = doc.map(|u| self.session.docs.iter().position(|ds| ds.uid == u));
+        // Cancelled, or its file closed meanwhile.
+        if !picked || index == Some(None) {
+            self.pending_dialog = None;
+            return;
+        }
+        let window = match doc {
+            Some(u) => self.windows.of(u),
+            None if self.windows.exists(origin) => origin,
+            None => 0,
+        };
+        if window != self.windows.current {
+            ctx.request_repaint_of(windows::viewport(window));
+            return;
+        }
+        let Some(PendingDialog { path: Some(path), done, .. }) = self.pending_dialog.take() else { return };
+        let before = self.session.ds().ok().map(|d| d.uid);
+        if let Some(Some(i)) = index {
+            self.session.active = i;
+        }
+        done(self, path);
+        if doc.is_some()
+            && self.session.ds().ok().map(|d| d.uid) == doc
+            && let Some(i) = before.and_then(|u| self.session.docs.iter().position(|d| d.uid == u))
+        {
+            self.session.active = i;
         }
     }
 
@@ -958,6 +1071,7 @@ impl FigApp {
         #[cfg(not(target_arch = "wasm32"))]
         let t0 = std::time::Instant::now();
         let ctx = ui.ctx().clone();
+        self.ui_context = Some(ctx.clone());
         self.frame_stats.record(&ctx);
         let first = !self.fonts_installed;
         self.logic(&ctx);
@@ -1001,6 +1115,8 @@ impl FigApp {
         // even if it lets go during the frame (Enter commits it), or as it began (egui drops the
         // focus on Escape before the frame, which cancels the field's edit and nothing else).
         let typing = std::mem::take(&mut self.field_focus) || a11y::field_focused(&ctx);
+        // A dialog that closed acts first, in the window it was opened from.
+        self.poll_dialog(&ctx);
         // Control requests run first so their results reflect this frame.
         control::drain(self, &ctx);
         windows::requests(self, &ctx);
