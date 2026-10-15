@@ -38,16 +38,17 @@ pub fn end(s: &mut Session) -> Result<()> {
         let _ = doc.remove(te.id);
         s.ds_mut()?.selection.clear();
     }
-    s.commit_interaction()?;
     if empty && te.created {
-        // Nothing to undo for a text box that was never filled.
+        // Nothing to undo for a text box that was never filled. The gesture snapshot was taken
+        // after the layer was added, so it still holds it: re-base it on the document without the
+        // layer, and committing then records no step (and leaves the redo stack alone).
         let ds = s.ds_mut()?;
-        if let Some(last) = ds.history.undo.last()
-            && *last.doc == *ds.doc
-        {
-            ds.history.undo.pop();
+        let doc = ds.doc.clone();
+        if let Some(it) = ds.interaction.as_mut() {
+            it.doc = doc;
         }
     }
+    s.commit_interaction()?;
     let ds = s.ds_mut()?;
     ds.revision += 1;
     Ok(())
