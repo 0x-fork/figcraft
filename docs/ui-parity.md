@@ -116,15 +116,15 @@ are included, without its operands. Equal paints from different styles or variab
 Each row edits the matching slots through the ordinary color picker or hex/opacity fields and
 can select their owning layers. A picker drag is one undo step and retains its original targets
 even when two colors become equal. Paint discovery is cached per document snapshot and selection;
-the rows are virtualized.
+the rows are virtualized. During an interaction, the panel keeps its cached rows disabled and
+defers discovery until the gesture ends; selection commands still process all matching paints.
 
 Color styles already in the document (including imported styles) can be applied from a row.
 As with the existing Fill/Stroke style controls, applying a style replaces the matching layer's
 whole fill or stroke list and links it. A text range takes the style's resolved paints while
 keeping its typography; the document model has no paint-style link on character ranges.
-Browsing enabled libraries, binding/detaching variables from this section and a side-by-side
-comparison against the running incumbent remain unchecked or unfinished; this is **partial** UI
-parity. Behavior reference: [Figma's public selection-colors guide](https://help.figma.com/hc/en-us/articles/360042553434-View-and-adjust-colors-in-a-mixed-selection).
+Browsing enabled libraries and binding/detaching variables from this section are not implemented;
+this is **partial** UI parity.
 
 ## Keyboard shortcuts
 
