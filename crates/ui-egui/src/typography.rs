@@ -1065,6 +1065,8 @@ pub(crate) fn parse_letter_spacing(s: &str, cur: Option<LetterSpacing>) -> Optio
 
 const RECENT_KEY: &str = "figcraft_recent_fonts";
 const ROW: f32 = 26.0;
+/// The font list's tallest (it scrolls past that).
+const LIST_HEIGHT: f32 = 380.0;
 
 fn recent_families(ctx: &egui::Context) -> Vec<String> {
     ctx.data_mut(|d| d.get_persisted::<Vec<String>>(Id::new(RECENT_KEY))).unwrap_or_default()
@@ -1162,7 +1164,7 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
             // Scrolled just enough to show it.
             let seen: f32 = ui.data(|d| d.get_temp(hi_id.with("offset"))).unwrap_or(0.0);
             let top = i as f32 * stride;
-            offset = Some(seen.max(top + stride - 380.0).min(top));
+            offset = Some(seen.max(top + stride - LIST_HEIGHT).min(top));
         }
     }
     match hi {
@@ -1180,7 +1182,7 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
     }
     let mut budget = 4;
     let mut picked = None;
-    let mut area = egui::ScrollArea::vertical().max_height(380.0).auto_shrink([false, true]);
+    let mut area = egui::ScrollArea::vertical().max_height(LIST_HEIGHT).auto_shrink([false, true]);
     if let Some(y) = offset {
         area = area.vertical_scroll_offset(y);
     }
