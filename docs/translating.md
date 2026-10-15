@@ -18,7 +18,8 @@ The catalogs: English (`en`, the source), and Spanish (`es`, with the Latin Amer
 `es-419`), French (`fr`), German (`de`), Brazilian Portuguese (`pt-BR`), Japanese (`ja`), Korean (`ko`)
 and Simplified Chinese (`zh-Hans`), machine-drafted and waiting for native speakers' review.
 Russian (`ru`, Русский) was reviewed and approved by VanTan; its catalog keeps Frame, Dev Mode
-and Smart animate as familiar tool names and uses « » quotes.
+and Smart animate as familiar tool names and uses « » quotes. Turkish (`tr`) was machine-drafted
+and reviewed by a native speaker.
 
 ## The catalogs
 
@@ -47,7 +48,9 @@ Enter for the key, control for a gamepad, resorte) and keeps Spanish's tú. Japa
 concise, without です/ます endings, with full-width （）「」：、。 where Japanese UI text has them;
 Korean labels end without 합니다 (instructions in -세요). Simplified Chinese is concise, with
 full-width （）：，、。“” in Chinese text and a space between Chinese and Latin words or numbers.
-None of the three has plural forms.
+None of the three has plural forms. Turkish uses bare imperatives for buttons and menu items
+(Kaydet, Sil) and the polite -in/-ın for instructions (seçin, tıklayın), puts the percent sign before
+the number (%50) and keeps a noun singular after a count, so its plural entries give only `other`.
 
 CJK text needs a CJK font, which egui and Inter lack: the desktop app adds an installed one when
 something on screen needs it (see `crates/ui-egui/src/cjk.rs`). The web build has no system fonts,
@@ -73,7 +76,8 @@ language also needs its script in `cjk::language`.
    [`crates/ui-egui/src/i18n_tests.rs`](../crates/ui-egui/src/i18n_tests.rs). Every later PR that
    adds a string then has to translate it into each complete language: Spanish and Russian are there.
    French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese are registered as
-   drafts, and a string added later shows English in them until it is translated. To list what a draft lacks,
+   drafts, Turkish is reviewed but not required, and a string added later shows English in them until
+   it is translated. To list what a draft lacks,
    add its code to `COMPLETE` locally and run the check.
 5. Run the check and look at the panels in the app (longer words must fit the right panel):
 
