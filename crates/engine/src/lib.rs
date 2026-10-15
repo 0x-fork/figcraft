@@ -1091,6 +1091,8 @@ impl Session {
         self.ds()?;
         let before: Vec<_> =
             self.docs.iter().map(|ds| (ds.uid, ds.doc.clone(), ds.selection.clone(), ds.page, ds.history.undo.len(), ds.history.limit)).collect();
+        // An edit inside clears the redo steps; a failed group has to bring them back.
+        let redo_before: Vec<_> = self.docs.iter().map(|ds| ds.history.redo.clone()).collect();
         let active = self.active;
         let journal_len = self.journal.len();
 
@@ -1108,8 +1110,9 @@ impl Session {
 
         if result.is_err() {
             self.docs.retain(|ds| before.iter().any(|(uid, _, _, _, _, _)| *uid == ds.uid));
-            for (uid, doc, selection, page, undo_len, limit) in &before {
+            for ((uid, doc, selection, page, undo_len, limit), redo) in before.iter().zip(redo_before) {
                 if let Some(ds) = self.docs.iter_mut().find(|ds| ds.uid == *uid) {
+                    ds.history.redo = redo;
                     ds.doc = doc.clone();
                     ds.selection = selection.clone();
                     ds.page = *page;
