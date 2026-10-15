@@ -41,12 +41,44 @@ pub struct Recovery {
     dir: PathBuf,
     /// Held while the app runs: a free lock means the run that wrote the folder is gone.
     _lock: File,
-    /// The revision each document was last copied at, and the write in flight.
-    written: HashMap<u64, (u64, Option<JoinHandle<()>>)>,
+    /// What was copied of each document, and the write in flight.
+    written: HashMap<u64, Copy>,
     /// When (UI clock) the next copies are due.
     next: f64,
     /// Copies of online files from earlier runs, kept until their outcome is known.
     waiting: Vec<Waiting>,
+}
+
+/// The state of the copy of one document: only a write that succeeded counts as a copy.
+#[derive(Default)]
+struct Copy {
+    /// The revision whose copy was written.
+    done: Option<u64>,
+    /// The write in flight: the revision it copies, and whether it succeeded once it ends.
+    flight: Option<(u64, JoinHandle<bool>)>,
+}
+
+impl Copy {
+    /// Take in the result of the write in flight once it ended; a failed one leaves its revision uncopied.
+    fn reap(&mut self) {
+        if self.flight.as_ref().is_some_and(|f| f.1.is_finished()) {
+            self.join();
+        }
+    }
+
+    /// Wait for the write in flight and take in its result.
+    fn join(&mut self) {
+        if let Some((revision, h)) = self.flight.take()
+            && h.join().unwrap_or(false)
+        {
+            self.done = Some(revision);
+        }
+    }
+
+    /// Whether `revision` has neither been copied nor is being copied.
+    fn pending(&self, revision: u64) -> bool {
+        self.done != Some(revision) && self.flight.as_ref().is_none_or(|f| f.0 != revision)
+    }
 }
 
 /// A copy of one of your online files whose file is being joined again as session `session`.
@@ -86,15 +118,21 @@ impl Recovery {
     /// an idle window can sleep).
     pub fn tick(&mut self, s: &Session, now: f64) -> Option<f64> {
         self.settle(s);
+        self.written.values_mut().for_each(Copy::reap);
         // A join on its way settles within its timeouts: look again soon.
         let settling = (!self.waiting.is_empty()).then_some(0.5);
-        let pending = s.docs.iter().any(|d| needs_copy(d) && self.written.get(&d.uid).is_none_or(|w| w.0 != d.revision));
         if now < self.next {
-            return pending.then_some(self.next - now).or(settling);
+            return self.pending(s).then_some(self.next - now).or(settling);
         }
         self.write(s, false);
         self.next = now + INTERVAL;
-        settling
+        // A copy that failed is tried again at the next turn, without another edit.
+        settling.or(self.pending(s).then_some(INTERVAL))
+    }
+
+    /// Whether a document with unsaved changes has a revision that is neither copied nor being copied.
+    fn pending(&self, s: &Session) -> bool {
+        s.docs.iter().any(|d| needs_copy(d) && self.written.get(&d.uid).is_none_or(|w| w.pending(d.revision)))
     }
 
     /// Remove earlier runs' copies whose outcome is known, once what they became is copied here.
@@ -125,23 +163,23 @@ impl Recovery {
             let path = self.dir.join(format!("{}.figcraft", d.uid));
             let note = path.with_extension(ONLINE);
             if !needs_copy(d) {
-                if let Some((_, writer)) = self.written.remove(&d.uid) {
+                if let Some(mut w) = self.written.remove(&d.uid) {
                     // A write still running would bring the copy back after it was removed.
-                    if let Some(h) = writer {
-                        let _ = h.join();
-                    }
+                    w.join();
                     let _ = std::fs::remove_file(&path);
                     let _ = std::fs::remove_file(&note);
                 }
                 continue;
             }
-            let entry = self.written.entry(d.uid).or_insert((0, None));
+            let entry = self.written.entry(d.uid).or_default();
             // An emergency save must copy the newest revision: let the write in flight finish first.
-            if wait && let Some(h) = entry.1.take() {
-                let _ = h.join();
+            if wait {
+                entry.join();
+            } else {
+                entry.reap();
             }
-            let busy = entry.1.as_ref().is_some_and(|h| !h.is_finished());
-            if entry.0 == d.revision || busy {
+            // A write still in flight (for any revision) is waited for; a failed one is tried again.
+            if entry.done == Some(d.revision) || entry.flight.is_some() {
                 continue;
             }
             let doc = d.doc.clone();
@@ -152,20 +190,22 @@ impl Recovery {
             let online = s.online_of(d.uid).map(|(server, file, at)| format!("{server}\n{file}\n{} {} {}", at.session, at.client_id, at.seq));
             let job = move || {
                 if !write_atomic(&path, &doc) {
-                    return;
+                    return false;
                 }
                 let _ = match online {
                     Some(text) => std::fs::write(&note, text),
                     None => std::fs::remove_file(&note),
                 };
+                true
             };
+            // The revision counts as copied only once its write succeeded.
             if wait {
-                job();
-                entry.1 = None;
+                if job() {
+                    entry.done = Some(d.revision);
+                }
             } else {
-                entry.1 = std::thread::Builder::new().name("recovery".into()).spawn(job).ok();
+                entry.flight = std::thread::Builder::new().name("recovery".into()).spawn(job).ok().map(|h| (d.revision, h));
             }
-            entry.0 = d.revision;
         }
         // Closed documents.
         let open: Vec<u64> = s.docs.iter().map(|d| d.uid).collect();
@@ -173,9 +213,7 @@ impl Recovery {
         self.written.retain(|uid, w| {
             let keep = open.contains(uid);
             if !keep {
-                if let Some(h) = w.1.take() {
-                    let _ = h.join();
-                }
+                w.join();
                 let _ = std::fs::remove_file(dir.join(format!("{uid}.figcraft")));
                 let _ = std::fs::remove_file(dir.join(format!("{uid}.{ONLINE}")));
             }
@@ -185,8 +223,8 @@ impl Recovery {
 
     /// Test hook: pretend a write of `uid` at `revision` is in flight in `writer`.
     #[cfg(test)]
-    pub fn hold(&mut self, uid: u64, revision: u64, writer: JoinHandle<()>) {
-        self.written.insert(uid, (revision, Some(writer)));
+    pub fn hold(&mut self, uid: u64, revision: u64, writer: JoinHandle<bool>) {
+        self.written.insert(uid, Copy { done: None, flight: Some((revision, writer)) });
     }
 
     /// A normal quit: the documents were saved or their changes discarded on purpose. (Earlier
@@ -194,7 +232,7 @@ impl Recovery {
     pub fn finish(self) {
         let Self { dir, _lock, written, .. } = self;
         // Windows removes a folder only once nothing in it is open: copies being written first.
-        for h in written.into_values().filter_map(|w| w.1) {
+        for (_, h) in written.into_values().filter_map(|w| w.flight) {
             let _ = h.join();
         }
         drop(_lock);
