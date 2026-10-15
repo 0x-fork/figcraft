@@ -1161,10 +1161,11 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
             }
         }
         if let Some(i) = hi {
-            // Scrolled just enough to show it.
-            let seen: f32 = ui.data(|d| d.get_temp(hi_id.with("offset"))).unwrap_or(0.0);
+            // Scrolled just enough to show it (the list is shorter than its tallest where the
+            // window has less room).
+            let (seen, height): (f32, f32) = ui.data(|d| d.get_temp(hi_id.with("view"))).unwrap_or((0.0, LIST_HEIGHT));
             let top = i as f32 * stride;
-            offset = Some(seen.max(top + stride - LIST_HEIGHT).min(top));
+            offset = Some(seen.max(top + stride - height).min(top));
         }
     }
     match hi {
@@ -1231,7 +1232,7 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
             }
         }
     });
-    ui.data_mut(|d| d.insert_temp(hi_id.with("offset"), shown.state.offset.y));
+    ui.data_mut(|d| d.insert_temp(hi_id.with("view"), (shown.state.offset.y, shown.inner_rect.height())));
     FontPick { highlighted: hi.and_then(family), picked }
 }
 
