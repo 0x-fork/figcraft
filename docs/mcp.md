@@ -1092,6 +1092,11 @@ only: a host stops hosting it, a guest leaves it.
   pointer. Your selection, page and view go out by themselves when they change.
 - `collab.follow {client}` follows that person's viewport; `collab.follow {}` stops (so does any
   pan or zoom of your own, or Escape).
+- `collab.removePerson {client}` removes that person from the session: they are told the session
+  is over for them (they keep their copy and don't reconnect), and their address can't join the
+  file again while the session runs. Only the person hosting, or the owner of a
+  file on a server (with its owner token), can; a server older than this request says it can't.
+  Returns `{removed, name}`.
 - `collab.cursorChat {text}` shows `text` next to your cursor for everyone in the session (put the
   cursor somewhere first with `collab.cursor`): at most 100 characters, control characters become
   spaces, `""` closes it. Others see it fade 5 seconds after its last change, so send it again to
