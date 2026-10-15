@@ -156,7 +156,9 @@ pub fn drain_hidden(app: &mut FigApp, ctx: &Context) {
             app.control_queue.push(r);
             continue;
         }
-        let res = handle(app, ctx, &r.method, &r.params);
+        // Outside a frame, so outside the frame's guard: a panic still ends in recovery copies.
+        let mut res = Err("internal error".to_string());
+        crate::windows::guard(app, ctx, |app| res = handle(app, ctx, &r.method, &r.params));
         let _ = r.reply.send(ControlReply { id: r.id, result: res });
     }
 }
