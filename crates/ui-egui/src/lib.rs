@@ -902,6 +902,9 @@ impl FigApp {
             self.language = Some(self.session.prefs.language.clone());
         }
         if !self.fonts_installed {
+            // Cmd/Ctrl+= / - / 0 zoom the canvas (view.zoomIn, view.zoomOut, view.zoom100): egui's
+            // own keyboard zoom would scale the whole interface on the same keys.
+            ctx.options_mut(|o| o.zoom_with_keyboard = false);
             theme::install_fonts(ctx, false, 0);
             self.fonts_installed = true;
         } else if figcraft_text::system_fonts_scanned() {
