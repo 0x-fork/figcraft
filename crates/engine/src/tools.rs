@@ -701,7 +701,18 @@ pub(crate) fn handle_cursor(c: &[Point; 4], h: Handle) -> Cursor {
         Handle::Corner(i) => {
             let a = c.get(i as usize).copied().unwrap_or_default();
             let b = c.get((i as usize + 2) % 4).copied().unwrap_or_default();
-            Cursor::Resize(angle(a, b))
+            // Along the box's own axes at 45°, not the diagonal, so wide or tall boxes still get a
+            // diagonal cursor. A box with no width or height falls back to the diagonal.
+            let unit = |v: figcraft_geom::kurbo::Vec2| {
+                let len = v.hypot();
+                (len.is_finite() && len > 1e-9).then(|| v / len)
+            };
+            let next = c.get((i as usize + 1) % 4).copied().unwrap_or_default();
+            let prev = c.get((i as usize + 3) % 4).copied().unwrap_or_default();
+            match (unit(next - a), unit(prev - a)) {
+                (Some(u), Some(v)) => Cursor::Resize((u + v).atan2().to_degrees()),
+                _ => Cursor::Resize(angle(a, b)),
+            }
         }
         Handle::Edge(i) => {
             let a = c.get(i as usize).copied().unwrap_or_default();
