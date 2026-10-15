@@ -301,9 +301,9 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   given, are or are in; default the selection) out of the library the file publishes, or let them
   back in (`on: false`; without `on` it toggles). The sign of it is the name: hiding puts a `.`
   before it, showing takes the leading `.` and `_` away. Returns `{ids, hidden}`; one undo step.
-- New files and pages: `file.new` and `page.add` give a page the colour `#F5F5F5`. Only the app
-  with its dark theme showing makes them `#1E1E1E`; headless sessions (the CLI, this server) have
-  no theme. Text made with `text.create` or `node.create` is black whatever the page here; in the
+- New files and pages: `file.new` gives its page the colour `#F5F5F5`. Only the app with its dark
+  theme showing makes it `#1E1E1E`; headless sessions (the CLI, this server) have no theme.
+  `page.add` gives the new page the current page's colour, wherever it runs. Text made with `text.create` or `node.create` is black whatever the page here; in the
   app (the control channel, `--attach`) it is white on a dark page unless `props` name a `fill`,
   as the Text tool (`pointer` with `tool.text`) makes it everywhere.
 - `transform.rotationOrigin {on?}` (`Alt+R`): show or hide the selection's rotation origin handle
@@ -1406,6 +1406,12 @@ turned off 0°.
   With `pointer`, `alt: true` hovers measure (add `cmd` for nested layers, `shift` for padding) and
   `alt` drags show live distances to the neighbours; `inspect_ui` reports them under
   `tool.overlay` (`guides`, and `measure_box` for the box measured to).
+- **Duplicating at a spacing**: a copy Alt-dragged off a layer with `pointer` snaps to that layer
+  too (its edges, centres and equal spacing). `edit.duplicate {ids?, dx?, dy?}` without `dx`/`dy`
+  repeats the last duplicate's page offset while its copies are what it duplicates (and still the
+  selection), measured when it runs: Alt-drag or duplicate and move a copy, then each
+  `edit.duplicate` steps out the next one as far again. Copies placed by an auto layout set no
+  step; explicit `dx`/`dy` always win.
 - **Scale tool** (`tool.scale`, K): dragging a selection handle with `pointer` scales everything by
   one factor (sizes and positions whatever the constraints, strokes, effects, corner radii, auto
   layout spacing, min/max sizes, layout grids, guides, tiled images, text), one undo step per drag,

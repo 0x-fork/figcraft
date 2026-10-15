@@ -328,6 +328,9 @@ pub struct DocState {
     pub guide: Option<(NodeId, usize)>,
     /// The selection's rotation origin, when moved or shown (see [`rotation_origin`]; not saved).
     pub(crate) rotation_origin: Option<rotation_origin::RotationOrigin>,
+    /// The last duplicate while its copies are the selection: Duplicate repeats its offset (see
+    /// [`cmd::edit::Duplicated`]; not saved).
+    pub(crate) last_duplicate: Option<cmd::edit::Duplicated>,
 }
 
 /// A version shown on the canvas in place of the document: read-only until it's restored or the
@@ -383,6 +386,7 @@ impl DocState {
             focus: None,
             guide: None,
             rotation_origin: None,
+            last_duplicate: None,
         };
         st.zoom_to_fit();
         st
@@ -538,6 +542,10 @@ impl DocState {
         if self.rotation_origin.as_ref().is_some_and(|o| o.ids != self.selection) {
             self.rotation_origin = None;
         }
+        // So does the last duplicate (undo reuses ids: a new layer could take a copy's).
+        if self.last_duplicate.as_ref().is_some_and(|d| !d.is_selection(&self.selection)) {
+            self.last_duplicate = None;
+        }
     }
 }
 
@@ -552,6 +560,7 @@ pub struct Prefs {
     pub highlight_on_hover: bool,
     pub number_keys_opacity: bool,
     pub show_dimensions: bool,
+    /// "system" by default; an explicit "light" or "dark" choice stays saved.
     pub theme: String,
     /// The widths of the main window's left and right panels (the interface keeps them within its
     /// limits; other windows have their own while they are open).
@@ -611,7 +620,7 @@ impl Default for Prefs {
             highlight_on_hover: true,
             number_keys_opacity: true,
             show_dimensions: true,
-            theme: "light".into(),
+            theme: "system".into(),
             panel_widths: (240.0, 240.0),
             language: "system".into(),
             user_name: cmd::comment::DEFAULT_AUTHOR.into(),
@@ -663,8 +672,8 @@ pub struct Session {
     pub prefs: Prefs,
     pub tool: tools::ToolState,
     pub ui_requests: Vec<UiRequest>,
-    /// The interface's theme once the UI knows it ([`Session::set_ui_dark`]): new files and pages
-    /// get the dark page colour while it is dark. Headless sessions (CLI, MCP, exports) have no
+    /// The interface's theme once the UI knows it ([`Session::set_ui_dark`]): new files get the
+    /// dark page colour while it is dark (added pages take the current page's). Headless sessions (CLI, MCP, exports) have no
     /// theme, so what scripts make is the same everywhere.
     pub ui_dark: Option<bool>,
     /// Command log (id + params) for actions/automation.
@@ -721,7 +730,7 @@ impl Session {
         }
     }
 
-    /// The background new pages get: the dark page colour while the interface is dark.
+    /// The background a new file's page gets: the dark page colour while the interface is dark.
     pub fn new_page_background(&self) -> figcraft_color::Color {
         if self.ui_dark == Some(true) { figcraft_color::Color::DARK_PAGE } else { figcraft_color::Color::DEFAULT_PAGE }
     }
@@ -1441,6 +1450,8 @@ mod double_click_tests;
 #[cfg(test)]
 mod draw_tools_tests;
 #[cfg(test)]
+mod duplicate_spacing_tests;
+#[cfg(test)]
 mod effects_tests;
 #[cfg(test)]
 mod export_behaviour_tests;
@@ -1516,6 +1527,8 @@ mod paint_tests;
 mod panels_behaviour_tests;
 #[cfg(test)]
 mod pdf_print_tests;
+#[cfg(test)]
+mod pen_overlay_tests;
 #[cfg(test)]
 mod pixel_preview_tests;
 #[cfg(test)]
