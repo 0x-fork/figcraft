@@ -1708,6 +1708,7 @@ dependencies = [
  "serde_json",
  "toml",
  "wat",
+ "web-time",
 ]
 
 [[package]]
