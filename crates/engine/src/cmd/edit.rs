@@ -253,7 +253,7 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         spec!("effect.set", "Set effect", "{ids?, index, effect {..}}", true, |s, p| {
-            let i = req_num("effect.set", p, "index")? as usize;
+            let i = req_index("effect.set", p, "index")?;
             let e: Effect = parse("effect.set", p, "effect")?.ok_or_else(|| bad("effect.set", "`effect` required"))?;
             for id in req_targets("effect.set", s, p)? {
                 let n = s.doc_mut()?.get_mut(id)?;
@@ -302,7 +302,7 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             |s, p| {
                 let cmd = "export.update";
-                let i = req_num(cmd, p, "index")? as usize;
+                let i = req_index(cmd, p, "index")?;
                 super::file::export_setting(cmd, ExportSetting::default(), p)?;
                 for id in req_targets(cmd, s, p)? {
                     let n = s.doc_mut()?.get_mut(id)?;
@@ -314,7 +314,7 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         spec!("export.remove", "Remove export setting", "{ids?, index}", true, |s, p| {
-            let i = req_num("export.remove", p, "index")? as usize;
+            let i = req_index("export.remove", p, "index")?;
             for id in req_targets("export.remove", s, p)? {
                 let n = s.doc_mut()?.get_mut(id)?;
                 if i < n.exports.len() {
