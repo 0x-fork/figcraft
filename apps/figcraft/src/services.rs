@@ -271,6 +271,8 @@ impl Services for Desktop {
     fn emergency_save(&mut self, session: &Session) {
         if let Some(r) = crate::recovery::lock(&self.recovery).as_mut() {
             r.write(session, true);
+            // Earlier runs' copies now covered go, so the next start doesn't open them twice.
+            r.settle(session);
         }
     }
     fn reduce_motion(&self) -> bool {
