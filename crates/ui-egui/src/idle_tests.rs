@@ -301,13 +301,26 @@ fn auto_save_writes_a_changed_file_then_rests() {
     h.run("shape.rectangle", json!({"x": 500, "y": 300, "width": 40, "height": 40}));
     assert!(h.frame(vec![]) <= Duration::from_secs_f64(crate::AUTO_SAVE_SECS), "wakes up to save it");
     assert!(h.app.session.ds().unwrap().is_dirty(), "not saved at once");
-    h.time += crate::AUTO_SAVE_SECS;
+    // Another change restarts the wait.
+    h.time += crate::AUTO_SAVE_SECS - 0.5;
+    h.run("shape.rectangle", json!({"x": 600, "y": 300, "width": 40, "height": 40}));
     h.frame(vec![]);
-    assert!(!h.app.session.ds().unwrap().is_dirty(), "saved");
+    h.time += 1.0;
+    h.frame(vec![]);
+    assert!(h.app.ui.auto_saving.is_empty() && h.app.session.ds().unwrap().is_dirty(), "waits for a pause in the changes");
+    h.time += crate::AUTO_SAVE_SECS;
+    // The file is encoded on a thread of its own, then written.
+    let start = Instant::now();
+    while h.app.session.ds().unwrap().is_dirty() {
+        assert!(start.elapsed() < Duration::from_secs(20), "saved");
+        let delay = h.frame(vec![]);
+        assert!(h.app.ui.auto_saving.is_empty() || delay <= Duration::from_millis(100), "looks again for the file being encoded");
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let mut t = Session::empty();
     t.execute("file.open", &json!({"path": path})).unwrap();
     let ds = t.ds().unwrap();
-    assert!(ds.doc.page_content_bounds(ds.page).unwrap().x1 >= 540.0, "the new rectangle is in the file");
+    assert!(ds.doc.page_content_bounds(ds.page).unwrap().x1 >= 640.0, "the new rectangles are in the file");
     h.assert_idle("an auto-saved file");
     let _ = std::fs::remove_dir_all(&dir);
 }
