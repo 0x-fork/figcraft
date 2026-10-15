@@ -846,7 +846,8 @@ pub fn opacity_from_digits(digits: &str) -> Option<f32> {
     let mut n = 0u32;
     let mut count = 0;
     for c in digits.chars() {
-        n = n * 10 + c.to_digit(10)?;
+        // Input-derived: a number that outgrows `u32` stops the scan (None); it never wraps.
+        n = n.checked_mul(10)?.checked_add(c.to_digit(10)?)?;
         count += 1;
     }
     match count {
