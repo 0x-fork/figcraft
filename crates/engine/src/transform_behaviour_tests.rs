@@ -278,6 +278,35 @@ fn constrain_proportions_keeps_the_other_side_in_ratio() {
 }
 
 #[test]
+fn a_press_anywhere_on_a_corner_handle_resizes() {
+    // The canvas draws each corner handle as an 8 px square centred on the corner, and the
+    // corner-radius handle sits 10 px in along the diagonal: a press on the square's inner half
+    // resizes (both sides, in ratio with the link on), it doesn't pick the radius handle.
+    let radii = |s: &Session, r: NodeId| s.doc().unwrap().node(r).unwrap().corners.radii;
+    for lock in [false, true] {
+        let mut s = session();
+        let r = rect(&mut s, 0.0, 0.0, 1000.0, 600.0, None);
+        set(&mut s, &[r], json!({"constrainProportions": lock}));
+        ex(&mut s, "select.set", json!({"ids": [r]}));
+        let on_square = Point::new(997.0, 597.0);
+        s.pointer(&ev(PointerKind::Hover, on_square, NONE)).unwrap();
+        assert!(matches!(s.tool.overlay.cursor, Cursor::Resize(_)), "lock {lock}: {:?}", s.tool.overlay.cursor);
+        drag(&mut s, on_square, Point::new(1197.0, 637.0), NONE);
+        let (w, h) = size(&s, r);
+        let want_h = if lock { 718.2 } else { 637.0 };
+        assert!(near(w, 1197.0) && near(h, want_h), "lock {lock}: both sides follow the corner, got {w}×{h}");
+        assert_eq!(radii(&s, r), [0.0; 4]);
+    }
+    // Further in, past the square, the radius handle still answers.
+    let mut s = session();
+    let r = rect(&mut s, 0.0, 0.0, 1000.0, 600.0, None);
+    ex(&mut s, "select.set", json!({"ids": [r]}));
+    drag(&mut s, Point::new(993.0, 593.0), Point::new(980.0, 580.0), NONE);
+    assert_eq!(size(&s, r), (1000.0, 600.0));
+    assert!(radii(&s, r)[0] > 0.0, "the radius handle rounds the corners");
+}
+
+#[test]
 fn frames_resize_with_constraints_and_cmd_ignores_them() {
     let mut s = session();
     let f = id(&ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 200, "height": 100})));
