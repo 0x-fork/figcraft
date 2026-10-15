@@ -2,7 +2,7 @@
 //! a scrub and an arrow key move a value, and the Design panel's fields driven through egui
 //! headless: scrubbing by the label with and without Shift and Alt, arrow keys, arithmetic on
 //! commit, Tab and Shift+Tab, Escape, fields showing "Mixed", and one undo step per scrub or
-//! commit (the colour picker's fields too).
+//! commit (the colour picker's and the prototype panel's fields too).
 
 use egui::accesskit::Role;
 use egui::{Event, Id, Key, Modifiers, Pos2, pos2};
@@ -436,4 +436,28 @@ fn scrubbing_colour_picker_fields_is_live_and_one_undo_step() {
     let [.., alpha] = rgba(&u);
     assert!(alpha < a0, "alpha {a0} → {alpha}");
     assert_eq!(undo_steps(&u), steps + 2, "alpha");
+}
+
+#[test]
+fn scrubbing_a_prototype_delay_sets_it_once_when_let_go() {
+    let mut s = Session::new();
+    let f1 = id(s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 200, "height": 300})).unwrap());
+    let f2 = id(s.execute("frame.create", &json!({"x": 300, "y": 0, "width": 200, "height": 300})).unwrap());
+    let it = json!({"id": f1, "trigger": {"type": "afterDelay", "ms": 500}, "action": {"type": "navigate", "dest": f2}});
+    s.execute("proto.interaction.add", &it).unwrap();
+    s.execute("select.set", &json!({"ids": [f1]})).unwrap();
+    let mut u = Ui::new(s);
+    u.app.ui.right_tab = crate::RightTab::Prototype;
+    crate::proto_panel::open_editor(&u.ctx, Some((f1, 0)));
+    for _ in 0..3 {
+        u.frame(vec![]);
+    }
+    let steps = undo_steps(&u);
+    let from = lead(&u, Id::new(("proto_delay", f1, 0usize)));
+    drag(&mut u, from, 30.0, Modifiers::NONE);
+    let ms = match u.app.session.doc().unwrap().node(f1).unwrap().interactions[0].trigger {
+        figcraft_doc::proto::Trigger::AfterDelay { ms } => ms,
+        _ => panic!("still after a delay"),
+    };
+    assert_eq!((ms, undo_steps(&u)), (800, steps + 1));
 }
