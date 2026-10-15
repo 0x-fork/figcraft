@@ -9,6 +9,7 @@ status = "draft — needs native review"
 
 [ui]
 "Couldn't download the variables" = "No se pudieron descargar las variables"
+"A .figcraft file with this name already exists. Choose its full name to confirm replacement." = "Ya existe un archivo .figcraft con este nombre. Elige su nombre completo para confirmar que deseas reemplazarlo."
 
 "% of all commits" = "% del total de commits"
 "(no longer published)" = "(ya no publicado)"
@@ -1414,6 +1415,7 @@ status = "draft — needs native review"
 "Use as mask" = "Usar como máscara"
 "Use auto layout" = "Usar diseño automático"
 "Use number keys for opacity" = "Usar teclas numéricas para la opacidad"
+"Use the .figcraft or .fig extension." = "Usa la extensión .figcraft o .fig."
 "Use the layer's fill" = "Usar el relleno de la capa"
 "Used in {files} · {instances}" = "Usado en {files} · {instances}"
 "Username" = "Usuario"
