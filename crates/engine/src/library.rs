@@ -134,9 +134,12 @@ pub fn closure(doc: &Document, roots: &[NodeId]) -> Vec<NodeId> {
     out
 }
 
-/// The style ids a layer links to (fill, stroke, effect, grid, text).
+/// The style ids a layer links to (fill, stroke, effect, grid, text, and text styles on
+/// character ranges).
 pub(crate) fn style_links(n: &Node) -> impl Iterator<Item = &String> {
-    [&n.styles.fill, &n.styles.stroke, &n.styles.effect, &n.styles.grid, &n.styles.text].into_iter().flatten()
+    let chars =
+        n.kind.text().into_iter().flat_map(|t| std::iter::once(&t.style).chain(t.runs.iter().map(|r| &r.style))).filter_map(|s| s.style_id.as_ref());
+    [&n.styles.fill, &n.styles.stroke, &n.styles.effect, &n.styles.grid, &n.styles.text].into_iter().flatten().chain(chars)
 }
 
 /// Style ids the layers under `roots` link to.
