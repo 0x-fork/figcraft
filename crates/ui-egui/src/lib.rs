@@ -892,7 +892,7 @@ impl FigApp {
             _ => false,
         };
         self.ui.dark = dark;
-        // New files and pages take the theme's page colour (existing pages keep theirs).
+        // New files take the theme's page colour (existing pages keep theirs).
         self.session.set_ui_dark(dark);
         theme::apply_with(ctx, if dark { theme::Tokens::dark() } else { theme::Tokens::light() }, self.reduce_motion());
         if self.worker.is_none() {
