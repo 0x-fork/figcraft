@@ -369,18 +369,24 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"url": s.prefs.publish_server, "default": crate::live::DEFAULT_SERVER}))
             }
         ),
-        spec!("pref.language", "Interface language", "{language: system|en|es|es-419|fr|de|pt-BR|ja|ko|zh-Hans|…; else English}", false, |s, p| {
-            let lang = req_string("pref.language", p, "language")?;
-            let lang = lang.trim();
-            // A BCP 47-style tag ("es", "pt-BR", "zh_Hans") or "system".
-            let tag = lang.len() <= 35
-                && lang.split(['-', '_']).all(|part| !part.is_empty() && part.len() <= 8 && part.chars().all(|c| c.is_ascii_alphanumeric()));
-            if !tag {
-                return Err(bad("pref.language", format!("`{lang}` is not a language code")));
+        spec!(
+            "pref.language",
+            "Interface language",
+            "{language: system|en|cs|es|es-419|fr|de|pt-BR|ja|ko|zh-Hans|…; else English}",
+            false,
+            |s, p| {
+                let lang = req_string("pref.language", p, "language")?;
+                let lang = lang.trim();
+                // A BCP 47-style tag ("es", "pt-BR", "zh_Hans") or "system".
+                let tag = lang.len() <= 35
+                    && lang.split(['-', '_']).all(|part| !part.is_empty() && part.len() <= 8 && part.chars().all(|c| c.is_ascii_alphanumeric()));
+                if !tag {
+                    return Err(bad("pref.language", format!("`{lang}` is not a language code")));
+                }
+                s.prefs.language = lang.to_string();
+                Ok(json!({"language": s.prefs.language}))
             }
-            s.prefs.language = lang.to_string();
-            Ok(json!({"language": s.prefs.language}))
-        }),
+        ),
         spec!("app.preferences", "Preferences", "{}", false, |s, _| ui(s, "dialog.preferences")),
         spec!("app.actions", "Actions", "{}", false, |s, _| ui(s, "palette.actions")),
         spec!("help.shortcuts", "Keyboard shortcuts", "{}", false, |s, _| ui(s, "panel.shortcuts")),
