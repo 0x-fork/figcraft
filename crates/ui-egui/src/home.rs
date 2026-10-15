@@ -163,7 +163,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             });
         });
     });
-    // The whole window is the drop target, like the incumbent.
+    // The whole window is the drop target, not only the canvas.
     crate::drop_overlay(ui.ctx(), ui.ctx().content_rect(), tr("Drop to open"));
 }
 
