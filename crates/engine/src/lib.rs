@@ -1588,6 +1588,8 @@ mod open_issues_tests;
 #[cfg(test)]
 mod outline_options_tests;
 #[cfg(test)]
+mod page_copy_navigation_tests;
+#[cfg(test)]
 mod page_target_tests;
 #[cfg(test)]
 mod paint_reorder_tests;
