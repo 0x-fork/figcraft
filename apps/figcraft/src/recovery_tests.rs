@@ -63,6 +63,51 @@ fn copies_follow_saves_and_a_normal_quit_leaves_nothing() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+fn slow_write(path: std::path::PathBuf) -> std::thread::JoinHandle<bool> {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        std::fs::write(path, b"stale").is_ok()
+    })
+}
+
+#[test]
+fn saving_or_closing_waits_for_a_slow_write_so_the_copy_does_not_come_back() {
+    let root = root("slow-cleanup");
+    let mut s = edited();
+    let mut r = Recovery::start(&root).unwrap();
+    let dir = std::fs::read_dir(&root).unwrap().flatten().next().unwrap().path();
+    let uid = s.docs[0].uid;
+    let copy = dir.join(format!("{uid}.figcraft"));
+    r.hold(uid, 1, slow_write(copy.clone()));
+    s.ds_mut().unwrap().mark_saved();
+    r.write(&s, false);
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    assert!(!copy.exists(), "a saved document's copy stays removed");
+    // Closed: the same.
+    let s = edited();
+    let uid = s.docs[0].uid;
+    let copy = dir.join(format!("{uid}.figcraft"));
+    r.hold(uid, 1, slow_write(copy.clone()));
+    r.write(&Session::empty(), false);
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    assert!(!copy.exists(), "a closed document's copy stays removed");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_emergency_save_waits_for_the_write_in_flight_and_copies_the_newest_revision() {
+    let root = root("slow-emergency");
+    let s = edited();
+    let mut r = Recovery::start(&root).unwrap();
+    let dir = std::fs::read_dir(&root).unwrap().flatten().next().unwrap().path();
+    let uid = s.docs[0].uid;
+    let copy = dir.join(format!("{uid}.figcraft"));
+    r.hold(uid, 0, slow_write(copy.clone()));
+    r.write(&s, true);
+    assert!(std::fs::read(&copy).is_ok_and(|b| b != b"stale"), "the newest revision replaced the slow write");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// The files named `*.figcraft` in the run folder under `root`.
 fn copy_count(root: &std::path::Path) -> usize {
     let Some(dir) = std::fs::read_dir(root).unwrap().flatten().next().map(|e| e.path()) else { return 0 };

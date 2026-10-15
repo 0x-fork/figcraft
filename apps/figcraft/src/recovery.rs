@@ -61,8 +61,14 @@ struct Copy {
 impl Copy {
     /// Take in the result of the write in flight once it ended; a failed one leaves its revision uncopied.
     fn reap(&mut self) {
-        if self.flight.as_ref().is_some_and(|f| f.1.is_finished())
-            && let Some((revision, h)) = self.flight.take()
+        if self.flight.as_ref().is_some_and(|f| f.1.is_finished()) {
+            self.join();
+        }
+    }
+
+    /// Wait for the write in flight and take in its result.
+    fn join(&mut self) {
+        if let Some((revision, h)) = self.flight.take()
             && h.join().unwrap_or(false)
         {
             self.done = Some(revision);
@@ -157,14 +163,21 @@ impl Recovery {
             let path = self.dir.join(format!("{}.figcraft", d.uid));
             let note = path.with_extension(ONLINE);
             if !needs_copy(d) {
-                if self.written.remove(&d.uid).is_some() {
+                if let Some(mut w) = self.written.remove(&d.uid) {
+                    // A write still running would bring the copy back after it was removed.
+                    w.join();
                     let _ = std::fs::remove_file(&path);
                     let _ = std::fs::remove_file(&note);
                 }
                 continue;
             }
             let entry = self.written.entry(d.uid).or_default();
-            entry.reap();
+            // An emergency save must copy the newest revision: let the write in flight finish first.
+            if wait {
+                entry.join();
+            } else {
+                entry.reap();
+            }
             // A write still in flight (for any revision) is waited for; a failed one is tried again.
             if entry.done == Some(d.revision) || entry.flight.is_some() {
                 continue;
@@ -197,14 +210,21 @@ impl Recovery {
         // Closed documents.
         let open: Vec<u64> = s.docs.iter().map(|d| d.uid).collect();
         let dir = &self.dir;
-        self.written.retain(|uid, _| {
+        self.written.retain(|uid, w| {
             let keep = open.contains(uid);
             if !keep {
+                w.join();
                 let _ = std::fs::remove_file(dir.join(format!("{uid}.figcraft")));
                 let _ = std::fs::remove_file(dir.join(format!("{uid}.{ONLINE}")));
             }
             keep
         });
+    }
+
+    /// Test hook: pretend a write of `uid` at `revision` is in flight in `writer`.
+    #[cfg(test)]
+    pub fn hold(&mut self, uid: u64, revision: u64, writer: JoinHandle<bool>) {
+        self.written.insert(uid, Copy { done: None, flight: Some((revision, writer)) });
     }
 
     /// A normal quit: the documents were saved or their changes discarded on purpose. (Earlier
