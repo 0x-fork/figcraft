@@ -361,9 +361,13 @@ Forks and modified versions must remove them.
 
 ## Linux window controls
 
-Linux desktop builds enable winit's Adwaita client-side frame on GNOME/Wayland,
-where the compositor does not provide server-side decorations. Its minimize,
-maximize/restore and close icons are drawn as vectors, so the close button does
-not depend on a font containing a particular character. The frame follows the
-desktop's button layout; X11 and compositors offering server-side decorations
-keep their window manager's frame.
+On Wayland without the `zxdg_decoration_manager_v1` protocol (including GNOME),
+FigCraft enables winit's Adwaita client-side frame with vector minimize,
+maximize/restore and close buttons. The tab strip keeps the document names;
+the frame's title-font renderer is disabled, so this does not embed Cantarell.
+X11 and Wayland compositors advertising server decorations, including KDE and
+wlroots, retain FigCraft's existing frameless tab strip and its own controls.
+
+The actual window backend is checked before requesting the frame. A failed or
+slow capability query, or a launch using only an inherited Wayland socket,
+keeps the existing custom controls. Desktop names are not used to guess capabilities.

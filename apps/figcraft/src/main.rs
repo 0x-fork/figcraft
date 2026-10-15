@@ -15,6 +15,8 @@ mod args;
 mod control_server;
 mod gamepad;
 mod graphics;
+#[cfg(target_os = "linux")]
+mod linux_window;
 mod recovery;
 mod services;
 mod startup;
@@ -192,7 +194,8 @@ fn main() -> eframe::Result {
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([800.0, 500.0])
         .with_drag_and_drop(true);
-    // Other windows inherit this choice, so they keep the same native frame on Linux.
+    // Start frameless on Linux; the app creator checks the actual display backend
+    // before enabling a client-side frame. Other windows inherit that decision.
     fig.ui.title_bar = desktop_title_bar();
     viewport = window_chrome(viewport, fig.ui.title_bar);
     if let Some(icon) = icon {
@@ -201,6 +204,8 @@ fn main() -> eframe::Result {
     let mut options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, ..Default::default() };
     graphics::configure(&mut options.wgpu_options);
     figcraft_ui_egui::windows::install(fig);
+    #[cfg(target_os = "linux")]
+    let linux_display = linux_window::display_socket();
     // Registered before the event loop starts, so it catches the Finder event that launched the app
     // as well as later ones. Lives until the event loop returns; the app creator only borrows it.
     #[cfg(target_os = "macos")]
@@ -211,6 +216,11 @@ fn main() -> eframe::Result {
         "FigCraft",
         options,
         Box::new(move |_cc| {
+            #[cfg(target_os = "linux")]
+            if linux_window::needs_native_frame(_cc, linux_display) {
+                let _ = with_app(|fig| fig.ui.title_bar = figcraft_ui_egui::TitleBar::Native);
+                _cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
+            }
             Ok(Box::new(App {
                 queue,
                 ctx_slot,
@@ -230,13 +240,7 @@ fn main() -> eframe::Result {
 
 fn desktop_title_bar() -> figcraft_ui_egui::TitleBar {
     use figcraft_ui_egui::TitleBar;
-    if cfg!(target_os = "macos") {
-        TitleBar::Inset
-    } else if cfg!(target_os = "linux") {
-        TitleBar::Native
-    } else {
-        TitleBar::Custom
-    }
+    if cfg!(target_os = "macos") { TitleBar::Inset } else { TitleBar::Custom }
 }
 
 fn window_chrome(viewport: egui::ViewportBuilder, title_bar: figcraft_ui_egui::TitleBar) -> egui::ViewportBuilder {
@@ -251,10 +255,10 @@ fn window_chrome(viewport: egui::ViewportBuilder, title_bar: figcraft_ui_egui::T
 #[cfg(all(test, target_os = "linux"))]
 mod linux_window_tests {
     #[test]
-    fn the_desktop_and_detached_windows_use_native_chrome() {
+    fn linux_starts_with_the_existing_frameless_title_bar() {
         let bar = super::desktop_title_bar();
-        assert_eq!(bar, figcraft_ui_egui::TitleBar::Native);
+        assert_eq!(bar, figcraft_ui_egui::TitleBar::Custom);
         let viewport = super::window_chrome(egui::ViewportBuilder::default(), bar);
-        assert_eq!(viewport.decorations, Some(true));
+        assert_eq!(viewport.decorations, Some(false));
     }
 }

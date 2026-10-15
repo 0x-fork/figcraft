@@ -45,6 +45,7 @@ wat = { workspace = true }
 winresource = "0.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# GNOME/Wayland has no server-side frame. Enable winit's Adwaita title bar and
-# vector-drawn window buttons; eframe/wayland alone does not enable decorations.
-winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
+# Use vector window controls without a title-font renderer or embedded Cantarell.
+winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita-notitle"] }
+raw-window-handle = "0.6"
+wayland-client = "0.31"
