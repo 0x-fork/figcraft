@@ -167,6 +167,16 @@ impl<'a> View<'a> {
         v
     }
 
+    /// This view with `style` just above the node itself: the style beats the node's own copy of
+    /// its fields (stale when the style changed since), and override rows beat both.
+    fn styled(&self, style: Option<&'a Kv<'a>>) -> Self {
+        let mut v = self.clone();
+        if let Some(s) = style {
+            v.layers.insert(v.layers.len().min(1), s);
+        }
+        v
+    }
+
     fn get(&self, k: &str) -> Option<&'a Kv<'a>> {
         self.layers.iter().rev().find_map(|l| l.get(k))
     }
@@ -1095,18 +1105,29 @@ impl<'a> Mapper<'a> {
     }
 
     fn text(&mut self, o: &mut Obj, v: &View<'a>) {
-        let style_node = v
-            .get("styleIdForText")
-            .and_then(ref_guid)
-            .or_else(|| v.get("inheritTextStyleID").and_then(guid))
-            .and_then(|s| self.nodes.get(&s).copied());
-        let sv = v.with(style_node.filter(|s| s.get("styleType").and_then(Kv::str) == Some("TEXT")));
+        let style_node = style_link(v, "styleIdForText", "inheritTextStyleID").and_then(|s| self.nodes.get(&s).copied());
+        // Instance overrides beat the shared style; the style beats the layer's own copy.
+        let sv = v.styled(style_node.filter(|s| s.get("styleType").and_then(Kv::str) == Some("TEXT")));
         let td = v.get("textData");
         let chars = td.and_then(|t| t.get("characters")).and_then(Kv::str).unwrap_or("");
         o.insert("characters".into(), json!(chars));
         let mut style = text_style(&sv, None);
+        // The style's typography beats the layer's own copy of it (the copy is stale when the style
+        // changed). The file cannot tell a stale copy of these four values from a deliberate local
+        // one, and "original", "none" and 0 could never be set locally if the style always won, so
+        // a value the layer or an override sets itself is taken as deliberate.
+        if let Some(decoration @ ("NONE" | "UNDERLINE" | "STRIKETHROUGH")) = v.str("textDecoration") {
+            style.insert("textDecoration".into(), json!(decoration));
+        }
+        if let Some(case @ ("ORIGINAL" | "UPPER" | "LOWER" | "TITLE" | "SMALL_CAPS" | "SMALL_CAPS_FORCED")) = v.str("textCase") {
+            style.insert("textCase".into(), json!(case));
+        }
         for k in ["textAlignHorizontal", "textAlignVertical", "textAutoResize", "textTruncation"] {
             copy_str(&mut style, v, k, k);
+        }
+        // Paragraph settings belong to the effective text layer, including explicit zero clears.
+        for k in ["paragraphSpacing", "paragraphIndent"] {
+            copy_num(&mut style, v, k, k);
         }
         if let Some(n) = v.num("maxLines").filter(|n| *n >= 1.0) {
             style.insert("maxLines".into(), json!(n));
@@ -1117,20 +1138,7 @@ impl<'a> Mapper<'a> {
         }
         o.insert("style".into(), Value::Object(style));
         let Some(td) = td else { return };
-        let ids: Vec<u64> = td.get("characterStyleIDs").map(Kv::list).unwrap_or_default().iter().filter_map(Kv::f64).map(|i| i as u64).collect();
-        if ids.iter().any(|i| *i != 0) {
-            let mut table = Obj::new();
-            for e in td.get("styleOverrideTable").map(Kv::list).unwrap_or_default() {
-                let Some(sid) = num(e, "styleID") else { continue };
-                let mut s = text_style(&View::of(e), size);
-                if let Some(fills) = e.get("fillPaints") {
-                    s.insert("fills".into(), Value::Array(fills.list().iter().filter_map(paint).collect()));
-                }
-                table.insert((sid as u64).to_string(), Value::Object(s));
-            }
-            o.insert("characterStyleOverrides".into(), json!(ids));
-            o.insert("styleOverrideTable".into(), Value::Object(table));
-        }
+        char_styles(o, td, size);
         let lines: Vec<&str> = td
             .get("lines")
             .map(Kv::list)
@@ -1318,6 +1326,16 @@ impl<'a> Mapper<'a> {
                 "characters" => {
                     if let Some(t) = prop_text(val) {
                         o.insert("characters".into(), json!(t));
+                        // Run styles count the chars they were made for: for other chars only
+                        // the value's own apply.
+                        if own_text(v) != Some(t) {
+                            o.remove("characterStyleOverrides");
+                            o.remove("styleOverrideTable");
+                            if let Some(tv) = val.get("textValue") {
+                                let size = o.get("style").and_then(|s| s.get("fontSize")).and_then(Value::as_f64);
+                                char_styles(o, tv, size);
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -2026,6 +2044,26 @@ fn variable_value(d: &Kv) -> Option<Value> {
     v.get("textValue").and_then(Kv::str).map(|s| json!(s))
 }
 
+/// Per-character styles of text data `td` (`characterStyleIDs` + `styleOverrideTable`) as REST
+/// `characterStyleOverrides` + `styleOverrideTable`; `size`: the base font size.
+fn char_styles(o: &mut Obj, td: &Kv, size: Option<f64>) {
+    let ids: Vec<u64> = td.get("characterStyleIDs").map(Kv::list).unwrap_or_default().iter().filter_map(Kv::f64).map(|i| i as u64).collect();
+    if ids.iter().all(|i| *i == 0) {
+        return;
+    }
+    let mut table = Obj::new();
+    for e in td.get("styleOverrideTable").map(Kv::list).unwrap_or_default() {
+        let Some(sid) = num(e, "styleID") else { continue };
+        let mut s = text_style(&View::of(e), size);
+        if let Some(fills) = e.get("fillPaints") {
+            s.insert("fills".into(), Value::Array(fills.list().iter().filter_map(paint).collect()));
+        }
+        table.insert((sid as u64).to_string(), Value::Object(s));
+    }
+    o.insert("characterStyleOverrides".into(), json!(ids));
+    o.insert("styleOverrideTable".into(), Value::Object(table));
+}
+
 /// The text of a component property value.
 fn prop_text<'k>(v: &'k Kv) -> Option<&'k str> {
     v.get("textValue").and_then(|t| t.get("characters")).and_then(Kv::str)
@@ -2063,7 +2101,11 @@ fn text_style(v: &View, size: Option<f64>) -> Obj {
         let val = num(ls, "value").unwrap_or(0.0);
         let px = match ls.get("units").and_then(Kv::str) {
             Some("PIXELS") => val,
-            Some("PERCENT") => val / 100.0 * font_size,
+            Some("PERCENT") => {
+                // Private (read by `rest/text.rs`): REST spacing is in pixels; keep the percent.
+                s.insert("_letterSpacingPercent".into(), json!(val));
+                val / 100.0 * font_size
+            }
             _ => val * font_size,
         };
         s.insert("letterSpacing".into(), json!(px));

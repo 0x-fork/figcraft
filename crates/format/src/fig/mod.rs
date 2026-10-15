@@ -24,6 +24,8 @@ mod network;
 mod source_identity_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod text_style_tests;
 
 use std::io::Read;
 
