@@ -440,7 +440,7 @@ mod gif_tests;
 #[cfg(test)]
 mod glass_bench_tests;
 #[cfg(test)]
-mod glass_cache_tests;
+mod glass_cut_tests;
 #[cfg(test)]
 mod grain_tests;
 #[cfg(test)]
