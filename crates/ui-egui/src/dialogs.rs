@@ -139,6 +139,7 @@ pub fn keys(app: &mut FigApp, ctx: &Context) {
     let open = u.color_profile.is_some()
         || u.find.is_some()
         || u.batch_rename.is_some()
+        || u.import_report.is_some()
         || u.confirm_close
         || u.export_preview
         || u.shortcuts_panel
@@ -147,7 +148,7 @@ pub fn keys(app: &mut FigApp, ctx: &Context) {
     if !open || !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         return;
     }
-    if u.color_profile.take().is_some() || u.find.take().is_some() || u.batch_rename.take().is_some() {
+    if u.color_profile.take().is_some() || u.find.take().is_some() || u.batch_rename.take().is_some() || u.import_report.take().is_some() {
         return;
     }
     for flag in [&mut u.confirm_close, &mut u.export_preview, &mut u.shortcuts_panel, &mut u.preferences, &mut u.about] {
@@ -160,6 +161,7 @@ pub fn keys(app: &mut FigApp, ctx: &Context) {
 pub fn show(app: &mut FigApp, ctx: &Context) {
     // Dropped files waiting to open: their card, then (once it has shown) the files.
     crate::pending_open::pending_opens(app, ctx);
+    crate::import_report::show(app, ctx);
     let t = Tokens::get(ctx);
     if app.ui.about {
         let mut open = true;
