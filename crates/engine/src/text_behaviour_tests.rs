@@ -210,8 +210,8 @@ fn text_tool(from: (f64, f64), to: (f64, f64), chars: &str) -> (figcraft_geom::R
 }
 
 #[test]
-fn a_drag_with_the_text_tool_makes_a_fixed_width_box() {
-    // #360: as wide as the drag, its top-left where the drag started, and its text wraps in it; a
+fn a_drag_with_the_text_tool_makes_a_fixed_size_box() {
+    // #360: the drag's size, its top-left where the drag started, and its text wraps in it; a
     // click, or a drag within a few pixels, still makes auto-width text.
     use figcraft_doc::TextAutoResize;
     figcraft_text::scan_system_fonts();
@@ -219,11 +219,13 @@ fn a_drag_with_the_text_tool_makes_a_fixed_width_box() {
     let (line, auto) = text_tool((100.0, 100.0), (100.0, 100.0), long);
     assert_eq!(auto, TextAutoResize::WidthAndHeight);
     assert_eq!(text_tool((100.0, 100.0), (101.0, 101.0), long).1, TextAutoResize::WidthAndHeight, "a slip of the hand is a click");
-    let (b, auto) = text_tool((100.0, 100.0), (180.0, 160.0), long);
-    assert_eq!(auto, TextAutoResize::Height);
-    assert_eq!((b.x0, b.y0, b.width()), (100.0, 100.0, 80.0));
-    assert!(b.height() > line.height(), "the text wraps: {} vs one line {}", b.height(), line.height());
+    let (b, auto) = text_tool((100.0, 100.0), (180.0, 400.0), long);
+    assert_eq!(auto, TextAutoResize::None);
+    assert_eq!((b.x0, b.y0, b.width(), b.height()), (100.0, 100.0, 80.0, 300.0), "the text wraps in a box that keeps its size");
     // Dragged up and to the left, the box is the same.
-    let (b2, _) = text_tool((180.0, 160.0), (100.0, 100.0), long);
-    assert_eq!((b2.x0, b2.y0, b2.width()), (100.0, 100.0, 80.0));
+    let (b2, _) = text_tool((180.0, 400.0), (100.0, 100.0), long);
+    assert_eq!((b2.x0, b2.y0, b2.width(), b2.height()), (100.0, 100.0, 80.0, 300.0));
+    // A flat drag still makes a box one line tall.
+    let (b3, _) = text_tool((100.0, 100.0), (180.0, 101.0), "A");
+    assert_eq!((b3.width(), b3.height()), (80.0, line.height()));
 }
