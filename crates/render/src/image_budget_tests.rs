@@ -87,6 +87,20 @@ fn the_image_cache_keeps_within_its_byte_budget() {
 }
 
 #[test]
+fn a_full_image_cache_drops_the_least_recently_used_image_only() {
+    // 1000 bytes hold two 400-byte pixmaps: the third drops the one used longest ago.
+    let mut c = images::PixmapCache::default();
+    c.insert(key("a"), pixmap(10), 1000);
+    c.insert(key("b"), pixmap(10), 1000);
+    assert!(c.get(&key("a")).is_some());
+    c.insert(key("c"), pixmap(10), 1000);
+    assert!(c.get(&key("a")).is_some(), "used since b: kept");
+    assert!(c.get(&key("b")).is_none(), "used longest ago: dropped");
+    assert!(c.get(&key("c")).is_some());
+    assert_eq!(c.bytes(), 800);
+}
+
+#[test]
 fn an_image_larger_than_the_budget_is_held_alone() {
     let mut c = images::PixmapCache::default();
     c.insert(key("small"), pixmap(10), 1000);

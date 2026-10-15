@@ -17,8 +17,9 @@ pub(crate) type Key = (String, [i32; 7], ColorProfile);
 
 /// The largest image side decoded.
 const MAX_SIDE: u32 = 16_384;
-/// The most bytes one image's decoded pixels take (a 16k × 16k 8-bit RGBA image).
-const MAX_DECODED_BYTES: u64 = 1 << 30;
+/// The most bytes one image's decoding may allocate: the image crate's own default limit (a
+/// larger image is refused from its header).
+const MAX_DECODED_BYTES: u64 = 512 << 20;
 /// The most bytes of pixels each decoded-image cache holds (one image larger than this is held
 /// alone).
 const MAX_CACHED_BYTES: u64 = 512 << 20;
@@ -26,29 +27,43 @@ const MAX_CACHED_BYTES: u64 = 512 << 20;
 const MAX_CACHED_IMAGES: usize = 256;
 
 /// Decoded pixmaps by image, filters and profile, holding at most a byte budget of pixels: adding
-/// one past the budget (or past [`MAX_CACHED_IMAGES`]) empties the cache first.
+/// one past the budget (or past [`MAX_CACHED_IMAGES`]) drops the least recently used first, so
+/// the images on screen stay while they fit.
 #[derive(Default)]
 pub(crate) struct PixmapCache {
-    map: HashMap<Key, Arc<Pixmap>>,
+    /// Each pixmap and when it was last used.
+    map: HashMap<Key, (Arc<Pixmap>, u64)>,
     bytes: u64,
+    tick: u64,
 }
 
 impl PixmapCache {
-    pub(crate) fn get(&self, key: &Key) -> Option<Arc<Pixmap>> {
-        self.map.get(key).cloned()
+    pub(crate) fn get(&mut self, key: &Key) -> Option<Arc<Pixmap>> {
+        self.tick += 1;
+        let tick = self.tick;
+        self.map.get_mut(key).map(|(p, used)| {
+            *used = tick;
+            p.clone()
+        })
     }
 
     /// Add `p` under `key`, keeping the cache within `max_bytes` (or holding `p` alone).
     pub(crate) fn insert(&mut self, key: Key, p: Arc<Pixmap>, max_bytes: u64) {
         let size = p.data().len() as u64;
-        if self.bytes.saturating_add(size) > max_bytes || self.map.len() >= MAX_CACHED_IMAGES {
-            self.map.clear();
-            self.bytes = 0;
+        self.remove(&key);
+        while self.bytes.saturating_add(size) > max_bytes || self.map.len() >= MAX_CACHED_IMAGES {
+            let Some(oldest) = self.map.iter().min_by_key(|(_, (_, used))| *used).map(|(k, _)| k.clone()) else { break };
+            self.remove(&oldest);
         }
-        if let Some(old) = self.map.insert(key, p) {
-            self.bytes = self.bytes.saturating_sub(old.data().len() as u64);
-        }
+        self.tick += 1;
+        self.map.insert(key, (p, self.tick));
         self.bytes = self.bytes.saturating_add(size);
+    }
+
+    fn remove(&mut self, key: &Key) {
+        if let Some((p, _)) = self.map.remove(key) {
+            self.bytes = self.bytes.saturating_sub(p.data().len() as u64);
+        }
     }
 
     /// The bytes of pixels held.
