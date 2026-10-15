@@ -169,6 +169,9 @@ fn main() -> eframe::Result {
     if session.docs.is_empty() && !first_run {
         let _ = session.execute("file.new", &json!({}));
     }
+    // The interface language from the first frame on, and for the message when the window can't
+    // open (no frame then).
+    figcraft_ui_egui::i18n::set(&session.prefs.language, figcraft_ui_egui::Services::system_language(&svc).as_deref());
     let mut fig = FigApp::new(session, Box::new(svc));
     fig.ui.home = false;
     fig.note_recovered(recovered.copies);
