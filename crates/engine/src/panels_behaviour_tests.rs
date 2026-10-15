@@ -403,3 +403,14 @@ fn assets_panel_lists_files_and_drops_by_the_documented_rules() {
     assert_eq!(kids(&s, row).first(), Some(&into), "an asset dropped in an auto layout frame joins the flow where it is dropped");
     assert_eq!(s.doc().unwrap().page_of(into), Some(page));
 }
+
+#[test]
+fn duplicating_a_layer_named_past_the_counter_does_not_overflow() {
+    let mut s = Session::new();
+    ex(&mut s, "pref.renameDuplicates", json!({"on": true}));
+    let r = rect(&mut s, "r", 30.0, 40.0, None);
+    ex(&mut s, "node.set", json!({"id": r, "props": {"name": "Layer 18446744073709551615"}}));
+    let dup = id_of(&ex(&mut s, "edit.duplicate", json!({"ids": [r]}))["ids"][0]).unwrap();
+    assert_eq!(name(&s, dup), "Layer 18446744073709551615 2");
+    assert!(s.doc().unwrap().validate().is_empty(), "the document still checks out");
+}

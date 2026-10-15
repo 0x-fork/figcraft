@@ -488,8 +488,9 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
 fn bump_name(n: &str) -> String {
     if let Some((base, num)) = n.rsplit_once(' ')
         && let Ok(k) = num.parse::<u64>()
+        && let Some(next) = k.checked_add(1)
     {
-        return format!("{base} {}", k + 1);
+        return format!("{base} {next}");
     }
     format!("{n} 2")
 }
