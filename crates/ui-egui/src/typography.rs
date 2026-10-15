@@ -181,10 +181,14 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
         let w = ui.available_width();
         let resp = widgets::dropdown(ui, family.as_deref().unwrap_or(tr(MIXED)), w, None);
         menu_popup(&resp).width(w.max(240.0)).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-            if let Some(f) = font_picker(ui, family.as_deref(), resp.clicked()) {
+            let pick = font_picker(ui, family.as_deref(), resp.clicked());
+            if let Some(f) = pick.picked {
                 remember_family(ui.ctx(), &f);
                 apply_style(app, "fontFamily", json!(f));
                 ui.close();
+            } else if let Some(f) = pick.highlighted {
+                // The canvas shows the family the arrow keys are on.
+                app.preview_text(ui.ctx(), "text.style", text_style_params(ids, range, json!({"fontFamily": f})));
             }
         });
     });
@@ -1061,6 +1065,8 @@ pub(crate) fn parse_letter_spacing(s: &str, cur: Option<LetterSpacing>) -> Optio
 
 const RECENT_KEY: &str = "figcraft_recent_fonts";
 const ROW: f32 = 26.0;
+/// The font list's tallest (it scrolls past that).
+const LIST_HEIGHT: f32 = 380.0;
 
 fn recent_families(ctx: &egui::Context) -> Vec<String> {
     ctx.data_mut(|d| d.get_persisted::<Vec<String>>(Id::new(RECENT_KEY))).unwrap_or_default()
@@ -1080,14 +1086,31 @@ enum PickRow {
     Family(String),
 }
 
-/// The searchable family list. Returns the family picked.
-pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool) -> Option<String> {
+/// What the family list did this frame.
+#[derive(Default)]
+pub(crate) struct FontPick {
+    /// The family clicked, or the one Enter picked.
+    pub picked: Option<String>,
+    /// The family Up and Down are on (Enter picks it).
+    pub highlighted: Option<String>,
+}
+
+/// The searchable family list: click a family, or step through it with Up and Down and press Enter.
+pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool) -> FontPick {
     let t = Tokens::get(ui.ctx());
     let q_id = Id::new("font_query");
+    // The row Up and Down are on, and the search it is a row of.
+    let hi_id = Id::new("font_highlight");
     let mut q: String = ui.data(|d| d.get_temp(q_id)).unwrap_or_default();
     if just_opened {
         q.clear();
+        ui.data_mut(|d| d.remove::<(String, usize)>(hi_id));
     }
+    // Taken before the search field sees them (it would move its cursor).
+    let step = ui.input_mut(|i| {
+        i.count_and_consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) as i64
+            - i.count_and_consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) as i64
+    });
     let search = ui.add(egui::TextEdit::singleline(&mut q).hint_text(tr("Search fonts")).desired_width(ui.available_width()).font(regular(11.5)));
     if just_opened {
         search.request_focus();
@@ -1096,9 +1119,6 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
     let ql = q.trim().to_lowercase();
     let all = figcraft_text::family_names();
     let matches: Vec<String> = all.iter().filter(|f| ql.is_empty() || f.to_lowercase().contains(&ql)).cloned().collect();
-    if search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-        return matches.into_iter().next();
-    }
     let mut rows: Vec<PickRow> = Vec::new();
     if ql.is_empty() {
         let recent: Vec<String> = recent_families(ui.ctx()).into_iter().filter(|f| all.iter().any(|a| a.eq_ignore_ascii_case(f))).collect();
@@ -1110,13 +1130,65 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
     }
     if matches.is_empty() {
         widgets::label(ui, tr("No fonts match"), t.text_tertiary);
-        return None;
+        return FontPick::default();
     }
     rows.extend(matches.into_iter().map(PickRow::Family));
+    let family = |i: usize| match rows.get(i) {
+        Some(PickRow::Family(f)) => Some(f.clone()),
+        _ => None,
+    };
+    // A new search starts again; the first step starts from the current family.
+    let mut hi = ui.data(|d| d.get_temp::<(String, usize)>(hi_id)).filter(|(hq, _)| *hq == q).map(|(_, i)| i);
+    let stride = ROW + ui.spacing().item_spacing.y;
+    let mut offset = None;
+    if step != 0 {
+        let next = |i: usize| if step > 0 { i.checked_add(1) } else { i.checked_sub(1) };
+        let mut from =
+            hi.or_else(|| rows.iter().rposition(|r| matches!(r, PickRow::Family(f) if current.is_some_and(|c| c.eq_ignore_ascii_case(f)))));
+        for _ in 0..step.unsigned_abs() {
+            let mut at = match from {
+                Some(i) => next(i),
+                None if step > 0 => Some(0),
+                None => rows.len().checked_sub(1),
+            };
+            // Past the headers; at either end it stays where it was.
+            while let Some(i) = at.filter(|i| *i < rows.len() && family(*i).is_none()) {
+                at = next(i);
+            }
+            if let Some(i) = at.filter(|i| family(*i).is_some()) {
+                from = Some(i);
+                hi = Some(i);
+            }
+        }
+        if let Some(i) = hi {
+            // Scrolled just enough to show it (the list is shorter than its tallest where the
+            // window has less room).
+            let (seen, height): (f32, f32) = ui.data(|d| d.get_temp(hi_id.with("view"))).unwrap_or((0.0, LIST_HEIGHT));
+            let top = i as f32 * stride;
+            offset = Some(seen.max(top + stride - height).min(top));
+        }
+    }
+    match hi {
+        Some(i) => ui.data_mut(|d| {
+            d.insert_temp(hi_id, (q.clone(), i));
+        }),
+        None => ui.data_mut(|d| d.remove::<(String, usize)>(hi_id)),
+    }
+    if search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        let first = rows.iter().find_map(|r| match r {
+            PickRow::Family(f) => Some(f.clone()),
+            PickRow::Header(_) => None,
+        });
+        return FontPick { picked: hi.and_then(family).or(first), highlighted: None };
+    }
     let mut budget = 4;
     let mut picked = None;
-    egui::ScrollArea::vertical().max_height(380.0).auto_shrink([false, true]).show_rows(ui, ROW, rows.len(), |ui, range| {
-        for r in rows.get(range).unwrap_or(&[]) {
+    let mut area = egui::ScrollArea::vertical().max_height(LIST_HEIGHT).auto_shrink([false, true]);
+    if let Some(y) = offset {
+        area = area.vertical_scroll_offset(y);
+    }
+    let shown = area.show_rows(ui, ROW, rows.len(), |ui, range| {
+        for (i, r) in rows.iter().enumerate().skip(range.start).take(range.len()) {
             let w = ui.available_width();
             let (rect, resp) = ui.allocate_exact_size(vec2(w, ROW), if matches!(r, PickRow::Family(_)) { Sense::click() } else { Sense::hover() });
             match r {
@@ -1124,7 +1196,7 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
                     ui.painter().text(pos2(rect.min.x + 8.0, rect.center().y), Align2::LEFT_CENTER, *h, semibold(10.5), t.text_secondary);
                 }
                 PickRow::Family(f) => {
-                    let hovered = resp.hovered();
+                    let hovered = resp.hovered() || hi == Some(i);
                     if hovered {
                         ui.painter().rect_filled(rect, CornerRadius::same(5), t.accent);
                     }
@@ -1160,7 +1232,8 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
             }
         }
     });
-    picked
+    ui.data_mut(|d| d.insert_temp(hi_id.with("view"), (shown.state.offset.y, shown.inner_rect.height())));
+    FontPick { highlighted: hi.and_then(family), picked }
 }
 
 #[cfg(test)]
@@ -1205,6 +1278,42 @@ mod tests {
         assert_eq!(parse_letter_spacing("-1", None), Some(json!("-1%")));
         assert_eq!(parse_letter_spacing("3", Some(LetterSpacing::Pixels(1.0))), Some(json!(3.0)));
         assert_eq!(parse_letter_spacing("x", Some(LetterSpacing::Percent(0.0))), None);
+    }
+
+    /// One frame of the font picker with `events`.
+    fn pick(ctx: &egui::Context, current: &str, opened: bool, events: Vec<egui::Event>) -> FontPick {
+        let mut out = FontPick::default();
+        let mut shown = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| out = font_picker(ui, Some(current), opened));
+        shown.textures_delta.clear();
+        out
+    }
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }
+    }
+
+    #[test]
+    fn arrow_keys_step_through_the_families_and_enter_picks() {
+        // #345
+        figcraft_text::scan_system_fonts();
+        let all = figcraft_text::family_names();
+        if all.len() < 3 {
+            eprintln!("fewer than three font families; skipping");
+            return;
+        }
+        let ctx = egui::Context::default();
+        let current = all[1].as_str();
+        assert!(pick(&ctx, current, true, vec![]).highlighted.is_none());
+        // The first step starts from the current family; each press is one step.
+        let down = pick(&ctx, current, false, vec![key(egui::Key::ArrowDown)]);
+        assert_eq!(down.highlighted.as_deref(), Some(all[2].as_str()));
+        let up = pick(&ctx, current, false, vec![key(egui::Key::ArrowUp), key(egui::Key::ArrowUp)]);
+        assert_eq!(up.highlighted.as_deref(), Some(all[0].as_str()));
+        // At the top it stays; Enter picks the family it is on, not the first.
+        assert_eq!(pick(&ctx, current, false, vec![key(egui::Key::ArrowUp)]).highlighted.as_deref(), Some(all[0].as_str()));
+        pick(&ctx, current, false, vec![key(egui::Key::ArrowDown)]);
+        let enter = pick(&ctx, current, false, vec![key(egui::Key::Enter)]);
+        assert_eq!(enter.picked.as_deref(), Some(all[1].as_str()));
     }
 
     #[test]
