@@ -184,6 +184,17 @@ fn colour_emoji_carry_their_own_pixels() {
 }
 
 #[test]
+fn emoji_in_plain_text_draw_from_a_colour_face() {
+    // A symbol font among the fallbacks (Windows has one) draws U+1F600 in one colour: the emoji
+    // face comes first for it.
+    if emoji_face().is_none() {
+        return;
+    }
+    let l = layout(&TextData::new("Hi \u{1F600}"), None, None);
+    assert!(l.glyphs.iter().any(|g| g.color(1.0).is_some()), "the emoji has colour ink");
+}
+
+#[test]
 fn glyphs_place_their_ink_at_a_scale() {
     let Some(face) = emoji_face() else { return };
     let mut t = TextData::new("\u{1F600}");

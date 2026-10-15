@@ -329,11 +329,10 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         faces.push(dbw.find(&s.font_family, &s.font_style).or_else(|| dbw.default_face()));
     }
     // Colour emoji are their own, large faces (Apple Color Emoji is ~180 MB): they are read only
-    // for a text whose characters nothing above covers.
+    // for a text with emoji, or with characters nothing above covers.
     let covered = |c: char| c == '\n' || faces.iter().flatten().any(|f| f.has_char(c)) || fallbacks.iter().any(|f| f.has_char(c));
-    if chars.iter().any(|c| !covered(*c)) {
-        fallbacks.extend(dbw.emoji_fallbacks());
-    }
+    let emoji = if chars.iter().any(|c| is_emoji(*c) || !covered(*c)) { dbw.emoji_fallbacks() } else { Vec::new() };
+    fallbacks.extend(emoji.iter().cloned());
     drop(dbw);
 
     // OpenType features the user toggled (global for the node).
@@ -364,7 +363,9 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                 if c == '\n' || primary.has_char(c) {
                     return primary.clone();
                 }
-                fallbacks.iter().find(|f| f.has_char(c)).cloned().unwrap_or_else(|| primary.clone())
+                // Emoji take a colour face before the symbol fonts, which draw many of them in one colour.
+                let colour = if is_emoji(c) { emoji.iter().find(|f| f.has_char(c)) } else { None };
+                colour.or_else(|| fallbacks.iter().find(|f| f.has_char(c))).cloned().unwrap_or_else(|| primary.clone())
             };
             let first = chars.get(seg_start).copied().unwrap_or(' ');
             let face = face_for(first);
@@ -986,6 +987,13 @@ fn add_ellipsis(out: &mut TextLayout, wrap: Option<f64>) {
 
 fn sanitize_size(s: f64) -> f64 {
     if s.is_finite() { s.clamp(0.5, 5000.0) } else { 12.0 }
+}
+
+/// A character drawn as a colour emoji by default: flags and the pictograph blocks.
+/// shortcut: the older symbols (U+2600–U+27BF) keep their text look even before U+FE0F; read the
+/// emoji presentation data if they should turn colour too.
+fn is_emoji(c: char) -> bool {
+    matches!(c, '\u{1F1E6}'..='\u{1F1FF}' | '\u{1F300}'..='\u{1FAFF}')
 }
 
 /// One run of chars shaped with a single face and style.
