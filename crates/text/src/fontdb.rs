@@ -696,12 +696,25 @@ fn system_font_dirs() -> Vec<std::path::PathBuf> {
     {
         v.push("/usr/share/fonts".into());
         v.push("/usr/local/share/fonts".into());
-        if let Some(h) = std::env::var_os("HOME") {
-            v.push(std::path::PathBuf::from(&h).join(".fonts"));
-            v.push(std::path::PathBuf::from(h).join(".local/share/fonts"));
-        }
+        v.extend(unix_user_font_dirs(std::env::var_os("HOME"), std::env::var_os("XDG_DATA_HOME")));
     }
     v
+}
+
+// Fontconfig's default configuration uses $XDG_DATA_HOME/fonts for user fonts.
+// Ignore relative XDG paths, as required by the XDG Base Directory Specification.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn unix_user_font_dirs(home: Option<std::ffi::OsString>, data_home: Option<std::ffi::OsString>) -> Vec<std::path::PathBuf> {
+    let home = home.map(std::path::PathBuf::from);
+    let data = data_home.map(std::path::PathBuf::from).filter(|p| p.is_absolute()).or_else(|| home.as_ref().map(|h| h.join(".local/share")));
+    let mut dirs = Vec::new();
+    if let Some(home) = home {
+        dirs.push(home.join(".fonts"));
+    }
+    if let Some(data) = data {
+        dirs.push(data.join("fonts"));
+    }
+    dirs
 }
 
 fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (String, Vec<Pending>)>) {

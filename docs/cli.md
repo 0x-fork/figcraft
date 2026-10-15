@@ -15,6 +15,10 @@ Every subcommand takes `--no-system-fonts` (or set `FIGCRAFT_NO_SYSTEM_FONTS=1`,
 app honours too) to use only the built-in fonts, for renders that come out the same on every
 machine, e.g. in CI.
 
+On Linux and other Unix systems except macOS, user fonts are read from
+`$XDG_DATA_HOME/fonts`, or `$HOME/.local/share/fonts` when `XDG_DATA_HOME` is unset,
+empty or relative. The legacy `$HOME/.fonts` directory is also scanned.
+
 The collaboration server is a binary of its own, `figcraft-server` (`cargo build --release -p
 figcraft-server`): it keeps files with share links and serves their live sessions, and its
 `key`, `files`, `links`, `reports`, `block-ip` and `check` subcommands manage them (a server can
