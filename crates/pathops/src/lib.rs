@@ -526,6 +526,50 @@ mod tests {
     }
 
     #[test]
+    fn equal_point_joins_keep_the_layer_stroke_and_differing_ones_apply() {
+        let mut path = BezPath::new();
+        path.move_to((0.0, 0.0));
+        path.line_to((10.0, 10.0));
+        path.line_to((20.0, 0.0));
+        let net = VectorNetwork {
+            vertices: vec![
+                figcraft_doc::Vertex { cap: Some(StrokeCap::Square), ..figcraft_doc::Vertex::new(0.0, 0.0) },
+                figcraft_doc::Vertex { x: 10.0, y: 10.0, radius: 2.0, join: Some(StrokeJoin::Miter), ..figcraft_doc::Vertex::new(10.0, 10.0) },
+                figcraft_doc::Vertex { cap: Some(StrokeCap::Square), ..figcraft_doc::Vertex::new(20.0, 0.0) },
+            ],
+            segments: vec![figcraft_doc::Segment::line(0, 1), figcraft_doc::Segment::line(1, 2)],
+            ..Default::default()
+        };
+        let props = StrokeProps { weight: 4.0, ..Default::default() };
+        let inherited = stroke_outline_of(&path, &props, false, Some(&net));
+        let mut without_join = net.clone();
+        without_join.vertices[1].join = None;
+        let baseline = stroke_outline_of(&path, &props, false, Some(&without_join));
+        assert_eq!(inherited, baseline);
+
+        let different_layer = StrokeProps { join: StrokeJoin::Bevel, ..props };
+        let explicit = stroke_outline_of(&path, &different_layer, false, Some(&net));
+        let layer_only = stroke_outline_of(&path, &different_layer, false, Some(&without_join));
+        assert_ne!(explicit, layer_only);
+    }
+
+    #[test]
+    fn equal_joins_do_not_break_closed_stroke_runs() {
+        let path = sq(0.0, 0.0, 20.0);
+        let mut net = VectorNetwork::from_points(&[Point::new(0.0, 0.0), Point::new(20.0, 0.0), Point::new(20.0, 20.0), Point::new(0.0, 20.0)], true);
+        for vertex in &mut net.vertices {
+            vertex.join = Some(StrokeJoin::Round);
+        }
+        let props = StrokeProps { join: StrokeJoin::Round, weight: 4.0, ..Default::default() };
+        let styled = stroke_outline_of(&path, &props, true, Some(&net));
+        for vertex in &mut net.vertices {
+            vertex.join = None;
+        }
+        let inherited = stroke_outline_of(&path, &props, true, Some(&net));
+        assert_eq!(styled, inherited);
+    }
+
+    #[test]
     fn dashes() {
         let mut line = BezPath::new();
         line.move_to((0.0, 0.0));
