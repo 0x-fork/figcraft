@@ -308,6 +308,11 @@ fn system_languages_pick_the_first_one_with_a_catalog() {
     let code = |pref: &str, system: Option<&str>| LANGS[resolve(pref, system)].code;
     assert_eq!(code("system", Some("fr-CA")), "fr");
     assert_eq!(code("system", Some("de_CH.UTF-8")), "de");
+    assert_eq!(code("system", Some("cs_CZ.UTF-8")), "cs");
+    assert_eq!(code("system", Some("cs-CZ,en-US")), "cs");
+    assert_eq!(code("cs", None), "cs");
+    assert_eq!(LANGS[resolve("cs", None)].name, "Čeština");
+    assert!(LANGS[resolve("cs", None)].draft);
     assert_eq!(code("system", Some("pt-BR")), "pt-BR");
     assert_eq!(code("system", Some("tr_TR.UTF-8")), "tr");
     // Portugal's Portuguese and a bare "pt" read the Brazilian catalog.
@@ -356,8 +361,10 @@ fn french_and_portuguese_count_zero_as_singular() {
     for code in ["fr", "pt-BR"] {
         assert!(one(code, 0) && one(code, 1) && !one(code, 2), "{code}");
     }
-    for code in ["en", "es", "de"] {
-        assert!(!one(code, 0) && one(code, 1) && !one(code, 2), "{code}");
+    for code in ["en", "es", "de", "cs"] {
+        for n in [0, 1, 2, 3, 4, 5, 21] {
+            assert_eq!(one(code, n), n == 1, "{code}: {n}");
+        }
     }
 }
 

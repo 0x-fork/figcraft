@@ -15,8 +15,8 @@ Simplified.
 `pref.language {language}` does the same from the CLI, MCP and the control channel.
 
 The catalogs: English (`en`, the source), and Spanish (`es`, with the Latin American overlay
-`es-419`), French (`fr`), German (`de`), Brazilian Portuguese (`pt-BR`), Japanese (`ja`), Korean (`ko`)
-and Simplified Chinese (`zh-Hans`), machine-drafted and waiting for native speakers' review.
+`es-419`), French (`fr`), German (`de`), Brazilian Portuguese (`pt-BR`), Japanese (`ja`), Korean (`ko`),
+Simplified Chinese (`zh-Hans`) and Czech (`cs`), machine-drafted and waiting for native speakers' review.
 Russian (`ru`, Русский) was reviewed and approved by VanTan; its catalog keeps Frame, Dev Mode
 and Smart animate as familiar tool names and uses « » quotes. Turkish (`tr`) was machine-drafted
 and reviewed by a native speaker.
@@ -51,6 +51,9 @@ full-width （）：，、。“” in Chinese text and a space between Chinese 
 None of the three has plural forms. Turkish uses bare imperatives for buttons and menu items
 (Kaydet, Sil) and the polite -in/-ın for instructions (seçin, tıklayın), puts the percent sign before
 the number (%50) and keeps a noun singular after a count, so its plural entries give only `other`.
+Czech uses formal address, „ “ quotes and no space before `:`. Use consistent design terms (rámec,
+komponenta, instance, varianta, automatické rozvržení, omezení, výplň, tah, efekt, prototyp,
+proměnná, styl).
 
 CJK text needs a CJK font, which egui and Inter lack: the desktop app adds an installed one when
 something on screen needs it (see `crates/ui-egui/src/cjk.rs`). The web build has no system fonts,
@@ -71,13 +74,15 @@ language also needs its script in `cjk::language`.
    `few` for 2–4, 22–24… except 12–14; and `many` for the other integers, including 0. Keep `{n}`
    in all Russian forms. Add new rules to `plural` in
    [`crates/ui-egui/src/i18n.rs`](../crates/ui-egui/src/i18n.rs). A missing form reads `other`;
-   a missing key uses the fallback catalog's own plural rule.
+   a missing key uses the fallback catalog's own plural rule. Czech has no rule of its own yet, so it
+   picks `one` for 1 and `other` for everything else: its `other` forms are count-neutral for 0,
+   2–4 and 5+ (e.g. `Vrstvy: {n}`).
 4. To require full coverage, add the code to `COMPLETE` in
    [`crates/ui-egui/src/i18n_tests.rs`](../crates/ui-egui/src/i18n_tests.rs). Every later PR that
-   adds a string then has to translate it into each complete language: Spanish and Russian are there.
-   French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese are registered as
-   drafts, Turkish is reviewed but not required, and a string added later shows English in them until
-   it is translated. To list what a draft lacks,
+   adds a string then has to translate it into each complete language, so only Spanish is there:
+   French, German, Brazilian Portuguese, Japanese, Korean, Simplified Chinese and Czech are
+   registered as drafts, Russian and Turkish are reviewed but not required, and a string added
+   later shows English in them until it is translated. To list what a draft lacks,
    add its code to `COMPLETE` locally and run the check.
 5. Run the check and look at the panels in the app (longer words must fit the right panel):
 
