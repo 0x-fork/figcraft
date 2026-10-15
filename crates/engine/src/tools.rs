@@ -1456,7 +1456,8 @@ impl Session {
             }
             Gesture::Vector(_) | Gesture::ShapeBuild { .. } | Gesture::Origin => Ok(()),
             Gesture::PenDrag { anchor } => {
-                let out = ev.p() - *anchor;
+                // A click's wobble pulls out no handle.
+                let out = if within_slop(ev, *anchor) { Vec2::ZERO } else { ev.p() - *anchor };
                 if let Some(pen) = self.tool.pen.as_mut()
                     && let Some(last) = pen.points.last_mut()
                 {
