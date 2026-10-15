@@ -185,8 +185,8 @@ fn colour_emoji_carry_their_own_pixels() {
 
 #[test]
 fn emoji_in_plain_text_draw_from_a_colour_face() {
-    // A symbol font among the fallbacks (Windows has one) draws U+1F600 in one colour: the emoji
-    // face comes first for it.
+    // The style's own face (DejaVu Sans on Linux) or a symbol font among the fallbacks (Windows has
+    // one) draws U+1F600 in one colour: the emoji face comes first for it.
     if emoji_face().is_none() {
         return;
     }
@@ -207,7 +207,8 @@ fn glyphs_place_their_ink_at_a_scale() {
         assert!(g.color(2.0).is_some(), "the emoji glyph has ink");
         return;
     };
-    assert!(bitmap.width >= 32 && bitmap.width <= 65, "{} px at 2:1", bitmap.width);
+    // Some emoji faces draw wider than the em (Noto Color Emoji's strikes are about 1.25 em).
+    assert!(bitmap.width >= 32 && bitmap.width <= 96, "{} px at 2:1", bitmap.width);
     let corner = place * figcraft_geom::Point::new(0.0, 0.0);
     assert!(corner.x >= g.x - g.size && corner.x <= g.x + g.size, "x {} vs pen {}", corner.x, g.x);
     assert!(corner.y >= g.y - g.size && corner.y <= g.y + g.size, "y {} vs baseline {}", corner.y, g.y);

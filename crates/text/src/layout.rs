@@ -360,12 +360,18 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         let mut seg_start = *start;
         while seg_start < *end {
             let face_for = |c: char| -> Arc<Face> {
+                // Emoji take a colour face before a face without colour glyphs (the style's own or a
+                // symbol font), which would draw them in one colour.
+                if is_emoji(c)
+                    && !primary.has_color()
+                    && let Some(f) = emoji.iter().find(|f| f.has_char(c))
+                {
+                    return f.clone();
+                }
                 if c == '\n' || primary.has_char(c) {
                     return primary.clone();
                 }
-                // Emoji take a colour face before the symbol fonts, which draw many of them in one colour.
-                let colour = if is_emoji(c) { emoji.iter().find(|f| f.has_char(c)) } else { None };
-                colour.or_else(|| fallbacks.iter().find(|f| f.has_char(c))).cloned().unwrap_or_else(|| primary.clone())
+                fallbacks.iter().find(|f| f.has_char(c)).cloned().unwrap_or_else(|| primary.clone())
             };
             let first = chars.get(seg_start).copied().unwrap_or(' ');
             let face = face_for(first);
