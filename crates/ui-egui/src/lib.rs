@@ -131,6 +131,8 @@ mod panel_reorder_tests;
 #[cfg(test)]
 mod panel_width_tests;
 #[cfg(test)]
+mod pen_mode_tests;
+#[cfg(test)]
 mod perf_tests;
 #[cfg(test)]
 mod plugin_panel_tests;
@@ -159,7 +161,11 @@ mod text_enter_tests;
 #[cfg(test)]
 mod titlebar_tests;
 #[cfg(test)]
+mod variables_export_ui_tests;
+#[cfg(test)]
 mod variables_rename_tests;
+#[cfg(test)]
+mod vector_panel_tests;
 #[cfg(test)]
 mod vector_tail_ui_tests;
 #[cfg(test)]
@@ -189,6 +195,15 @@ pub trait Services {
     }
     fn pick_save(&mut self, _title: &str, _name: &str, _exts: &[&str]) -> DialogFuture {
         Box::pin(std::future::ready(None))
+    }
+    /// The platform saves files by handing them over as downloads (the browser), not through
+    /// save dialogs.
+    fn downloads(&self) -> bool {
+        false
+    }
+    /// Hand `bytes` over as a download named `name`; false when nothing was delivered.
+    fn download(&mut self, _name: &str, _bytes: &[u8]) -> bool {
+        false
     }
     /// A folder to write several files into.
     fn pick_folder(&mut self, _title: &str) -> DialogFuture {
@@ -305,6 +320,14 @@ pub enum TitleBar {
 /// How often open documents get an autosave checkpoint (seconds).
 pub const AUTOSAVE_SECS: f64 = 30.0 * 60.0;
 
+/// With auto-save on: how long after a file last changed it is saved, and how long a failed save
+/// waits before trying again (seconds).
+pub const AUTO_SAVE_SECS: f64 = 3.0;
+const AUTO_SAVE_RETRY_SECS: f64 = 60.0;
+
+/// A file being encoded for auto-save: its snapshot and, once done, its bytes.
+pub type AutoSaveEncoding = std::thread::JoinHandle<(figcraft_engine::cmd::file::FileSnapshot, figcraft_engine::Result<Vec<u8>>)>;
+
 /// How long a toast shows (seconds).
 const TOAST_SECS: f64 = 3.0;
 
@@ -344,6 +367,8 @@ pub struct UiState {
     pub left_width: f32,
     pub right_width: f32,
     pub right_tab: RightTab,
+    /// The tab of the previous frame, to see the right panel change mode.
+    pub last_right_tab: RightTab,
     pub left_tab: LeftTab,
     pub pages_open: bool,
     pub expanded: BTreeSet<NodeId>,
@@ -440,6 +465,11 @@ pub struct UiState {
     pub last_copy: Option<String>,
     /// When (UI clock, seconds) open documents next get an autosave checkpoint.
     pub next_autosave: f64,
+    /// With auto-save on: when (UI clock, seconds) files with unsaved changes are next saved, and
+    /// the revisions of those files it waits on (a change restarts the wait).
+    pub auto_save_at: Option<(f64, u64)>,
+    /// Files being encoded for auto-save on threads of their own (tab `uid`).
+    pub auto_saving: Vec<(u64, AutoSaveEncoding)>,
     /// The Assets panel shows the libraries view (publish this file, enabled libraries).
     pub libraries: bool,
     /// Keyboard navigation: the region with the keyboard, keyboard mode (F6, Tab).
@@ -464,6 +494,7 @@ impl Default for UiState {
             left_width: PANEL_DEFAULT,
             right_width: PANEL_DEFAULT,
             right_tab: RightTab::Design,
+            last_right_tab: RightTab::Design,
             left_tab: LeftTab::File,
             pages_open: true,
             expanded: BTreeSet::new(),
@@ -524,6 +555,8 @@ impl Default for UiState {
 
             last_copy: None,
             next_autosave: 0.0,
+            auto_save_at: None,
+            auto_saving: Vec::new(),
             libraries: false,
             nav: a11y::Nav::default(),
             plugins_window: false,
@@ -677,6 +710,19 @@ impl FigApp {
         if self.ui.text_preview.take().is_some() {
             let _ = self.session.execute("text.endPreview", &json!({}));
             ctx.request_repaint();
+        }
+    }
+
+    /// Leaving Design ends a pen path as Escape does and goes back to Move: Prototype and Inspect
+    /// don't draw (#307). Checked as the frame starts (the control channel) and after the panels
+    /// and shortcuts (the mode switcher, the tabs, Shift+E/Shift+D), before the canvas sees more.
+    fn end_pen_outside_design(&mut self) {
+        if self.ui.right_tab == self.ui.last_right_tab {
+            return;
+        }
+        self.ui.last_right_tab = self.ui.right_tab;
+        if self.ui.right_tab != RightTab::Design && self.session.tool.tool == figcraft_engine::tools::ToolId::Pen {
+            self.run("tool.set", json!({"tool": "move"}));
         }
     }
 
@@ -1066,6 +1112,79 @@ impl FigApp {
         repaint_in(ctx, AUTOSAVE_SECS);
     }
 
+    /// With auto-save on, files that have a path are saved [`AUTO_SAVE_SECS`] after they last
+    /// changed (not during a gesture, a live preview or while a version is shown). The file is
+    /// encoded on a thread of its own, so a big one doesn't hold up the window, and written here.
+    fn auto_save_tick(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        let mut failed = self.auto_save_done();
+        // The browser has no files to save to.
+        let on = !cfg!(target_arch = "wasm32") && self.session.prefs.auto_save;
+        let saving = &self.ui.auto_saving;
+        let due = |d: &&figcraft_engine::DocState| {
+            d.path.is_some() && d.branch_of.is_none() && d.preview.is_none() && d.is_dirty() && !saving.iter().any(|(uid, _)| *uid == d.uid)
+        };
+        let changes = if on { self.session.docs.iter().filter(due).map(|d| d.revision).reduce(u64::wrapping_add) } else { None };
+        match changes {
+            None => self.ui.auto_save_at = None,
+            Some(changes) => {
+                let at = match self.ui.auto_save_at {
+                    Some((at, c)) if c == changes && failed.is_none() => at,
+                    _ => now + if failed.is_some() { AUTO_SAVE_RETRY_SECS } else { AUTO_SAVE_SECS },
+                };
+                self.ui.auto_save_at = Some((at, changes));
+                if now < at || self.session.docs.iter().any(|d| d.interaction.is_some() || d.text_preview.is_some()) {
+                    // Due but busy: look again in a second.
+                    repaint_in(ctx, if now < at { at - now } else { 1.0 });
+                } else {
+                    self.ui.auto_save_at = None;
+                    let files: Vec<_> =
+                        self.session.docs.iter().filter(due).map(|d| (d.uid, figcraft_engine::cmd::file::FileSnapshot::of(d))).collect();
+                    for (uid, file) in files {
+                        let encode = move || {
+                            let bytes = file.encode();
+                            (file, bytes)
+                        };
+                        match std::thread::Builder::new().name("figcraft-save".into()).spawn(encode) {
+                            Ok(h) => self.ui.auto_saving.push((uid, h)),
+                            Err(e) => {
+                                failed.get_or_insert(e.to_string());
+                                self.ui.auto_save_at = Some((now + AUTO_SAVE_RETRY_SECS, changes));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !self.ui.auto_saving.is_empty() {
+            // Look again shortly for the files being encoded.
+            repaint_in(ctx, 0.1);
+        }
+        if let Some(e) = failed {
+            self.toast(i18n::trf("Couldn't save automatically: {error}", &[("error", &e)]));
+        }
+    }
+
+    /// Write the files whose auto-save encoding finished; the first error, if one failed.
+    fn auto_save_done(&mut self) -> Option<String> {
+        if self.ui.auto_saving.is_empty() {
+            return None;
+        }
+        let mut failed = None;
+        let done: Vec<_> = self.ui.auto_saving.extract_if(.., |(_, h)| h.is_finished()).collect();
+        for (_, h) in done {
+            let saved = match h.join() {
+                Ok((snapshot, Ok(bytes))) => snapshot.save(&mut self.session, &bytes).map(|_| ()).map_err(|e| e.to_string()),
+                Ok((_, Err(e))) => Err(e.to_string()),
+                Err(_) => Err("the file couldn't be encoded".to_string()),
+            };
+            if let Err(e) = saved {
+                failed.get_or_insert(e);
+            }
+        }
+        failed
+    }
+
     /// Draw the whole UI: the main window (the other windows draw themselves).
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -1076,6 +1195,7 @@ impl FigApp {
         let first = !self.fonts_installed;
         self.logic(&ctx);
         self.autosave_tick(&ctx);
+        self.auto_save_tick(&ctx);
         if first {
             // New fonts apply from the next frame; draw nothing until then.
             ctx.request_repaint();
@@ -1132,6 +1252,7 @@ impl FigApp {
         widgets::set_nudge(&ctx, self.session.prefs.nudge_small, self.session.prefs.nudge_big);
         // The Inspect tab measures on hover without Alt.
         self.session.tool.redlines = self.ui.right_tab == RightTab::Inspect;
+        self.end_pen_outside_design();
         if self.ui.present.is_some() {
             present::show(self, ui);
             // What went wrong while presenting (a widget's plugin failing) shows over it.
@@ -1234,6 +1355,7 @@ impl FigApp {
         variable_ui::picker(self, &ctx);
         style_picker::show(self, &ctx);
         self.end_unwanted_text_preview(&ctx);
+        self.end_pen_outside_design();
         dialogs::show(self, &ctx);
         self.toast_ui(&ctx);
         // A rename started after the layers panel drew (Cmd/Ctrl+R, a double-click) opens its field

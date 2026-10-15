@@ -17,6 +17,7 @@ mod gamepad;
 mod graphics;
 mod recovery;
 mod services;
+mod startup;
 
 #[cfg(all(test, target_os = "macos"))]
 mod apple_events_tests;
@@ -30,6 +31,8 @@ mod recovery_online_tests;
 mod recovery_tests;
 #[cfg(test)]
 mod services_tests;
+#[cfg(test)]
+mod startup_tests;
 
 use std::sync::{Arc, Mutex};
 
@@ -167,6 +170,9 @@ fn main() -> eframe::Result {
     if session.docs.is_empty() && !first_run {
         let _ = session.execute("file.new", &json!({}));
     }
+    // The interface language from the first frame on, and for the message when the window can't
+    // open (no frame then).
+    figcraft_ui_egui::i18n::set(&session.prefs.language, figcraft_ui_egui::Services::system_language(&svc).as_deref());
     let mut fig = FigApp::new(session, Box::new(svc));
     fig.ui.home = false;
     fig.note_recovered(recovered.copies);
@@ -207,7 +213,7 @@ fn main() -> eframe::Result {
     let apple_events = apple_events::AppleEvents::install();
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
-    eframe::run_native(
+    let result = eframe::run_native(
         "FigCraft",
         options,
         Box::new(move |_cc| {
@@ -220,5 +226,10 @@ fn main() -> eframe::Result {
                 apple_events: apple_events.connect(&_cc.egui_ctx),
             }))
         }),
-    )
+    );
+    // Say why instead of quitting silently: release builds on Windows have no console.
+    if let Err(e) = &result {
+        startup::failed(e, port.is_some());
+    }
+    result
 }

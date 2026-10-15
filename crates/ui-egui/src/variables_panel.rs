@@ -204,9 +204,20 @@ fn header(app: &mut FigApp, ui: &mut Ui, open: &mut bool) {
     ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, t.border));
 }
 
-/// Export this file's collections through a save dialog.
-fn export_dialog(app: &mut FigApp, format: &str) {
+/// Export this file's collections through a save dialog, or as a download where the platform has
+/// no save dialogs (the browser).
+pub(crate) fn export_dialog(app: &mut FigApp, format: &str) {
     let name = app.session.doc().map(|d| format!("{}.variables.{format}", d.name)).unwrap_or_else(|_| format!("variables.{format}"));
+    if app.services.downloads() {
+        let Some(r) = app.run("variable.export", json!({"format": format})) else { return };
+        let text = r["text"].as_str().unwrap_or_default();
+        if app.services.download(&name, text.as_bytes()) {
+            app.toast(trf("Exported {file}", &[("file", &name)]));
+        } else {
+            app.toast(tr("Couldn't download the variables"));
+        }
+        return;
+    }
     let format = format.to_owned();
     let ext = format.clone();
     app.pick_save(tr("Export variables"), &name, &[&ext], move |app, p| {

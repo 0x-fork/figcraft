@@ -746,7 +746,7 @@ fn text_properties(ui: &mut Ui, id: &str, def: &TextStyle, out: &mut Frame) {
         (family_resp, style_resp)
     });
     crate::right::menu_popup(&family_resp).width(260.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-        if let Some(f) = crate::typography::font_picker(ui, Some(&def.font_family), family_resp.clicked()) {
+        if let Some(f) = crate::typography::font_picker(ui, Some(&def.font_family), family_resp.clicked()).picked {
             set(out, &|d| {
                 d.font_family = f.clone();
                 let styles = figcraft_text::family_styles(&f);

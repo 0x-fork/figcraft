@@ -376,6 +376,13 @@ pub(crate) enum Gesture {
     TextSelect {
         id: NodeId,
     },
+    /// A new text from the Text tool, still pressed: a drag makes it a box the size of the drag
+    /// (at least `line`, the height of its first line, tall).
+    TextBox {
+        id: NodeId,
+        start: Point,
+        line: f64,
+    },
     PenDrag {
         anchor: Point,
     },
@@ -1400,6 +1407,11 @@ impl Session {
                 self.tool.gesture = g;
                 return self.draw_drag(ev, start, id, parent, &targets);
             }
+            Gesture::TextBox { id, start, line } => {
+                let (id, start, line) = (*id, *start, *line);
+                self.tool.gesture = g;
+                return self.text_box_drag(ev, id, start, line);
+            }
             Gesture::Arc { id, handle, arc } => {
                 let (id, handle, arc) = (*id, *handle, *arc);
                 self.tool.gesture = g;
@@ -1818,7 +1830,7 @@ impl Session {
                 self.tool.overlay.pen.clear();
                 self.pencil_finish(&points, &pressure)?;
             }
-            Gesture::TextSelect { .. } | Gesture::Marquee { .. } | Gesture::None => {}
+            Gesture::TextSelect { .. } | Gesture::TextBox { .. } | Gesture::Marquee { .. } | Gesture::None => {}
             Gesture::PenDrag { .. } | Gesture::ShapeBuild { .. } | Gesture::Origin => {}
             Gesture::Vector(_) => self.commit_interaction()?,
         }
@@ -1943,12 +1955,36 @@ impl Session {
             n.width = w.max(1.0);
             n.height = h;
         }
+        let line = n.height;
         d.insert(n, parent, None)?;
         ds.selection = vec![id];
         textedit::begin(self, id, Some(0), true)?;
+        self.tool.gesture = Gesture::TextBox { id, start: ev.p(), line };
         if !self.prefs.keep_tool {
             self.tool.tool = ToolId::Move;
         }
+        Ok(())
+    }
+
+    /// Drag out a new text box: past the drag slop it has the drag's size (at least one line
+    /// tall) and its top-left, and that size is fixed.
+    fn text_box_drag(&mut self, ev: &PointerEvent, id: NodeId, start: Point, line: f64) -> Result<()> {
+        if within_slop(ev, start) {
+            return Ok(());
+        }
+        let r = Rect::from_points(start, ev.p());
+        let d = self.ds_mut()?.doc_mut();
+        let pw = d.node(id).and_then(|n| n.parent).map(|p| d.world_transform(p)).unwrap_or_default();
+        let n = d.get_mut(id)?;
+        n.transform = pw.inverse() * Affine::translate((r.x0.round(), r.y0.round()));
+        n.width = r.width().round().max(1.0);
+        n.height = r.height().round().max(line);
+        n.child_layout.sizing_h = Sizing::Fixed;
+        n.child_layout.sizing_v = Sizing::Fixed;
+        if let NodeKind::Text(t) = &mut n.kind {
+            t.auto_resize = TextAutoResize::None;
+        }
+        self.ds_mut()?.revision += 1;
         Ok(())
     }
 
