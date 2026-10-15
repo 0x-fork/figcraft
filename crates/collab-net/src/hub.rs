@@ -1147,7 +1147,8 @@ struct Hub<B> {
     local: Option<String>,
     /// What the servers said, sent once the backend made what changed durable.
     outbox: Vec<(String, Outgoing)>,
-    /// Addresses ([`ip_key`]) removed from each file: they can't join it again while the hub runs.
+    /// Addresses ([`ip_key`]) removed from each open file: they can't join it again until its
+    /// session closes (the file is closed or removed; the entry goes with it).
     barred: HashMap<String, HashSet<IpAddr>>,
 }
 
@@ -1414,8 +1415,8 @@ impl<B: Backend> Hub<B> {
     }
 
     /// Remove client `id` from `file`: they are told the session is over for them and
-    /// disconnected, and their address can't join the file again while the hub runs. The person
-    /// hosting can't be removed.
+    /// disconnected, and their address can't join the file again while its session lasts. The
+    /// person hosting can't be removed.
     fn remove_peer(&mut self, file: &str, id: u32) -> Result<(), String> {
         let room = self.rooms.get(file).ok_or("nobody is in this file")?;
         if room.local.as_ref().is_some_and(|(local, _)| *local == id) {
@@ -1558,6 +1559,7 @@ impl<B: Backend> Hub<B> {
                 .collect();
             // Closed without saving: the file is gone.
             self.rooms.remove(&file);
+            self.barred.remove(&file);
             self.kick(&users, "this file was removed from the server");
         }
         if let Some(ip) = handled.blocked {
@@ -1635,6 +1637,7 @@ impl<B: Backend> Hub<B> {
         let Some(room) = self.rooms.get_mut(file).filter(|r| r.empty()) else { return };
         if self.backend.idle(file, &mut room.server) {
             self.rooms.remove(file);
+            self.barred.remove(file);
         }
     }
 
@@ -1740,3 +1743,7 @@ pub(crate) fn to_local(inbox: &Inbox, local: u32, msg: &ServerMsg) {
 #[cfg(test)]
 #[path = "queue_tests.rs"]
 mod queue_tests;
+
+#[cfg(test)]
+#[path = "barred_tests.rs"]
+mod barred_tests;

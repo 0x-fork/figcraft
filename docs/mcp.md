@@ -1092,7 +1092,7 @@ only: a host stops hosting it, a guest leaves it.
   pan or zoom of your own, or Escape).
 - `collab.removePerson {client}` removes that person from the session: they are told the session
   is over for them (they keep their copy and don't reconnect), and their address can't join the
-  file again while the session (or the server) runs. Only the person hosting, or the owner of a
+  file again while the session runs. Only the person hosting, or the owner of a
   file on a server (with its owner token), can; a server older than this request says it can't.
   Returns `{removed, name}`.
 - `collab.cursorChat {text}` shows `text` next to your cursor for everyone in the session (put the

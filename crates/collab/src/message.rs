@@ -275,7 +275,7 @@ pub enum Admin {
     /// [`AdminReply::Owned`]. Servers older than this request can't read it.
     Owned { files: Vec<(String, String)> },
     /// Remove client `client` from `file`'s session: they are disconnected and their address
-    /// can't join the file again while the server runs. With the server key, or on an open
+    /// can't join the file again while its session lasts. With the server key, or on an open
     /// hosting connection with `file`'s owner token. Servers older than this request can't read it.
     RemovePeer { file: String, client: u32 },
 }
