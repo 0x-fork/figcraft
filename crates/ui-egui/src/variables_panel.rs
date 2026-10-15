@@ -833,10 +833,11 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &C
             }
             let hex_r = Rect::from_min_max(pos2(sw.max.x + 8.0, body.min.y + 4.0), pos2(body.max.x - 44.0, body.max.y - 4.0));
             if let Some(h) = widgets::text_field_inline(ui, id.with("hex"), &c.to_hex(), hex_r, regular(11.0))
-                && let Some(nc) = figcraft_color::Color::from_hex(&h)
+                && let Some(nc) = figcraft_color::Color::from_hex_or_name(&h)
             {
-                // Six digits keep the alpha; eight set it.
-                let nc = if h.trim().trim_start_matches('#').len() == 8 { nc } else { nc.with_alpha(c.a) };
+                // Six digits (or a colour name) keep the alpha; eight digits set it.
+                let digits = h.trim().trim_start_matches('#');
+                let nc = if digits.len() == 8 && digits.chars().all(|ch| ch.is_ascii_hexdigit()) { nc } else { nc.with_alpha(c.a) };
                 set(app, v, mode, json!(nc.to_css_hex()));
             }
             alpha_text(ui, c, body);

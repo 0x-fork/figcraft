@@ -455,7 +455,7 @@ fn settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
     row(ui, 32.0, |ui| {
         widgets::swatch(ui, &Paint::solid(bg), 16.0);
         if let Some(h) = widgets::text_field(ui, Id::new("proto_bg"), &bg.to_hex(), 96.0, "")
-            && let Some(c) = figcraft_color::Color::from_hex(&h)
+            && let Some(c) = figcraft_color::Color::from_hex_or_name(&h)
         {
             app.run("proto.settings", json!({"background": c.to_css_hex()}));
         }
@@ -926,7 +926,7 @@ pub(crate) fn action_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, page:
                 row(ui, 32.0, |ui| {
                     widgets::swatch(ui, &Paint::solid(bg), 16.0);
                     if let Some(h) = widgets::text_field(ui, slot.id("proto_ovbg"), &bg.to_hex(), 96.0, "")
-                        && let Some(c) = figcraft_color::Color::from_hex(&h)
+                        && let Some(c) = figcraft_color::Color::from_hex_or_name(&h)
                     {
                         set_action(app, slot, Action::OpenOverlay { dest, position, close_on_outside, background: Some(c), offset });
                     }

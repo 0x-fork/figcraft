@@ -411,7 +411,7 @@ fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
         app.ui.picker = Some(crate::colorpicker::PickerTarget::PageBackground);
     }
     if let Some(h) = new_hex
-        && let Some(c) = figcraft_color::Color::from_hex(&h)
+        && let Some(c) = figcraft_color::Color::from_hex_or_name(&h)
     {
         app.run("page.setBackground", json!({"color": c.to_css_hex()}));
     }
@@ -1057,7 +1057,7 @@ fn range_fill(app: &mut FigApp, ui: &mut Ui, doc: &Document, id: NodeId, start: 
                     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text_r));
                     if let Some(h) =
                         widgets::text_field_inline(&mut child, Id::new("range_hex"), &c.to_hex(), text_r.shrink2(vec2(0.0, 4.0)), regular(11.0))
-                        && let Some(nc) = figcraft_color::Color::from_hex(&h)
+                        && let Some(nc) = figcraft_color::Color::from_hex_or_name(&h)
                     {
                         app.run("text.style", json!({"id": id, "start": start, "end": end, "textFills": [nc.to_css_hex()]}));
                     }
@@ -1569,7 +1569,7 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
             PaintKind::Solid { color } => {
                 if let Some(h) =
                     widgets::text_field_inline(&mut child, Id::new(("hex", fills, i)), &color.to_hex(), text_r.shrink2(vec2(0.0, 4.0)), regular(11.0))
-                    && let Some(c) = figcraft_color::Color::from_hex(&h)
+                    && let Some(c) = figcraft_color::Color::from_hex_or_name(&h)
                 {
                     app.run(cmd, json!({"ids": ids, "index": i, "color": c.to_css_hex()}));
                 }
@@ -1922,7 +1922,7 @@ fn fx_color(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &Effect,
         app.ui.picker = Some(crate::colorpicker::PickerTarget::Effect { ids: ids.to_vec(), index: i, secondary });
     }
     if let Some(h) = widgets::text_field(ui, Id::new(("fx_c", i, secondary)), &c.to_hex(), 80.0, "")
-        && let Some(nc) = figcraft_color::Color::from_hex(&h)
+        && let Some(nc) = figcraft_color::Color::from_hex_or_name(&h)
     {
         edit(app, secondary, nc.with_alpha(c.a), None);
     }
@@ -2111,7 +2111,7 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
         let (sw, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
         widgets::paint_swatch(ui.painter(), sw, &Paint::solid(g.color));
         if let Some(h) = widgets::text_field(ui, Id::new(("grid_hex", i)), &g.color.to_hex(), 80.0, "")
-            && let Some(c) = figcraft_color::Color::from_hex(&h)
+            && let Some(c) = figcraft_color::Color::from_hex_or_name(&h)
         {
             app.run("node.set", set(&|x| x.color = c.with_alpha(x.color.a)));
         }
