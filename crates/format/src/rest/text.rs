@@ -127,6 +127,8 @@ fn type_style(cx: &mut Ctx, s: &Value, base: &TextStyle) -> TextStyle {
     if let Some(h) = s.get("hyperlink") {
         match (text(h, "type"), text(h, "url")) {
             (Some("URL") | None, Some(url)) if !url.is_empty() => t.link = Some(super::props::clip_str(url).to_string()),
+            // An empty URL clears the link the base style has.
+            (Some("URL") | None, Some(_)) => t.link = None,
             _ => {}
         }
     }
