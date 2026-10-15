@@ -846,10 +846,11 @@ impl Session {
                 }
             }
             Err(_) => {
-                // Roll back any partial edit.
+                // Roll back any partial edit — also during an interaction, where `before` is the
+                // interaction's last valid preview: restore it and leave the gesture itself (its
+                // own snapshot) alone.
                 if let Some((doc, sel, page, uid)) = before
                     && let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid)
-                    && ds.interaction.is_none()
                 {
                     ds.doc = doc;
                     ds.selection = sel;
@@ -1490,6 +1491,8 @@ mod html_codegen_tests;
 mod import_export_tests;
 #[cfg(test)]
 mod inspect_behaviour_tests;
+#[cfg(test)]
+mod interaction_rollback_tests;
 #[cfg(test)]
 mod invite_links_tests;
 #[cfg(test)]
