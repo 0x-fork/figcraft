@@ -178,8 +178,11 @@ fn main() -> eframe::Result {
         control_server::start(p, queue.clone(), ctx_slot.clone());
     }
     let icon = services::window_icon();
+    // The app id is the Wayland app_id and the X11 window class on Linux: the desktop entry's name
+    // and StartupWMClass (FreeBSD's package matches the binary's name instead).
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("FigCraft")
+        .with_app_id("ai.storyteller.figcraft")
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([800.0, 500.0])
         .with_drag_and_drop(true);
