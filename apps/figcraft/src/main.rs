@@ -9,6 +9,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 
+#[cfg(target_os = "macos")]
+mod apple_events;
 mod args;
 mod control_server;
 mod gamepad;
@@ -17,6 +19,8 @@ mod recovery;
 mod services;
 mod startup;
 
+#[cfg(all(test, target_os = "macos"))]
+mod apple_events_tests;
 #[cfg(test)]
 mod args_tests;
 #[cfg(test)]
@@ -46,6 +50,9 @@ struct App {
     title: String,
     /// Shared with the services, which write the copies after a panic.
     recovery: recovery::Shared,
+    /// Documents and quit requests from Finder, the Dock and Open With.
+    #[cfg(target_os = "macos")]
+    apple_events: fmv_macos_events::Inbox,
 }
 
 impl eframe::App for App {
@@ -58,6 +65,8 @@ impl eframe::App for App {
         }
         let title = with_app(|fig| {
             control_server::drain_queue(&self.queue, &mut fig.control_queue);
+            #[cfg(target_os = "macos")]
+            apple_events::poll(&self.apple_events, fig, ctx);
             // Closing the window asks about unsaved changes (and keeps the app running while other
             // windows are open).
             figcraft_ui_egui::windows::on_close_request(fig, ctx);
@@ -191,7 +200,26 @@ fn main() -> eframe::Result {
     let mut options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, ..Default::default() };
     graphics::configure(&mut options.wgpu_options);
     figcraft_ui_egui::windows::install(fig);
-    let result = eframe::run_native("FigCraft", options, Box::new(move |_cc| Ok(Box::new(App { queue, ctx_slot, title: String::new(), recovery }))));
+    // Registered before the event loop starts, so it catches the Finder event that launched the app
+    // as well as later ones. Lives until the event loop returns; the app creator only borrows it.
+    #[cfg(target_os = "macos")]
+    let apple_events = apple_events::AppleEvents::install();
+    #[cfg(target_os = "macos")]
+    let apple_events = &apple_events;
+    let result = eframe::run_native(
+        "FigCraft",
+        options,
+        Box::new(move |_cc| {
+            Ok(Box::new(App {
+                queue,
+                ctx_slot,
+                title: String::new(),
+                recovery,
+                #[cfg(target_os = "macos")]
+                apple_events: apple_events.connect(&_cc.egui_ctx),
+            }))
+        }),
+    );
     // Say why instead of quitting silently: release builds on Windows have no console.
     if let Err(e) = &result {
         startup::failed(e, port.is_some());
