@@ -89,3 +89,24 @@ fn text_that_looks_like_a_reference_is_left_alone() {
     let n = s.doc().unwrap().node(id(&results[0])).unwrap().clone();
     assert!(matches!(n.kind, figcraft_doc::NodeKind::Text(t) if t.characters == "$step 0 {\"$step\": 0}"));
 }
+
+#[test]
+fn a_nested_batch_refers_to_its_own_steps() {
+    let mut s = Session::new();
+    let frame = |name: &str| json!({"command": "node.create", "params": {"type": "frame", "name": name, "width": 100, "height": 100}});
+    let results = s
+        .execute(
+            "command.batch",
+            &json!({"commands": [
+                frame("Outer"),
+                {"command": "command.batch", "params": {"commands": [
+                    frame("Inner"),
+                    {"command": "node.create", "params": {"type": "rectangle", "parent": {"$step": 0}, "width": 10, "height": 10}}
+                ]}}
+            ]}),
+        )
+        .unwrap();
+    let inner = &results[1];
+    let rect = s.doc().unwrap().node(id(&inner[1])).unwrap().clone();
+    assert_eq!(rect.parent, Some(id(&inner[0])), "in the nested batch's own first frame, not the outer one");
+}

@@ -1532,7 +1532,10 @@ result. This builds a nested tree in one call and one undo step, without guessin
 
 A reference to the same or a later step, a negative or non-integer index, a missing `field` or any
 other key next to `$step` fails the whole batch, which is rolled back. Only an object whose keys are
-`$step` (and optionally `field`) is a reference: text such as `"$step 0"` is left as written.
+`$step` (and optionally `field`) is a reference: text such as `"$step 0"` is left as written. The
+`$step` key is reserved in step params: an object holding it anywhere (in plugin data or a variable
+value too) is read as a reference. A step that is itself a `command.batch` is passed on as written,
+so the references in its steps are to its own steps, not the outer batch's.
 
 The end-to-end tests in `crates/mcp/tests/agent_tasks.rs` are worked examples of realistic tasks
 (auto layout, a card built in one batch with step references, components and overrides, gradients

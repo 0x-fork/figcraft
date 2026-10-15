@@ -1124,12 +1124,14 @@ impl Session {
 
     /// Run several commands as one undo step. A param value `{"$step": n}` is replaced by the `id`
     /// in the result of the earlier step `n` (`{"$step": n, "field": "…"}` picks another field),
-    /// so a step can target a layer that an earlier step of the same batch created.
+    /// so a step can target a layer that an earlier step of the same batch created. Any object
+    /// with a `$step` key in a step's params is such a reference, except inside a nested
+    /// `command.batch` step: its references are to its own steps.
     pub fn batch(&mut self, label: &str, cmds: &[(String, Value)]) -> Result<Vec<Value>> {
         self.grouped(label, |s| {
             let mut results: Vec<Value> = Vec::with_capacity(cmds.len());
             for (step, (id, p)) in cmds.iter().enumerate() {
-                let p = resolve_step_refs(p, &results, step, 0)?;
+                let p = if id == "command.batch" { p.clone() } else { resolve_step_refs(p, &results, step, 0)? };
                 results.push(s.execute(id, &p)?);
             }
             Ok(results)
