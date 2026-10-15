@@ -3,13 +3,13 @@
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use figcraft_color::{BlendMode, Paint, PaintKind};
 use figcraft_doc::*;
-use figcraft_engine::cmd::lists::moved_index;
+use figcraft_engine::cmd::lists::{moved_index, removed_index};
 use serde_json::{Value, json};
 
 use crate::a11y::{self, Tip};
 use crate::i18n::{tr, trf, trn};
 use crate::icons::{self, Icon};
-use crate::list_drag::{ListDrag, move_flags};
+use crate::list_drag::{ListDrag, move_flags, remove_flags};
 use crate::style_picker::{self, StyleSlot};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets::{self, Edit, FIELD_H, FieldEdit, Lead, PAD};
@@ -1596,8 +1596,16 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
         if icons::button(ui, if p.visible { Icon::Eye } else { Icon::EyeOff }, 24.0, false, tr("Toggle visibility")).clicked() {
             app.run(cmd, json!({"ids": ids, "index": i, "visible": !p.visible}));
         }
-        if icons::button(ui, Icon::Minus, 24.0, false, tr("Remove")).clicked() {
-            app.run(if fills { "fill.remove" } else { "stroke.remove" }, json!({"ids": ids, "index": i}));
+        if icons::button(ui, Icon::Minus, 24.0, false, tr("Remove")).clicked()
+            && app.run(if fills { "fill.remove" } else { "stroke.remove" }, json!({"ids": ids, "index": i})).is_some()
+            && let Some(crate::colorpicker::PickerTarget::Paint { fills: f, index, .. }) = &mut app.ui.picker
+            && *f == fills
+        {
+            // An open colour picker keeps editing the paint it was on, or closes with it.
+            match removed_index(*index, i) {
+                Some(k) => *index = k,
+                None => app.ui.picker = None,
+            }
         }
     })
 }
@@ -1627,6 +1635,7 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     style_picker::chip(app, ui, doc, &ids, StyleSlot::Effect);
     let Some(list) = list else { return };
     let mut drag = ListDrag::new(ui, "effects");
+    let mut removed = None;
     for (i, e) in list.iter().enumerate().rev() {
         let mut open = effect_open(ui.ctx(), i);
         let header = row_rect(ui, 32.0, |ui| {
@@ -1651,8 +1660,10 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
                 e2.visible = !e2.visible;
                 app.run("effect.set", json!({"ids": ids, "index": i, "effect": e2}));
             }
-            if icons::button(ui, Icon::Minus, 24.0, false, tr("Remove")).clicked() {
-                app.run("effect.remove", json!({"ids": ids, "index": i}));
+            if icons::button(ui, Icon::Minus, 24.0, false, tr("Remove")).clicked()
+                && app.run("effect.remove", json!({"ids": ids, "index": i})).is_some()
+            {
+                removed = Some(i);
             }
         });
         if open {
@@ -1665,6 +1676,16 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         move_flags(ui, FX_OPEN, list.len(), from, to);
         if let Some(crate::colorpicker::PickerTarget::Effect { index, .. }) = &mut app.ui.picker {
             *index = moved_index(*index, from, to);
+        }
+    }
+    // Open settings and an open colour picker stay with their effects, or go with theirs.
+    if let Some(i) = removed {
+        remove_flags(ui, FX_OPEN, list.len(), i);
+        if let Some(crate::colorpicker::PickerTarget::Effect { index, .. }) = &mut app.ui.picker {
+            match removed_index(*index, i) {
+                Some(k) => *index = k,
+                None => app.ui.picker = None,
+            }
         }
     }
 }
@@ -1925,6 +1946,7 @@ fn grids(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let Some(list) = list else { return };
     // The last grid first, like paints and effects; rows drag to reorder.
     let mut drag = ListDrag::new(ui, "grids");
+    let mut removed = None;
     for (i, g) in list.iter().enumerate().rev() {
         let open_id = Id::new(("grid_open", i));
         let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
@@ -1951,8 +1973,10 @@ fn grids(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             if icons::button(ui, if g.visible { Icon::Eye } else { Icon::EyeOff }, 24.0, false, tr("Toggle")).clicked() {
                 app.set_props(&ids, json!({"grids": grids_with(&list, i, |x| x.visible = !x.visible)}));
             }
-            if icons::button(ui, Icon::Minus, 24.0, false, tr("Remove")).clicked() {
-                app.run("grid.remove", json!({"ids": ids, "index": i}));
+            if icons::button(ui, Icon::Minus, 24.0, false, tr("Remove")).clicked()
+                && app.run("grid.remove", json!({"ids": ids, "index": i})).is_some()
+            {
+                removed = Some(i);
             }
         });
         if open {
@@ -1963,6 +1987,10 @@ fn grids(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     if let Some((from, to)) = drag.finish(ui) {
         app.run("grid.move", json!({"ids": ids, "from": from, "to": to}));
         move_flags(ui, "grid_open", list.len(), from, to);
+    }
+    // Open settings stay with their grids, or go with theirs.
+    if let Some(i) = removed {
+        remove_flags(ui, "grid_open", list.len(), i);
     }
 }
 
