@@ -284,7 +284,7 @@ fn model_fields(ui: &mut Ui, c: Color) -> Option<Color> {
             }
             _ => {
                 if let Some(h) = widgets::text_field(ui, Id::new("cp_hex"), &c.to_hex(), 101.0, "") {
-                    out = Color::from_hex(&h).map(|h| h.with_alpha(if h.a < 1.0 { h.a } else { c.a }));
+                    out = Color::from_hex_or_name(&h).map(|h| h.with_alpha(if h.a < 1.0 { h.a } else { c.a }));
                 }
             }
         }
