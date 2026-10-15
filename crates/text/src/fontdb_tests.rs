@@ -139,6 +139,21 @@ fn the_scan_skips_named_pipes() {
     assert_eq!(std::fs::read(dir.0.join("complete")).unwrap(), b"scanned");
 }
 
+#[test]
+fn fallback_faces_follow_the_runs_style() {
+    // A bold run's missing characters come from each fallback family's face nearest Bold, not its
+    // Regular, so Hangul or kana in a bold Latin run come out bold too. Same families, same order.
+    scan_system_fonts();
+    let mut w = db().write().unwrap();
+    let regular = w.fallbacks();
+    let bold = w.fallbacks_for("Bold");
+    let families = |v: &[Arc<Face>]| v.iter().map(|f| f.family.clone()).collect::<Vec<_>>();
+    assert_eq!(families(&regular), families(&bold));
+    for (r, b) in regular.iter().zip(&bold) {
+        assert!(b.weight >= r.weight, "{}: {} is lighter than {}", b.family, b.style, r.style);
+    }
+}
+
 #[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn user_font_dirs_follow_xdg_data_home() {

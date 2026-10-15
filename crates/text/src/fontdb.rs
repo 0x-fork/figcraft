@@ -405,6 +405,28 @@ fn names(f: &skrifa::FontRef) -> (Option<String>, Option<String>) {
     (family, style)
 }
 
+/// Families tried, in order, for characters a text's own font lacks.
+const FALLBACK_FAMILIES: [&str; 18] = [
+    "Inter",
+    "Helvetica Neue",
+    "Arial",
+    "Segoe UI",
+    "DejaVu Sans",
+    "Noto Sans",
+    "BIZ UDPGothic",
+    "Hiragino Sans",
+    "PingFang SC",
+    "Noto Sans CJK SC",
+    "Microsoft YaHei",
+    "Apple SD Gothic Neo",
+    "Malgun Gothic",
+    "Noto Sans CJK KR",
+    "Noto Sans KR",
+    "Noto Sans Arabic",
+    "Apple Symbols",
+    "Segoe UI Symbol",
+];
+
 /// A system font file entry not yet loaded.
 #[derive(Clone, Debug)]
 struct Pending {
@@ -614,24 +636,15 @@ impl FontDb {
 
     /// Faces to try for characters the primary face lacks.
     pub fn fallbacks(&mut self) -> Vec<Arc<Face>> {
+        self.fallbacks_for("Regular")
+    }
+
+    /// [`fallbacks`](Self::fallbacks), each family's face nearest `style`, so the characters a
+    /// bold run takes from a fallback font (Hangul in Inter Bold) come out bold too.
+    pub fn fallbacks_for(&mut self, style: &str) -> Vec<Arc<Face>> {
         let mut out = Vec::new();
-        for fam in [
-            "Inter",
-            "Helvetica Neue",
-            "Arial",
-            "Segoe UI",
-            "DejaVu Sans",
-            "Noto Sans",
-            "BIZ UDPGothic",
-            "Hiragino Sans",
-            "PingFang SC",
-            "Noto Sans CJK SC",
-            "Microsoft YaHei",
-            "Noto Sans Arabic",
-            "Apple Symbols",
-            "Segoe UI Symbol",
-        ] {
-            if let Some(f) = self.find(fam, "Regular") {
+        for fam in FALLBACK_FAMILIES {
+            if let Some(f) = self.find(fam, style) {
                 out.push(f);
             }
         }
