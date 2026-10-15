@@ -100,6 +100,38 @@ pub fn scrubbed(from: f64, amount: f64, quantum: f64) -> f64 {
     if quantum > 0.0 && quantum.is_finite() { stepped(from, (amount / quantum).round(), quantum) } else { from }
 }
 
+/// The shared label-scrub gesture, including changing modifier rates and raw edge motion.
+/// Callers supply the hit area and apply live values until the final `Scrub(_, true)`.
+pub(crate) fn scrub(ui: &Ui, id: Id, response: &Response, value: Option<f64>, step: f64) -> Option<FieldEdit> {
+    let v = value?;
+    // Where the scrub began and how far it has taken the value (the modifiers can change on
+    // the way: each stretch counts at its own rate).
+    let scrub_id = id.with("scrub");
+    if response.dragged() || response.drag_stopped() {
+        let began = response.drag_started();
+        let (v0, mut amount): (f64, f64) = ui.data(|d| d.get_temp(scrub_id)).filter(|_| !began).unwrap_or((v, 0.0));
+        let (dx, shift, alt) = ui.input(|i| {
+            let p = &i.pointer;
+            // As it begins: all the way from the press (a drag is one only after a few points).
+            let moved = if began { p.hover_pos().zip(p.press_origin()).map_or(0.0, |(at, from)| at.x - from.x) } else { p.delta().x };
+            // With the pointer stopped at the edge of the screen (or of a window that fills
+            // it) the mouse's own motion goes on, where the platform reports it: the scrub
+            // does too. Elsewhere the scrub just stops there.
+            let raw = p.motion().map_or(0.0, |m| m.x / i.pixels_per_point);
+            let at_edge = moved == 0.0 && p.hover_pos().is_none_or(|at| at.x <= 1.0 || at.x >= i.content_rect().max.x - 1.0);
+            (f64::from(if at_edge { raw } else { moved }), i.modifiers.shift, i.modifiers.alt)
+        });
+        // The frame the button goes up moves nothing: the scrub ends where the last one left it.
+        if response.dragged() {
+            amount += scrub_amount(dx, step, shift, alt);
+            ui.data_mut(|d| d.insert_temp(scrub_id, (v0, amount)));
+        }
+        let quantum = if alt { step * 0.1 } else { step };
+        return Some(FieldEdit::Scrub(scrubbed(v0, amount, quantum), response.drag_stopped()));
+    }
+    None
+}
+
 pub(crate) fn fmt_num(v: f64) -> String {
     if !v.is_finite() {
         return String::new();
@@ -201,33 +233,8 @@ fn number_field_impl(
     if lead_resp.hovered() || lead_resp.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
-    // Scrub by dragging the label: a step a point, ten with Shift, a tenth with Alt.
-    if let Some(v) = value {
-        // Where the scrub began and how far it has taken the value (the modifiers can change on
-        // the way: each stretch counts at its own rate).
-        let scrub_id = id.with("scrub");
-        if lead_resp.dragged() || lead_resp.drag_stopped() {
-            let began = lead_resp.drag_started();
-            let (v0, mut amount): (f64, f64) = ui.data(|d| d.get_temp(scrub_id)).filter(|_| !began).unwrap_or((v, 0.0));
-            let (dx, shift, alt) = ui.input(|i| {
-                let p = &i.pointer;
-                // As it begins: all the way from the press (a drag is one only after a few points).
-                let moved = if began { p.hover_pos().zip(p.press_origin()).map_or(0.0, |(at, from)| at.x - from.x) } else { p.delta().x };
-                // With the pointer stopped at the edge of the screen (or of a window that fills
-                // it) the mouse's own motion goes on, where the platform reports it: the scrub
-                // does too. Elsewhere the scrub just stops there.
-                let raw = p.motion().map_or(0.0, |m| m.x / i.pixels_per_point);
-                let at_edge = moved == 0.0 && p.hover_pos().is_none_or(|at| at.x <= 1.0 || at.x >= i.content_rect().max.x - 1.0);
-                (f64::from(if at_edge { raw } else { moved }), i.modifiers.shift, i.modifiers.alt)
-            });
-            // The frame the button goes up moves nothing: the scrub ends where the last one left it.
-            if lead_resp.dragged() {
-                amount += scrub_amount(dx, step, shift, alt);
-                ui.data_mut(|d| d.insert_temp(scrub_id, (v0, amount)));
-            }
-            let quantum = if alt { step * 0.1 } else { step };
-            out = Some(Edit::All(FieldEdit::Scrub(scrubbed(v0, amount, quantum), lead_resp.drag_stopped())));
-        }
+    if let Some(edit) = scrub(ui, id, &lead_resp, value, step) {
+        out = Some(Edit::All(edit));
     }
     let (key_step, key_big) = key_steps(ui.ctx(), suffix, step);
     // The keyboard is on the field (also in a window that isn't in front: keys reach one only
