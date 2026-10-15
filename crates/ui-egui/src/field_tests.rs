@@ -2,7 +2,7 @@
 //! a scrub and an arrow key move a value, and the Design panel's fields driven through egui
 //! headless: scrubbing by the label with and without Shift and Alt, arrow keys, arithmetic on
 //! commit, Tab and Shift+Tab, Escape, fields showing "Mixed", and one undo step per scrub or
-//! commit (the colour picker's and the prototype panel's fields too).
+//! commit (the colour picker's, the prototype panel's and the Scale panel's fields too).
 
 use egui::accesskit::Role;
 use egui::{Event, Id, Key, Modifiers, Pos2, pos2};
@@ -460,4 +460,16 @@ fn scrubbing_a_prototype_delay_sets_it_once_when_let_go() {
         _ => panic!("still after a delay"),
     };
     assert_eq!((ms, undo_steps(&u)), (800, steps + 1));
+}
+
+#[test]
+fn scrubbing_the_scale_panel_width_scales_live_in_one_undo_step() {
+    let (mut u, a, _) = setup();
+    u.app.run("tool.set", json!({"tool": "scale"}));
+    u.frame(vec![]);
+    let steps = undo_steps(&u);
+    let from = lead(&u, Id::new("scale_w"));
+    drag(&mut u, from, 20.0, Modifiers::NONE);
+    let (_, _, w, h) = geom(&u, a);
+    assert_eq!((w, h, undo_steps(&u)), (60.0, 45.0, steps + 1), "40×30 scaled to a width of 60");
 }
