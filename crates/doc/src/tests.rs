@@ -336,6 +336,16 @@ fn next_name_increments() {
 }
 
 #[test]
+fn next_name_never_overflows() {
+    let mut d = Document::new("x");
+    let p = page(&d);
+    d.create(p, NodeKind::Frame, "Frame 18446744073709551615", 0.0, 0.0, 1.0, 1.0).unwrap();
+    assert_eq!(d.next_name("Frame"), "Frame 1", "the counter can't step past u64::MAX");
+    d.create(p, NodeKind::Frame, "Frame 1", 0.0, 0.0, 1.0, 1.0).unwrap();
+    assert_eq!(d.next_name("Frame"), "Frame 2");
+}
+
+#[test]
 fn custom_easings() {
     use crate::proto::Easing;
     // cubic-bezier(0.25, 0.1, 0.25, 1) is CSS `ease`: 0.8024 at half time.
@@ -410,4 +420,26 @@ fn text_style_updates_merge_equal_runs() {
     t.link_text_style(0, 1, &base, "S");
     t.map_text_styles(|_| None);
     assert!(t.runs.is_empty());
+}
+
+#[test]
+fn text_style_empty_range_links_and_unlinks_all() {
+    let def = TextStyle { font_style: "Bold".into(), ..Default::default() };
+    let mut t = TextData::new("abcd");
+    t.link_text_style(2, 2, &def, "S");
+    assert!((0..4).all(|i| t.style_at(i).style_id.as_deref() == Some("S") && t.style_at(i).font_style == "Bold"));
+    t.unlink_text_style(2, 2);
+    assert!((0..4).all(|i| t.style_at(i).style_id.is_none() && t.style_at(i).font_style == "Bold"));
+    // Partial ranges stay partial.
+    t.link_text_style(0, 4, &def, "S");
+    t.unlink_text_style(1, 3);
+    assert_eq!(t.style_at(0).style_id.as_deref(), Some("S"));
+    assert!(t.style_at(1).style_id.is_none() && t.style_at(2).style_id.is_none());
+    assert_eq!(t.style_at(3).style_id.as_deref(), Some("S"));
+    // Empty text changes the base style.
+    let mut e = TextData::new("");
+    e.link_text_style(0, 0, &def, "S");
+    assert_eq!(e.style.style_id.as_deref(), Some("S"));
+    e.unlink_text_style(0, 0);
+    assert!(e.style.style_id.is_none());
 }
