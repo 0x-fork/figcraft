@@ -1856,9 +1856,10 @@ impl Session {
             self.widget_click(ev.p(), ev.tol() * 2.0)?;
             return Ok(());
         }
-        // The second press began a move or a resize: a double-click isn't one.
-        if matches!(self.tool.gesture, Gesture::Move { .. } | Gesture::Resize { .. }) {
+        // The second press began a move, a resize, a shape or a marquee: a double-click isn't one.
+        if matches!(self.tool.gesture, Gesture::Move { .. } | Gesture::Resize { .. } | Gesture::Draw { .. } | Gesture::Marquee { .. }) {
             self.tool.gesture = Gesture::None;
+            self.tool.overlay.marquee = None;
             self.cancel_interaction()?;
         }
         let Some(leaf) = self.hit(&doc, page, ev.p(), ev.tol() * 2.0) else { return Ok(()) };
