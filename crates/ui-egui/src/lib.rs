@@ -1501,3 +1501,6 @@ impl FigApp {
         })
     }
 }
+
+#[cfg(test)]
+mod typography_scrub_tests;
