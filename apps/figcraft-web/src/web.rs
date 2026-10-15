@@ -131,7 +131,8 @@ impl Services for WebServices {
 }
 
 fn download(name: &str, bytes: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
-    let document = web_sys::window().and_then(|w| w.document()).ok_or("no document")?;
+    let window = web_sys::window().ok_or("no window")?;
+    let document = window.document().ok_or("no document")?;
     let body = document.body().ok_or("no body")?;
     let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
     let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &{
@@ -146,5 +147,14 @@ fn download(name: &str, bytes: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
     body.append_child(&a)?;
     a.click();
     a.remove();
-    web_sys::Url::revoke_object_url(&url)
+    // Revoked later, not at once: some browsers cancel a download whose URL goes before it starts.
+    let revoke = wasm_bindgen::closure::Closure::once_into_js(move || {
+        let _ = web_sys::Url::revoke_object_url(&url);
+    });
+    // Without the timer the URL just stays until the page closes.
+    let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(revoke.unchecked_ref(), REVOKE_DOWNLOAD_MS);
+    Ok(())
 }
+
+/// How long a download's object URL is kept (milliseconds).
+const REVOKE_DOWNLOAD_MS: i32 = 40_000;
