@@ -151,7 +151,7 @@ size and SHA-256. The server's key comes from the address or, better, from the
 lists); it is never printed. The bundle is checked before it is sent and again by the server. See
 [plugins.md](plugins.md#plugin-directories).
 
-### `perf [--layers N[,N...]]`
+### `perf [--layers N[,N...]] [--instances N[,N...]]`
 
 Builds synthetic documents of each size (default `1000,10000` layers: screens with an auto layout
 header, a card group, button instances and a grid of shapes and text) and prints a Markdown table of
@@ -160,3 +160,11 @@ and hover, single-layer edits through the engine (fill, move, text in auto layou
 with all its instances), undo/redo, a drag preview frame, `normalize` after a one-node edit,
 `document.inspect` and select-all + move. Use a release build for meaningful numbers;
 `cargo xtask bench` runs it at 1k/10k/50k layers together with the UI frame benchmarks.
+
+`--layers` picks the document sizes (each value is clamped to 10 to 2,000,000 layers). `--instances`
+picks the component workloads (default `2000`): for each count the command builds a synthetic design
+system (about 300 components, variables and styles, nested four deep) with that many instances that
+carry overrides at every level, in one file and as a library in another. It then prints a second
+table with the build time and edits of a deep main component (icon colour, glyph size, an added
+layer) and of the 72 button mains, where all copies follow. Zeros are dropped and counts above
+100,000 are capped to 100,000; `--instances 0` skips this table.
