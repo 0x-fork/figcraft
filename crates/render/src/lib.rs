@@ -426,6 +426,8 @@ pub fn png_insert_chunk(png: Vec<u8>, kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(test)]
+mod backdrop_shadow_tests;
+#[cfg(test)]
 mod backdrop_tests;
 #[cfg(test)]
 mod band_tests;
@@ -441,6 +443,8 @@ mod gif_tests;
 mod grain_tests;
 #[cfg(test)]
 mod group_effects_tests;
+#[cfg(test)]
+mod image_budget_tests;
 #[cfg(test)]
 mod image_profile_tests;
 #[cfg(test)]

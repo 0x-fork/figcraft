@@ -107,7 +107,7 @@ fn serve(mut out: TcpStream, queue: Queue, ctx: CtxSlot, timeout: Duration) -> s
                     },
                     Err(_) => {
                         cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
-                        json!({"id": id, "ok": false, "error": "timed out waiting for the UI (is the window visible?)"})
+                        json!({"id": id, "ok": false, "error": "timed out waiting for the UI: screenshots and input need the FigCraft window on screen (is it minimised or covered?)"})
                     }
                 }
             }

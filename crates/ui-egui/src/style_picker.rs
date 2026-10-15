@@ -746,7 +746,7 @@ fn text_properties(ui: &mut Ui, id: &str, def: &TextStyle, out: &mut Frame) {
         (family_resp, style_resp)
     });
     crate::right::menu_popup(&family_resp).width(260.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-        if let Some(f) = crate::typography::font_picker(ui, Some(&def.font_family), family_resp.clicked()) {
+        if let Some(f) = crate::typography::font_picker(ui, Some(&def.font_family), family_resp.clicked()).picked {
             set(out, &|d| {
                 d.font_family = f.clone();
                 let styles = figcraft_text::family_styles(&f);
@@ -1042,7 +1042,10 @@ pub fn local_styles(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
                 let (r, resp) = ui.allocate_exact_size(vec2(w, 24.0), Sense::click());
                 let text_r = Rect::from_min_max(pos2(r.min.x + widgets::PAD, r.min.y + 2.0), pos2(r.max.x - widgets::PAD, r.max.y - 2.0));
                 if renaming.as_deref() == Some(*f) {
-                    let (out, open) = widgets::rename_field(ui, folder_rename_id().with(*f), f, text_r, regular(11.0), false);
+                    // Focused as it is first drawn: a focus asked for before its field is drawn
+                    // isn't in the screen reader tree (UI Automation aborts the app, #224).
+                    let start = ui.data_mut(|d| d.remove_temp::<bool>(folder_rename_id().with("start"))).unwrap_or(false);
+                    let (out, open) = widgets::rename_field(ui, folder_rename_id().with(*f), f, text_r, regular(11.0), start);
                     if let Some(name) = out {
                         run = Some(("style.renameFolder", json!({"folder": f, "name": name})));
                     }
@@ -1055,7 +1058,7 @@ pub fn local_styles(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
                     crate::right::context_popup(&resp).show(|ui| {
                         if crate::right::menu_item(ui, tr("Rename folder"), "") {
                             ui.data_mut(|d| d.insert_temp(folder_rename_id(), f.to_string()));
-                            ui.memory_mut(|m| m.request_focus(folder_rename_id().with(*f).with("te")));
+                            ui.data_mut(|d| d.insert_temp(folder_rename_id().with("start"), true));
                             ui.close();
                         }
                     });
