@@ -1061,6 +1061,23 @@ pub(crate) fn parse_letter_spacing(s: &str, cur: Option<LetterSpacing>) -> Optio
     }
 }
 
+/// A [`parse_line_height`] value as a [`LineHeight`]: "auto", "150%" or a number of pixels.
+pub(crate) fn line_height_of(v: &Value) -> Option<LineHeight> {
+    match v {
+        Value::String(s) if s.eq_ignore_ascii_case("auto") => Some(LineHeight::Auto),
+        Value::String(s) => s.strip_suffix('%')?.trim().parse().ok().filter(|p: &f64| p.is_finite()).map(LineHeight::Percent),
+        other => other.as_f64().filter(|v| v.is_finite()).map(LineHeight::Pixels),
+    }
+}
+
+/// A [`parse_letter_spacing`] value as a [`LetterSpacing`]: "2%" or a number of pixels.
+pub(crate) fn letter_spacing_of(v: &Value) -> Option<LetterSpacing> {
+    match v {
+        Value::String(s) => s.strip_suffix('%')?.trim().parse().ok().filter(|p: &f64| p.is_finite()).map(LetterSpacing::Percent),
+        other => other.as_f64().filter(|v| v.is_finite()).map(LetterSpacing::Pixels),
+    }
+}
+
 // ---- Font picker ----
 
 const RECENT_KEY: &str = "figcraft_recent_fonts";
