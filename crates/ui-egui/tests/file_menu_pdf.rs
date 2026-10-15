@@ -5,14 +5,25 @@
 use std::path::PathBuf;
 
 use figcraft_engine::Session;
-use figcraft_ui_egui::{FigApp, Services, menus};
+use figcraft_ui_egui::{DialogFuture, FigApp, Services, menus};
 use serde_json::json;
 
 /// Services whose save dialog always returns the given path.
 struct SaveTo(PathBuf);
 impl Services for SaveTo {
-    fn pick_save(&mut self, _title: &str, _name: &str, _exts: &[&str]) -> Option<PathBuf> {
-        Some(self.0.clone())
+    fn pick_save(&mut self, _title: &str, _name: &str, _exts: &[&str]) -> DialogFuture {
+        Box::pin(std::future::ready(Some(self.0.clone())))
+    }
+}
+
+/// The menu item, then a frame: the save dialog answers asynchronously and the frame takes its answer.
+fn invoke(app: &mut FigApp, id: &str) {
+    menus::invoke(app, id);
+    let ctx = egui::Context::default();
+    for _ in 0..2 {
+        let input =
+            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1440.0, 900.0))), ..Default::default() };
+        ctx.run_ui(input, |ui| app.ui(ui)).textures_delta.clear();
     }
 }
 
@@ -37,7 +48,7 @@ fn frames_pdf_menu_saves_the_pdf() {
     let path = out_path("one");
     let mut app = FigApp::new(Session::new(), Box::new(SaveTo(path.clone())));
     frame(&mut app, 0, 0);
-    menus::invoke(&mut app, "file.exportFramesPdf");
+    invoke(&mut app, "file.exportFramesPdf");
     assert!(app.ui.last_error.is_none(), "{:?}", app.ui.last_error);
     let bytes = std::fs::read(&path).expect("the menu writes the PDF where the user chose");
     let _ = std::fs::remove_file(&path);
@@ -60,7 +71,7 @@ fn frames_pdf_menu_one_page_per_visible_frame() {
     let hidden = frame(&mut app, 600, 0);
     let id = hidden["id"].clone();
     app.session.execute("node.set", &json!({"id": id, "visible": false})).unwrap();
-    menus::invoke(&mut app, "file.exportFramesPdf");
+    invoke(&mut app, "file.exportFramesPdf");
     assert!(app.ui.last_error.is_none(), "{:?}", app.ui.last_error);
     let bytes = std::fs::read(&path).expect("the menu writes the PDF where the user chose");
     let _ = std::fs::remove_file(&path);
