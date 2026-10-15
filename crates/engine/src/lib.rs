@@ -372,6 +372,8 @@ pub struct DocState {
     /// The last duplicate while its copies are the selection: Duplicate repeats its offset (see
     /// [`cmd::edit::Duplicated`]; not saved).
     pub(crate) last_duplicate: Option<cmd::edit::Duplicated>,
+    /// The View toggles the preferences keep were applied ([`Session::apply_view_prefs`]).
+    view_from_prefs: bool,
 }
 
 /// A version shown on the canvas in place of the document: read-only until it's restored or the
@@ -431,6 +433,7 @@ impl DocState {
             guide: None,
             rotation_origin: None,
             last_duplicate: None,
+            view_from_prefs: false,
         };
         st.zoom_to_fit();
         st
@@ -663,6 +666,10 @@ pub struct Prefs {
     /// `widget:<plugin>`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub recent_actions: Vec<String>,
+    /// The View menu's toggles turned on or off (rulers, pixel grid, snapping…), by command id:
+    /// files opened or made later start with them. Missing: the toggle's default.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub view: BTreeMap<String, bool>,
 }
 
 /// Recently run actions kept for the Actions palette (newest first).
@@ -697,6 +704,7 @@ impl Default for Prefs {
             home_sort: "modified".into(),
             home_order: "desc".into(),
             recent_actions: Vec::new(),
+            view: BTreeMap::new(),
         }
     }
 }
@@ -848,6 +856,14 @@ impl Session {
         s
     }
 
+    /// Files new to the session start with the View toggles the preferences keep.
+    pub fn apply_view_prefs(&mut self) {
+        for ds in self.docs.iter_mut().filter(|d| !d.view_from_prefs) {
+            cmd::view::apply_kept(&self.prefs, &mut ds.view);
+            ds.view_from_prefs = true;
+        }
+    }
+
     pub fn ds(&self) -> Result<&DocState> {
         self.docs.get(self.active).ok_or(EngineError::NoDocument)
     }
@@ -889,6 +905,7 @@ impl Session {
             return Err(EngineError::Disabled(id.into(), "leave the live session before reverting to the saved file".into()));
         }
         branches::sync(self);
+        self.apply_view_prefs();
         if textpreview::COMMANDS.contains(&id) {
             // A live preview is no edit: no undo step, normalisation or rollback here.
             let r = guard::run(id, || (spec.run)(self, params));
@@ -914,6 +931,7 @@ impl Session {
         match &result {
             Ok(_) => {
                 self.after_command(spec, before);
+                self.apply_view_prefs();
                 if spec.history && id != "edit.repeat" {
                     self.last_command = Some((id.to_string(), params.clone()));
                 }
