@@ -29,7 +29,7 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
   and 29 menu wordings by command id: 1,982 entries. Command ids, the CLI, MCP and the control
   channel stay English. Accessibility names come from the same strings.
 - **Language preference:** Preferences ▸ Language (System, English, Deutsch, Español, Español
-  (Latinoamérica), Français, 日本語, 한국어, Português (Brasil), 简体中文), applied at once without a
+  (Latinoamérica), Français, 日本語, 한국어, Português (Brasil), Svenska, 简体中文), applied at once without a
   restart; System takes the first of the OS's preferred languages that has a catalog (Windows'
   language list, macOS AppleLanguages, `LANGUAGE` then the locale variables on Linux and BSD; a regional tag
   falls back to its language, pt-PT or pt to pt-BR, and es-419, es-MX, es-AR, es-CO and the other
@@ -91,7 +91,9 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
 | Korean | ko | 2,076 / 2,076 (100%, draft) | yes | Hangul text and IME in documents; UI text in an installed Korean face (web: the `FIGCRAFT_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
 | Vietnamese | vi | 0 (0%) | no | Latin with stacked diacritics | no | none | 3–5 |
 
-Other languages: none shipped (Figma ships none beyond the eight above).
+Other languages: Swedish (`sv`), every UI string, command label and menu wording translated (a
+catalog test checks it stays complete); native review welcome. Figma ships none beyond the eight
+above.
 
 The layer is done. Per-language hours above are agent hours for a catalog of ~1,800 entries
 (a machine draft, then a pass over the panels for overflow), plus each language's plural rule where
