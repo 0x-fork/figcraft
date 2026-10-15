@@ -154,15 +154,17 @@ fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
     if let Err(e) = r {
         app.toast(e.to_string());
     }
-    // Drag previews are not choices: a drag records only the colour it ends on, in `finish`.
-    let dragging = app.session.ds().map(|d| d.interaction.is_some()).unwrap_or(false);
-    if !dragging && let Some(c) = paint.solid_color() {
+    // Drag previews (`live`) are not choices: a drag records only the colour it ends on. Not "an
+    // interaction is open": editing text holds one, and its colour clicks are choices.
+    if !live && let Some(c) = paint.solid_color() {
         remember_recent(app, c);
     }
 }
 
 fn remember_recent(app: &mut FigApp, c: Color) {
-    app.session.recent_colors.retain(|x| *x != c);
+    // By 8-bit value: a document stores colours rounded to 8 bits, so the colour picked and the one read
+    // back differ by a fraction and would show as two identical swatches.
+    app.session.recent_colors.retain(|x| x.to_rgba8() != c.to_rgba8());
     app.session.recent_colors.insert(0, c);
     app.session.recent_colors.truncate(16);
 }
