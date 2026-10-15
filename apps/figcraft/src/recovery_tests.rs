@@ -62,3 +62,51 @@ fn copies_follow_saves_and_a_normal_quit_leaves_nothing() {
     assert!(!dir.exists(), "a normal quit removes the copies");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// The files named `*.figcraft` in the run folder under `root`.
+fn copy_count(root: &std::path::Path) -> usize {
+    let Some(dir) = std::fs::read_dir(root).unwrap().flatten().next().map(|e| e.path()) else { return 0 };
+    std::fs::read_dir(dir).unwrap().flatten().filter(|f| f.path().extension().is_some_and(|e| e == "figcraft")).count()
+}
+
+#[test]
+fn a_copy_that_failed_is_tried_again_without_another_edit() {
+    let root = root("retry");
+    let s = edited();
+    let mut r = Recovery::start(&root).unwrap();
+    let dir = std::fs::read_dir(&root).unwrap().flatten().next().unwrap().path();
+    let moved = root.join("moved");
+    // The run folder is gone while the copy is written: it fails.
+    std::fs::rename(&dir, &moved).unwrap();
+    r.write(&s, true);
+    std::fs::rename(&moved, &dir).unwrap();
+    // Nothing was edited since: the same revision still has to be copied.
+    r.write(&s, true);
+    assert_eq!(copy_count(&root), 1, "the failed revision was copied again");
+    r.finish();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_background_copy_that_failed_is_tried_again_without_another_edit() {
+    let root = root("retry-bg");
+    let s = edited();
+    let mut r = Recovery::start(&root).unwrap();
+    let dir = std::fs::read_dir(&root).unwrap().flatten().next().unwrap().path();
+    let moved = root.join("moved");
+    std::fs::rename(&dir, &moved).unwrap();
+    r.write(&s, false);
+    // Let the failing write end before the folder comes back.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    std::fs::rename(&moved, &dir).unwrap();
+    for _ in 0..50 {
+        r.write(&s, false);
+        if copy_count(&root) == 1 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert_eq!(copy_count(&root), 1, "the failed revision was copied again");
+    r.finish();
+    let _ = std::fs::remove_dir_all(&root);
+}
