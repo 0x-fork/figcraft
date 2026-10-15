@@ -52,7 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
             let id = match id(p, "id") {
                 Some(i) => i,
                 None => {
-                    let k = req_num("page.select", p, "index")? as usize;
+                    let k = req_index("page.select", p, "index")?;
                     *doc.pages.get(k).ok_or_else(|| bad("page.select", "no such page"))?
                 }
             };

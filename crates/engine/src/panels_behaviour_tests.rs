@@ -338,6 +338,23 @@ fn pages_by_the_documented_rules() {
 }
 
 #[test]
+fn page_select_and_doc_switch_refuse_negative_or_fractional_indexes() {
+    let mut s = Session::new();
+    let p2 = id(&ex(&mut s, "page.add", json!({})));
+    for bad_index in [json!(-1), json!(0.5)] {
+        assert!(s.execute("page.select", &json!({"index": bad_index})).is_err(), "page.select index {bad_index} must fail");
+        assert_eq!(s.page().unwrap(), p2, "page.select index {bad_index} leaves the open page alone");
+    }
+    ex(&mut s, "file.new", json!({}));
+    let active = s.active;
+    assert_eq!(active, 1);
+    for bad_index in [json!(-1), json!(0.5)] {
+        assert!(s.execute("doc.switch", &json!({"index": bad_index})).is_err(), "doc.switch index {bad_index} must fail");
+        assert_eq!(s.active, active, "doc.switch index {bad_index} leaves the active tab alone");
+    }
+}
+
+#[test]
 fn assets_panel_lists_files_and_drops_by_the_documented_rules() {
     let mut s = Session::new();
     let page = s.page().unwrap();
