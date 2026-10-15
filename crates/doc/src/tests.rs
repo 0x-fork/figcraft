@@ -371,3 +371,43 @@ fn custom_easings() {
     assert_eq!(back, Easing::CustomSpring { mass: 2.0, stiffness: 50.0, damping: 5.0 });
     assert_eq!(serde_json::from_value::<Easing>(serde_json::json!("easeInOut")).unwrap(), Easing::EaseInOut);
 }
+
+#[test]
+fn text_style_updates_merge_equal_runs() {
+    let def = TextStyle { font_size: 14.0, ..Default::default() };
+    let mut t = TextData::new("abcd");
+    t.link_text_style(0, 2, &def, "S");
+    t.link_text_style(2, 4, &def, "S");
+    t.restyle(2, 4, |s| s.font_size = 24.0);
+    assert_eq!(t.runs.len(), 2);
+    t.update_text_style("S", &TextStyle { font_size: 24.0, ..def.clone() });
+    let spans = t.spans();
+    assert_eq!(spans.len(), 1);
+    assert_eq!((spans[0].0, spans[0].1), (0, 4));
+    assert_eq!(spans[0].2.font_size, 24.0);
+    assert_eq!(spans[0].2.style_id.as_deref(), Some("S"));
+
+    // Remapping two links to one id merges the runs.
+    let mut t = TextData::new("ab");
+    t.link_text_style(0, 1, &def, "A");
+    t.link_text_style(1, 2, &def, "B");
+    t.map_text_styles(|_| Some("C".into()));
+    assert_eq!(t.spans().len(), 1);
+    assert_eq!(t.style_at(1).style_id.as_deref(), Some("C"));
+
+    // Different values stay separate.
+    let mut t = TextData::new("ab");
+    t.link_text_style(0, 1, &def, "A");
+    t.link_text_style(1, 2, &TextStyle { font_size: 30.0, ..Default::default() }, "B");
+    t.map_text_styles(|_| Some("C".into()));
+    let spans = t.spans();
+    assert_eq!(spans.len(), 2);
+    assert_eq!((spans[0].2.font_size, spans[1].2.font_size), (14.0, 30.0));
+
+    // Unlinking a run equal to the base drops it.
+    let mut t = TextData::new("ab");
+    let base = t.style.clone();
+    t.link_text_style(0, 1, &base, "S");
+    t.map_text_styles(|_| None);
+    assert!(t.runs.is_empty());
+}
