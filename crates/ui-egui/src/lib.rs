@@ -152,6 +152,8 @@ mod titlebar_tests;
 #[cfg(test)]
 mod vector_tail_ui_tests;
 #[cfg(test)]
+mod web_clipboard_tests;
+#[cfg(test)]
 mod windows_qa_tests;
 #[cfg(test)]
 mod windows_tests;
@@ -214,6 +216,23 @@ pub trait Services {
 /// No-op services (tests, headless screenshots).
 pub struct NoServices;
 impl Services for NoServices {}
+
+/// Put `text` on the system clipboard through egui's output, which the browser shell writes while
+/// it handles the copy event (the only time a page may write it). For shells without a clipboard
+/// of their own.
+pub fn egui_copy_text(ctx: &egui::Context, text: &str) {
+    ctx.copy_text(text.to_string());
+}
+
+/// Put a straight-RGBA image on the system clipboard through egui's output (see
+/// [`egui_copy_text`]); a buffer that doesn't match its size is dropped.
+pub fn egui_copy_png(ctx: &egui::Context, w: u32, h: u32, rgba: &[u8]) {
+    let (w, h) = (w as usize, h as usize);
+    if w.checked_mul(h).and_then(|n| n.checked_mul(4)) != Some(rgba.len()) {
+        return;
+    }
+    ctx.copy_image(egui::ColorImage::from_rgba_unmultiplied([w, h], rgba));
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub enum RightTab {
