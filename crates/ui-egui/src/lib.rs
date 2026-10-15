@@ -165,6 +165,8 @@ mod variables_export_ui_tests;
 #[cfg(test)]
 mod variables_rename_tests;
 #[cfg(test)]
+mod vector_panel_tests;
+#[cfg(test)]
 mod vector_tail_ui_tests;
 #[cfg(test)]
 mod web_clipboard_tests;
