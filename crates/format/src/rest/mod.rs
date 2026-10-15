@@ -16,7 +16,8 @@
 //!
 //! Instances come out with their own layers as the file lists them. Linking those layers to the
 //! main component's (`source`) and deriving overrides is left to the caller (the engine does it
-//! after loading), since that needs the component model.
+//! after loading), since that needs the component model. The private .fig entry point additionally
+//! preserves explicit GUID/expansion provenance before the engine derives overrides.
 
 #[cfg(test)]
 mod blur_tests;
@@ -24,6 +25,7 @@ mod blur_tests;
 mod conditional_tests;
 #[cfg(test)]
 mod effects_tests;
+mod fig_sources;
 #[cfg(test)]
 mod gamepad_tests;
 pub(crate) mod props;
@@ -53,6 +55,10 @@ pub use variables::export as export_variables;
 pub const MAX_NODES: usize = 200_000;
 /// Deepest layer nesting followed.
 const MAX_DEPTH: usize = 256;
+/// Private .fig provenance, consumed only by `import_fig`.
+pub(crate) const FIG_SOURCE_FIELD: &str = "_figSource";
+/// Hidden .fig library context; accepted only by [`import_fig`].
+pub(crate) const FIG_LIBRARY_CONTEXTS_FIELD: &str = "_figLibraryContexts";
 /// Longest SVG path string read from one geometry entry.
 const MAX_PATH_BYTES: usize = 4 << 20;
 /// Most path elements in one vector.
@@ -138,12 +144,22 @@ pub fn import(v: &Value, images: ImageResolver) -> Result<(Document, Vec<String>
 /// in the file JSON (a `meta` with `variableCollections`, or `variableCollections` and
 /// `variables` at the top level) are read too; the first definition of an id wins.
 pub fn import_with(v: &Value, variables: Option<&Value>, images: ImageResolver) -> Result<(Document, Vec<String>), FormatError> {
+    import_impl(v, variables, images, false)
+}
+
+/// Internal .fig JSON path: GUID provenance is not part of the public REST import contract.
+pub(crate) fn import_fig(v: &Value, images: ImageResolver) -> Result<(Document, Vec<String>), FormatError> {
+    import_impl(v, None, images, true)
+}
+
+fn import_impl(v: &Value, variables: Option<&Value>, images: ImageResolver, fig_sources: bool) -> Result<(Document, Vec<String>), FormatError> {
     let entries: Vec<&Value> = if is_document(v) { vec![v] } else { nodes_entries(v).collect() };
     if entries.is_empty() {
         return Err(FormatError::Corrupt("not a REST API file JSON (no `document`)".into()));
     }
     let name = text(v, "name").filter(|n| !n.trim().is_empty()).map_or("Imported file", clip_str);
     let mut cx = Ctx::new(Document::new(name), images);
+    cx.fig_sources = fig_sources.then(|| fig_sources::Sources::new(MAX_NODES));
     let blank = cx.doc.first_page();
     let mut loose: Option<NodeId> = None;
     for e in &entries {
@@ -176,6 +192,12 @@ pub fn import_with(v: &Value, variables: Option<&Value>, images: ImageResolver) 
                 cx.build(root, page, Space::default(), None, 0, true);
             }
             None => cx.warn("entries without a node type were skipped"),
+        }
+    }
+    if fig_sources {
+        for context in v.get(FIG_LIBRARY_CONTEXTS_FIELD).and_then(Value::as_array).into_iter().flatten() {
+            let store = cx.doc.ensure_library_store();
+            cx.build(context, store, Space::default(), None, 0, false);
         }
     }
     // Drop the empty page the new document started with once real pages exist.
@@ -291,6 +313,7 @@ pub(crate) struct Ctx<'a> {
     count: usize,
     /// REST node id → imported node.
     ids: BTreeMap<String, NodeId>,
+    fig_sources: Option<fig_sources::Sources<'a>>,
     component_meta: BTreeMap<&'a str, &'a Value>,
     set_meta: BTreeMap<&'a str, &'a Value>,
     style_meta: BTreeMap<&'a str, &'a Value>,
@@ -321,6 +344,7 @@ impl<'a> Ctx<'a> {
             warnings: Warnings::default(),
             count: 0,
             ids: BTreeMap::new(),
+            fig_sources: None,
             component_meta: BTreeMap::new(),
             set_meta: BTreeMap::new(),
             style_meta: BTreeMap::new(),
@@ -411,7 +435,10 @@ impl<'a> Ctx<'a> {
         }
         self.count += 1;
         if let Some(rid) = text(j, "id") {
-            self.ids.entry(rid.to_string()).or_insert(id);
+            let primary = *self.ids.entry(rid.to_string()).or_insert(id) == id;
+            if let Some(sources) = &mut self.fig_sources {
+                sources.record(id, j, primary);
+            }
         }
         if ty == "INSTANCE" {
             self.instances.push((id, j));
@@ -822,6 +849,12 @@ impl<'a> Ctx<'a> {
             }
         }
         self.resolve_instances();
+        if let Some(sources) = self.fig_sources.take() {
+            let missing = sources.apply(&mut self.doc, &self.ids);
+            if missing > 0 {
+                self.warn(format!("{missing} .fig instance source link(s) could not be resolved and were left unlinked"));
+            }
+        }
         self.rename_props();
         for (id, j) in std::mem::take(&mut self.protos) {
             let list = self.interactions(j);
