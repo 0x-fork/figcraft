@@ -1017,9 +1017,13 @@ fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, ti
 }
 
 /// "Auto", "24", "150%" → the `lineHeight` value. A bare number keeps the current unit when it is
-/// a percentage, else means pixels.
+/// a percentage, else means pixels. Empty text means Auto, except on a Mixed field (`cur` is
+/// `None`), where nothing typed is an untouched field and commits nothing.
 pub(crate) fn parse_line_height(s: &str, cur: Option<LineHeight>) -> Option<Value> {
     let s = s.trim();
+    if s.is_empty() && cur.is_none() {
+        return None;
+    }
     if s.is_empty() || s.eq_ignore_ascii_case("auto") {
         return Some(json!("auto"));
     }
@@ -1200,6 +1204,9 @@ mod tests {
         assert_eq!(parse_line_height("130", Some(LineHeight::Percent(120.0))), Some(json!("130%")));
         assert_eq!(parse_line_height("-5", Some(LineHeight::Pixels(10.0))), Some(json!(0.0)));
         assert_eq!(parse_line_height("abc", None), None);
+        // Enter on an untouched Mixed field commits nothing; typing Auto still does.
+        assert_eq!(parse_line_height("", None), None);
+        assert_eq!(parse_line_height("  ", None), None);
         assert_eq!(parse_letter_spacing("2%", None), Some(json!("2%")));
         assert_eq!(parse_letter_spacing("1.5px", None), Some(json!(1.5)));
         assert_eq!(parse_letter_spacing("-1", None), Some(json!("-1%")));
