@@ -16,10 +16,10 @@ Simplified.
 
 The catalogs: English (`en`, the source), and Spanish (`es`, with the Latin American overlay
 `es-419`), French (`fr`), German (`de`), Brazilian Portuguese (`pt-BR`), Japanese (`ja`), Korean (`ko`),
-Simplified Chinese (`zh-Hans`) and Czech (`cs`), machine-drafted and waiting for native speakers' review.
-Russian (`ru`, Русский) was reviewed and approved by VanTan; its catalog keeps Frame, Dev Mode
-and Smart animate as familiar tool names and uses « » quotes. Turkish (`tr`) was machine-drafted
-and reviewed by a native speaker.
+Simplified Chinese (`zh-Hans`), Czech (`cs`) and Indonesian (`id`), machine-drafted and waiting for
+native speakers' review. Russian (`ru`, Русский) was reviewed and approved by VanTan; its catalog
+keeps Frame, Dev Mode and Smart animate as familiar tool names and uses « » quotes. Turkish (`tr`)
+was machine-drafted and reviewed by a native speaker.
 
 ## The catalogs
 
@@ -53,7 +53,10 @@ None of the three has plural forms. Turkish uses bare imperatives for buttons an
 the number (%50) and keeps a noun singular after a count, so its plural entries give only `other`.
 Czech uses formal address, „ “ quotes and no space before `:`. Use consistent design terms (rámec,
 komponenta, instance, varianta, automatické rozvržení, omezení, výplň, tah, efekt, prototyp,
-proměnná, styl).
+proměnná, styl). Indonesian uses bare imperatives for buttons and menu items (Simpan, Hapus), the
+formal Anda (never kamu), keeps established design terms in English (frame, layer, component,
+instance, auto layout, plugin, file) and keeps a noun unchanged after a count, so its plural entries
+give only `other`.
 
 CJK text needs a CJK font, which egui and Inter lack: the desktop app adds an installed one when
 something on screen needs it (see `crates/ui-egui/src/cjk.rs`). The web build has no system fonts,
@@ -80,8 +83,8 @@ language also needs its script in `cjk::language`.
 4. To require full coverage, add the code to `COMPLETE` in
    [`crates/ui-egui/src/i18n_tests.rs`](../crates/ui-egui/src/i18n_tests.rs). Every later PR that
    adds a string then has to translate it into each complete language, so only Spanish is there:
-   French, German, Brazilian Portuguese, Japanese, Korean, Simplified Chinese and Czech are
-   registered as drafts, Russian and Turkish are reviewed but not required, and a string added
+   French, German, Brazilian Portuguese, Japanese, Korean, Simplified Chinese, Czech and Indonesian
+   are registered as drafts, Russian and Turkish are reviewed but not required, and a string added
    later shows English in them until it is translated. To list what a draft lacks,
    add its code to `COMPLETE` locally and run the check.
 5. Run the check and look at the panels in the app (longer words must fit the right panel):

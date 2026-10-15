@@ -315,6 +315,7 @@ fn system_languages_pick_the_first_one_with_a_catalog() {
     assert!(LANGS[resolve("cs", None)].draft);
     assert_eq!(code("system", Some("pt-BR")), "pt-BR");
     assert_eq!(code("system", Some("tr_TR.UTF-8")), "tr");
+    assert_eq!(code("system", Some("id_ID.UTF-8")), "id");
     // Portugal's Portuguese and a bare "pt" read the Brazilian catalog.
     assert_eq!(code("system", Some("pt-PT")), "pt-BR");
     assert_eq!(code("pt", None), "pt-BR");
