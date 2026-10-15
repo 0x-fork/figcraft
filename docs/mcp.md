@@ -219,7 +219,7 @@ Or in a project's `.mcp.json`:
 |---|---|
 | `list_commands {filter?}` | Every command: id, label, menu, shortcut, undoable, params doc. |
 | `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, Leptos, SwiftUI or Jetpack Compose for a layer; components take their properties as parameters and instances are calls, see Dev Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names; `colorFormat`: hex, rgb, css, hsl or hsb), `inspect.assets` (layers under the selection with export settings, icons and images, each with its `kind`), `inspect.code` takes `unit: rem` and `rootFontSize` for CSS, HTML, React and Leptos, `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`, `codeConnect.set` (components linked to real code, see Dev Mode below)). |
-| `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing for open documents and their document state. Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. |
+| `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing for open documents and their document state. Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. A step can use what an earlier step returned: `{"$step": n}` anywhere in its params becomes the `id` in step n's result (zero-based), and `{"$step": n, "field": "…"}` another field of it (see Step references below). |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
 | `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`; marking again clears "Changed"), a section's `sectionContentsHidden`, text…); returns the updated layers. |
 | `inspect_document {depth, allPages}` | The document as JSON (layer tree, styles, selection, history). |
@@ -1517,6 +1517,29 @@ Align and distribute as one undo step:
   {"command":"distribute.horizontal","params":{"ids":[3,4,5]}}]}}}
 ```
 
-The end-to-end tests in `crates/mcp/tests/agent_tasks.rs` are worked examples of ten realistic
-tasks (auto layout, components and overrides, gradients and shadows, paint styles, Light/Dark
-variables, align/distribute/group, boolean subtract + flatten, export, undo/redo, drawing with tools).
+### Step references
+
+A step in a `batch` can use what an earlier step returned. `{"$step": n}` anywhere in a step's
+params (a value, an item in `ids`, a nested field) is replaced by the `id` in the result of step `n`
+(zero-based) before the step runs; `{"$step": n, "field": "name"}` takes another field of that
+result. This builds a nested tree in one call and one undo step, without guessing ids:
+
+```json
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"batch","arguments":{"label":"Card","commands":[
+  {"command":"node.create","params":{"type":"frame","name":"Card","props":{"layout":"vertical","gap":12}}},
+  {"command":"node.create","params":{"type":"text","parent":{"$step":0},"text":"Ada Lovelace"}},
+  {"command":"node.create","params":{"type":"frame","parent":{"$step":0},"name":"Button"}},
+  {"command":"node.create","params":{"type":"text","parent":{"$step":2},"text":"Follow"}}]}}}
+```
+
+A reference to the same or a later step, a negative or non-integer index, a missing `field` or any
+other key next to `$step` fails the whole batch, which is rolled back. Only an object whose keys are
+`$step` (and optionally `field`) is a reference: text such as `"$step 0"` is left as written. The
+`$step` key is reserved in step params: an object holding it anywhere (in plugin data or a variable
+value too) is read as a reference. A step that is itself a `command.batch` is passed on as written,
+so the references in its steps are to its own steps, not the outer batch's.
+
+The end-to-end tests in `crates/mcp/tests/agent_tasks.rs` are worked examples of realistic tasks
+(auto layout, a card built in one batch with step references, components and overrides, gradients
+and shadows, paint styles, Light/Dark variables, align/distribute/group, boolean subtract + flatten,
+export, undo/redo, drawing with tools).
