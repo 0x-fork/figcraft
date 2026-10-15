@@ -1,5 +1,6 @@
-//! `node.set` refuses what can't apply instead of storing it where nothing reads it: auto layout
-//! keys on layers that can't have auto layout, and a `fontStyle` the font family doesn't have.
+//! `node.set` doesn't store what can't apply: auto layout keys go only to layers that can have auto
+//! layout (the others are named in `warnings`, and with none of them the call is refused), and a
+//! `fontStyle` the family lacks says which face draws instead.
 
 use serde_json::{Value, json};
 
@@ -32,24 +33,53 @@ fn auto_layout_keys_on_layers_without_auto_layout_are_refused() {
     }
     // Frames still take them, with or without a layout mode first.
     let f = id(&ex(&mut s, "node.create", json!({"type": "frame"}))["id"]);
-    ex(&mut s, "node.set", json!({"ids": [f], "props": {"gap": 8, "padding": 4}}));
+    let out = ex(&mut s, "node.set", json!({"ids": [f], "props": {"gap": 8, "padding": 4}}));
     assert_eq!(s.doc().unwrap().node(f).unwrap().layout.as_ref().map(|l| l.gap), Some(8.0));
+    assert!(out.get("warnings").is_none(), "{out}");
 }
 
 #[test]
-fn a_font_style_the_family_lacks_is_refused_with_the_styles_it_has() {
+fn with_several_layers_the_frames_take_auto_layout_keys_and_the_others_are_named() {
+    let mut s = Session::new();
+    let f = id(&ex(&mut s, "node.create", json!({"type": "frame", "name": "Card"}))["id"]);
+    let t = id(&ex(&mut s, "node.create", json!({"type": "text", "text": "Hi", "name": "Title"}))["id"]);
+    let out = ex(&mut s, "node.set", json!({"ids": [f, t], "props": {"gap": 8, "opacity": 0.5}}));
+    let doc = s.doc().unwrap();
+    assert_eq!(doc.node(f).unwrap().layout.as_ref().map(|l| l.gap), Some(8.0));
+    assert!(doc.node(t).unwrap().layout.is_none(), "no hidden auto layout on the text");
+    assert_eq!(doc.node(t).unwrap().opacity, 0.5, "the text still gets the other keys");
+    let w = out["warnings"][0].as_str().unwrap();
+    assert!(w.contains("`gap`") && w.contains(&format!("{t} “Title”")) && w.contains("TEXT"), "{w}");
+    // One undo step for all of it.
+    ex(&mut s, "edit.undo", json!({}));
+    assert!(s.doc().unwrap().node(f).unwrap().layout.as_ref().is_none_or(|l| l.gap != 8.0));
+}
+
+#[test]
+fn a_font_style_draws_in_the_nearest_face_and_says_so_when_it_differs() {
     figcraft_text::scan_system_fonts();
-    // Any installed family with a known list of styles will do (CI machines differ).
-    let Some((family, styles)) =
-        figcraft_text::family_names().into_iter().map(|f| (f.clone(), figcraft_text::family_styles(&f))).find(|(_, st)| !st.is_empty())
-    else {
-        return;
-    };
+    // Any installed family with a regular and a bold face and nothing heavier (CI machines differ).
+    let pick = figcraft_text::family_names().into_iter().find_map(|f| {
+        let st = figcraft_text::family_styles(&f);
+        let has = |w: u16| st.iter().any(|x| figcraft_doc::style_weight(x) == w && !x.to_lowercase().contains("italic"));
+        (has(400) && has(700) && !st.iter().any(|x| figcraft_doc::style_weight(x) > 700)).then_some((f, st))
+    });
+    let Some((family, styles)) = pick else { return };
     let mut s = Session::new();
     let t = id(&ex(&mut s, "node.create", json!({"type": "text", "text": "Hi", "props": {"fontFamily": family}}))["id"]);
-    let msg = bad_msg(s.execute("node.set", &json!({"ids": [t], "props": {"fontStyle": "Definitely Not A Style"}})));
-    assert!(msg.contains(&family) && msg.contains(&styles[0]), "{msg}");
-    ex(&mut s, "node.set", json!({"ids": [t], "props": {"fontStyle": styles[0]}}));
-    // A family that isn't installed keeps any style name (files from elsewhere name theirs).
-    ex(&mut s, "node.set", json!({"ids": [t], "props": {"fontFamily": "No Such Family 7f3a", "fontStyle": "Hairline"}}));
+    let set = |s: &mut Session, style: &str| ex(s, "node.set", json!({"ids": [t], "props": {"fontStyle": style}}));
+    // Any spelling of a style it has, and names that resolve to the weight they ask for, say nothing.
+    let bold = styles.iter().find(|x| figcraft_doc::style_weight(x) == 700).unwrap().clone();
+    for style in [bold.clone(), bold.to_uppercase(), bold.replace(' ', ""), "Roman".into(), "Normal".into()] {
+        let out = set(&mut s, &style);
+        assert!(out.get("warnings").is_none(), "{style}: {out}");
+    }
+    // A heavier weight than the family has applies (as a text layer resolves it) and says which face draws.
+    let out = set(&mut s, "Black");
+    let w = out["warnings"][0].as_str().unwrap();
+    assert!(w.contains(&family) && w.contains("`Black`") && w.contains("nearest"), "{w}");
+    assert_eq!(s.doc().unwrap().node(t).unwrap().kind.text().unwrap().spans()[0].2.font_style, "Black");
+    // A family that isn't installed keeps any style name without a word (files from elsewhere name theirs).
+    let out = ex(&mut s, "node.set", json!({"ids": [t], "props": {"fontFamily": "No Such Family 7f3a", "fontStyle": "Hairline"}}));
+    assert!(out.get("warnings").is_none(), "{out}");
 }

@@ -260,8 +260,41 @@ fn ensure_layout(n: &mut Node) -> &mut AutoLayout {
     n.layout.get_or_insert_with(|| AutoLayout { padding: [0.0; 4], gap: 0.0, ..Default::default() })
 }
 
+/// The keys that set a frame's auto layout (through [`layout_mut`]).
+pub const LAYOUT_KEYS: &[&str] = &[
+    "gap",
+    "itemSpacing",
+    "columnGap",
+    "crossGap",
+    "counterAxisSpacing",
+    "rowGap",
+    "padding",
+    "paddingTop",
+    "paddingRight",
+    "paddingBottom",
+    "paddingLeft",
+    "paddingHorizontal",
+    "paddingVertical",
+    "mainAlign",
+    "primaryAxisAlignItems",
+    "crossAlign",
+    "counterAxisAlignItems",
+    "contentAlign",
+    "counterAxisAlignContent",
+    "wrap",
+    "gridColumns",
+    "gridRows",
+    "strokesIncluded",
+    "reverseZ",
+    "columnTracks",
+    "gridColumnTracks",
+    "rowTracks",
+    "gridRowTracks",
+];
+
 /// The auto layout of a frame-like node, created when it has none yet. Other nodes can't hold an
-/// auto layout: an auto layout key on them is refused, not stored where nothing reads it.
+/// auto layout: an auto layout key on them is refused, not stored where nothing reads it
+/// (`node.set` on several layers skips them instead, see `edit::set`).
 fn layout_mut<'a>(cmd: &str, k: &str, n: &'a mut Node) -> Result<&'a mut AutoLayout> {
     if !n.kind.is_frame_like() {
         return Err(bad(
@@ -869,15 +902,6 @@ pub fn apply_text_style(cmd: &str, t: &mut TextData, start: usize, end: usize, k
         }
         "fontStyle" => {
             let st = string_val(v).ok_or_else(|| bad(cmd, "`fontStyle` must be a string"))?;
-            // A style the family doesn't have would draw in another face without a word; refuse it
-            // and list the family's styles. A family that isn't installed keeps any name (files
-            // from elsewhere name their fonts' styles).
-            for (_, _, span) in t.spans().into_iter().filter(|(a, b, _)| *b > start && *a < end.max(start + 1)) {
-                let styles = figcraft_text::family_styles(&span.font_family);
-                if !styles.is_empty() && !styles.iter().any(|x| x.eq_ignore_ascii_case(&st)) {
-                    return Err(bad(cmd, format!("{} has no `{st}` style (it has: {})", span.font_family, styles.join(", "))));
-                }
-            }
             t.restyle(start, end, |s| s.set_font_style(st.clone()));
         }
         "fontWeight" => {
