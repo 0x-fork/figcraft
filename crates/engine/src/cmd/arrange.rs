@@ -325,8 +325,12 @@ fn zorder(s: &mut Session, p: &Value, z: Z) -> Result<Value> {
         }
     }
     if matches!(z, Z::Back) {
-        for (k, i) in ids.iter().enumerate() {
-            doc.reorder(*i, k)?;
+        let mut next: std::collections::HashMap<NodeId, usize> = std::collections::HashMap::new();
+        for i in &ids {
+            let Some(pp) = doc.get(*i)?.parent else { continue };
+            let k = next.entry(pp).or_insert(0);
+            doc.reorder(*i, *k)?;
+            *k += 1;
         }
     }
     ok()

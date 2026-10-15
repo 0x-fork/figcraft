@@ -254,6 +254,28 @@ fn align_distribute_zorder() {
 }
 
 #[test]
+fn send_to_back_across_frames_counts_per_parent() {
+    let mut s = sess();
+    let make = |s: &mut Session, p: Value| id(&s.execute("node.create", &p).unwrap());
+    let fa = make(&mut s, json!({"type": "frame", "x": 0, "y": 0, "width": 200, "height": 200}));
+    let fb = make(&mut s, json!({"type": "frame", "x": 300, "y": 0, "width": 200, "height": 200}));
+    let rect = |parent: NodeId| json!({"type": "rectangle", "parent": parent, "x": 10, "y": 10, "width": 20, "height": 20});
+    let a: Vec<NodeId> = (0..2).map(|_| make(&mut s, rect(fa))).collect();
+    let b: Vec<NodeId> = (0..3).map(|_| make(&mut s, rect(fb))).collect();
+    let idx = |s: &Session, n: NodeId| s.doc().unwrap().index_in_parent(n);
+    assert_eq!(idx(&s, a[1]), Some(1));
+    assert_eq!(idx(&s, b[2]), Some(2));
+    s.execute("arrange.back", &json!({"ids": [a[1], b[2]]})).unwrap();
+    assert_eq!(idx(&s, a[1]), Some(0), "top of frame A at the back");
+    assert_eq!(idx(&s, b[2]), Some(0), "top of frame B at the back");
+    // Two from B plus one from A: each parent's selection ends at 0..n in its original order.
+    s.execute("arrange.back", &json!({"ids": [b[1], a[0], b[0]]})).unwrap();
+    let kids = |s: &Session, f: NodeId| s.doc().unwrap().node(f).unwrap().children.clone();
+    assert_eq!(kids(&s, fa), vec![a[0], a[1]]);
+    assert_eq!(kids(&s, fb), vec![b[0], b[1], b[2]]);
+}
+
+#[test]
 fn copy_paste_and_duplicate() {
     let mut s = sess();
     let a = id(&s.execute("shape.rectangle", &json!({"x": 5, "y": 5, "width": 10, "height": 10})).unwrap());
