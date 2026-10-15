@@ -271,6 +271,26 @@ fn a_long_pages_list_scrolls_and_leaves_room_for_the_layers() {
     assert!(top > 30, "the list scrolled past its first pages (top row: page {top})");
 }
 
+#[test]
+fn a_page_dropped_below_the_pages_list_stays_where_it_was() {
+    let mut s = Session::new();
+    let first = s.page().unwrap();
+    let rect = id(s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap());
+    let second = id(s.execute("page.add", &json!({})).unwrap());
+    for _ in 0..58 {
+        s.execute("page.add", &json!({})).unwrap();
+    }
+    let pages = s.doc().unwrap().pages.clone();
+    s.execute("page.select", &json!({"id": first})).unwrap();
+    s.execute("select.none", &json!({})).unwrap();
+    let mut u = Ui::new(s);
+    let (row, layer) = (page_row(&mut u, second, first), u.row_at(rect));
+    // Released over the layers, where pages scrolled out of view would be: no page row is there.
+    u.drag_to(row, layer);
+    u.button(layer, false);
+    assert_eq!(u.app.session.doc().unwrap().pages, pages, "the pages keep their order");
+}
+
 /// A double click at `p`, with the screen reader tree checked on every frame: the platform adapter
 /// (UI Automation on Windows) aborts the app when the focused node isn't in the tree.
 fn double_click_checking_focus(u: &mut Ui, p: Pos2) {
