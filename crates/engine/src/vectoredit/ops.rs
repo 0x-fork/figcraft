@@ -236,6 +236,12 @@ pub fn bend(net: &mut VectorNetwork, seg: usize, t: f64, p: Point) {
 pub fn split_segment(net: &mut VectorNetwork, seg: usize, t: f64) -> Option<usize> {
     let s = net.segments.get(seg).copied()?;
     let c: CubicBez = net.cubic(seg)?;
+    // Which way each region loop walks `seg`, read before the split changes its endpoints.
+    let reversed: Vec<Vec<bool>> = net
+        .regions
+        .iter()
+        .map(|reg| reg.loops.iter().map(|lp| net.loop_walk(lp).iter().find(|(i, _)| *i == seg).is_some_and(|(_, rev)| *rev)).collect())
+        .collect();
     let t = if t.is_finite() { t.clamp(0.01, 0.99) } else { 0.5 };
     let l = c.subsegment(0.0..t);
     let r = c.subsegment(t..1.0);
@@ -263,10 +269,12 @@ pub fn split_segment(net: &mut VectorNetwork, seg: usize, t: f64) -> Option<usiz
     };
     net.segments.push(new_seg);
     let ni = net.segments.len() - 1;
-    for reg in &mut net.regions {
-        for lp in &mut reg.loops {
+    for (r, reg) in net.regions.iter_mut().enumerate() {
+        for (l, lp) in reg.loops.iter_mut().enumerate() {
             if let Some(pos) = lp.iter().position(|x| *x == seg) {
-                lp.insert(pos + 1, ni);
+                // Walked backwards, the new half (mid→b) comes before `seg` (a→mid).
+                let rev = reversed.get(r).and_then(|v| v.get(l)).copied().unwrap_or(false);
+                lp.insert(if rev { pos } else { pos + 1 }, ni);
             }
         }
     }
@@ -872,6 +880,38 @@ mod tests {
         set_mirroring(&mut n, &[1], HandleMirroring::AngleAndLength);
         let (a, b) = (tvec(n.segments[1].ta), tvec(n.segments[0].tb));
         assert!((a + b).hypot() < 1e-9, "made symmetric: {a:?} {b:?}");
+    }
+
+    fn loop_is_continuous(n: &VectorNetwork, lp: &[usize]) -> bool {
+        let ends: Vec<(usize, usize)> = n
+            .loop_walk(lp)
+            .iter()
+            .map(|&(i, rev)| {
+                let s = n.segments[i];
+                if rev { (s.b, s.a) } else { (s.a, s.b) }
+            })
+            .collect();
+        (0..ends.len()).all(|k| ends[k].1 == ends[(k + 1) % ends.len()].0)
+    }
+
+    #[test]
+    fn split_keeps_region_loop_in_ring_order() {
+        // Triangle closed 0→2: its loop [2, 1, 0] walks segment 1 backwards.
+        let mut n = VectorNetwork::from_points(&[Point::new(0.0, 0.0), Point::new(100.0, 0.0), Point::new(100.0, 100.0)], false);
+        n.segments.push(Segment::line(0, 2));
+        n.regions.push(Region { loops: vec![vec![2, 1, 0]], winding: WindingRule::NonZero });
+        let p = Point::new(25.0, 10.0);
+        assert!(n.fill_contains(p));
+        for (seg, lp) in [(1, vec![2, 1, 0]), (2, vec![2, 1, 0]), (1, vec![0, 1, 2])] {
+            let mut m = n.clone();
+            m.regions[0].loops = vec![lp];
+            let mid = split_segment(&mut m, seg, 0.5).unwrap();
+            assert!(loop_is_continuous(&m, &m.regions[0].loops[0]), "loop {:?}", m.regions[0].loops);
+            assert!(m.fill_contains(p), "split of {seg} removed {p:?} from the fill");
+            if seg == 1 {
+                assert_eq!(m.vertices[mid].point(), Point::new(100.0, 50.0));
+            }
+        }
     }
 
     #[test]
