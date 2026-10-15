@@ -52,9 +52,11 @@ page 1 "Screens": 380 nodes, 4 top-level
 - `<out>` has an image extension: one file with the given `--node`, or the whole page composited.
 - `--node` takes a layer id (`12` or `0:12`) or a layer name.
 - `--format fig` (or an `<out>` ending in `.fig`) writes the whole file as `.fig`, experimental:
-  written from public format notes and checked only by opening it again in FigCraft; other apps
-  may not open every file. What was left out (shared style links, variables, comments, Dev Mode
-  data…) is printed as `note:` lines.
+  written from public format notes, including variables with their modes and bindings and shared
+  styles with their layer links. Checked by opening it again in FigCraft and, on the example
+  documents and small test files, in other software; other apps may not open every file. What was
+  left out (comments, Dev Mode data, some bindings and settings…) is printed as `note:` lines;
+  `docs/file-format-parity.md` lists what was checked and what is unchecked.
 - The format comes from `--format`, else `<out>`'s extension, else png. `--scale` (default 1, max 64)
   applies to raster formats.
 - SVG/PDF exports with visible descendants more than 256 levels below an exported root fail with
