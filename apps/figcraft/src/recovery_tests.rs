@@ -185,3 +185,166 @@ fn a_run_whose_folder_name_is_still_held_takes_another() {
     drop(lock);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// The rectangles in `doc`.
+fn rectangles(doc: &figcraft_engine::doc::Document) -> usize {
+    doc.nodes().filter(|n| matches!(n.kind, figcraft_engine::doc::NodeKind::Rectangle)).count()
+}
+
+/// The documents a crashed run's copies under `root` open as.
+fn crash_and_recover(r: Recovery, root: &std::path::Path) -> Session {
+    drop(r);
+    let mut next = Session::empty();
+    assert_eq!(recover(root, &mut next), 1);
+    next
+}
+
+#[test]
+fn copies_keep_the_version_history_and_branches() {
+    // #185: a copy has what a save would write, the latest edits on a branch tab included.
+    let root = root("history");
+    let mut s = edited();
+    s.execute("file.saveVersion", &json!({"name": "v1"})).unwrap();
+    s.execute("branch.create", &json!({"name": "Explore"})).unwrap();
+    s.execute("shape.rectangle", &json!({"x": 20, "y": 0, "width": 10, "height": 10})).unwrap();
+    let mut r = Recovery::start(&root).unwrap();
+    r.write(&s, true);
+    let next = crash_and_recover(r, &root);
+    let ds = next.docs.first().unwrap();
+    assert_eq!(ds.versions.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["v1"]);
+    assert_eq!(ds.branches.iter().map(|b| (b.name.as_str(), rectangles(&b.head))).collect::<Vec<_>>(), [("Explore", 2)]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The one copy under `root` (the run's folder), read back.
+fn copy(root: &std::path::Path) -> figcraft_format::Loaded {
+    let dir = std::fs::read_dir(root).unwrap().flatten().next().unwrap().path();
+    let file = std::fs::read_dir(dir).unwrap().flatten().map(|f| f.path()).find(|f| f.extension().is_some_and(|e| e == "figcraft")).unwrap();
+    figcraft_format::load_bytes_with_versions(&std::fs::read(file).unwrap()).unwrap()
+}
+
+#[test]
+fn a_change_only_on_a_branch_tab_or_to_the_history_is_copied() {
+    let root = root("history-only");
+    let mut s = edited();
+    s.execute("file.saveVersion", &json!({"name": "v1"})).unwrap();
+    s.execute("branch.create", &json!({"name": "Explore"})).unwrap();
+    for d in &mut s.docs {
+        d.mark_saved();
+    }
+    let mut r = Recovery::start(&root).unwrap();
+    // An edit on the branch tab only: the main file has no changes of its own yet.
+    s.execute("shape.rectangle", &json!({"x": 20, "y": 0, "width": 10, "height": 10})).unwrap();
+    r.write(&s, true);
+    assert_eq!(copy(&root).branches.iter().map(|b| rectangles(&b.head)).collect::<Vec<_>>(), [2]);
+    s.execute("shape.rectangle", &json!({"x": 40, "y": 0, "width": 10, "height": 10})).unwrap();
+    r.write(&s, true);
+    assert_eq!(copy(&root).branches.iter().map(|b| rectangles(&b.head)).collect::<Vec<_>>(), [3]);
+    // A version renamed on the main file leaves its document as it was.
+    s.execute("doc.switch", &json!({"index": 0})).unwrap();
+    r.write(&s, true);
+    let id = s.docs[0].versions[0].id.clone();
+    s.execute("version.rename", &json!({"id": id, "name": "v1 (renamed)"})).unwrap();
+    r.write(&s, true);
+    assert_eq!(copy(&root).versions.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["v1 (renamed)"]);
+    r.finish();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn slow_write(path: std::path::PathBuf) -> std::thread::JoinHandle<bool> {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        std::fs::write(path, b"stale").is_ok()
+    })
+}
+
+#[test]
+fn saving_or_closing_waits_for_a_slow_write_so_the_copy_does_not_come_back() {
+    let root = root("slow-cleanup");
+    let mut s = edited();
+    let mut r = Recovery::start(&root).unwrap();
+    let dir = std::fs::read_dir(&root).unwrap().flatten().next().unwrap().path();
+    let uid = s.docs[0].uid;
+    let copy = dir.join(format!("{uid}.figcraft"));
+    r.hold(uid, 1, slow_write(copy.clone()));
+    s.ds_mut().unwrap().mark_saved();
+    r.write(&s, false);
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    assert!(!copy.exists(), "a saved document's copy stays removed");
+    // Closed: the same.
+    let s = edited();
+    let uid = s.docs[0].uid;
+    let copy = dir.join(format!("{uid}.figcraft"));
+    r.hold(uid, 1, slow_write(copy.clone()));
+    r.write(&Session::empty(), false);
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    assert!(!copy.exists(), "a closed document's copy stays removed");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_emergency_save_waits_for_the_write_in_flight_and_copies_the_newest_revision() {
+    let root = root("slow-emergency");
+    let s = edited();
+    let mut r = Recovery::start(&root).unwrap();
+    let dir = std::fs::read_dir(&root).unwrap().flatten().next().unwrap().path();
+    let uid = s.docs[0].uid;
+    let copy = dir.join(format!("{uid}.figcraft"));
+    r.hold(uid, 0, slow_write(copy.clone()));
+    r.write(&s, true);
+    assert!(std::fs::read(&copy).is_ok_and(|b| b != b"stale"), "the newest revision replaced the slow write");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The files named `*.figcraft` in the run folder under `root`.
+fn copy_count(root: &std::path::Path) -> usize {
+    let Some(dir) = std::fs::read_dir(root).unwrap().flatten().next().map(|e| e.path()) else { return 0 };
+    std::fs::read_dir(dir).unwrap().flatten().filter(|f| f.path().extension().is_some_and(|e| e == "figcraft")).count()
+}
+
+/// A folder at the path of `s`'s first document's copy in the run folder under `root`.
+fn blocked_copy(root: &std::path::Path, s: &Session) -> std::path::PathBuf {
+    let dir = std::fs::read_dir(root).unwrap().flatten().next().unwrap().path();
+    let blocker = dir.join(format!("{}.figcraft", s.docs[0].uid));
+    std::fs::create_dir(&blocker).unwrap();
+    blocker
+}
+
+#[test]
+fn a_copy_that_failed_is_tried_again_without_another_edit() {
+    let root = root("retry");
+    let s = edited();
+    let mut r = Recovery::start(&root).unwrap();
+    // A folder where the copy goes makes its write fail on every platform (renaming the run folder
+    // away fails on Windows, where the run's lock file keeps it open).
+    let blocker = blocked_copy(&root, &s);
+    r.write(&s, true);
+    std::fs::remove_dir(&blocker).unwrap();
+    // Nothing was edited since: the same revision still has to be copied.
+    r.write(&s, true);
+    assert_eq!(copy_count(&root), 1, "the failed revision was copied again");
+    r.finish();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_background_copy_that_failed_is_tried_again_without_another_edit() {
+    let root = root("retry-bg");
+    let s = edited();
+    let mut r = Recovery::start(&root).unwrap();
+    let blocker = blocked_copy(&root, &s);
+    r.write(&s, false);
+    // Let the failing write end before the way is clear again.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    std::fs::remove_dir(&blocker).unwrap();
+    for _ in 0..50 {
+        r.write(&s, false);
+        if copy_count(&root) == 1 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert_eq!(copy_count(&root), 1, "the failed revision was copied again");
+    r.finish();
+    let _ = std::fs::remove_dir_all(&root);
+}
