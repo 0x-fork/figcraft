@@ -35,9 +35,10 @@ instead of dispatching the new request. These limits apply to the opt-in loopbac
 requests still queued after the UI timeout are discarded, including requests deferred to a hidden
 window. A command already running is not interrupted.
 
-A minimised or covered main window draws no frames, but still answers `engine.execute`,
-`engine.commands`, `document.inspect`, `node.get`, `window.list` and `ui.render`, so an attached
-agent can edit, inspect and save while the app is out of sight. Screenshots, input (`ui.input`,
+A minimised or covered window (the main one or another, see Windows below) draws no frames, but
+still answers `engine.execute`, `engine.commands`, `document.inspect`, `node.get`, `window.list`
+and `ui.render`, acting on the file that window shows, so an attached agent can edit, inspect and
+save while the app is out of sight. Screenshots, input (`ui.input`,
 `ui.pointer`, `ui.key`, `ui.type`) and the interface's own state wait for the window to show, and
 time out after 60 s if it doesn't.
 
