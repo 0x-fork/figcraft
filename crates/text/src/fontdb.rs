@@ -734,6 +734,11 @@ fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (Str
             scan_dir(&path, depth + 1, out);
             continue;
         }
+        // Font-like names can also belong to pipes or devices; opening a pipe can block.
+        // `meta` follows symlinks, so links to regular font files remain supported.
+        if !meta.is_file() {
+            continue;
+        }
         let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
         if !matches!(ext.as_str(), "ttf" | "otf" | "ttc" | "otc") {
             continue;
