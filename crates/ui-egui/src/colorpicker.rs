@@ -460,23 +460,21 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     ui.add_space(12.0);
                     if let Some(i) = widgets::segmented(ui, &kinds, Some(active), 30.0) {
                         let base = paint.preview_color();
+                        let mut image_pending = false;
                         paint.kind = match i {
                             0 => PaintKind::Solid { color: base.with_alpha(1.0) },
                             5 => {
-                                // Pick an image file.
-                                match app.services.pick_open(tr("Choose image"), &["png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"]) {
-                                    Some(p) => match std::fs::read(&p) {
-                                        Ok(bytes) => {
-                                            let hash = app.session.doc_mut().ok().and_then(|d| figcraft_format_add(d, bytes));
-                                            match hash {
-                                                Some(h) => Paint::image(h, ImageScaleMode::Fill).kind,
-                                                None => paint.kind.clone(),
-                                            }
-                                        }
-                                        Err(_) => paint.kind.clone(),
-                                    },
-                                    None => paint.kind.clone(),
-                                }
+                                image_pending = true;
+                                let target = target.clone();
+                                app.pick_open(tr("Choose image"), &["png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"], move |app, p| {
+                                    let Ok(bytes) = std::fs::read(&p) else { return };
+                                    let Some(hash) = app.session.doc_mut().ok().and_then(|d| figcraft_format_add(d, bytes)) else { return };
+                                    if let Some(mut paint) = current_paint(app, &target) {
+                                        paint.kind = Paint::image(hash, ImageScaleMode::Fill).kind;
+                                        write(app, &target, &paint, false);
+                                    }
+                                });
+                                paint.kind.clone()
                             }
                             6 => match pattern_sources(app, &target).first() {
                                 Some((id, _)) => Paint::pattern(id.0).kind,
@@ -495,7 +493,9 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                                 }
                             }
                         };
-                        write(app, &target, &paint, false);
+                        if !image_pending {
+                            write(app, &target, &paint, false);
+                        }
                     }
                 });
             }

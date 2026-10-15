@@ -531,21 +531,50 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize,
         NodeKind::Text(t) => {
             let Some((layout, dy)) = figcraft_text::layout_node(n) else { return };
             let gxf = xf * Affine::translate((0.0, dy));
+            // Colour glyphs (emoji) carry their own ink, which draws instead of their outline: a
+            // bitmap the font ships, or COLR layers with a colour each.
+            let gs = gxf.determinant().abs().sqrt();
+            let mut ink: Vec<(usize, Ink)> = Vec::new();
             // Group glyphs by style so runs with their own fills paint with them.
             let mut by_style: HashMap<usize, BezPath> = HashMap::new();
             for g in &layout.glyphs {
-                by_style.entry(g.style).or_default().extend(g.path().elements().iter().copied());
+                match g.color(gs) {
+                    Some(figcraft_text::ColorInk::Bitmap(bitmap, place)) => ink.push((g.style, Ink::Bitmap(bitmap, place))),
+                    Some(figcraft_text::ColorInk::Layers(layers)) => {
+                        for layer in layers.iter() {
+                            ink.push((g.style, Ink::Layer(g.layer_path(layer.gid), layer.rgba)));
+                        }
+                    }
+                    None => by_style.entry(g.style).or_default().extend(g.path().elements().iter().copied()),
+                }
             }
             for d in &layout.decorations {
                 by_style.entry(d.style).or_default().extend(d.path().elements().iter().copied());
             }
-            let mut keys: Vec<usize> = by_style.keys().copied().collect();
+            // A run can have ink and no outline at all (bitmap-only fonts).
+            let mut keys: Vec<usize> = by_style.keys().copied().chain(ink.iter().map(|(style, _)| *style)).collect();
             keys.sort_unstable();
-            // Every run's fills, then what paints over the fills, then the strokes on top.
+            keys.dedup();
+            // Every run's fills (its ink included), then what paints over the fills, then the
+            // strokes on top.
             for k in &keys {
-                let Some(tp) = by_style.get(k).and_then(ts_path) else { continue };
                 let fills = layout.styles.get(*k).and_then(|s| s.fills.as_ref()).unwrap_or(&n.fills);
-                fill_with(pix, &tp, fills, w, h, gxf, FillRule::Winding, ctx, None);
+                if let Some(tp) = by_style.get(k).and_then(ts_path) {
+                    fill_with(pix, &tp, fills, w, h, gxf, FillRule::Winding, ctx, None);
+                }
+                for (_, item) in ink.iter().filter(|(style, _)| style == k) {
+                    match item {
+                        Ink::Bitmap(bitmap, place) => blit(pix, bitmap, ts_transform(gxf * *place)),
+                        Ink::Layer(path, rgba) => {
+                            if let Some(tp) = ts_path(path) {
+                                let mut paint = tiny_skia::Paint::default();
+                                paint.set_color_rgba8(rgba[0], rgba[1], rgba[2], rgba[3]);
+                                paint.anti_alias = true;
+                                pix.fill_path(&tp, &paint, FillRule::Winding, ts_transform(gxf), None);
+                            }
+                        }
+                    }
+                }
             }
             if let Some(f) = over_fills {
                 f(pix);
@@ -685,6 +714,23 @@ fn draw_children_clipped(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, dept
         draw_children(&Ctx { under: Some(&under), ..*ctx }, &mut layer, n, lxf, depth);
     }
     backdrop::replace(pix, (lx, ly), &layer, mask.as_ref().map(|m| (m, (0, 0))));
+}
+
+/// Colour ink of a text run, in the order the run paints it. Strokes follow the outlines only: a
+/// bitmap-strike glyph has no outline to stroke.
+enum Ink {
+    /// An embedded bitmap and the transform from its pixels into layout coordinates.
+    Bitmap(Arc<figcraft_text::ColorBitmap>, Affine),
+    /// One COLR layer: its outline in layout coordinates and the colour to fill it with.
+    Layer(BezPath, [u8; 4]),
+}
+
+/// Draw a colour bitmap (premultiplied RGBA) under a transform, sampled smoothly when the
+/// transform scales it.
+fn blit(pix: &mut Pixmap, bitmap: &figcraft_text::ColorBitmap, transform: Transform) {
+    let Some(image) = tiny_skia::PixmapRef::from_bytes(&bitmap.rgba, bitmap.width, bitmap.height) else { return };
+    let paint = PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+    pix.draw_pixmap(0, 0, image, &paint, transform, None);
 }
 
 fn is_axis_aligned(xf: Affine) -> bool {

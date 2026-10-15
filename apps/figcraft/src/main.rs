@@ -62,6 +62,7 @@ impl eframe::App for App {
         }
         let title = with_app(|fig| {
             control_server::drain_queue(&self.queue, &mut fig.control_queue);
+            figcraft_ui_egui::control::drain_hidden(fig, ctx);
             #[cfg(target_os = "macos")]
             apple_events::poll(&self.apple_events, fig, ctx);
             // Closing the window asks about unsaved changes (and keeps the app running while other
@@ -90,9 +91,9 @@ impl eframe::App for App {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        with_app(|fig| figcraft_ui_egui::windows::guard(fig, &ctx, |fig| fig.ui(ui)));
+        services::parented(frame, || with_app(|fig| figcraft_ui_egui::windows::guard(fig, &ctx, |fig| fig.ui(ui))));
     }
 
     fn on_exit(&mut self) {
@@ -177,8 +178,11 @@ fn main() -> eframe::Result {
         control_server::start(p, queue.clone(), ctx_slot.clone());
     }
     let icon = services::window_icon();
+    // The app id is the Wayland app_id and the X11 window class on Linux: the desktop entry's name
+    // and StartupWMClass (FreeBSD's package matches the binary's name instead).
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("FigCraft")
+        .with_app_id("ai.storyteller.figcraft")
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([800.0, 500.0])
         .with_drag_and_drop(true);

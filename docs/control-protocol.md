@@ -35,6 +35,13 @@ instead of dispatching the new request. These limits apply to the opt-in loopbac
 requests still queued after the UI timeout are discarded, including requests deferred to a hidden
 window. A command already running is not interrupted.
 
+A minimised or covered window (the main one or another, see Windows below) draws no frames, but
+still answers `engine.execute`, `engine.commands`, `document.inspect`, `node.get`, `window.list`
+and `ui.render`, acting on the file that window shows, so an attached agent can edit, inspect and
+save while the app is out of sight. Screenshots, input (`ui.input`,
+`ui.pointer`, `ui.key`, `ui.type`) and the interface's own state wait for the window to show, and
+time out after 60 s if it doesn't.
+
 Coordinates are page units, y down. `x`/`y` in `node.set`/`node.create` are relative to the parent
 frame (groups have no coordinate space of their own).
 
@@ -95,7 +102,12 @@ ellipse, its arc handles `arcHandles`, for a selected rectangle, frame, polygon 
 an idle window draws none) with the most frequent repaint requests behind them (`repaintCauses`:
 `[{at: "file:line", count}]`, every request made in the frame before each one, delayed ones such as
 the autosave deadline included; egui's `context.rs` begin-pass line means input events) and what the last canvas render had to do (`canvas.renderWork`: `full`, `partial` with
-the `pixels` re-rendered after a pan or an edit, or `reused`). While a prototype plays, `presenter`
+the `pixels` re-rendered after a pan or an edit, or `reused`), whether the canvas shows a coarse
+zoom preview or the refined image (`canvas.quality`: `preview` or `refined`) and the time from
+asking for a render to its preview and its refined image being handed to egui as the canvas
+texture (`canvas.previewLatencyMs`, `canvas.refineLatencyMs`, on a monotonic clock, rendering
+included in the browser too; the GPU upload and presenting the frame come after; `null` until
+there was one). While a prototype plays, `presenter`
 (full window) and `preview` (the preview pane) hold the player's state: the `current` frame and its
 `name`, `start`, `history`, open `overlays`, how many delayed mouse triggers are `waiting`, the screen's `scroll` offset and `scrollRange`, the
 `device` (and whether it is turned to `landscape`, its `deviceColor`) and the `viewport` of the frame

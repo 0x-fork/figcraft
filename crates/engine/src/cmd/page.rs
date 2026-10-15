@@ -107,6 +107,9 @@ pub fn specs() -> Vec<CommandSpec> {
             let id = id(p, "id").unwrap_or(s.page()?);
             let k = req_num("page.move", p, "index")?.max(0.0) as usize;
             let doc = s.doc_mut()?;
+            if !doc.pages.contains(&id) {
+                return Err(bad("page.move", format!("{id} is not a page")));
+            }
             doc.pages.retain(|x| *x != id);
             let k = k.min(doc.pages.len());
             doc.pages.insert(k, id);
