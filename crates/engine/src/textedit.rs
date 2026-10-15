@@ -146,9 +146,15 @@ fn list_key(s: &mut Session, key: &str, shift: bool) -> Result<bool> {
 }
 
 /// Cmd/Ctrl+] and Cmd/Ctrl+[ while editing: the selected list items a level deeper or out, like
-/// Tab and Shift+Tab. Returns whether anything changed (text that isn't a list stays as it is).
+/// Tab and Shift+Tab. Returns whether anything changed (text that isn't a list and items already
+/// at the deepest level stay as they are).
 pub fn list_indent(s: &mut Session, out: bool) -> Result<bool> {
-    list_key(s, "Tab", out)
+    let Some(id) = s.ds()?.text_edit.as_ref().map(|te| te.id) else { return Ok(false) };
+    let before = text_of(s, id)?;
+    if !list_key(s, "Tab", out)? {
+        return Ok(false);
+    }
+    Ok(text_of(s, id)? != before)
 }
 
 /// The kind of word char `i` belongs to: 0 for spaces and punctuation, else its script, so a word
