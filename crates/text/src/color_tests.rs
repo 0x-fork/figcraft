@@ -87,6 +87,22 @@ fn png_strikes_decode_to_premultiplied_rgba() {
 }
 
 #[test]
+fn a_png_strike_claiming_a_huge_size_is_refused_before_anything_is_allocated() {
+    // PNG_STRAIGHT with its header saying 1 048 576 × 1 048 576 pixels (4 TiB as RGBA).
+    let mut png = PNG_STRAIGHT.to_vec();
+    assert_eq!(crc32(&png[12..29]).to_be_bytes(), png[29..33], "the patched header passes its checksum");
+    png[16..24].copy_from_slice(&[0, 0x10, 0, 0, 0, 0x10, 0, 0]);
+    let crc = crc32(&png[12..29]);
+    png[29..33].copy_from_slice(&crc.to_be_bytes());
+    assert!(decode_png(&png).is_none());
+}
+
+/// The CRC-32 a PNG chunk ends with.
+fn crc32(bytes: &[u8]) -> u32 {
+    !bytes.iter().fold(!0u32, |c, b| (0..8).fold(c ^ u32::from(*b), |c, _| if c & 1 == 1 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 }))
+}
+
+#[test]
 fn raw_bgra_strikes_are_already_premultiplied() {
     // BitmapData::Bgra is BGRA with premultiplied channels (the spec says so), so decoding only
     // moves the red and blue channels.

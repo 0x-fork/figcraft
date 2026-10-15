@@ -29,6 +29,8 @@ const MAX_RASTER_BYTES: usize = 32 * 1024 * 1024;
 const MAX_RASTER_ENTRIES: usize = 8192;
 /// COLR layer lists kept per face (24 bytes a layer, so a count is enough).
 const MAX_LAYERS: usize = 4096;
+/// Widest and tallest PNG strike decoded (strikes are at most a few hundred pixels).
+const MAX_PNG_SIDE: u32 = 4096;
 /// Largest colour raster per em (device pixels). Past this the renderer scales one up instead.
 pub const MAX_PX_PER_EM: f64 = 512.0;
 
@@ -223,13 +225,15 @@ fn decode_png(png: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     // Expand palettes, `tRNS` and sub-byte samples to 8-bit RGBA.
     decoder.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
     let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0u8; reader.output_buffer_size()?];
-    let info = reader.next_frame(&mut buf).ok()?;
-    if info.width == 0 || info.height == 0 || info.width > 4096 || info.height > 4096 {
+    // The header's size is checked before anything is allocated for it: a font can claim any size.
+    let (w, h) = reader.info().size();
+    if w == 0 || h == 0 || w > MAX_PNG_SIDE || h > MAX_PNG_SIDE {
         return None;
     }
+    let mut buf = vec![0u8; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buf).ok()?;
     let (width, height) = (info.width, info.height);
-    let data = &buf[..info.buffer_size()];
+    let data = buf.get(..info.buffer_size())?;
     let rgba = match info.color_type {
         png::ColorType::Rgba => data.to_vec(),
         png::ColorType::Rgb => data.as_chunks::<3>().0.iter().flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
