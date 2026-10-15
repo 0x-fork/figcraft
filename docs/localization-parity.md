@@ -91,8 +91,8 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
 | Korean | ko | 2,076 / 2,076 (100%, draft) | yes | Hangul text and IME in documents; UI text in an installed Korean face (web: the `FIGCRAFT_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
 | Vietnamese | vi | 0 (0%) | no | Latin with stacked diacritics | no | none | 3–5 |
 
-Other languages: Swedish (`sv`), every UI string, command label and menu wording translated (a
-catalog test checks it stays complete); native review welcome. Figma ships none beyond the eight
+Other languages: Swedish (`sv`): every UI string translated, and 120 of the 588 command labels and
+menu wordings (the rest show in English); native review welcome. Figma ships none beyond the eight
 above.
 
 The layer is done. Per-language hours above are agent hours for a catalog of ~1,800 entries

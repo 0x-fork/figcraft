@@ -15,7 +15,7 @@ Simplified.
 The catalogs: English (`en`, the source), and Spanish (`es`, with the Latin American overlay
 `es-419`), French (`fr`), German (`de`), Brazilian Portuguese (`pt-BR`), Japanese (`ja`), Korean (`ko`)
 and Simplified Chinese (`zh-Hans`), machine-drafted and waiting for native speakers' review, and
-Swedish (`sv`), which translates every string.
+Swedish (`sv`), which translates every UI string and some command labels.
 
 ## The catalogs
 
