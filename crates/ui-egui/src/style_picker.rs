@@ -733,12 +733,13 @@ fn text_properties(ui: &mut Ui, id: &str, def: &TextStyle, out: &mut Frame) {
         });
         ui.horizontal(|ui| {
             if let Some(v) = widgets::text_field(ui, Id::new(("ts_lh", id)), &def.line_height.label(), half, tr("Line height"))
-                && let Some(lh) = crate::typography::parse_line_height(&v, Some(def.line_height)).and_then(|v| serde_json::from_value(v).ok())
+                && let Some(lh) = crate::typography::parse_line_height(&v, Some(def.line_height)).and_then(|v| crate::typography::line_height_of(&v))
             {
                 set(out, &|d| d.line_height = lh);
             }
             if let Some(v) = widgets::text_field(ui, Id::new(("ts_ls", id)), &def.letter_spacing.label(), half, tr("Letter spacing"))
-                && let Some(ls) = crate::typography::parse_letter_spacing(&v, Some(def.letter_spacing)).and_then(|v| serde_json::from_value(v).ok())
+                && let Some(ls) =
+                    crate::typography::parse_letter_spacing(&v, Some(def.letter_spacing)).and_then(|v| crate::typography::letter_spacing_of(&v))
             {
                 set(out, &|d| d.letter_spacing = ls);
             }
