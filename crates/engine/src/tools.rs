@@ -266,6 +266,12 @@ pub struct Overlay {
     /// Pen tool: the in-progress path's anchor points and the rubber band to the pointer.
     pub pen: Vec<[f64; 2]>,
     pub rubber: Option<[f64; 4]>,
+    /// Pen tool: the handles shaping the segments at the pen (anchor x, y, handle x, y): the last
+    /// anchor's in and out handles and the one before's out handle.
+    pub pen_handles: Vec<[f64; 4]>,
+    /// Pen tool: where the last anchor's out handle ends, when it has one: the rubber band is the
+    /// curve a click would make, leaving along it.
+    pub rubber_handle: Option<[f64; 2]>,
     /// Frame/section the pointer is drawing or dropping into (highlighted).
     pub drop_target: Option<NodeId>,
     /// Auto layout insertion indicator (x0, y0, x1, y1).
@@ -395,6 +401,14 @@ pub(crate) enum Gesture {
         start: Point,
         last: Point,
     },
+}
+
+/// The handles a pen path shows while it is drawn ([`Overlay::pen_handles`]): the last anchor's in
+/// and out handles and the one before's out handle, those that aren't zero.
+fn pen_handles(points: &[(Point, Vec2, Vec2)]) -> Vec<[f64; 4]> {
+    let last = points.last().into_iter().flat_map(|(p, i, o)| [(p, i), (p, o)]);
+    let before = points.len().checked_sub(2).and_then(|k| points.get(k)).into_iter().map(|(p, _, o)| (p, o));
+    before.chain(last).filter(|(_, h)| h.hypot() > 0.0).map(|(p, h)| [p.x, p.y, p.x + h.x, p.y + h.y]).collect()
 }
 
 /// The pen tool's in-progress path (page coordinates).
@@ -1057,8 +1071,9 @@ impl Session {
             let (to, g) = if ev.shift { (ev.p(), Vec::new()) } else { self.snap_pen_tool(ev)? };
             guides = g;
             self.tool.overlay.cursor = Cursor::Pen(self.pen_cursor(&doc, &sel, to, ev.zoom));
-            if let Some((last, _, _)) = self.tool.pen.as_ref().and_then(|pen| pen.points.last()) {
+            if let Some((last, _, out)) = self.tool.pen.as_ref().and_then(|pen| pen.points.last()) {
                 self.tool.overlay.rubber = Some([last.x, last.y, to.x, to.y]);
+                self.tool.overlay.rubber_handle = (out.hypot() > 0.0).then_some([last.x + out.x, last.y + out.y]);
             }
         }
         self.tool.overlay.guides = guides;
@@ -1974,6 +1989,9 @@ impl Session {
 
     fn pen_down(&mut self, ev: &PointerEvent) -> Result<()> {
         self.tool.overlay.guides.clear();
+        // The segment being placed shows as itself while the press lasts.
+        self.tool.overlay.rubber = None;
+        self.tool.overlay.rubber_handle = None;
         let p = if ev.shift { ev.p() } else { self.snap_pen_tool(ev)?.0 };
         let (doc, page) = {
             let ds = self.ds()?;
@@ -2028,6 +2046,7 @@ impl Session {
     fn pen_update(&mut self) -> Result<()> {
         let Some(pen) = self.tool.pen.clone() else { return Ok(()) };
         self.tool.overlay.pen = pen.points.iter().map(|(p, _, _)| [p.x, p.y]).collect();
+        self.tool.overlay.pen_handles = pen_handles(&pen.points);
         if pen.points.len() < 2 {
             if let Ok(ds) = self.ds_mut() {
                 ds.revision += 1;
@@ -2110,7 +2129,9 @@ impl Session {
     pub fn pen_finish(&mut self) -> Result<()> {
         let pen = self.tool.pen.take();
         self.tool.overlay.pen.clear();
+        self.tool.overlay.pen_handles.clear();
         self.tool.overlay.rubber = None;
+        self.tool.overlay.rubber_handle = None;
         self.tool.gesture = Gesture::None;
         if pen.as_ref().is_some_and(|p| p.id.is_some()) {
             self.commit_interaction()?;
