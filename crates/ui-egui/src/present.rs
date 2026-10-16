@@ -393,6 +393,18 @@ impl Presenter {
         self.stop_scrolling();
     }
 
+    /// A new device changes the viewport and may relayout every frame. Start at its top instead
+    /// of carrying scroll offsets or a drag from the old screen into the new one.
+    fn reset_for_device(&mut self) {
+        self.pan = None;
+        self.scroll.clear();
+        self.scroll_anim = None;
+        self.press = None;
+        self.dragged = false;
+        self.stop_scrolling();
+        self.rev += 1;
+    }
+
     /// The current offset of `t` (a frame's scroll, else the view's pan).
     fn offset(&self, t: Scroller) -> (f64, f64) {
         match t {
@@ -1523,6 +1535,11 @@ fn body_outset(device: &str, size: Vec2, landscape: bool) -> (f32, f32, f32) {
     }
 }
 
+/// Tablet and computer presets size the screen without drawing a hardware shell around it.
+fn has_device_body(device: Device) -> bool {
+    !device.name.starts_with("iPad") && !matches!(device.name, "MacBook Air" | "Desktop")
+}
+
 /// Place the presented frame in `area`: on its device's screen (the whole device sized by the
 /// view's scale option), else the frame itself. Fit and 100% keep the chrome's padding from the
 /// edges; Fit never goes above 100%. What doesn't fit the window pans (`Presenter::pan`). The
@@ -1538,7 +1555,7 @@ fn layout(p: &mut Presenter, area: Rect, chrome: Chrome) -> Option<Layout> {
     let fb = disp.world_bounds(p.current)?;
     let view = if chrome.pane { PresentView::default() } else { p.view };
     // Custom sizes are just a screen: no body.
-    let body = device.filter(|d| view.device_frame && !d.colors.is_empty());
+    let body = device.filter(|d| view.device_frame && has_device_body(*d) && !d.colors.is_empty());
     let pad = if !fills && matches!(view.scale, PresentScale::Fit | PresentScale::Actual) { chrome.pad } else { 0.0 };
     let avail = area.shrink(pad);
     let (sw, sh) = device.map_or((fb.width(), fb.height()), |d| (d.width, d.height));
@@ -1684,13 +1701,22 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         app.run("proto.settings", json!({"responsive": on}));
     }
     if let Some(device) = picked_device {
-        app.run("proto.settings", json!({"device": device}));
+        choose_device(app, &mut pres, &device);
     }
     if action == Some(BarAction::Close) || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         app.ui.present_uid = None;
         return;
     }
     app.ui.present = Some(pres);
+}
+
+/// Device choices in the presenter use the screen's real dimensions and reflow a copy of the
+/// design through constraints and auto layout. "No device" returns to the original frame size.
+fn choose_device(app: &mut FigApp, p: &mut Presenter, device: &str) {
+    let responsive = device != "None";
+    if app.run("proto.settings", json!({"device": device, "responsive": responsive})).is_some() {
+        p.reset_for_device();
+    }
 }
 
 /// Controls that stay in reach while viewing a prototype, including screen stepping, device and
@@ -2320,7 +2346,7 @@ fn options_menu(p: &mut Presenter, ui: &mut Ui, device: Option<Device>, responsi
         }
         ui.separator();
     }
-    if device.is_some_and(|d| !d.colors.is_empty()) && menu_check(ui, p.view.device_frame, tr("Show device frame"), "") {
+    if device.is_some_and(|d| has_device_body(d) && !d.colors.is_empty()) && menu_check(ui, p.view.device_frame, tr("Show device frame"), "") {
         p.view.device_frame = !p.view.device_frame;
         ui.close();
     }
@@ -2814,6 +2840,70 @@ mod delay_tests;
 mod tests {
     use super::*;
     use figcraft_doc::NodeKind;
+
+    use crate::present_tests::{Ui, id};
+
+    #[test]
+    fn device_picker_reflows_without_resizing_the_saved_frame_and_can_revert() {
+        let mut session = figcraft_engine::Session::new();
+        let frame = id(&session.execute("node.create", &json!({"type": "frame", "width": 894, "height": 844})).unwrap());
+        let right = id(&session
+            .execute("node.create", &json!({"type": "rectangle", "parent": frame, "x": 804, "y": 20, "width": 80, "height": 40}))
+            .unwrap());
+        session.execute("node.set", &json!({"id": right, "props": {"constraints": {"horizontal": "right", "vertical": "top"}}})).unwrap();
+        let mut ui = Ui::new(session);
+        ui.run("proto.present", json!({"start": frame}));
+
+        let mut presenter = ui.app.ui.present.take().unwrap();
+        presenter.pan = Some((100.0, 200.0));
+        presenter.scroll.insert(frame, (75.0, 50.0));
+        choose_device(&mut ui.app, &mut presenter, "iPhone 17");
+        assert!(presenter.pan.is_none() && presenter.scroll.is_empty());
+        ui.app.ui.present = Some(presenter);
+        ui.frame(vec![]);
+
+        let shown = &ui.app.ui.present.as_ref().unwrap().doc.as_ref().unwrap();
+        assert_eq!((shown.node(frame).unwrap().width, shown.node(frame).unwrap().height), (402.0, 874.0));
+        assert_eq!(shown.world_bounds(right).unwrap().x0, 312.0, "right constraint follows the phone edge");
+        assert_eq!(ui.app.inspect()["presenter"]["viewport"], json!([402.0, 874.0]));
+        assert_eq!(ui.app.inspect()["presenter"]["scrollRange"], json!([0.0, 0.0]));
+        assert_eq!(ui.app.session.doc().unwrap().node(frame).unwrap().width, 894.0, "the saved design keeps its geometry");
+
+        let mut presenter = ui.app.ui.present.take().unwrap();
+        choose_device(&mut ui.app, &mut presenter, "None");
+        ui.app.ui.present = Some(presenter);
+        ui.frame(vec![]);
+        assert_eq!(ui.app.inspect()["presenter"]["frameSize"], json!([894.0, 844.0]));
+        assert_eq!(ui.app.inspect()["presenter"]["responsive"], Value::Null);
+    }
+
+    #[test]
+    fn tablet_and_computer_presets_show_only_their_screen_at_the_real_resolution() {
+        let mut session = figcraft_engine::Session::new();
+        let frame = id(&session.execute("node.create", &json!({"type": "frame", "width": 894, "height": 844})).unwrap());
+        let mut ui = Ui::new(session);
+        ui.run("proto.present", json!({"start": frame}));
+        let area = Rect::from_min_max(pos2(0.0, 40.0), pos2(1440.0, 860.0));
+
+        for (name, width, height, body) in [
+            ("iPad mini", 744.0, 1133.0, false),
+            ("MacBook Air", 1280.0, 832.0, false),
+            ("Desktop", 1440.0, 1024.0, false),
+            ("iPhone 17", 402.0, 874.0, true),
+        ] {
+            let mut presenter = ui.app.ui.present.take().unwrap();
+            choose_device(&mut ui.app, &mut presenter, name);
+            ui.app.ui.present = Some(presenter);
+            ui.frame(vec![]);
+
+            let presenter = ui.app.ui.present.as_mut().unwrap();
+            let laid = layout(presenter, area, FULL).unwrap();
+            assert_eq!(laid.color.is_some(), body, "{name}: body visibility");
+            assert!((f64::from(laid.screen.width()) / laid.scale - width).abs() < 0.1, "{name}: width");
+            assert!((f64::from(laid.screen.height()) / laid.scale - height).abs() < 0.1, "{name}: height");
+            assert_eq!(ui.app.session.doc().unwrap().node(frame).unwrap().width, 894.0);
+        }
+    }
 
     fn doc_with_two_frames() -> (Document, NodeId, NodeId) {
         let mut d = Document::new("t");
