@@ -280,6 +280,45 @@ fn command_resize_leaves_fills_when_text_or_auto_layout_recomputes_the_box() {
 }
 
 #[test]
+fn image_crop_respects_variable_bound_dimensions() {
+    for (field, value, from, to) in [
+        ("width", 200, Point::new(200.0, 50.0), Point::new(100.0, 50.0)),
+        ("height", 100, Point::new(100.0, 100.0), Point::new(100.0, 50.0)),
+        ("w", 200, Point::new(200.0, 50.0), Point::new(100.0, 50.0)),
+        ("h", 100, Point::new(100.0, 100.0), Point::new(100.0, 50.0)),
+        ("opacity", 100, Point::new(200.0, 50.0), Point::new(100.0, 50.0)),
+    ] {
+        for mods in [CMD, NONE] {
+            let mut s = session();
+            let layer = image_layer(&mut s);
+            ex(&mut s, "variable.createCollection", json!({"name": "Tokens"}));
+            ex(&mut s, "variable.create", json!({"collection": "Tokens", "name": "bound", "type": "number", "value": value}));
+            ex(&mut s, "variable.bind", json!({"ids": [layer], "field": field, "variable": "bound"}));
+            let before = s.doc().unwrap().clone();
+            let pixels = figcraft_render::render_node(&before, layer, 1.0).unwrap();
+            drag(&mut s, from, to, mods);
+            let doc = s.doc().unwrap();
+            let n = doc.node(layer).unwrap();
+            assert_eq!(n.bound, before.node(layer).unwrap().bound, "{field}: keep the binding");
+            assert_eq!(doc.variables, before.variables, "{field}: do not edit the variable");
+            let after = figcraft_render::render_node(doc, layer, 1.0).unwrap();
+            if field != "opacity" {
+                assert_eq!((n.width, n.height), (200.0, 100.0), "{field}: the binding restores the size");
+                assert!(after.data() == pixels.data(), "{field}, cmd={}: restored bounds must not stretch a partial crop", mods.cmd);
+            } else if mods.cmd {
+                assert_eq!((n.width, n.height), (100.0, 100.0));
+                for y in 0..100usize {
+                    assert_eq!(&after.data()[y * 400..(y + 1) * 400], &pixels.data()[y * 800..y * 800 + 400], "opacity binding still allows crop");
+                }
+            }
+            if field != "opacity" || !mods.cmd {
+                assert_eq!(n.fills, before.node(layer).unwrap().fills, "{field}: keep the existing resize behaviour");
+            }
+        }
+    }
+}
+
+#[test]
 fn handle_drags_resize_by_the_documented_rules() {
     // A 100×50 box; (handle, pointer in the box's axes, modifiers, new box x0 y0 x1 y1, derivation).
     let rows: [(Handle, (f64, f64), Mods, (f64, f64, f64, f64), &str); 11] = [
