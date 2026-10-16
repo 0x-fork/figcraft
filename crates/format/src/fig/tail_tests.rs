@@ -301,7 +301,12 @@ fn vectors_import_as_editable_networks() {
     let fallback = network_of(&doc, "Join Fallbacks");
     assert!(fallback.vertices.iter().all(|v| v.join.is_none()));
     assert_eq!(named(&doc, "Join Fallbacks").stroke.join, StrokeJoin::Miter);
-    assert!(warnings.iter().any(|w| w.contains("unresolved style IDs lost their point styles")), "{warnings:?}");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("vector points refer to point settings missing from the file; they use the layer's joins and plain corners")),
+        "{warnings:?}"
+    );
     assert!(warnings.iter().any(|w| w.contains("unknown stroke joins use the layer join")), "{warnings:?}");
     assert!(warnings.iter().any(|w| w.contains("dashed or variable-width strokes render with the layer join")), "{warnings:?}");
 }

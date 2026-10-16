@@ -942,7 +942,7 @@ impl<'a> Mapper<'a> {
             self.warn("filled areas of a vector with their own fill use the layer's fill");
         }
         if unresolved_style {
-            self.warn("vector points with unresolved style IDs lost their point styles");
+            self.warn("some vector points refer to point settings missing from the file; they use the layer's joins and plain corners");
         }
         if unknown_join {
             self.warn("vector points with unknown stroke joins use the layer join");
