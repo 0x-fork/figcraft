@@ -319,7 +319,15 @@ pub struct Recents {
     pub selected: Option<String>,
     /// The pass the recent files were last drawn in: coming back to them reads the dates again.
     drawn: u64,
+    /// When the dates were last read again while in view, and whether the window had the focus:
+    /// files deleted, moved or saved elsewhere show up within [`RECHECK_SECS`], or at once when
+    /// the window gets the focus back.
+    checked: f64,
+    focused: bool,
 }
+
+/// How often the dates of the recent files in view are read again (seconds).
+const RECHECK_SECS: f64 = 2.0;
 
 enum Job {
     Stat(String),
@@ -423,10 +431,15 @@ impl Recents {
     /// files not looked at since the recent files came into view. `time`: the input time.
     fn refresh(&mut self, ctx: &egui::Context, paths: &[String], time: f64) {
         let pass = ctx.cumulative_pass_nr();
-        if pass > self.drawn.saturating_add(1) {
+        let (focused, refocused) = ctx.input(|i| (i.focused, i.events.iter().any(|e| matches!(e, egui::Event::WindowFocused(true)))));
+        let back = pass > self.drawn.saturating_add(1) || refocused || (focused && !self.focused);
+        if back || time - self.checked >= RECHECK_SECS {
             self.files.values_mut().for_each(|k| k.asked = false);
+            self.checked = time;
         }
         self.drawn = pass;
+        self.focused = focused;
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(RECHECK_SECS));
         let loader = self.loader.get_or_insert_with(|| Loader::new(ctx));
         for reply in loader.poll() {
             match reply {
@@ -738,7 +751,7 @@ fn grid(ui: &mut Ui, t: &Tokens, recents: &mut Recents, files: &[Shown], now: u6
         for (i, file) in row.iter().enumerate() {
             let rect = Rect::from_min_size(pos2(r.min.x + i as f32 * (card_w + GAP), r.min.y), vec2(card_w, card_h));
             let resp = ui.interact(rect, card_id(&file.path), Sense::click());
-            a11y::button(&resp, &spoken(file, now));
+            a11y::named_button(&resp, &spoken(file, now));
             let resp = resp.on_hover_text(&file.path);
             let visible = ui.is_rect_visible(rect);
             let picture = recents.picture(&file.path, visible, time);
@@ -878,7 +891,7 @@ fn list(ui: &mut Ui, t: &Tokens, recents: &mut Recents, files: &[Shown], now: u6
     for file in files {
         let (r, _) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::hover());
         let resp = ui.interact(r, card_id(&file.path), Sense::click());
-        a11y::button(&resp, &spoken(file, now));
+        a11y::named_button(&resp, &spoken(file, now));
         let resp = resp.on_hover_text(&file.path);
         if let Some(a) = interact(ui, &resp, recents, file) {
             action = Some(a);

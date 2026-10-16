@@ -88,32 +88,56 @@ pub(crate) struct FileRow<'a> {
     pub detail_ink: Color32,
 }
 
-/// Paint `row` in `r` (highlighted while `resp` is hovered): the name gives way to the detail.
-pub(crate) fn file_row(ui: &Ui, t: &Tokens, r: Rect, resp: &Response, row: &FileRow) {
+/// Paint `row` in `r` (highlighted while `resp` is hovered): the name first, the detail in the
+/// room left after it, cut at its start; true when either is cut.
+pub(crate) fn file_row(ui: &Ui, t: &Tokens, r: Rect, resp: &Response, row: &FileRow) -> bool {
+    /// Between the name and the detail.
+    const GAP: f32 = 16.0;
+    /// A detail with less room than this is left out rather than shown as a bare ellipsis.
+    const MIN_DETAIL: f32 = 48.0;
     if resp.hovered() {
         ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
     }
     if let Some((icon, tint)) = row.mark {
         icons::paint(ui.painter(), Rect::from_min_size(pos2(r.min.x + 8.0, r.center().y - 8.0), vec2(16.0, 16.0)), icon, tint);
     }
-    let detail = ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, row.detail, regular(row.detail_size), row.detail_ink);
-    let name = widgets::elide_font(ui, row.name, (detail.min.x - r.min.x - 44.0).max(40.0), regular(12.0));
-    ui.painter().text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, name, regular(12.0), row.ink);
+    let (name_font, detail_font) = (regular(12.0), regular(row.detail_size));
+    let width = |s: &str, font: &egui::FontId| ui.painter().layout_no_wrap(s.to_string(), font.clone(), Color32::WHITE).size().x;
+    let room = (r.width() - 40.0).max(0.0);
+    let name_w = width(row.name, &name_font);
+    let detail_w = width(row.detail, &detail_font);
+    // When both don't fit, the name keeps at least 60% of the row and the detail gets the rest.
+    let name_max = if name_w + GAP + detail_w <= room { name_w } else { name_w.min((room - GAP - detail_w).max(room * 0.6)) };
+    let name = widgets::elide_font(ui, row.name, name_max, name_font.clone());
+    let detail_room = room - width(&name, &name_font) - GAP;
+    let detail = if row.detail.is_empty() || detail_room < MIN_DETAIL {
+        String::new()
+    } else {
+        widgets::elide_start_font(ui, row.detail, detail_room, detail_font.clone())
+    };
+    let cut = name != row.name || detail != row.detail;
+    ui.painter().text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, name, name_font, row.ink);
+    ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, detail, detail_font, row.detail_ink);
+    cut
 }
 
 /// A row of Recents' own lists: laid out in place, named for screen readers, ringed with the
 /// keyboard on it; true when chosen.
 fn listed(ui: &mut Ui, t: &Tokens, id: Id, height: f32, row: &FileRow) -> bool {
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width().min(640.0), height), Sense::hover());
-    let resp = ui.interact(r, id, Sense::click());
+    let mut resp = ui.interact(r, id, Sense::click());
     a11y::button(&resp, row.name);
-    file_row(ui, t, r, &resp, row);
+    if file_row(ui, t, r, &resp, row) {
+        // Cut to fit: in full on hover.
+        resp = resp.on_hover_text(format!("{}\n{}", row.name, row.detail));
+    }
     focus_ring(ui, t, r, &resp, 5);
     resp.clicked()
 }
 
 pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
+    dropped(app, ui.ctx());
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.panel)).show(ui, |ui| {
         let rect = ui.max_rect();
         let left = Rect::from_min_size(rect.min, vec2(SIDEBAR, rect.height()));
@@ -139,6 +163,34 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             });
         });
     });
+    // The whole window is the drop target, not only the canvas.
+    crate::drop_overlay(ui.ctx(), ui.ctx().content_rect(), tr("Drop to open"));
+}
+
+/// Files dropped on the home screen: each one the app opens becomes a document of its own (the
+/// editor then shows it), behind an "Opening as a new file" card ([`crate::pending_open`]); anything
+/// else is turned away with a toast. A file that fails to open keeps the engine's own error.
+fn dropped(app: &mut FigApp, ctx: &egui::Context) {
+    let files = ctx.input(|i| i.raw.dropped_files.clone());
+    for f in files {
+        let path = f.path().to_path_buf();
+        if !crate::opens(&path) {
+            app.toast(tr("Drop a .figcraft, .fig, .json, .svg or image file."));
+            continue;
+        }
+        // `opens` saw an extension, so there is a file name to tell the format by.
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let params = if path.exists() {
+            json!({"path": path.to_string_lossy()})
+        } else if let Some(bytes) = crate::dropped_bytes(&f) {
+            use base64::Engine as _;
+            let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            json!({"data": data, "name": name})
+        } else {
+            continue;
+        };
+        app.ui.pending_opens.push(crate::pending_open::PendingOpen { label: name, params, command: "file.open", target: None });
+    }
 }
 
 fn sidebar(app: &mut FigApp, ui: &mut Ui, t: &Tokens, left: Rect) {
