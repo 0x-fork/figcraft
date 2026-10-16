@@ -873,6 +873,9 @@ fn nested_instances_resized_again_drop_the_layout_derived_for_their_old_size() {
 #[path = "tail_tests.rs"]
 mod tail;
 
+#[path = "image_filter_tests.rs"]
+mod image_filters;
+
 /// `.fig` files in the folder `FIGCRAFT_FIG_SAMPLES` names (none when it's unset).
 pub(super) fn samples() -> Vec<std::path::PathBuf> {
     let Some(dir) = std::env::var_os("FIGCRAFT_FIG_SAMPLES") else { return Vec::new() };

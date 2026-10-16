@@ -178,6 +178,24 @@ fn image(cx: &mut Ctx, p: &Value) -> ImagePaint {
         .filter(|c| c[0].abs() > 1e-9 && c[3].abs() > 1e-9);
     let f = p.get("filters");
     let filter = |k: &str| f.and_then(|f| num(f, k)).unwrap_or(0.0).clamp(-1.0, 1.0) as f32;
+    let filter_fields = ["exposure", "contrast", "saturation", "temperature", "tint", "highlights", "shadows"];
+    let mut has_filters = false;
+    if let Some(filters) = f.and_then(Value::as_object) {
+        for (key, value) in filters {
+            match value.as_f64().filter(|value| value.is_finite()) {
+                Some(value) if filter_fields.contains(&key.as_str()) => has_filters |= value != 0.0,
+                Some(0.0) => {}
+                Some(_) => cx.warn(format!("nonzero unsupported image filter `{}` was skipped", clip_str(key))),
+                None => cx.warn(format!("malformed image filter `{}` was skipped", clip_str(key))),
+            }
+        }
+    } else if f.is_some_and(|filters| !filters.is_null()) {
+        cx.warn("malformed image filters container was skipped");
+    }
+    let fig = cx.fig_sources.is_some();
+    if has_filters && fig {
+        cx.warn("image filters use FigCraft's approximate renderer");
+    }
     ImagePaint {
         image: cx.image_key(text(p, "imageRef").unwrap_or("")),
         scale_mode,
@@ -189,7 +207,8 @@ fn image(cx: &mut Ctx, p: &Value) -> ImagePaint {
             contrast: filter("contrast"),
             saturation: filter("saturation"),
             temperature: filter("temperature"),
-            tint: filter("tint"),
+            // A positive tint in .fig sources moves toward magenta; native positive tint adds green.
+            tint: if fig { -filter("tint") } else { filter("tint") },
             highlights: filter("highlights"),
             shadows: filter("shadows"),
         },
@@ -550,6 +569,6 @@ pub(super) fn export_settings(v: &Value) -> Vec<ExportSetting> {
 }
 
 /// At most 200 chars of `s` (names and labels from the file stay readable in warnings).
-pub(super) fn clip_str(s: &str) -> &str {
+pub(crate) fn clip_str(s: &str) -> &str {
     s.char_indices().nth(200).and_then(|(i, _)| s.get(..i)).unwrap_or(s)
 }

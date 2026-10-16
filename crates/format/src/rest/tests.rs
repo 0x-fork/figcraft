@@ -187,6 +187,24 @@ fn paints_gradients_and_image_placeholders() {
 }
 
 #[test]
+fn public_rest_image_filter_tint_keeps_its_sign() {
+    let rect = |name: &str, tint: f64| {
+        json!({
+            "id": name, "name": name, "type": "RECTANGLE", "relativeTransform": at(0.0, 0.0), "size": {"x": 10, "y": 10},
+            "fills": [{"type": "IMAGE", "imageRef": "tint", "filters": {"tint": tint}}]
+        })
+    };
+    let (doc, warnings) = one(json!([rect("Magenta", 0.75), rect("Green", -0.5)]));
+    let image = |name: &str| {
+        let PaintKind::Image(image) = &named(&doc, name).fills[0].kind else { panic!("{name} is not an image fill") };
+        image
+    };
+    assert!(close(f64::from(image("Magenta").filters.tint), 0.75));
+    assert!(close(f64::from(image("Green").filters.tint), -0.5));
+    assert!(!warnings.iter().any(|w| w.contains("approximate renderer")), "{warnings:?}");
+}
+
+#[test]
 fn image_bytes_come_from_the_resolver() {
     let png = {
         let img = image::RgbaImage::from_pixel(3, 2, image::Rgba([0, 0, 255, 255]));
