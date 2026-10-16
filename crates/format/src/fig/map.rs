@@ -1192,12 +1192,29 @@ impl<'a> Mapper<'a> {
     fn network(&mut self, o: &mut Obj, v: &View<'a>) -> bool {
         let Some(vd) = v.get("vectorData") else { return false };
         let Some(blob) = num(vd, "vectorNetworkBlob").and_then(|i| self.blobs.get(i as usize)).copied() else { return false };
-        let Some((net, styled_segments)) = network::decode_styled(blob) else {
+        let Some((net, _)) = network::decode_styled(blob) else {
             self.warn("damaged vector networks import as outlines");
             return false;
         };
-        if styled_segments > 0 {
-            self.warn("stroke styles of single vector network segments were left out");
+        let styles: BTreeMap<u64, &Kv> =
+            vd.get("styleOverrideTable").map(Kv::list).unwrap_or_default().iter().filter_map(|s| Some((num(s, "styleID")? as u64, s))).collect();
+        let mut has_uninterpreted = false;
+        let mut has_missing = false;
+        for segment in &net.segments {
+            if segment.style == 0 {
+                continue;
+            }
+            if styles.contains_key(&u64::from(segment.style)) {
+                has_uninterpreted = true;
+            } else {
+                has_missing = true;
+            }
+        }
+        if has_uninterpreted {
+            self.warn("style settings of some vector segments aren't supported; those segments use the layer's stroke");
+        }
+        if has_missing {
+            self.warn("some vector segments refer to style settings missing from the file; they use the layer's stroke");
         }
         // An open path shows its fill, which regions can't hold: the outline keeps the look.
         let fills_shown =
@@ -1205,8 +1222,6 @@ impl<'a> Mapper<'a> {
         if net.segments.is_empty() || (net.regions.is_empty() && fills_shown && o.contains_key("fillGeometry")) {
             return false;
         }
-        let styles: BTreeMap<u64, &Kv> =
-            vd.get("styleOverrideTable").map(Kv::list).unwrap_or_default().iter().filter_map(|s| Some((num(s, "styleID")? as u64, s))).collect();
         let style = |id: u32| styles.get(&u64::from(id)).copied().filter(|_| id != 0);
         let scale = |k: &str| {
             let size = v.size().map(|s| if k == "x" { s.0 } else { s.1 });

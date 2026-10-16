@@ -17,6 +17,7 @@ pub(super) struct Vertex {
 }
 
 pub(super) struct Segment {
+    pub style: u32,
     pub a: usize,
     pub ta: (f64, f64),
     pub b: usize,
@@ -70,8 +71,7 @@ pub(super) fn decode(b: &[u8]) -> Option<Network> {
     decode_styled(b).map(|(net, _)| net)
 }
 
-/// The network in blob `b` and how many of its segments have a style id of their own (per-segment
-/// stroke overrides, which the document model can't hold); `None` as for `decode`.
+/// The network in blob `b` and how many of its segments have a nonzero style id; `None` as for `decode`.
 pub(super) fn decode_styled(b: &[u8]) -> Option<(Network, usize)> {
     let mut r = Reader { b, pos: 0 };
     let (nv, ns, nr) = (r.u32()? as usize, r.u32()? as usize, r.u32()? as usize);
@@ -84,10 +84,11 @@ pub(super) fn decode_styled(b: &[u8]) -> Option<(Network, usize)> {
     }
     let mut styled = 0usize;
     for _ in 0..ns {
-        if r.u32()? != 0 {
+        let style = r.u32()?;
+        if style != 0 {
             styled += 1;
         }
-        net.segments.push(Segment { a: r.index(nv)?, ta: (r.f32()?, r.f32()?), b: r.index(nv)?, tb: (r.f32()?, r.f32()?) });
+        net.segments.push(Segment { style, a: r.index(nv)?, ta: (r.f32()?, r.f32()?), b: r.index(nv)?, tb: (r.f32()?, r.f32()?) });
     }
     let mut entries = 0usize;
     for _ in 0..nr {
@@ -120,7 +121,7 @@ pub(super) fn encode(net: &Network) -> Vec<u8> {
         fl(v.y, &mut out);
     }
     for s in &net.segments {
-        u(0, &mut out);
+        u(s.style, &mut out);
         u(s.a as u32, &mut out);
         fl(s.ta.0, &mut out);
         fl(s.ta.1, &mut out);
