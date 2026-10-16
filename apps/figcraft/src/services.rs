@@ -174,9 +174,13 @@ fn watch_system_dark(dark: Arc<AtomicU8>) {
         return;
     };
     let read = || -> zbus::Result<u32> {
-        conn.call_method(Some(PORTAL), "/org/freedesktop/portal/desktop", Some(SETTINGS), "ReadOne", &(APPEARANCE, "color-scheme"))?
-            .body()
-            .deserialize()
+        let reply = conn.call_method(Some(PORTAL), "/org/freedesktop/portal/desktop", Some(SETTINGS), "ReadOne", &(APPEARANCE, "color-scheme"))?;
+        let body = reply.body();
+        let value = body.deserialize::<zbus::zvariant::Value>()?;
+        match value {
+            zbus::zvariant::Value::U32(v) => Ok(v),
+            _ => Ok(0),
+        }
     };
     match read() {
         Ok(v) => store(v),
