@@ -1302,10 +1302,10 @@ impl<'a> Mapper<'a> {
             }
         }
         if has_uninterpreted {
-            self.warn("metadata for styled vector network segments was not interpreted");
+            self.warn("style settings of some vector segments aren't supported; those segments use the layer's stroke");
         }
         if has_missing {
-            self.warn("vector network segments reference missing style entries");
+            self.warn("some vector segments refer to style settings missing from the file; they use the layer's stroke");
         }
         // An open path shows its fill, which regions can't hold: the outline keeps the look.
         let fills_shown =

@@ -280,9 +280,9 @@ fn per_segment_stroke_styles_are_reported() {
     };
     assert_eq!(network::decode_styled(&square_blob()).unwrap().1, 0);
     let plain = import(&tail_canvas(), "Tail").unwrap().1;
-    assert!(!plain.iter().any(|w| w.contains("vector network segments")), "{plain:?}");
-    let uninterpreted = |w: &String| w.contains("metadata for styled vector network segments was not interpreted");
-    let missing = |w: &String| w.contains("vector network segments reference missing style entries");
+    assert!(!plain.iter().any(|w| w.contains("vector segments")), "{plain:?}");
+    let uninterpreted = |w: &String| w.contains("style settings of some vector segments aren't supported; those segments use the layer's stroke");
+    let missing = |w: &String| w.contains("some vector segments refer to style settings missing from the file; they use the layer's stroke");
     // Style 1 has a row in the layer's override table; its contents are not applied.
     let known = styled_import(1);
     assert_eq!(known.iter().filter(|w| uninterpreted(w)).count(), 1, "{known:?}");
