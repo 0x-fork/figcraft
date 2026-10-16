@@ -10,6 +10,8 @@ name: FreeBSD
 on:
   schedule:
     - cron: "17 2 * * *"
+  push:
+    branches: [release]
   pull_request:
     paths:
       - .github/workflows/freebsd.yml
@@ -30,4 +32,5 @@ jobs:
     uses: storytold/craft-common-actions/.github/workflows/freebsd.yml@main
     with:
       freebsd-release: "14.3"
+      run-package-check: true
       craft-fonts-ref: 43913056ce82a3fdad0ef69f6b88d1dc922a8104
