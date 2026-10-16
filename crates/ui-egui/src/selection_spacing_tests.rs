@@ -186,3 +186,22 @@ fn undo_while_dragging_cancels_the_gesture_without_undoing_an_earlier_edit() {
     assert_eq!(xy(&u, ids[1]), (180., 100.));
     assert_eq!(u.app.session.selection(), ids);
 }
+
+#[test]
+fn stationary_gap_drag_does_not_change_the_document_again() {
+    let (mut u, ids) = scene(false);
+    let p = u.app.to_screen(165., 130.);
+    let z = u.app.session.ds().unwrap().view.zoom as f32;
+    drag(&mut u, p, vec2(20. * z, 0.), false);
+    assert_eq!(xy(&u, ids[1]), (200., 100.));
+    let revision = u.app.session.ds().unwrap().revision;
+    let doc = u.app.session.ds().unwrap().doc.clone();
+    for _ in 0..5 {
+        u.frame(vec![]);
+        u.frame(vec![Event::PointerMoved(p + vec2(20.2 * z, 0.))]);
+    }
+    assert_eq!(u.app.session.ds().unwrap().revision, revision);
+    assert!(std::sync::Arc::ptr_eq(&doc, &u.app.session.ds().unwrap().doc));
+    u.button(p + vec2(20.2 * z, 0.), false);
+    assert_eq!(xy(&u, ids[1]), (200., 100.));
+}

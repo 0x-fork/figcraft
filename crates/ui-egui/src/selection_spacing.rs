@@ -1,16 +1,51 @@
 //! Smart-selection fields and handles. Geometry and document edits belong to the engine.
-use egui::{Color32, CornerRadius, CursorIcon, Id, Pos2, Rect, Stroke, Ui, vec2};
+use std::sync::Arc;
+
+use egui::{CursorIcon, Id, Pos2, Rect, Stroke, Ui, vec2};
 use figcraft_doc::{Document, NodeId};
-use figcraft_engine::selection_spacing::{Axis, selection_spacing};
+use figcraft_engine::selection_spacing::{Axis, SelectionSpacing, selection_spacing};
 use serde_json::json;
 
 use crate::FigApp;
+use crate::handles::{PINK, pink_label};
 use crate::i18n::tr;
 use crate::icons::Icon;
-use crate::theme::semibold;
 use crate::widgets::{self, Lead};
 
-const PINK: Color32 = Color32::from_rgb(0xF2, 0x48, 0x8C);
+#[derive(Clone)]
+struct LayoutCache {
+    document: u64,
+    page: NodeId,
+    doc: Arc<Document>,
+    ids: Vec<NodeId>,
+    frame: u64,
+    layout: Arc<SelectionSpacing>,
+}
+
+fn layout(app: &FigApp, ctx: &egui::Context, ids: &[NodeId]) -> Arc<SelectionSpacing> {
+    let Ok(ds) = app.session.ds() else { return Arc::new(SelectionSpacing::default()) };
+    let key = Id::new("selection_spacing_layout");
+    let frame = ctx.cumulative_frame_nr();
+    if let Some(mut cache) = ctx.data(|d| d.get_temp::<LayoutCache>(key))
+        && cache.document == ds.uid
+        && cache.page == ds.page
+        && cache.ids == ids
+        && (cache.frame == frame || Arc::ptr_eq(&cache.doc, &ds.doc))
+    {
+        if cache.frame != frame {
+            cache.frame = frame;
+            ctx.data_mut(|d| d.insert_temp(key, cache.clone()));
+        }
+        return cache.layout;
+    }
+    // Panel, input and drawing share one calculation per frame. If a command changes the
+    // document during this frame, refresh next frame; unchanged snapshots also reuse it then.
+    let layout = Arc::new(selection_spacing(&ds.doc, ids));
+    ctx.data_mut(|d| {
+        d.insert_temp(key, LayoutCache { document: ds.uid, page: ds.page, doc: ds.doc.clone(), ids: ids.to_vec(), frame, layout: layout.clone() });
+    });
+    layout
+}
 fn drag_id() -> Id {
     Id::new("selection_spacing_drag")
 }
@@ -24,10 +59,11 @@ struct Drag {
     uid: u64,
     page: NodeId,
     moved: bool,
+    last_value: Option<f64>,
 }
 
-pub fn panel(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId]) {
-    let layout = selection_spacing(doc, ids);
+pub fn panel(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId]) {
+    let layout = layout(app, ui.ctx(), ids);
     if layout.horizontal.is_none() && layout.vertical.is_none() {
         return;
     }
@@ -145,8 +181,11 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Option<Pos2>, hovered: 
                     })
                     .clamp(-1e6, 1e6);
                 let key = if drag.axis.vertical { "vertical" } else { "horizontal" };
-                if let Err(e) = app.session.execute("arrange.spacing", &json!({"ids":drag.ids,key:value,"fromGesture":true})) {
-                    app.toast(e.to_string());
+                if drag.last_value != Some(value) {
+                    match app.session.execute("arrange.spacing", &json!({"ids":drag.ids,key:value,"fromGesture":true})) {
+                        Ok(_) => drag.last_value = Some(value),
+                        Err(e) => app.toast(e.to_string()),
+                    }
                 }
             }
         }
@@ -164,9 +203,9 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Option<Pos2>, hovered: 
     }
     let Some(p) = pos else { return false };
     let ids = app.session.selection();
-    let layout = app.session.doc().map(|d| selection_spacing(d, &ids)).unwrap_or_default();
-    for axis in [layout.horizontal, layout.vertical].into_iter().flatten() {
-        for h in handles(app, &axis) {
+    let layout = layout(app, ctx, &ids);
+    for axis in [layout.horizontal.as_ref(), layout.vertical.as_ref()].into_iter().flatten() {
+        for h in handles(app, axis) {
             if !h.hit.contains(p) {
                 continue;
             }
@@ -175,7 +214,8 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Option<Pos2>, hovered: 
                 && app.session.begin_interaction(tr("Spacing")).is_ok()
                 && let Ok(ds) = app.session.ds()
             {
-                let drag = Drag { ids, axis, start: p, value: h.value, uid: ds.uid, page: ds.page, moved: false };
+                let drag =
+                    Drag { ids, axis: axis.clone(), start: p, value: h.value, uid: ds.uid, page: ds.page, moved: false, last_value: axis.value };
                 app.ui.layers_focus = false;
                 app.ui.key_box = None;
                 ctx.memory_mut(|m| {
@@ -207,8 +247,8 @@ pub fn draw(app: &FigApp, painter: &egui::Painter) {
     let axes = if let Some(d) = &drag {
         vec![d.axis.clone()]
     } else {
-        let layout = selection_spacing(&ds.doc, &ds.selection);
-        [layout.horizontal, layout.vertical].into_iter().flatten().collect()
+        let layout = layout(app, ctx, &ds.selection);
+        [layout.horizontal.clone(), layout.vertical.clone()].into_iter().flatten().collect()
     };
     for axis in axes {
         for h in handles(app, &axis) {
@@ -216,13 +256,69 @@ pub fn draw(app: &FigApp, painter: &egui::Painter) {
             let by = if axis.vertical { vec2(10.0, 0.0) } else { vec2(0.0, 10.0) };
             painter.line_segment([h.center - by, h.center + by], Stroke::new(if hot { 3.0 } else { 2.0 }, PINK));
             if hot {
-                let text = widgets::fmt_num(h.value);
-                let galley = painter.layout_no_wrap(text, semibold(10.0), Color32::WHITE);
                 let at = h.center + if axis.vertical { vec2(18.0, 0.0) } else { vec2(0.0, -22.0) };
-                let r = Rect::from_center_size(at, galley.size() + vec2(8.0, 4.0));
-                painter.rect_filled(r, CornerRadius::same(3), PINK);
-                painter.galley(r.min + vec2(4.0, 2.0), galley, Color32::WHITE);
+                pink_label(painter, widgets::fmt_num(h.value), at);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    use crate::NoServices;
+    use figcraft_engine::Session;
+
+    fn setup() -> (FigApp, egui::Context, Vec<NodeId>) {
+        let mut session = Session::new();
+        let mut ids = Vec::new();
+        for x in [0, 80, 160] {
+            ids.push(NodeId(session.execute("shape.rectangle", &json!({"x":x,"width":50,"height":50})).unwrap()["id"].as_u64().unwrap()));
+        }
+        session.execute("select.set", &json!({"ids":ids})).unwrap();
+        (FigApp::new(session, Box::new(NoServices)), egui::Context::default(), ids)
+    }
+
+    #[test]
+    fn layout_is_shared_within_a_frame_and_refreshed_after_a_document_edit() {
+        let (mut app, ctx, ids) = setup();
+        let mut cached = None;
+        let mut output = ctx.run_ui(Default::default(), |_| {
+            let first = layout(&app, &ctx, &ids);
+            assert_eq!(first.horizontal.as_ref().unwrap().value, Some(30.0));
+            assert!(Arc::ptr_eq(&first, &layout(&app, &ctx, &ids)));
+            cached = Some(first);
+        });
+        output.textures_delta.clear();
+        let mut output = ctx.run_ui(Default::default(), |_| {
+            let first = layout(&app, &ctx, &ids);
+            assert!(Arc::ptr_eq(cached.as_ref().unwrap(), &first), "unchanged frames reuse the calculation");
+            app.set_props(&[ids[1]], json!({"x":90}));
+            assert!(Arc::ptr_eq(&first, &layout(&app, &ctx, &ids)), "a mid-frame edit waits until the next frame");
+        });
+        output.textures_delta.clear();
+        let mut output = ctx.run_ui(Default::default(), |_| {
+            let next = layout(&app, &ctx, &ids);
+            assert!(!Arc::ptr_eq(cached.as_ref().unwrap(), &next));
+            assert_eq!(next.horizontal.as_ref().unwrap().value, None);
+            assert!(Arc::ptr_eq(&next, &layout(&app, &ctx, &ids)));
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn a_selection_or_document_switch_invalidates_the_layout() {
+        let (mut app, ctx, ids) = setup();
+        let mut output = ctx.run_ui(Default::default(), |_| {
+            let all = layout(&app, &ctx, &ids);
+            let subset = layout(&app, &ctx, &ids[..2]);
+            assert!(!Arc::ptr_eq(&all, &subset));
+            assert_eq!(subset.horizontal.as_ref().unwrap().tracks.len(), 2);
+            app.session.execute("file.new", &json!({})).unwrap();
+            let other = layout(&app, &ctx, &ids[..2]);
+            assert!(!Arc::ptr_eq(&subset, &other));
+            assert!(other.horizontal.is_none() && other.vertical.is_none());
+        });
+        output.textures_delta.clear();
     }
 }
