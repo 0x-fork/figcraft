@@ -48,7 +48,7 @@ interaction feel not yet compared.
 
 | Item | Status | Notes |
 |---|---|---|
-| Click, Shift-click, marquee, Shift-marquee toggle | done | a marquee selects what it touches; from a top-level frame's background, the layers inside it; locked and hidden layers are skipped (`selection_behaviour_tests`) |
+| Click, Shift-click, marquee, Shift-marquee toggle | done | a marquee selects what it touches; from a top-level frame's background, the layers inside it; locked and hidden layers are skipped; Shift-click takes a selected layer out on release, so a Shift-drag on it moves the selection along one axis instead (`selection_behaviour_tests`) |
 | Deep select (Cmd/Ctrl-click, Cmd/Ctrl-marquee) | done | |
 | Select layer menu (every layer under the click) | done | |
 | Enter / Shift+Enter (children / parent), Tab / Shift+Tab (siblings) | done | Tab renames the next layer while renaming |
