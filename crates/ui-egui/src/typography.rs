@@ -181,7 +181,12 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
         let w = ui.available_width();
         let resp = widgets::dropdown(ui, family.as_deref().unwrap_or(tr(MIXED)), w, None);
         menu_popup(&resp).width(w.max(240.0)).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-            if let Some(f) = font_picker(ui, family.as_deref(), resp.clicked()) {
+            let (picked, hovered) = font_picker(ui, family.as_deref(), resp.clicked());
+            if let Some(h) = hovered {
+                // The canvas shows the hovered family; closing without picking ends the preview.
+                app.preview_text(ui.ctx(), "text.style", text_style_params(ids, range, json!({"fontFamily": h})));
+            }
+            if let Some(f) = picked {
                 remember_family(ui.ctx(), &f);
                 apply_style(app, "fontFamily", json!(f));
                 ui.close();
@@ -1049,8 +1054,9 @@ enum PickRow {
     Family(String),
 }
 
-/// The searchable family list. Returns the family picked.
-pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool) -> Option<String> {
+/// The searchable family list. Returns the family picked and the family hovered (the caller
+/// previews the hovered one on the canvas: closing without picking restores the original).
+pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool) -> (Option<String>, Option<String>) {
     let t = Tokens::get(ui.ctx());
     let q_id = Id::new("font_query");
     let mut q: String = ui.data(|d| d.get_temp(q_id)).unwrap_or_default();
@@ -1066,7 +1072,7 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
     let all = figcraft_text::family_names();
     let matches: Vec<String> = all.iter().filter(|f| ql.is_empty() || f.to_lowercase().contains(&ql)).cloned().collect();
     if search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-        return matches.into_iter().next();
+        return (matches.into_iter().next(), None);
     }
     let mut rows: Vec<PickRow> = Vec::new();
     if ql.is_empty() {
@@ -1079,11 +1085,12 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
     }
     if matches.is_empty() {
         widgets::label(ui, tr("No fonts match"), t.text_tertiary);
-        return None;
+        return (None, None);
     }
     rows.extend(matches.into_iter().map(PickRow::Family));
     let mut budget = 4;
     let mut picked = None;
+    let mut hovered_family = None;
     egui::ScrollArea::vertical().max_height(380.0).auto_shrink([false, true]).show_rows(ui, ROW, rows.len(), |ui, range| {
         for r in rows.get(range).unwrap_or(&[]) {
             let w = ui.available_width();
@@ -1125,11 +1132,14 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
                     if resp.clicked() {
                         picked = Some(f.clone());
                     }
+                    if resp.hovered() {
+                        hovered_family = Some(f.clone());
+                    }
                 }
             }
         }
     });
-    picked
+    (picked, hovered_family)
 }
 
 #[cfg(test)]

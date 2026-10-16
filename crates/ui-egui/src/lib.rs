@@ -583,7 +583,7 @@ impl FigApp {
     }
 
     /// Show what `command params` would do on the canvas as a live preview (`text.preview`) while
-    /// a text style, a named instance or an axis slider is hovered or dragged. Call it every frame
+    /// a font family, font style, text style, named instance or axis slider is hovered or dragged. Call it every frame
     /// the preview should stay: it ends on the first frame nothing asks for it.
     pub fn preview_text(&mut self, ctx: &egui::Context, command: &str, params: Value) {
         self.ui.text_preview_wanted = true;
