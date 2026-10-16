@@ -123,3 +123,41 @@ fn removing_effects_and_grids_keeps_open_settings_with_their_rows() {
     assert_eq!(u.app.session.doc().unwrap().node(f).unwrap().grids.len(), 1);
     assert!(flag(&u, "grid_open", 0) && !flag(&u, "grid_open", 1));
 }
+
+#[test]
+fn adding_a_fill_or_stroke_opens_the_color_picker() {
+    let mut s = Session::new();
+    let r = id(s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 50, "height": 50})).unwrap());
+    s.execute("select.set", &json!({"ids": [r]})).unwrap();
+    let mut u = Ui::new(s);
+    u.ctx.enable_accesskit();
+    assert_eq!(u.app.ui.picker, None);
+
+    let out = u.frame_output(vec![]);
+    let add_fill = out
+        .platform_output
+        .accesskit_update
+        .unwrap()
+        .nodes
+        .into_iter()
+        .find(|(_, n)| n.label() == Some("Add fill"))
+        .and_then(|(_, n)| n.bounds())
+        .map(|b| Pos2::new(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32))
+        .expect("Add fill button");
+    click(&mut u, add_fill);
+    assert_eq!(u.app.ui.picker, Some(PickerTarget::Paint { fills: true, index: 1, ids: vec![r] }));
+
+    let out = u.frame_output(vec![]);
+    let add_stroke = out
+        .platform_output
+        .accesskit_update
+        .unwrap()
+        .nodes
+        .into_iter()
+        .find(|(_, n)| n.label() == Some("Add stroke"))
+        .and_then(|(_, n)| n.bounds())
+        .map(|b| Pos2::new(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32))
+        .expect("Add stroke button");
+    click(&mut u, add_stroke);
+    assert_eq!(u.app.ui.picker, Some(PickerTarget::Paint { fills: false, index: 0, ids: vec![r] }));
+}

@@ -1101,7 +1101,14 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
         empty,
     ) {
         if i == 1 {
-            app.run(if fills { "fill.add" } else { "stroke.add" }, json!({"ids": ids}));
+            if app.run(if fills { "fill.add" } else { "stroke.add" }, json!({"ids": ids})).is_some() {
+                if let Ok(doc) = app.session.doc() {
+                    let count = ids.first().and_then(|id| doc.node(*id)).map_or(0, |n| if fills { n.fills.len() } else { n.strokes.len() });
+                    if count > 0 {
+                        app.ui.picker = Some(crate::colorpicker::PickerTarget::Paint { fills, index: count - 1, ids: ids.clone() });
+                    }
+                }
+            }
         } else {
             style_picker::open(app, ui, &ids, slot);
         }
