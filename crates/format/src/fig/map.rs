@@ -827,10 +827,8 @@ impl<'a> Mapper<'a> {
             o.insert("characterStyleOverrides".into(), json!(ids));
             o.insert("styleOverrideTable".into(), Value::Object(table));
         }
-        let lines: Vec<&str> = td
-            .get("lines")
-            .map(Kv::list)
-            .unwrap_or_default()
+        let raw = td.get("lines").map(Kv::list).unwrap_or_default();
+        let lines: Vec<&str> = raw
             .iter()
             .map(|l| match l.get("lineType").and_then(Kv::str) {
                 Some("ORDERED_LIST") => "ORDERED",
@@ -840,6 +838,12 @@ impl<'a> Mapper<'a> {
             .collect();
         if lines.iter().any(|l| *l != "NONE") {
             o.insert("lineTypes".into(), json!(lines));
+        }
+        // Where a numbered list starts counting, less one (not a REST field).
+        let starts: Vec<u32> =
+            raw.iter().map(|l| num(l, "listStartOffset").filter(|n| n.is_finite()).map_or(0, |n| n.clamp(0.0, f64::from(u32::MAX)) as u32)).collect();
+        if starts.iter().any(|n| *n > 0) {
+            o.insert("listStartOffsets".into(), json!(starts));
         }
     }
 

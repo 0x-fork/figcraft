@@ -1574,12 +1574,14 @@ impl<'d> Exporter<'d> {
             };
             let listed = *l != ListStyle::None;
             let first = listed && (i == 0 || lists.get(i - 1) != Some(l));
+            // Where a numbered list starts counting, less one.
+            let start = if first && *l == ListStyle::Numbered { td.para_list(i).start } else { 0 };
             o(vec![
                 ("lineType", e(ty)),
                 ("styleId", int(0)),
                 ("indentationLevel", int(i64::from(listed))),
                 ("sourceDirectionality", e("AUTO")),
-                ("listStartOffset", int(0)),
+                ("listStartOffset", int(i64::from(start))),
                 ("isFirstLineOfList", b(first)),
             ])
         };
