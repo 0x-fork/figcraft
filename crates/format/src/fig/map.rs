@@ -140,6 +140,41 @@ fn copy_str(o: &mut Obj, n: &View, from: &str, to: &str) {
     }
 }
 
+/// The value from the last override layer holding a valid one for an optional text setting; invalid instance rows fall through.
+fn text_num(v: &View, key: &str) -> Option<f64> {
+    v.layers.iter().rev().find_map(|layer| {
+        layer.get(key).and_then(|value| match value {
+            Kv::Bool(_) => None,
+            _ => value.f64(),
+        })
+    })
+}
+
+fn text_flag(v: &View, key: &str) -> Option<bool> {
+    v.layers.iter().rev().find_map(|layer| layer.get(key).and_then(Kv::bool))
+}
+
+fn insert_text_options(style: &mut Obj, v: &View) {
+    if let Some(value) = text_num(v, "listSpacing") {
+        style.insert("listSpacing".into(), json!(value));
+    }
+    for k in ["hangingList", "hangingPunctuation"] {
+        if let Some(value) = text_flag(v, k) {
+            style.insert(k.into(), json!(value));
+        }
+    }
+    if let Some(value) = leading_trim(v) {
+        style.insert("leadingTrim".into(), json!(value));
+    }
+}
+
+fn leading_trim<'a>(v: &View<'a>) -> Option<&'a str> {
+    v.layers.iter().rev().find_map(|layer| match layer.get("leadingTrim").and_then(Kv::str) {
+        Some(value @ ("NONE" | "CAP_HEIGHT")) => Some(value),
+        _ => None,
+    })
+}
+
 /// A node seen through override layers: the last layer with a field wins.
 #[derive(Clone)]
 struct View<'a> {
@@ -1132,6 +1167,7 @@ impl<'a> Mapper<'a> {
         for k in ["paragraphSpacing", "paragraphIndent"] {
             copy_num(&mut style, v, k, k);
         }
+        insert_text_options(&mut style, v);
         if let Some(n) = v.num("maxLines").filter(|n| *n >= 1.0) {
             style.insert("maxLines".into(), json!(n));
         }
@@ -2097,6 +2133,7 @@ fn text_style(v: &View, size: Option<f64>) -> Obj {
     copy_num(&mut s, v, "fontSize", "fontSize");
     copy_num(&mut s, v, "paragraphSpacing", "paragraphSpacing");
     copy_num(&mut s, v, "paragraphIndent", "paragraphIndent");
+    insert_text_options(&mut s, v);
     copy_str(&mut s, v, "textCase", "textCase");
     copy_str(&mut s, v, "textDecoration", "textDecoration");
     if let Some(skip_ink) = v.flag("textDecorationSkipInk") {
