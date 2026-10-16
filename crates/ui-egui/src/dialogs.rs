@@ -71,6 +71,15 @@ pub enum AboutTab {
     Models,
 }
 
+/// Values collected by a menu or Actions command before dispatching it to the engine.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MenuInput {
+    RenameFile(String),
+    Link(String),
+    Offset(f64),
+    MoveToPage,
+}
+
 impl AboutTab {
     pub const ALL: [AboutTab; 3] = [AboutTab::About, AboutTab::Contributors, AboutTab::Models];
 
@@ -137,6 +146,7 @@ fn about_body(ui: &mut egui::Ui, t: &Tokens) {
 pub fn keys(app: &mut FigApp, ctx: &Context) {
     let u = &mut app.ui;
     let open = u.color_profile.is_some()
+        || u.menu_input.is_some()
         || u.find.is_some()
         || u.batch_rename.is_some()
         || u.confirm_close
@@ -147,7 +157,7 @@ pub fn keys(app: &mut FigApp, ctx: &Context) {
     if !open || !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         return;
     }
-    if u.color_profile.take().is_some() || u.find.take().is_some() || u.batch_rename.take().is_some() {
+    if u.menu_input.take().is_some() || u.color_profile.take().is_some() || u.find.take().is_some() || u.batch_rename.take().is_some() {
         return;
     }
     for flag in [&mut u.confirm_close, &mut u.export_preview, &mut u.shortcuts_panel, &mut u.preferences, &mut u.about] {
@@ -265,12 +275,17 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
                 ui.label(tr("Language"));
                 // Each language by its own name; System follows the OS (the browser on the web).
                 let langs = i18n::languages().iter().filter(|l| crate::cjk::can_show(l.code)).map(|l| (l.code, l.name));
-                for (code, name) in [("system", tr("System"))].into_iter().chain(langs) {
-                    if ui.selectable_label(app.session.prefs.language.eq_ignore_ascii_case(code), name).clicked() {
-                        app.run("pref.language", json!({"language": code}));
-                        ui.ctx().request_repaint();
+                let choices: Vec<_> = [("system", tr("System"))].into_iter().chain(langs).collect();
+                let selected =
+                    choices.iter().find(|(code, _)| app.session.prefs.language.eq_ignore_ascii_case(code)).map_or(tr("System"), |(_, name)| *name);
+                egui::ComboBox::from_id_salt("pref_language").selected_text(selected).width(220.0).show_ui(ui, |ui| {
+                    for (code, name) in choices {
+                        if ui.selectable_label(app.session.prefs.language.eq_ignore_ascii_case(code), name).clicked() {
+                            app.run("pref.language", json!({"language": code}));
+                            ui.ctx().request_repaint();
+                        }
                     }
-                }
+                });
             });
             if let Some(lang) = i18n::current().filter(|l| l.draft) {
                 let note = trf("{language}: draft translation, waiting for a native speaker's review.", &[("language", &lang.name)]);
@@ -321,6 +336,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
         app.ui.find = if open { Some((find, replace)) } else { None };
     }
     batch_rename_dialog(app, ctx);
+    menu_input_dialog(app, ctx);
     crate::variables_panel::show(app, ctx);
     crate::dev_compare::show(app, ctx);
     crate::branch_ui::show(app, ctx);
@@ -333,6 +349,70 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     crate::live::publish_dialog(app, ctx);
     crate::online::dialogs(app, ctx);
     crate::windows::confirm_close(app, ctx);
+}
+
+/// Menus and Actions cannot pass a value themselves. Gather it here, then run the regular
+/// command so the same validation and undo behaviour apply as for programmatic callers.
+fn menu_input_dialog(app: &mut FigApp, ctx: &Context) {
+    let Some(mut input) = app.ui.menu_input.take() else { return };
+    let title = match &input {
+        MenuInput::RenameFile(_) => i18n::command("file.rename", "Rename file"),
+        MenuInput::Link(_) => i18n::command("text.link", "Create link"),
+        MenuInput::Offset(_) => i18n::command("vector.offset", "Offset path"),
+        MenuInput::MoveToPage => i18n::command("object.moveToPage", "Move to page"),
+    };
+    let mut open = true;
+    let mut action: Option<(&str, serde_json::Value)> = None;
+    window(&title, ctx).open(&mut open).show(ctx, |ui| {
+        ui.set_width(320.0);
+        match &mut input {
+            MenuInput::RenameFile(name) => {
+                let field = ui.add(egui::TextEdit::singleline(name).desired_width(300.0));
+                if (ui.button(tr("Rename")).clicked() || field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    && !name.trim().is_empty()
+                {
+                    action = Some(("file.rename", json!({"name": name.trim()})));
+                }
+            }
+            MenuInput::Link(url) => {
+                let field = ui.add(egui::TextEdit::singleline(url).hint_text("https://").desired_width(300.0));
+                if (ui.button(tr("Done")).clicked() || field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) && !url.trim().is_empty()
+                {
+                    action = Some(("text.link", json!({"url": url.trim()})));
+                }
+            }
+            MenuInput::Offset(offset) => {
+                ui.add(egui::DragValue::new(offset).speed(1.0).range(-100_000.0..=100_000.0));
+                if ui.button(tr("Offset")).clicked() {
+                    action = Some(("vector.offset", json!({"offset": offset})));
+                }
+            }
+            MenuInput::MoveToPage => {
+                let mut choices = 0;
+                if let Ok(ds) = app.session.ds() {
+                    for &page in &ds.doc.pages {
+                        if page == ds.page || ds.doc.is_divider(page) {
+                            continue;
+                        }
+                        if let Some(node) = ds.doc.node(page)
+                            && ui.button(&node.name).clicked()
+                        {
+                            action = Some(("object.moveToPage", json!({"page": page})));
+                        }
+                        choices += 1;
+                    }
+                }
+                if choices == 0 {
+                    ui.label(tr("No other pages"));
+                }
+            }
+        }
+    });
+    if let Some((id, params)) = action {
+        app.run(id, params);
+    } else if open {
+        app.ui.menu_input = Some(input);
+    }
 }
 
 /// The Rename layers dialog's fields.
