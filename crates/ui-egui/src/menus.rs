@@ -651,6 +651,18 @@ fn palette(app: &mut FigApp, ctx: &egui::Context) {
     );
     let mut run: Option<String> = None;
     let mut close = false;
+    // A press anywhere outside closes the panel. The opening press is spared once, and the
+    // spare expires the first frame without a press (so the next outside press always closes).
+    let pressed = ctx.input(|i| i.pointer.any_pressed());
+    if pressed && !std::mem::replace(&mut app.ui.palette_armed, false) {
+        let on_toggle = app.ui.actions_rect.is_some_and(|b| ctx.input(|i| i.pointer.hover_pos().is_some_and(|p| b.contains(p))));
+        let outside = !on_toggle && ctx.input(|i| i.pointer.hover_pos().map(|p| !area.contains(p)).unwrap_or(false));
+        if outside {
+            close = true;
+        }
+    } else if !pressed {
+        app.ui.palette_armed = false;
+    }
     egui::Area::new(Id::new("palette")).fixed_pos(area.min).order(egui::Order::Foreground).show(
         ctx,
         |ui| {
@@ -830,9 +842,9 @@ pub(crate) struct ActionRow {
 
 /// A section header with its rows.
 fn section(ui: &mut Ui, t: &Tokens, name: &str, rows: impl FnOnce(&mut Ui)) {
-    ui.add_space(6.0);
-    ui.painter().text(pos2(ui.min_rect().min.x + 10.0, ui.cursor().min.y + 7.0), Align2::LEFT_TOP, name, regular(11.0), t.text_secondary);
-    ui.add_space(18.0);
+    ui.add_space(10.0);
+    ui.painter().text(pos2(ui.min_rect().min.x + 10.0, ui.cursor().min.y + 8.0), Align2::LEFT_TOP, name, regular(12.5), t.text_secondary);
+    ui.add_space(22.0);
     rows(ui);
 }
 
@@ -841,8 +853,10 @@ fn section(ui: &mut Ui, t: &Tokens, name: &str, rows: impl FnOnce(&mut Ui)) {
 fn draw_row(ui: &mut Ui, t: &Tokens, row: &ActionRow) -> bool {
     let w = ui.available_width();
     let (r, resp) = ui.allocate_exact_size(vec2(w, 34.0), Sense::click());
+    // The hover pill stays inside the row: it never touches the panel's edges.
+    let pill = r.shrink2(vec2(4.0, 1.0));
     if resp.hovered() {
-        ui.painter().rect_filled(r, CornerRadius::same(6), t.hover);
+        ui.painter().rect_filled(pill, CornerRadius::same(6), t.hover);
     }
     let mut label_x = r.min.x + 10.0;
     if let Some(letter) = row.tile {

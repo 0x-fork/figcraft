@@ -57,6 +57,7 @@ fn remembered(ui: &Ui, key: &str, default: ToolId) -> ToolId {
 pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let canvas = app.canvas.rect;
+    app.ui.actions_rect = None;
     // A file you can't edit now (view only, or on its way to a server): moving around only.
     if let Some(why) = app.session.active_read_only() {
         view_only_toolbar(app, ui, why);
@@ -138,13 +139,26 @@ fn main_toolbar(app: &mut FigApp, ui: &mut Ui, canvas: Rect, t: &Tokens) {
     ] {
         let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
         let resp = ui.interact(r, ui.id().with(id), Sense::click()).tip(tip);
-        if resp.hovered() {
+        if id == "actions" {
+            app.ui.actions_rect = Some(r);
+        }
+        // The Actions button reads on while its panel is open; clicking it again closes it.
+        let actions_open = id == "actions" && app.ui.palette.is_some();
+        if actions_open {
+            ui.painter().rect_filled(r, CornerRadius::same(5), ACCENT);
+        } else if resp.hovered() {
             ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
         }
-        icons::paint(ui.painter(), r.shrink(7.0), icon, t.icon);
+        icons::paint(ui.painter(), r.shrink(7.0), icon, if actions_open { Color32::WHITE } else { t.icon });
         if resp.clicked() {
             if id == "actions" {
-                app.ui.palette = Some(String::new());
+                if app.ui.palette.is_some() {
+                    app.ui.palette = None;
+                } else {
+                    app.ui.palette = Some(String::new());
+                    app.ui.palette_tab = crate::menus::PaletteTab::All;
+                    app.ui.palette_armed = true;
+                }
             } else {
                 app.ui.left_tab = crate::LeftTab::Assets;
                 app.ui.left_collapsed = false;

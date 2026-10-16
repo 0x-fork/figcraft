@@ -408,6 +408,10 @@ pub struct UiState {
     pub palette: Option<String>,
     /// The Actions palette's tab.
     pub palette_tab: menus::PaletteTab,
+    /// The palette ignores one outside click after opening (the click that opened it).
+    pub palette_armed: bool,
+    /// This frame's Actions toolbar button rect: presses on it toggle, never dismiss.
+    pub actions_rect: Option<egui::Rect>,
     /// The Variables editor, when open.
     pub variables: Option<variables_panel::Editor>,
     pub about: bool,
@@ -538,6 +542,8 @@ impl Default for UiState {
             main_menu: false,
             palette: None,
             palette_tab: menus::PaletteTab::All,
+            palette_armed: false,
+            actions_rect: None,
             variables: None,
             about: false,
             about_tab: dialogs::AboutTab::About,
@@ -794,8 +800,13 @@ impl FigApp {
                 "dialog.preferences" => self.ui.preferences = true,
                 "panel.shortcuts" => self.ui.shortcuts_panel = !self.ui.shortcuts_panel,
                 "palette.actions" => {
-                    self.ui.palette = Some(String::new());
-                    self.ui.palette_tab = menus::PaletteTab::All;
+                    if self.ui.palette.is_some() {
+                        self.ui.palette = None;
+                    } else {
+                        self.ui.palette = Some(String::new());
+                        self.ui.palette_tab = menus::PaletteTab::All;
+                        self.ui.palette_armed = true;
+                    }
                 }
                 "panel.design" => self.ui.right_tab = RightTab::Design,
                 "panel.prototype" => self.ui.right_tab = RightTab::Prototype,

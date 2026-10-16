@@ -1,7 +1,10 @@
 //! The Actions palette, driven headless: invoking records recents (newest first, capped),
-//! sections group commands by menu, the query filters, and gone entries drop out of Recents.
+//! sections group commands by menu, the query filters, gone entries drop out of Recents, a used
+//! plugin resolves back to a row, and a press outside the panel closes it.
 
+use egui::Pos2;
 use figcraft_engine::Session;
+use serde_json::json;
 
 use crate::layers_drag_tests::Ui;
 
@@ -57,4 +60,52 @@ fn gone_entries_drop_out_of_recents() {
     assert!(crate::menus::recent_row(&u.app, "command:nope.nope", "").is_none(), "gone commands drop out");
     assert!(crate::menus::recent_row(&u.app, "plugin:nope.nope/nope", "").is_none(), "gone plugins drop out");
     assert!(crate::menus::recent_row(&u.app, "widget:nope", "").is_none(), "gone widgets drop out");
+}
+
+/// A used plugin (API 4, several commands) resolves back to a Recents row.
+#[test]
+fn used_plugin_resolves_to_a_recent_row() {
+    let mut u = Ui::new(Session::new());
+    let plugin: figcraft_engine::plugins::InstalledPlugin = serde_json::from_value(json!({
+        "manifest": {
+            "id": "dev.local.solar-icons",
+            "name": "Solar icons",
+            "main": "solar_icons.wasm",
+            "api": 4,
+            "commands": [
+                {"id": "panel", "label": "Panel"},
+                {"id": "grid", "label": "Grid"},
+            ],
+        },
+    }))
+    .unwrap();
+    u.app.session.prefs.plugins.push(plugin);
+    crate::menus::record_recent(&mut u.app, "plugin:dev.local.solar-icons/panel");
+    let row = crate::menus::recent_row(&u.app, "plugin:dev.local.solar-icons/panel", "")
+        .expect("a used plugin stays in Recents");
+    assert_eq!(row.label, "Solar icons — Panel");
+    assert!(crate::menus::recent_row(&u.app, "plugin:dev.local.solar-icons/panel", "zzz").is_none(), "the query filters recents");
+}
+
+/// A press outside the panel closes it; the opening press is spared once.
+#[test]
+fn outside_press_closes_the_panel() {
+    let mut u = Ui::new(Session::new());
+    u.app.ui.palette = Some(String::new());
+    u.app.ui.palette_armed = true;
+    // The opening press: spared, and disarmed.
+    u.button(Pos2::new(720.0, 20.0), true);
+    u.button(Pos2::new(720.0, 20.0), false);
+    assert!(u.app.ui.palette.is_some(), "the opening press is spared");
+    // The next press outside: closed.
+    u.button(Pos2::new(720.0, 20.0), true);
+    u.button(Pos2::new(720.0, 20.0), false);
+    assert!(u.app.ui.palette.is_none(), "an outside press closes the panel");
+    // One click is enough: the spare expires on frames without a press.
+    u.app.ui.palette = Some(String::new());
+    u.app.ui.palette_armed = true;
+    u.frame(vec![]);
+    u.button(Pos2::new(720.0, 20.0), true);
+    u.button(Pos2::new(720.0, 20.0), false);
+    assert!(u.app.ui.palette.is_none(), "a single outside press closes the panel");
 }
