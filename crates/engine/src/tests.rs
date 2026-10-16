@@ -621,3 +621,20 @@ fn find_replace_changing_only_the_case_replaces_every_occurrence() {
     assert_eq!(s.doc().unwrap().node(t).unwrap().kind.text().unwrap().characters, "FigCraft and FigCraft, FigCraft");
     assert_eq!(s.doc().unwrap().node(f).unwrap().name, "FigCraft / FigCraft");
 }
+
+#[test]
+fn copy_and_cut_ignore_pages_so_paste_keeps_the_document_valid() {
+    for cmd in ["edit.copy", "edit.cut"] {
+        let mut s = sess();
+        let page = s.page().unwrap();
+        s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
+        let r = s.execute(cmd, &json!({"ids": [page.0]}));
+        if let Ok(v) = &r {
+            assert!(v.get("deleted").is_none_or(|d| d == &json!([])), "{cmd} reported the page as deleted: {v}");
+        }
+        let _ = s.execute("edit.paste", &json!({}));
+        let doc = s.doc().unwrap();
+        assert!(doc.validate().is_empty(), "{cmd}: {:?}", doc.validate());
+        assert!(doc.node(page).is_some(), "{cmd} removed the page");
+    }
+}

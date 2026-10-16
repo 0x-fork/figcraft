@@ -505,7 +505,12 @@ fn bump_name(n: &str) -> String {
 /// The copied form of the selection.
 pub fn copy_to_clipboard(s: &mut Session, ids: &[NodeId]) -> Result<()> {
     let ds = s.ds()?;
-    let (nodes, images, bounds) = copied(&ds.doc, ids);
+    // Pages are not layers: they can't be pasted anywhere.
+    let layers: Vec<NodeId> = ids.iter().copied().filter(|i| !ds.doc.node(*i).is_some_and(Node::is_page)).collect();
+    if layers.is_empty() && !ids.is_empty() {
+        return Err(EngineError::Disabled("edit.copy".into(), "pages can't be copied; use page.duplicate".into()));
+    }
+    let (nodes, images, bounds) = copied(&ds.doc, &layers);
     let (source, source_path, uid) = (ds.doc.clone(), ds.path.clone(), ds.uid);
     s.clipboard.source = Some(source);
     s.clipboard.source_path = source_path;
@@ -605,7 +610,9 @@ fn copy(s: &mut Session, p: &Value) -> Result<Value> {
 fn cut(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = req_targets("edit.cut", s, p)?;
     copy_to_clipboard(s, &ids)?;
-    delete(s, &json!({"ids": ids}))
+    let doc = s.doc()?;
+    let layers: Vec<NodeId> = ids.into_iter().filter(|i| !doc.node(*i).is_some_and(Node::is_page)).collect();
+    delete(s, &json!({"ids": layers}))
 }
 
 /// Paste the clipboard under `parent` with the copied top-left moved to `at` (page coords).
