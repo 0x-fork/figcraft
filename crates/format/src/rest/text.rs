@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use figcraft_doc::{
     DecorationLength, DecorationStyle, LetterSpacing, LineHeight, ListStyle, ParaList, StyleRun, TextAlignH, TextAlignV, TextAutoResize, TextCase,
-    TextData, TextDecoration, TextStyle,
+    TextData, TextDecoration, TextPath, TextStyle,
 };
 use serde_json::Value;
 
@@ -29,6 +29,16 @@ pub(super) fn text_data(cx: &mut Ctx, v: &Value) -> TextData {
     td.runs = runs(cx, v, &td);
     td.normalize();
     lists(v, &mut td);
+    if cx.fig_sources.is_some()
+        && let Some(path) = v.get("_figTextPath")
+    {
+        match (path.get("d").and_then(Value::as_str), path.get("start").and_then(Value::as_f64), path.get("flip").and_then(Value::as_bool)) {
+            (Some(d), Some(start), Some(flip)) if !d.is_empty() && start.is_finite() && (0.0..=1.0).contains(&start) => {
+                td.path = Some(Box::new(TextPath { d: d.to_owned(), start, flip }));
+            }
+            _ => cx.warn("invalid internal .fig text path data was ignored"),
+        }
+    }
     td
 }
 

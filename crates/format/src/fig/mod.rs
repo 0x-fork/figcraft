@@ -24,6 +24,9 @@ mod network;
 mod source_identity_tests;
 #[cfg(test)]
 mod tests;
+mod text_path;
+#[cfg(test)]
+mod text_path_tests;
 #[cfg(test)]
 mod text_style_tests;
 
