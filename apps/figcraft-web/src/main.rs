@@ -13,8 +13,15 @@
 //!   (browsers block `ws://` from secure pages); serve it over `http://` on a trusted network to
 //!   join from other machines.
 //!
-//! URL query flag: `?webgl` forces the WebGL2 backend instead of WebGPU.
+//! URL query: `?webgl` forces the WebGL2 backend instead of WebGPU; `?join=<invite link or join
+//! code>` joins that live session once the page has loaded, so a bookmark opens a shared file.
+//! `join` takes the rest of the query: put it last. The link carries the session's secret, so the
+//! URL (and the browser history) is as private as the link itself.
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod query;
+#[cfg(test)]
+mod query_tests;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
