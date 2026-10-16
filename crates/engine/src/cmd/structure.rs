@@ -556,6 +556,10 @@ fn offset_path(s: &mut Session, p: &Value) -> Result<Value> {
     for i in req_targets("vector.offset", s, p)? {
         let doc = s.doc_mut()?;
         let n = doc.get(i)?.clone();
+        // A vector can't hold children: leave containers (frames, groups, instances) alone.
+        if !n.children.is_empty() {
+            continue;
+        }
         let Some((path, _)) = figcraft_render::node_outline(doc, &n) else { continue };
         let props = StrokeProps { weight: d.abs() * 2.0, join: StrokeJoin::Round, align: StrokeAlign::Center, ..Default::default() };
         let ring = figcraft_pathops::stroke_center(&path, d.abs() * 2.0, &props);
