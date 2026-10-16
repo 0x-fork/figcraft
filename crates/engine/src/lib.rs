@@ -1135,11 +1135,20 @@ impl Session {
         self.grouped(label, |s| {
             let mut results: Vec<Value> = Vec::with_capacity(cmds.len());
             for (step, (id, p)) in cmds.iter().enumerate() {
-                let p = if id == "command.batch" { p.clone() } else { resolve_step_refs(p, &results, step, 0)? };
-                results.push(s.execute(id, &p)?);
+                let v = s.batch_step(&results, step, id, p)?;
+                results.push(v);
             }
             Ok(results)
         })
+    }
+
+    /// One step of a batch: `{"$step": n}` in `params` resolves against `results` (the results of
+    /// the steps before it), then the command runs. [`Session::batch`] runs a list of these as one
+    /// undo step; a caller with its own list — the CLI's script runner — uses this so its steps
+    /// resolve `$step` the same way, inside its own [`Session::grouped`].
+    pub fn batch_step(&mut self, results: &[Value], step: usize, cmd: &str, params: &Value) -> Result<Value> {
+        let p = if cmd == "command.batch" { params.clone() } else { resolve_step_refs(params, results, step, 0)? };
+        self.execute(cmd, &p)
     }
 
     /// Run `f` as one undo step called `label`: the commands it executes push no steps of their
