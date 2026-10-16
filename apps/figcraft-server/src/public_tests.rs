@@ -506,6 +506,8 @@ fn files_above_64_mib_fit_every_limit() {
         assert!(net.max_reading_total >= net.max_reading_block && net.max_queued_total >= net.max_queued_block);
         assert!(core.max_message_bytes > file, "open={open_publish}: {}", core.max_message_bytes);
     }
-    // A client takes the largest file any server can keep.
-    assert!(NetLimits::default().max_server_message > 4096 << 20);
+    // A client takes the largest file any server can keep, or as much as a 32-bit target can address
+    // (computed in u64: `4097 << 20` in a 32-bit usize wraps to 1 MiB).
+    let client = NetLimits::default().max_server_message as u64;
+    assert!(client > 4096 << 20 || client == u64::from(u32::MAX), "{client}");
 }
