@@ -499,7 +499,12 @@ fn bump_name(n: &str) -> String {
 pub fn copy_to_clipboard(s: &mut Session, ids: &[NodeId]) -> Result<()> {
     let ds = s.ds()?;
     let doc = &ds.doc;
-    let ids = z_sorted(doc, &roots(doc, ids));
+    // Pages are not layers: they can't be pasted anywhere.
+    let layers: Vec<NodeId> = ids.iter().copied().filter(|i| !doc.node(*i).is_some_and(Node::is_page)).collect();
+    if layers.is_empty() && !ids.is_empty() {
+        return Err(EngineError::Disabled("edit.copy".into(), "pages can't be copied; use page.duplicate".into()));
+    }
+    let ids = z_sorted(doc, &roots(doc, &layers));
     let mut nodes = Vec::new();
     let mut images = BTreeMap::new();
     for i in &ids {
@@ -542,7 +547,9 @@ fn copy(s: &mut Session, p: &Value) -> Result<Value> {
 fn cut(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = req_targets("edit.cut", s, p)?;
     copy_to_clipboard(s, &ids)?;
-    delete(s, &json!({"ids": ids}))
+    let doc = s.doc()?;
+    let layers: Vec<NodeId> = ids.into_iter().filter(|i| !doc.node(*i).is_some_and(Node::is_page)).collect();
+    delete(s, &json!({"ids": layers}))
 }
 
 /// Paste the clipboard under `parent` with the copied top-left moved to `at` (page coords).
