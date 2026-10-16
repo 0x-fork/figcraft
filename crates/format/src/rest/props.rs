@@ -5,8 +5,8 @@ use figcraft_doc::color::{BlendMode, Color, ColorStop, Gradient, GradientKind, I
 use figcraft_doc::geom::Affine;
 use figcraft_doc::{
     AutoLayout, Blur, BlurType, CellAlign, ChildLayout, Constraints, ContentAlign, CrossAlign, Effect, EffectKind, ExportFormat, ExportSetting,
-    ExportSize, Glass, GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, Noise, NoiseMode, Shadow, Sizing, StrokeAlign, StrokeCap,
-    StrokeJoin, StrokeProps, Texture, VConstraint, WidthPoint, WidthProfile,
+    ExportSize, Glass, GridAlign, GridKind, GridTrack, HConstraint, LayoutGrid, LayoutMode, MainAlign, Noise, NoiseMode, Shadow, Sizing, StrokeAlign,
+    StrokeCap, StrokeJoin, StrokeProps, Texture, VConstraint, WidthPoint, WidthProfile,
 };
 use serde_json::Value;
 
@@ -394,7 +394,7 @@ pub(super) fn constraints(v: &Value) -> Option<Constraints> {
 // ---- auto layout ----
 
 /// The auto layout of a frame-like node (`layoutMode` other than `NONE`).
-pub(super) fn auto_layout(v: &Value) -> Option<AutoLayout> {
+pub(super) fn auto_layout(v: &Value, fig_tracks: bool) -> Option<AutoLayout> {
     let mode = match text(v, "layoutMode")? {
         "HORIZONTAL" => LayoutMode::Horizontal,
         "VERTICAL" => LayoutMode::Vertical,
@@ -432,8 +432,29 @@ pub(super) fn auto_layout(v: &Value) -> Option<AutoLayout> {
         grid_rows: count("gridRowCount", 2),
         strokes_included: flag(v, "strokesIncludedInLayout").unwrap_or(false),
         reverse_z: flag(v, "itemReverseZIndex").unwrap_or(false),
-        ..AutoLayout::default()
+        column_tracks: if fig_tracks && grid { fig_grid_tracks(v, "columnTracks") } else { Vec::new() },
+        row_tracks: if fig_tracks && grid { fig_grid_tracks(v, "rowTracks") } else { Vec::new() },
     })
+}
+
+fn fig_grid_tracks(v: &Value, axis: &str) -> Vec<GridTrack> {
+    v.get(crate::rest::FIG_SOURCE_FIELD)
+        .and_then(|source| source.get("gridTracks"))
+        .and_then(|tracks| tracks.get(axis))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(1_000)
+        .map(|track| {
+            let value = track.get("value").and_then(Value::as_f64).filter(|n| n.is_finite() && (0.0..=MAX_SIZE).contains(n));
+            match (track.get("sizing").and_then(Value::as_str), value) {
+                (Some("fixed"), Some(px)) => GridTrack::fixed(px),
+                (Some("fill"), Some(fr)) if fr > 0.0 => GridTrack::fill(fr),
+                (Some("hug"), _) => GridTrack::hug(),
+                _ => GridTrack::default(),
+            }
+        })
+        .collect()
 }
 
 /// How the node sizes and sits in its parent: its own hug/fixed axes (auto layout frames), its

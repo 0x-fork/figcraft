@@ -23,6 +23,8 @@ const MAX_NODES: usize = crate::rest::MAX_NODES;
 const MAX_DEPTH: usize = 256;
 /// Most path commands read from one geometry blob.
 const MAX_COMMANDS: usize = 200_000;
+const MAX_GRID_TRACKS: usize = 1_000;
+const MAX_GRID_TRACK_VALUE: f64 = 1e6;
 /// Id of "no style".
 const NO_STYLE: &str = "4294967295:4294967295";
 /// Longest asset `key` or `version` kept for resolving references given as assets.
@@ -1089,19 +1091,73 @@ impl<'a> Mapper<'a> {
             copy_num(o, v, "gridRowGap", "gridRowGap");
             o.insert("gridColumnCount".into(), json!(tracks(v, "gridColumns").len()));
             o.insert("gridRowCount".into(), json!(tracks(v, "gridRows").len()));
-            let sizes = ["gridColumnsSizing", "gridRowsSizing"]
-                .iter()
-                .flat_map(|k| v.get(k).and_then(|m| m.get("entries")).map(Kv::list).unwrap_or_default());
-            let flexible = sizes.into_iter().all(|e| {
-                let t = e.get("trackSize");
-                ["minSizing", "maxSizing"]
-                    .iter()
-                    .all(|s| t.and_then(|t| t.get(s)).and_then(|s| s.get("type")).and_then(Kv::str).is_none_or(|x| x == "FLEX"))
-            });
-            if !flexible {
-                self.warn("grid tracks of fixed or content size import as equal tracks");
+            let track_data = [("columnTracks", "gridColumns", "gridColumnsSizing"), ("rowTracks", "gridRows", "gridRowsSizing")]
+                .into_iter()
+                .filter_map(|(out_key, order_key, sizing_key)| {
+                    self.map_grid_tracks(v, order_key, sizing_key).map(|mapped| (out_key.to_string(), mapped))
+                })
+                .collect::<Obj>();
+            if !track_data.is_empty() {
+                let source = o.entry(crate::rest::FIG_SOURCE_FIELD).or_insert_with(|| json!({}));
+                if let Some(source) = source.as_object_mut() {
+                    source.insert("gridTracks".into(), Value::Object(track_data));
+                }
             }
         }
+    }
+
+    /// Track sizing maps are keyed by GUID; their order comes from the separate track list.
+    fn map_grid_tracks(&mut self, v: &View<'a>, order_key: &str, sizing_key: &str) -> Option<Value> {
+        let track_entries = v.get(order_key).and_then(|m| m.get("entries")).map(Kv::list).unwrap_or_default();
+        let sizes = v.get(sizing_key).and_then(|m| m.get("entries")).map(Kv::list).unwrap_or_default();
+        if track_entries.len() > MAX_GRID_TRACKS {
+            self.warn("grid track list exceeds 1000 entries; the tracks use the default equal sizing");
+            return None;
+        }
+        if sizes.is_empty() {
+            return None;
+        }
+        if sizes.len() > MAX_GRID_TRACKS {
+            self.warn("grid track sizing list exceeds 1000 entries; the tracks use the default equal sizing");
+            return None;
+        }
+        let ordered = tracks(v, order_key);
+        let ordered_ids: BTreeSet<&str> = ordered.iter().map(String::as_str).collect();
+        let mut size_by_id: BTreeMap<String, Option<&Kv<'a>>> = BTreeMap::new();
+        for entry in sizes {
+            let Some(id) = entry.get("id").and_then(guid) else {
+                self.warn("stale or invalid grid track sizing entries were ignored");
+                continue;
+            };
+            if !ordered_ids.contains(id.as_str()) {
+                self.warn("stale or invalid grid track sizing entries were ignored");
+                continue;
+            }
+            match size_by_id.entry(id) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert(Some(entry));
+                }
+                std::collections::btree_map::Entry::Occupied(mut slot) => {
+                    slot.insert(None);
+                    self.warn("duplicate grid track sizing entries use equal tracks");
+                }
+            }
+        }
+        let mut mapped = Vec::with_capacity(ordered.len());
+        for id in ordered {
+            if let Some(Some(entry)) = size_by_id.get(&id) {
+                match grid_track_sizing(entry.get("trackSize")) {
+                    Some(track) => mapped.push(track),
+                    None => {
+                        self.warn("grid track sizing is unsupported or malformed; affected tracks use equal sizing");
+                        mapped.push(json!({"sizing": "fill", "value": 1.0}));
+                    }
+                }
+            } else {
+                mapped.push(json!({"sizing": "fill", "value": 1.0}));
+            }
+        }
+        Some(Value::Array(mapped))
     }
 
     fn text(&mut self, o: &mut Obj, v: &View<'a>) {
@@ -2016,6 +2072,32 @@ fn tracks(v: &View, key: &str) -> Vec<String> {
         .collect();
     t.sort();
     t.into_iter().map(|e| e.1).collect()
+}
+
+/// Convert only unconstrained tracks, whose min and max sizing functions agree.
+fn grid_track_sizing(size: Option<&Kv<'_>>) -> Option<Value> {
+    let size = size?;
+    let min = size.get("minSizing")?;
+    let max = size.get("maxSizing")?;
+    let min_type = min.get("type").and_then(Kv::str)?;
+    let max_type = max.get("type").and_then(Kv::str)?;
+    if min_type != max_type {
+        return None;
+    }
+    match min_type {
+        "FIXED" => {
+            let px = num(min, "value")?;
+            let max_px = num(max, "value")?;
+            (px == max_px && px.is_finite() && (0.0..=MAX_GRID_TRACK_VALUE).contains(&px)).then(|| json!({"sizing": "fixed", "value": px}))
+        }
+        "FLEX" => {
+            let fr = num(min, "value")?;
+            let max_fr = num(max, "value")?;
+            (fr == max_fr && fr.is_finite() && fr > 0.0 && fr <= MAX_GRID_TRACK_VALUE).then(|| json!({"sizing": "fill", "value": fr}))
+        }
+        "HUG" => Some(json!({"sizing": "hug", "value": 0.0})),
+        _ => None,
+    }
 }
 
 /// The variable an `ALIAS` variable data points at.

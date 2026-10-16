@@ -599,7 +599,7 @@ impl<'a> Ctx<'a> {
             if let Some(c) = flag(j, "clipsContent") {
                 n.clip = c;
             }
-            n.layout = props::auto_layout(j);
+            n.layout = props::auto_layout(j, self.fig_sources.is_some());
             n.grids = props::layout_grids(j);
         }
         n.child_layout = props::child_layout(j, n.layout.as_ref().map(|l| l.mode), parent_mode);
