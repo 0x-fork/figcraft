@@ -106,7 +106,7 @@ fn connector_snapshot_respects_last_and_zero_child_slots() {
     let message = message();
     let node = message.get("nodeChanges").unwrap().list().first().unwrap();
     let view = View::of(node);
-    let mut mapper = Mapper::new(&message);
+    let mut mapper = Mapper::new(&message, MAX_NODES);
     mapper.count = MAX_NODES - 1;
     let children = mapper.connector_snapshot_children(&view, "1:123");
     assert_eq!(children.len(), 1, "the final available slot preserves the saved vector");
@@ -116,7 +116,7 @@ fn connector_snapshot_respects_last_and_zero_child_slots() {
     assert_eq!(mapper.count, MAX_NODES);
     assert!(mapper.warnings.iter().any(|warning| warning == &format!("the file has more than {MAX_NODES} layers; connector label was skipped")));
 
-    let mut mapper = Mapper::new(&message);
+    let mut mapper = Mapper::new(&message, MAX_NODES);
     mapper.count = MAX_NODES;
     let children = mapper.connector_snapshot_children(&view, "1:123");
     assert!(children.is_empty());
@@ -127,14 +127,14 @@ fn connector_snapshot_respects_last_and_zero_child_slots() {
 #[test]
 fn connector_snapshot_flattens_vector_at_depth_and_node_limits() {
     let message = message();
-    let mut mapper = Mapper::new(&message);
+    let mut mapper = Mapper::new(&message, MAX_NODES);
     let depth_limited = mapper.layer("1:123", None, Affine::IDENTITY, None, None, MAX_DEPTH).expect("terminal connector");
     assert_eq!(depth_limited["type"], "VECTOR");
     assert!(!depth_limited["fillGeometry"].as_array().unwrap().is_empty());
     assert!(depth_limited.get("children").is_none());
     assert!(mapper.warnings.iter().any(|warning| warning == "connector label was skipped: depth limit prevents nested snapshot children"));
 
-    let mut mapper = Mapper::new(&message);
+    let mut mapper = Mapper::new(&message, MAX_NODES);
     mapper.count = MAX_NODES - 1;
     let budget_limited = mapper.layer("1:123", None, Affine::IDENTITY, None, None, 0).expect("last allowed connector");
     assert_eq!(budget_limited["type"], "VECTOR");
