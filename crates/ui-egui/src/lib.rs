@@ -500,6 +500,8 @@ pub struct UiState {
     /// (`shortcuts::swallowed_paste`).
     pub v_pressed: bool,
     pub paste_event: bool,
+    /// The window got the focus back since the last V release.
+    pub refocused: bool,
     /// When (UI clock, seconds) open documents next get an autosave checkpoint.
     pub next_autosave: f64,
     /// With auto-save on: when (UI clock, seconds) files with unsaved changes are next saved, and
@@ -595,6 +597,7 @@ impl Default for UiState {
             last_copy: None,
             v_pressed: false,
             paste_event: false,
+            refocused: false,
             next_autosave: 0.0,
             auto_save_at: None,
             auto_saving: Vec::new(),

@@ -201,6 +201,30 @@ fn a_v_press_lost_to_another_window_does_not_block_the_next_cmd_v() {
 }
 
 #[test]
+fn v_held_while_the_window_was_away_pastes_nothing_on_release() {
+    let mut w = Win::new();
+    w.copy_image_elsewhere();
+    // Pressed in another window: only the focus and the release arrive here.
+    w.frame(vec![Event::WindowFocused(true)]);
+    w.frame(vec![key(Key::V, false, Modifiers::NONE)]);
+    w.frame(vec![]);
+    assert_eq!(w.named("Pasted image"), 0);
+    w.cmd_v(CMD);
+    assert_eq!(w.named("Pasted image"), 1, "the next Cmd+V still pastes");
+}
+
+#[test]
+fn cmd_v_in_a_panel_field_does_not_paste_on_the_canvas() {
+    let mut w = Win::new();
+    w.copy_image_elsewhere();
+    w.frame(vec![]);
+    w.app.field_focus = true;
+    w.frame(vec![key(Key::V, false, CMD)]);
+    w.frame(vec![]);
+    assert_eq!(w.named("Pasted image"), 0);
+}
+
+#[test]
 fn paste_here_prefers_a_newer_image_over_copied_layers() {
     let mut w = Win::new();
     w.app.session.execute("select.all", &json!({})).unwrap();

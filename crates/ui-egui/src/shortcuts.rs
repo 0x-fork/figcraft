@@ -146,10 +146,13 @@ pub fn swallowed_paste(app: &mut FigApp, ctx: &Context) -> bool {
                 Event::Paste(_) => ui.paste_event = true,
                 Event::Key { key: Key::V, pressed: true, .. } => ui.v_pressed = true,
                 Event::Key { key: Key::V, pressed: false, modifiers, .. } => {
-                    // Shift or Alt with it is another command (paste over, paste properties).
-                    paste = !ui.v_pressed && !ui.paste_event && !modifiers.shift && !modifiers.alt;
+                    // Shift or Alt with it is another command (paste over, paste properties). A V
+                    // held while the window was away comes back as a release alone: without Cmd
+                    // held, that's no paste.
+                    paste = !ui.v_pressed && !ui.paste_event && !modifiers.shift && !modifiers.alt && (modifiers.command || !ui.refocused);
                     ui.v_pressed = false;
                     ui.paste_event = false;
+                    ui.refocused = false;
                 }
                 // The other keys that paste (Shift+Insert, a Paste key) end their paste event.
                 Event::Key { key: Key::Insert | Key::Paste, pressed: false, .. } => ui.paste_event = false,
@@ -158,6 +161,7 @@ pub fn swallowed_paste(app: &mut FigApp, ctx: &Context) -> bool {
                     ui.v_pressed = false;
                     ui.paste_event = false;
                 }
+                Event::WindowFocused(true) => ui.refocused = true,
                 _ => {}
             }
         }
