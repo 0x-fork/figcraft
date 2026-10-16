@@ -1789,7 +1789,7 @@ impl Session {
                         let sel = self.selection().into_iter().filter(|x| *x != d).collect();
                         self.set_selection(sel);
                     }
-                    if !(ev.shift || ev.cmd || duplicate) {
+                    if deselect.is_none() && !(ev.shift || ev.cmd || duplicate) {
                         self.widget_click(start, ev.tol() * 2.0)?;
                     }
                 }
