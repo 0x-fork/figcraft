@@ -9,7 +9,7 @@ use super::super::network::{self, Network, Region, Segment, Vertex};
 use super::*;
 
 fn seg(a: usize, b: usize, ta: (f64, f64), tb: (f64, f64)) -> Segment {
-    Segment { a, ta, b, tb }
+    Segment { style: 0, a, ta, b, tb }
 }
 
 fn vtx(style: u32, x: f64, y: f64) -> Vertex {
@@ -264,21 +264,33 @@ fn vectors_import_as_editable_networks() {
 
 #[test]
 fn per_segment_stroke_styles_are_reported() {
-    let mut blob = square_blob();
-    // The first segment's style id follows the counts and the vertices (12 bytes each).
-    blob[12 + 4 * 12..12 + 4 * 12 + 4].copy_from_slice(&7u32.to_le_bytes());
-    let (net, styled) = network::decode_styled(&blob).unwrap();
-    assert_eq!((net.segments.len(), styled), (4, 1));
+    let styled_import = |segment_style: u32| {
+        let mut blob = square_blob();
+        // The first segment's style id follows the counts and the vertices (12 bytes each).
+        blob[12 + 4 * 12..12 + 4 * 12 + 4].copy_from_slice(&segment_style.to_le_bytes());
+        let (net, styled) = network::decode_styled(&blob).unwrap();
+        assert_eq!((net.segments.len(), net.segments[0].style, styled), (4, segment_style, 1));
+        let mut message = tail_message();
+        let Kv::Object(fields) = &mut message else { panic!() };
+        let Kv::Array(blobs) = &mut fields.iter_mut().find(|(key, _)| *key == "blobs").unwrap().1 else { panic!() };
+        blobs[1] = o(vec![("bytes", Kv::Bytes(blob))]);
+        let (doc, warnings) = import(&canvas(&schema(), &message), "Tail").unwrap();
+        assert_eq!(network_of(&doc, "Wave").segments.len(), 4);
+        warnings
+    };
     assert_eq!(network::decode_styled(&square_blob()).unwrap().1, 0);
     let plain = import(&tail_canvas(), "Tail").unwrap().1;
-    assert!(!plain.iter().any(|w| w.contains("stroke styles of single")), "{plain:?}");
-    let mut message = tail_message();
-    let Kv::Object(fields) = &mut message else { panic!() };
-    let Kv::Array(blobs) = &mut fields.iter_mut().find(|(key, _)| *key == "blobs").unwrap().1 else { panic!() };
-    blobs[1] = o(vec![("bytes", Kv::Bytes(blob))]);
-    let (doc, warnings) = import(&canvas(&schema(), &message), "Tail").unwrap();
-    assert!(warnings.iter().any(|w| w.contains("stroke styles of single vector network segments were left out")), "{warnings:?}");
-    assert_eq!(network_of(&doc, "Wave").segments.len(), 4);
+    assert!(!plain.iter().any(|w| w.contains("vector network segments")), "{plain:?}");
+    let uninterpreted = |w: &String| w.contains("metadata for styled vector network segments was not interpreted");
+    let missing = |w: &String| w.contains("vector network segments reference missing style entries");
+    // Style 1 has a row in the layer's override table; its contents are not applied.
+    let known = styled_import(1);
+    assert_eq!(known.iter().filter(|w| uninterpreted(w)).count(), 1, "{known:?}");
+    assert!(!known.iter().any(missing), "{known:?}");
+    // Style 7 names no row at all.
+    let unknown = styled_import(7);
+    assert_eq!(unknown.iter().filter(|w| missing(w)).count(), 1, "{unknown:?}");
+    assert!(!unknown.iter().any(uninterpreted), "{unknown:?}");
 }
 
 #[test]
@@ -382,6 +394,30 @@ fn damaged_network_blobs_never_panic() {
     for _ in 0..2000 {
         let junk: Vec<u8> = (0..(r.next() % 120)).map(|_| r.next() as u8).collect();
         let _ = network::decode(&junk);
+    }
+}
+
+#[test]
+fn segment_styles_round_trip_without_changing_geometry() {
+    let original = Network {
+        vertices: vec![vtx(0, 2.0, 3.0), vtx(0, 10.0, 20.0), vtx(0, 40.0, 50.0), vtx(0, 60.0, 70.0)],
+        segments: vec![
+            seg(0, 1, (1.0, 2.0), (3.0, 4.0)),
+            Segment { style: 17, a: 1, ta: (5.0, 6.0), b: 2, tb: (7.0, 8.0) },
+            Segment { style: 27, a: 2, ta: (9.0, 10.0), b: 3, tb: (11.0, 12.0) },
+        ],
+        regions: vec![],
+    };
+    let bytes = network::encode(&original);
+    let (decoded, styled) = network::decode_styled(&bytes).unwrap();
+    assert_eq!(styled, 2);
+    assert_eq!(decoded.segments.len(), 3);
+    for (got, want) in decoded.segments.iter().zip(&original.segments) {
+        assert_eq!(got.style, want.style);
+        assert_eq!((got.a, got.ta, got.b, got.tb), (want.a, want.ta, want.b, want.tb));
+    }
+    for cut in 0..bytes.len() {
+        assert!(network::decode_styled(&bytes[..cut]).is_none(), "truncated at {cut}");
     }
 }
 
