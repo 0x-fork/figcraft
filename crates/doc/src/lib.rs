@@ -781,6 +781,23 @@ impl Document {
         self.paste_nodes(&src_nodes, &map, id, parent, index)
     }
 
+    /// Deep-copy each of `ids`' subtrees to the end of `parent`, in order, returning the new root
+    /// ids. One id map covers every copy, so references between the copied subtrees (a navigation
+    /// from one copied frame to another) point at the copies.
+    pub fn duplicate_all_into(&mut self, ids: &[NodeId], parent: NodeId) -> DocResult<Vec<NodeId>> {
+        let mut map = BTreeMap::new();
+        let mut trees = Vec::with_capacity(ids.len());
+        for &id in ids {
+            let src_nodes: Vec<Node> = self.subtree(id).into_iter().filter_map(|i| self.node(i).cloned()).collect();
+            for n in &src_nodes {
+                let nid = self.alloc_id();
+                map.insert(n.id, nid);
+            }
+            trees.push((id, src_nodes));
+        }
+        trees.into_iter().map(|(id, src_nodes)| self.paste_nodes(&src_nodes, &map, id, parent, None)).collect()
+    }
+
     /// Insert copies of `nodes` (a subtree rooted at `root`, from this or another document) with ids
     /// remapped by `map`. Interactions, instance references and pattern sources pointing inside the
     /// subtree are remapped too.
@@ -903,15 +920,22 @@ impl Document {
     /// A unique name like "Frame 3" for a new node of a kind.
     pub fn next_name(&self, base: &str) -> String {
         let mut max = 0u64;
+        let mut taken = std::collections::BTreeSet::new();
         for n in self.nodes() {
             if let Some(rest) = n.name.strip_prefix(base)
                 && let Some(num) = rest.strip_prefix(' ')
                 && let Ok(k) = num.parse::<u64>()
             {
                 max = max.max(k);
+                taken.insert(k);
             }
         }
-        format!("{base} {}", max + 1)
+        let next = match max.checked_add(1) {
+            Some(next) => next,
+            // The counter is spent: the lowest free number instead of wrapping onto a name.
+            None => (1u64..).find(|k| !taken.contains(k)).unwrap_or(1),
+        };
+        format!("{base} {next}")
     }
 
     pub fn style(&self, id: &str) -> Option<&Style> {
