@@ -309,33 +309,46 @@ fn flatten(s: &mut Session, p: &Value) -> Result<Value> {
     let parent = doc.get(top)?.parent.ok_or_else(|| bad("vector.flatten", "can't flatten a page"))?;
     let index = doc.index_in_parent(top).map(|i| i + 1);
     let pw = doc.world_transform(parent);
-    let mut path = BezPath::new();
-    let mut even = false;
+    let mut net = VectorNetwork::default();
     for i in &ids {
         let Some(n) = doc.node(*i) else { continue };
-        // Booleans flatten to their result; strokes don't get outlined.
-        let Some((mut op, rule)) = (match &n.kind {
-            NodeKind::Group | NodeKind::Frame | NodeKind::Component { .. } | NodeKind::Instance { .. } => figcraft_render::subtree_outline(doc, n, 0),
-            _ => figcraft_render::node_outline(doc, n),
-        }) else {
-            continue;
+        // Vectors keep their own network (open paths and unfilled loops have no fill outline);
+        // booleans flatten to their result; strokes don't get outlined.
+        let mut part = match &n.kind {
+            NodeKind::Vector { network } => network.clone(),
+            _ => {
+                let Some((op, rule)) = (match &n.kind {
+                    NodeKind::Group | NodeKind::Frame | NodeKind::Component { .. } | NodeKind::Instance { .. } => {
+                        figcraft_render::subtree_outline(doc, n, 0)
+                    }
+                    _ => figcraft_render::node_outline(doc, n),
+                }) else {
+                    continue;
+                };
+                let mut part = VectorNetwork::from_path(&op);
+                if rule == figcraft_render::FillRule::EvenOdd {
+                    for r in &mut part.regions {
+                        r.winding = WindingRule::EvenOdd;
+                    }
+                }
+                part
+            }
         };
-        even |= rule == figcraft_render::FillRule::EvenOdd;
         // Into the common parent's space.
-        let w = doc.world_transform(*i);
-        op.apply_affine(pw.inverse() * w);
-        path.extend(op.elements().iter().copied());
+        let all: Vec<usize> = (0..part.vertices.len()).collect();
+        crate::vectoredit::ops::transform_vertices(&mut part, &all, pw.inverse() * doc.world_transform(*i));
+        let (nv, ns) = (net.vertices.len(), net.segments.len());
+        net.vertices.extend(part.vertices);
+        net.segments.extend(part.segments.into_iter().map(|s| Segment { a: s.a + nv, b: s.b + nv, ..s }));
+        net.regions.extend(
+            part.regions.into_iter().map(|r| Region { loops: r.loops.into_iter().map(|l| l.into_iter().map(|s| s + ns).collect()).collect(), ..r }),
+        );
     }
-    if path.elements().is_empty() {
+    let Some(bb) = net.bounds() else {
         return Err(EngineError::Disabled("vector.flatten".into(), "nothing to flatten".into()));
-    }
+    };
     let first = ids.first().and_then(|i| doc.node(*i)).cloned();
-    let bb = path.bounding_box();
-    path.apply_affine(Affine::translate((-bb.x0, -bb.y0)));
-    let mut net = VectorNetwork::from_path(&path);
-    for r in &mut net.regions {
-        r.winding = if even { WindingRule::EvenOdd } else { WindingRule::NonZero };
-    }
+    net.translate(-bb.x0, -bb.y0);
     let vid = doc.alloc_id();
     let name = first.as_ref().map(|f| f.name.clone()).unwrap_or_else(|| "Vector".into());
     let mut v = Node::new(vid, NodeKind::Vector { network: net }, name, bb.width(), bb.height());
