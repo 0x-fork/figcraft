@@ -90,6 +90,10 @@ fn normalize_override_segment(path: &mut [String], index: usize, scope: &Overrid
     }
 }
 
+#[cfg(test)]
+#[path = "map_connector_snapshot_budget_tests.rs"]
+mod connector_snapshot_budget_tests;
+
 /// A `GUID`-holding reference (`StyleId`, `VariableID`, …): its `guid`.
 fn ref_guid(v: &Kv) -> Option<String> {
     v.get("guid").and_then(guid).filter(|g| g != NO_STYLE)
@@ -750,17 +754,27 @@ impl<'a> Mapper<'a> {
             _ => id.to_string(),
         };
         let own = view.str("type").unwrap_or("");
-        let stand = stand_in(own);
+        let connector_snapshot = own == "CONNECTOR" && self.connector_snapshot_supported(&view);
+        // Only a connector with a saved label needs the frame wrapper; an unlabelled one stays a single vector.
+        let connector_terminal =
+            connector_snapshot && (!connector_has_saved_label(&view) || depth >= MAX_DEPTH || self.count.saturating_add(1) >= MAX_NODES);
+        // A supported connector snapshot has its own note below instead of the generic stand-in one.
+        let stand = stand_in(own).filter(|_| !connector_snapshot);
         let ty = match own {
             "ROUNDED_RECTANGLE" => "RECTANGLE",
             "SYMBOL" => "COMPONENT",
             "FRAME" if view.flag("isStateGroup") == Some(true) => "COMPONENT_SET",
             "FRAME" if view.flag("resizeToFit") == Some(true) => "GROUP",
             "VARIABLE" | "VARIABLE_SET" => return None,
+            "CONNECTOR" if connector_snapshot && connector_terminal => "VECTOR",
+            "CONNECTOR" if connector_snapshot => "FRAME",
             t => stand.map_or(t, |s| s.0),
         };
         if let Some((_, what)) = stand {
             self.warn(format!("{} layers import as {what}", own.to_ascii_lowercase().replace('_', " ")));
+        }
+        if connector_snapshot {
+            self.warn("connector layers import as static frame/vector snapshots with labels when present; live endpoint bindings are not retained");
         }
         self.count += 1;
         let mut o = Obj::new();
@@ -790,7 +804,18 @@ impl<'a> Mapper<'a> {
             }
             _ => {}
         }
-        if own == "CONNECTOR" {
+        if own == "CONNECTOR" && connector_snapshot {
+            if connector_terminal {
+                self.connector_snapshot_flatten(&mut o, &view, &rest_id, space);
+            } else {
+                o.insert("fills".into(), json!([]));
+                o.insert("strokes".into(), json!([]));
+                for key in ["styles", "strokeWeight", "strokeAlign", "strokeJoin", "strokeDashes", "strokeCap"] {
+                    o.remove(key);
+                }
+                o.insert("clipsContent".into(), json!(false));
+            }
+        } else if own == "CONNECTOR" {
             self.connector(&mut o, &view, space);
         }
         if ty == "COMPONENT" || ty == "COMPONENT_SET" {
@@ -798,8 +823,10 @@ impl<'a> Mapper<'a> {
         }
         self.prop_refs(&mut o, &view, inst);
         let child_space = if matches!(ty, "GROUP" | "BOOLEAN_OPERATION") { space * view.transform().unwrap_or_default() } else { Affine::IDENTITY };
-        let mut kids = Vec::new();
-        if ty == "INSTANCE" {
+        let mut kids = if connector_snapshot && !connector_terminal { self.connector_snapshot_children(&view, &rest_id) } else { Vec::new() };
+        if connector_terminal {
+            // The saved vector is flattened into the connector node when no child slot remains.
+        } else if ty == "INSTANCE" {
             if let Some((sub, sym)) = self.instance(&mut o, &view, id, inst, &rest_id) {
                 let main = self.nodes.get(&sym).map(|m| View::of(m));
                 let fit = Fit::frame(main.and_then(|m| m.size()), view.size());
@@ -898,7 +925,7 @@ impl<'a> Mapper<'a> {
                 o.insert(to.into(), json!(cap_name(c)));
             }
         }
-        if own_text(v).is_some() {
+        if connector_has_saved_label(v) {
             self.warn("connector labels were skipped");
         }
         if ["vectorNetwork", "fillGeometry", "strokeGeometry"].iter().any(|k| o.contains_key(*k)) {
@@ -936,6 +963,207 @@ impl<'a> Mapper<'a> {
             "vectorNetwork".into(),
             json!({"vertices": [{"x": a.x - x0, "y": a.y - y0}, {"x": b.x - x0, "y": b.y - y0}], "segments": [{"a": 0, "b": 1}]}),
         );
+    }
+
+    fn connector_snapshot_supported(&self, v: &View<'a>) -> bool {
+        if v.str("connectorType") != Some("MANUAL")
+            || v.get("connectorVersion").and_then(Kv::f64) != Some(1.0)
+            || v.str("connectorLineStyle") != Some("STRAIGHT")
+            || v.get("derivedImmutableFrameData").and_then(|data| data.get("version")).and_then(Kv::f64) != Some(1.0)
+        {
+            return false;
+        }
+        let Some(line) = connector_record(v, "derivedImmutableFrameData", 0) else { return false };
+        if line.get("transform").and_then(matrix).is_none() || valid_size(line.get("size")).is_none() {
+            return false;
+        }
+        let geometry = ["fillGeometry", "strokeGeometry"].iter().any(|key| {
+            line.get(key).map(Kv::list).unwrap_or_default().iter().any(|path| {
+                num(path, "commandsBlob")
+                    .and_then(|index| self.blobs.get(index as usize))
+                    .and_then(|blob| svg_path(blob))
+                    .is_some_and(|data| !data.is_empty())
+            })
+        });
+        let network = line
+            .get("vectorData")
+            .and_then(|data| num(data, "vectorNetworkBlob"))
+            .and_then(|index| self.blobs.get(index as usize))
+            .and_then(|blob| network::decode_styled(blob))
+            .is_some_and(|(network, _)| !network.segments.is_empty());
+        (geometry || network) && connector_record(v, "nodeGenerationData", 0).is_some()
+    }
+
+    fn connector_snapshot_flatten(&mut self, out: &mut Obj, v: &View<'a>, rest_id: &str, space: Affine) {
+        let parent = space * v.get("transform").and_then(matrix).unwrap_or_default();
+        let Some(vector) = self.connector_snapshot_vector(v, rest_id, parent, false) else {
+            self.warn("connector snapshot vector data is missing; connector was left empty");
+            return;
+        };
+        for key in [
+            "size",
+            "relativeTransform",
+            "fills",
+            "strokes",
+            "strokeWeight",
+            "strokeAlign",
+            "strokeJoin",
+            "strokeDashes",
+            "strokeCap",
+            "strokeCapStart",
+            "strokeCapEnd",
+            "styles",
+            "fillGeometry",
+            "strokeGeometry",
+            "vectorNetwork",
+        ] {
+            if let Some(value) = vector.get(key) {
+                out.insert(key.to_string(), value.clone());
+            }
+        }
+        if vector.get("visible").and_then(Value::as_bool) == Some(false) {
+            out.insert("visible".into(), json!(false));
+        }
+        if let Some(line_opacity) = vector.get("opacity").and_then(Value::as_f64) {
+            let root_opacity = out.get("opacity").and_then(Value::as_f64).unwrap_or(1.0);
+            out.insert("opacity".into(), json!(root_opacity * line_opacity));
+        }
+        if connector_has_saved_label(v) {
+            let reason = if self.count >= MAX_NODES { "node budget" } else { "depth limit" };
+            self.warn(format!("connector label was skipped: {reason} prevents nested snapshot children"));
+        }
+    }
+
+    /// Build the saved vector child or flattened terminal connector from the same child-only view.
+    fn connector_snapshot_vector(&mut self, v: &View<'a>, rest_id: &str, space: Affine, nested: bool) -> Option<Obj> {
+        let (Some(line), Some(line_style)) = (connector_record(v, "derivedImmutableFrameData", 0), connector_record(v, "nodeGenerationData", 0))
+        else {
+            return None;
+        };
+        let mut vector = Obj::new();
+        vector.insert("id".into(), json!(if nested { format!("{rest_id};vector") } else { rest_id.to_string() }));
+        vector.insert("type".into(), json!("VECTOR"));
+        if let Some(name) = v.str("name") {
+            vector.insert("name".into(), json!(if nested { format!("{name} vector") } else { name.to_string() }));
+        }
+        let line_view = View::of(line).with([line_style]);
+        self.common(&mut vector, &line_view, "VECTOR", space, None);
+        self.geometry(&mut vector, &line_view);
+        for (from, to) in [("connectorStartCap", "strokeCapStart"), ("connectorEndCap", "strokeCapEnd")] {
+            if let Some(cap) = v.str(from) {
+                vector.entry(to).or_insert_with(|| json!(cap_name(cap)));
+            }
+        }
+        Some(vector)
+    }
+
+    /// Snapshot the straight, manual connector contract carried by its generated children.
+    fn connector_snapshot_children(&mut self, v: &View<'a>, rest_id: &str) -> Vec<Value> {
+        if self.count >= MAX_NODES {
+            self.warn(format!("the file has more than {MAX_NODES} layers; connector snapshot children were skipped"));
+            return Vec::new();
+        }
+        let Some(vector) = self.connector_snapshot_vector(v, rest_id, Affine::IDENTITY, true) else {
+            self.warn("connector snapshot vector data is missing; connector was left empty");
+            return Vec::new();
+        };
+        let mut children = Vec::new();
+        children.push(Value::Object(vector));
+        self.count += 1;
+
+        let Some(text_frame) = connector_record(v, "derivedImmutableFrameData", 1) else {
+            if connector_has_saved_label(v) {
+                self.warn("connector label was skipped: derived text bounds are missing");
+            }
+            return children;
+        };
+        let Some(background) = connector_record(v, "derivedImmutableFrameData", 2) else {
+            if connector_has_saved_label(v) || valid_size(text_frame.get("size")).is_some_and(|(w, h)| w > 0.0 && h > 0.0) {
+                self.warn("connector label was skipped: derived background bounds are missing");
+            }
+            return children;
+        };
+        let Some(text_style) = connector_record(v, "nodeGenerationData", 1) else {
+            if valid_size(text_frame.get("size")).is_some_and(|(w, h)| w > 0.0 && h > 0.0) {
+                self.warn("connector label was skipped: text style data is missing");
+            }
+            return children;
+        };
+        let text_view = View::of(text_frame).with([text_style]);
+        let Some(characters) = text_view.get("textData").and_then(|d| d.get("characters")).and_then(Kv::str).filter(|s| !s.trim().is_empty()) else {
+            return children;
+        };
+        let Some(text_transform) = text_frame.get("transform").and_then(matrix) else {
+            self.warn("connector label was skipped: text transform is invalid");
+            return children;
+        };
+        let Some(background_transform) = background.get("transform").and_then(matrix) else {
+            self.warn("connector label was skipped: background transform is invalid");
+            return children;
+        };
+        let Some(text_size) = valid_size(text_frame.get("size")) else {
+            self.warn("connector label was skipped: text bounds are invalid");
+            return children;
+        };
+        let Some(background_size) = valid_size(background.get("size")) else {
+            self.warn("connector label was skipped: background bounds are invalid");
+            return children;
+        };
+        let composed_text_transform = background_transform * text_transform;
+        if !composed_text_transform.as_coeffs().iter().all(|coefficient| coefficient.is_finite()) {
+            self.warn("connector label was skipped: composed text transform is invalid");
+            return children;
+        }
+
+        let Some(background_style) = connector_record(v, "nodeGenerationData", 2) else {
+            self.warn("connector label background was skipped: style data is missing");
+            self.add_connector_text(&mut children, rest_id, characters, text_size, composed_text_transform, &text_view);
+            return children;
+        };
+        let background_view = View::of(background).with([background_style]);
+        if !background_view.list("fillPaints").is_empty() {
+            if self.count >= MAX_NODES {
+                self.warn(format!("the file has more than {MAX_NODES} layers; connector label background was skipped"));
+            } else {
+                let mut rect = Obj::new();
+                rect.insert("id".into(), json!(format!("{rest_id};label-background")));
+                rect.insert("type".into(), json!("RECTANGLE"));
+                rect.insert("name".into(), json!("connector label background"));
+                self.common(&mut rect, &background_view, "RECTANGLE", Affine::IDENTITY, None);
+                rect.insert("size".into(), json!({"x": background_size.0, "y": background_size.1}));
+                rect.insert("relativeTransform".into(), rows(background_transform));
+                rect.insert("clipsContent".into(), json!(false));
+                children.push(Value::Object(rect));
+                self.count += 1;
+            }
+        }
+        self.add_connector_text(&mut children, rest_id, characters, text_size, composed_text_transform, &text_view);
+        children
+    }
+
+    fn add_connector_text(
+        &mut self,
+        children: &mut Vec<Value>,
+        rest_id: &str,
+        characters: &str,
+        size: (f64, f64),
+        transform: Affine,
+        view: &View<'a>,
+    ) {
+        if self.count >= MAX_NODES {
+            self.warn(format!("the file has more than {MAX_NODES} layers; connector label was skipped"));
+            return;
+        }
+        let mut text = Obj::new();
+        text.insert("id".into(), json!(format!("{rest_id};label-text")));
+        text.insert("type".into(), json!("TEXT"));
+        text.insert("name".into(), json!(characters));
+        text.insert("size".into(), json!({"x": size.0, "y": size.1}));
+        self.common(&mut text, view, "TEXT", Affine::IDENTITY, None);
+        text.insert("relativeTransform".into(), rows(transform));
+        self.text(&mut text, view);
+        children.push(Value::Object(text));
+        self.count += 1;
     }
 
     /// Fields every layer type shares.
@@ -1850,6 +2078,30 @@ fn variable_data(d: &Kv, depth: usize) -> Option<Value> {
 /// The text a layer that isn't a text layer carries (a note's, a shape's), unless blank.
 fn own_text<'a>(v: &View<'a>) -> Option<&'a str> {
     v.get("textData").and_then(|t| t.get("characters")).and_then(Kv::str).filter(|c| !c.trim().is_empty())
+}
+
+/// A generated connector child is identified by one exact template GUID, not its array position.
+fn connector_record<'a>(v: &View<'a>, field: &str, local_id: u32) -> Option<&'a Kv<'a>> {
+    v.get(field)?.get("overrides")?.list().iter().find(|row| {
+        row.get("guidPath").and_then(|path| path.get("guids")).map(Kv::list).is_some_and(|guids| {
+            guids.len() == 1 && num(&guids[0], "sessionID") == Some(40_000_000.0) && num(&guids[0], "localID") == Some(f64::from(local_id))
+        })
+    })
+}
+
+fn connector_has_saved_label(v: &View<'_>) -> bool {
+    own_text(v).is_some()
+        || connector_record(v, "nodeGenerationData", 1)
+            .and_then(|r| r.get("textData"))
+            .and_then(|d| d.get("characters"))
+            .and_then(Kv::str)
+            .is_some_and(|s| !s.trim().is_empty())
+}
+
+fn valid_size(value: Option<&Kv<'_>>) -> Option<(f64, f64)> {
+    let x = num(value?, "x")?;
+    let y = num(value?, "y")?;
+    (x.is_finite() && y.is_finite() && x >= 0.0 && y >= 0.0).then_some((x, y))
 }
 
 /// The REST name of a stroke cap.

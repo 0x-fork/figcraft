@@ -12,6 +12,8 @@
 //! tables, …) come in as the closest frames, text and vectors. Anything not understood is skipped
 //! with a warning; malformed input never panics.
 
+#[cfg(test)]
+mod connector_label_tests;
 mod export;
 #[cfg(test)]
 mod export_tests;
