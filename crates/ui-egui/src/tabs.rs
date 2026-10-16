@@ -28,7 +28,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
             }
         }
-        let buttons_w = if app.ui.title_bar == TitleBar::Custom { window_buttons(ui, rect) } else { 0.0 };
+        let buttons_w = if app.ui.title_bar == TitleBar::Custom { window_buttons(app, ui, rect) } else { 0.0 };
         let mut x = rect.min.x + if app.ui.title_bar == TitleBar::Inset { 76.0 } else { 8.0 };
         // Home.
         let hr = Rect::from_min_size(pos2(x, rect.min.y), vec2(44.0, HEIGHT));
@@ -256,7 +256,7 @@ pub fn live_mark(app: &FigApp, uid: u64) -> Option<bool> {
 }
 
 /// Minimise, maximise/restore and close at the right end of the title bar; returns their width.
-fn window_buttons(ui: &mut Ui, bar: Rect) -> f32 {
+fn window_buttons(app: &mut FigApp, ui: &mut Ui, bar: Rect) -> f32 {
     const W: f32 = 46.0;
     let t = Tokens::get(ui.ctx());
     let max = ui.input(|i| i.viewport().maximized.unwrap_or(false));
@@ -284,7 +284,11 @@ fn window_buttons(ui: &mut Ui, bar: Rect) -> f32 {
         }
         icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(14.0, 14.0)), icon, col);
         if resp.clicked() {
-            ui.ctx().send_viewport_cmd(cmd);
+            if close {
+                crate::windows::request_close(app, ui.ctx());
+            } else {
+                ui.ctx().send_viewport_cmd(cmd);
+            }
         }
     }
     W * 3.0

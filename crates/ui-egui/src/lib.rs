@@ -1312,9 +1312,14 @@ impl FigApp {
         self.end_pen_outside_design();
         tabs::tab_bar(self, ui);
         if self.ui.present.is_some() {
+            // A close request can arrive while the presenter fills the window. Let its unsaved
+            // changes dialog take Escape and draw above the player just as it does in the editor.
+            dialogs::keys(self, &ctx);
             present::show(self, ui);
+            dialogs::show(self, &ctx);
             // What went wrong while presenting (a widget's plugin failing) shows over it.
             self.toast_ui(&ctx);
+            windows::requests(self, &ctx);
             return;
         }
         if !self.has_files() || self.ui.home {

@@ -144,7 +144,11 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 - **Landed (2026-10-16):** choosing a presenter device reflows a copy of the frame to its screen
   size using constraints and auto layout, clears the previous screen's scroll and pan, and keeps
   the file's frame geometry unchanged; No device restores the original size. Tablet and computer
-  presets show the screen at their resolution without a drawn hardware body.
+  presets show the screen at their resolution without a drawn hardware body. In the full presenter,
+  dragging inside a phone or tablet scrolls content in either direction when it exceeds the screen,
+  even when the pointer moves outside the device. The device remains fixed; computer presets keep
+  their ordinary scrolling rules. These gestures do not alter the file. Closing a window from
+  presentation shows the unsaved-changes dialog over the presenter.
 - **Evidence:** ROADMAP item 7 ("Left: tool by tool, panel by panel against the incumbent").
 - **Impact:** Figma users notice the feel within minutes; it decides whether they stay.
 - **Estimate:** 40–60 h. Detail in [`ui-parity.md`](ui-parity.md).

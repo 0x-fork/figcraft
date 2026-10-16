@@ -541,7 +541,13 @@ impl Presenter {
     /// device's screen, other frames within themselves.
     fn range(&self, doc: &Document, frame: NodeId) -> (f64, f64) {
         let vp = if frame == self.current { viewport(doc, frame) } else { None };
-        scroll_range_in(doc, frame, vp)
+        // In a responsive preview, make content outside the device reachable even if the source
+        // frame has no overflow mode. Its settings and geometry stay untouched in the file.
+        let mobile = frame == self.current && page_settings(doc, frame).device().is_some_and(|d| d.rotates);
+        let overflow = doc
+            .node(frame)
+            .map_or(Overflow::None, |n| if mobile && self.fit.is_some() && n.overflow == Overflow::None { Overflow::Both } else { n.overflow });
+        scroll_range_with_overflow(doc, frame, vp, overflow)
     }
 
     /// What "Scroll to" `dest` moves: every scrolling frame around it, innermost first, brings the
@@ -1171,8 +1177,13 @@ pub fn scroll_range(doc: &Document, frame: NodeId) -> (f64, f64) {
 /// frame taller than the screen scrolls through its whole height. Without a viewport the frame
 /// shows at its own size and what overflows it scrolls. Only the axes its overflow allows scroll.
 pub fn scroll_range_in(doc: &Document, frame: NodeId, viewport: Option<(f64, f64)>) -> (f64, f64) {
+    let overflow = doc.node(frame).map_or(Overflow::None, |n| n.overflow);
+    scroll_range_with_overflow(doc, frame, viewport, overflow)
+}
+
+fn scroll_range_with_overflow(doc: &Document, frame: NodeId, viewport: Option<(f64, f64)>, overflow: Overflow) -> (f64, f64) {
     let Some(n) = doc.node(frame) else { return (0.0, 0.0) };
-    if n.overflow == Overflow::None {
+    if overflow == Overflow::None {
         return (0.0, 0.0);
     }
     let (mut x1, mut y1) = (0.0f64, 0.0f64);
@@ -1197,8 +1208,8 @@ pub fn scroll_range_in(doc: &Document, frame: NodeId, viewport: Option<(f64, f64
         }
         None => (n.width, n.height),
     };
-    let rx = if matches!(n.overflow, Overflow::Horizontal | Overflow::Both) { (x1 - vw).max(0.0) } else { 0.0 };
-    let ry = if matches!(n.overflow, Overflow::Vertical | Overflow::Both) { (y1 - vh).max(0.0) } else { 0.0 };
+    let rx = if matches!(overflow, Overflow::Horizontal | Overflow::Both) { (x1 - vw).max(0.0) } else { 0.0 };
+    let ry = if matches!(overflow, Overflow::Vertical | Overflow::Both) { (y1 - vh).max(0.0) } else { 0.0 };
     (if rx.is_finite() { rx } else { 0.0 }, if ry.is_finite() { ry } else { 0.0 })
 }
 
@@ -2367,7 +2378,7 @@ fn scrollers_at(p: &Presenter, base: &Document, disp: &Document, root: NodeId, p
     let mut out: Vec<NodeId> = disp
         .subtree(root)
         .into_iter()
-        .filter(|f| disp.node(*f).is_some_and(|n| n.visible && n.overflow != Overflow::None))
+        .filter(|f| disp.node(*f).is_some_and(|n| n.visible))
         .filter(|f| disp.world_bounds(*f).is_some_and(|b| place.rect(b).contains(q)))
         .filter(|f| p.range(base, *f) != (0.0, 0.0))
         .collect();
@@ -2574,14 +2585,21 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
             }
             return;
         }
-        // Otherwise the drag scrolls the innermost frame under it that scrolls, else pans a view
-        // bigger than the window.
+        // A drag begun inside a mobile screen moves its content, even if the pointer leaves the
+        // screen. The device body stays in place even when the drag begins outside its screen.
+        // Panning the whole view remains available only without a mobile device.
         if let Some(base) = p.doc.clone() {
-            let target = scrollers_at(p, &base, doc, root, &place, start)
-                .first()
+            let horizontal = d.x.abs() >= d.y.abs();
+            let scrolls = scrollers_at(p, &base, doc, root, &place, start);
+            let on_axis = |range: (f64, f64)| if horizontal { range.0 > 0.0 } else { range.1 > 0.0 };
+            let mobile = page_settings(&base, root).device().is_some_and(|device| device.rotates);
+            let target = scrolls
+                .iter()
                 .copied()
+                .find(|f| on_axis(p.range(&base, *f)))
+                .or_else(|| scrolls.first().copied())
                 .map(Scroller::Frame)
-                .or((p.pan_range != (0.0, 0.0)).then_some(Scroller::View));
+                .or((!mobile && p.pan_range != (0.0, 0.0)).then_some(Scroller::View));
             if let Some(t) = target {
                 p.fling = None;
                 p.drag_scroll = Some((t, clamp_scroll(p.offset(t), p.limits(&base, t))));
@@ -2869,6 +2887,14 @@ mod tests {
         assert_eq!(ui.app.inspect()["presenter"]["scrollRange"], json!([0.0, 0.0]));
         assert_eq!(ui.app.session.doc().unwrap().node(frame).unwrap().width, 894.0, "the saved design keeps its geometry");
 
+        let area = Rect::from_min_max(pos2(0.0, 40.0), pos2(1440.0, 900.0));
+        let screen_before = layout(ui.app.ui.present.as_mut().unwrap(), area, FULL).unwrap().screen;
+        ui.button(pos2(720.0, 440.0), true);
+        ui.frame(vec![egui::Event::PointerMoved(pos2(300.0, 300.0))]);
+        ui.button(pos2(300.0, 300.0), false);
+        assert_eq!(ui.app.inspect()["presenter"]["scroll"], json!([0.0, 0.0]), "fitted content does not move");
+        assert_eq!(layout(ui.app.ui.present.as_mut().unwrap(), area, FULL).unwrap().screen, screen_before);
+
         let mut presenter = ui.app.ui.present.take().unwrap();
         choose_device(&mut ui.app, &mut presenter, "None");
         ui.app.ui.present = Some(presenter);
@@ -2903,6 +2929,50 @@ mod tests {
             assert!((f64::from(laid.screen.height()) / laid.scale - height).abs() < 0.1, "{name}: height");
             assert_eq!(ui.app.session.doc().unwrap().node(frame).unwrap().width, 894.0);
         }
+    }
+
+    #[test]
+    fn responsive_device_scrolls_content_in_both_directions_without_changing_saved_overflow() {
+        let mut session = figcraft_engine::Session::new();
+        let frame = id(&session.execute("node.create", &json!({"type": "frame", "width": 894, "height": 844})).unwrap());
+        session.execute("node.create", &json!({"type": "rectangle", "parent": frame, "x": 650, "y": 1050, "width": 80, "height": 80})).unwrap();
+        let mut ui = Ui::new(session);
+        ui.run("proto.present", json!({"start": frame}));
+        let mut presenter = ui.app.ui.present.take().unwrap();
+        choose_device(&mut ui.app, &mut presenter, "iPhone 17");
+        ui.app.ui.present = Some(presenter);
+        ui.frame(vec![]);
+
+        let range = &ui.app.inspect()["presenter"]["scrollRange"];
+        assert!(range[0].as_f64().unwrap() > 0.0 && range[1].as_f64().unwrap() > 0.0, "{range}");
+        let start = pos2(720.0, 440.0);
+        ui.button(start, true);
+        ui.frame(vec![egui::Event::PointerMoved(start - vec2(100.0, 120.0))]);
+        ui.button(start - vec2(100.0, 120.0), false);
+        let scroll = &ui.app.inspect()["presenter"]["scroll"];
+        assert!(scroll[0].as_f64().unwrap() > 0.0 && scroll[1].as_f64().unwrap() > 0.0, "{scroll}");
+        assert_eq!(ui.app.session.doc().unwrap().node(frame).unwrap().overflow, Overflow::None);
+        assert_eq!(ui.app.session.doc().unwrap().node(frame).unwrap().width, 894.0);
+
+        // Like the phone preview, the content keeps following a drag after the pointer leaves
+        // the screen, while the device itself stays fixed on the stage.
+        ui.frames(60, Vec::new);
+        let area = Rect::from_min_max(pos2(0.0, 40.0), pos2(1440.0, 900.0));
+        let screen_before = layout(ui.app.ui.present.as_mut().unwrap(), area, FULL).unwrap().screen;
+        ui.button(start, true);
+        ui.frame(vec![egui::Event::PointerMoved(pos2(300.0, 300.0))]);
+        let during = ui.app.inspect()["presenter"].clone();
+        assert!(during["scroll"][0].as_f64().unwrap() > 0.0, "{during}");
+        let screen_after = layout(ui.app.ui.present.as_mut().unwrap(), area, FULL).unwrap().screen;
+        assert_eq!(screen_after, screen_before);
+        ui.button(pos2(300.0, 300.0), false);
+
+        let mut presenter = ui.app.ui.present.take().unwrap();
+        choose_device(&mut ui.app, &mut presenter, "Desktop");
+        ui.app.ui.present = Some(presenter);
+        ui.frame(vec![]);
+        let desktop = ui.app.inspect()["presenter"].clone();
+        assert_eq!(desktop["scrollRange"], json!([0.0, 0.0]));
     }
 
     fn doc_with_two_frames() -> (Document, NodeId, NodeId) {
