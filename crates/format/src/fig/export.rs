@@ -1502,7 +1502,6 @@ impl<'d> Exporter<'d> {
             ("textExplicitLayoutVersion", u(1)),
             ("textBidiVersion", u(1)),
             ("textTracking", fl(0.0)),
-            ("textDecorationSkipInk", b(true)),
             ("emojiImageSet", e("APPLE")),
         ]);
         if td.auto_resize == TextAutoResize::Truncate {
@@ -1589,7 +1588,7 @@ impl<'d> Exporter<'d> {
             self.warn("nested list levels were written as the first level");
         }
         let styles = std::iter::once(&td.style).chain(td.runs.iter().map(|r| &r.style));
-        if styles.clone().any(|st| st.decoration_look.is_some() || !st.variations.is_empty()) {
+        if styles.clone().any(|st| unsupported_decoration_look(st) || !st.variations.is_empty()) {
             self.warn("text decoration looks and variable font settings were left out");
         }
         if td.path.is_some() {
@@ -2394,6 +2393,12 @@ fn key_codes(key: &str) -> Option<(Vec<i64>, bool)> {
 }
 
 /// The text style fields of a layer or of an override table entry.
+fn unsupported_decoration_look(st: &TextStyle) -> bool {
+    let mut look = st.look();
+    look.skip_ink = false;
+    look != Default::default()
+}
+
 fn style_fields(st: &TextStyle, f: &mut Fields) {
     let line_height = match st.line_height {
         // Percent units count from the font's own line height (100 % is "auto"); a share of the
@@ -2425,6 +2430,7 @@ fn style_fields(st: &TextStyle, f: &mut Fields) {
         ("letterSpacing", letter_spacing),
         ("textCase", e(case)),
         ("textDecoration", e(decoration)),
+        ("textDecorationSkipInk", b(st.look().skip_ink)),
     ]);
     if let Some(url) = &st.link {
         f.push(("hyperlink", o(vec![("url", s(url))])));

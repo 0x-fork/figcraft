@@ -1119,6 +1119,9 @@ impl<'a> Mapper<'a> {
         if let Some(decoration @ ("NONE" | "UNDERLINE" | "STRIKETHROUGH")) = v.str("textDecoration") {
             style.insert("textDecoration".into(), json!(decoration));
         }
+        if let Some(skip_ink) = v.flag("textDecorationSkipInk") {
+            style.insert("textDecorationSkipInk".into(), json!(skip_ink));
+        }
         if let Some(case @ ("ORIGINAL" | "UPPER" | "LOWER" | "TITLE" | "SMALL_CAPS" | "SMALL_CAPS_FORCED")) = v.str("textCase") {
             style.insert("textCase".into(), json!(case));
         }
@@ -2096,6 +2099,9 @@ fn text_style(v: &View, size: Option<f64>) -> Obj {
     copy_num(&mut s, v, "paragraphIndent", "paragraphIndent");
     copy_str(&mut s, v, "textCase", "textCase");
     copy_str(&mut s, v, "textDecoration", "textDecoration");
+    if let Some(skip_ink) = v.flag("textDecorationSkipInk") {
+        s.insert("textDecorationSkipInk".into(), json!(skip_ink));
+    }
     let font_size = v.num("fontSize").or(size).unwrap_or(12.0);
     if let Some(ls) = v.get("letterSpacing") {
         let val = num(ls, "value").unwrap_or(0.0);
