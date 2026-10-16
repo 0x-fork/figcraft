@@ -652,7 +652,15 @@ pub struct Prefs {
     pub home_sort: String,
     /// Which way: `"desc"` (newest first, Z to A) or `"asc"`.
     pub home_order: String,
+    /// Recently run actions (the Actions palette's Recents), newest first, at most
+    /// [`MAX_RECENT_ACTIONS`]. Entries are `command:<id>`, `plugin:<plugin>/<command>` or
+    /// `widget:<plugin>`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recent_actions: Vec<String>,
 }
+
+/// Recently run actions kept for the Actions palette (newest first).
+pub const MAX_RECENT_ACTIONS: usize = 5;
 
 impl Default for Prefs {
     fn default() -> Self {
@@ -681,6 +689,7 @@ impl Default for Prefs {
             home_views: BTreeMap::new(),
             home_sort: "modified".into(),
             home_order: "desc".into(),
+            recent_actions: Vec::new(),
         }
     }
 }

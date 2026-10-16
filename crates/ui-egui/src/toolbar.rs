@@ -72,9 +72,18 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         builder_toolbar(app, ui);
         return;
     }
-    let cell = 32.0;
-    let gap = 4.0;
-    let width = GROUPS.len() as f32 * (cell + 4.0) + 4.0 * 10.0 + 2.0 * (cell + 4.0) + 16.0 + 4.0 * 34.0 + 24.0;
+    main_toolbar(app, ui, canvas, &t);
+}
+
+/// The main toolbar pill's width: the Actions palette matches it so the two read as one bar.
+pub(crate) fn main_width() -> f32 {
+    let (cell, gap) = (32.0, 4.0);
+    GROUPS.len() as f32 * (cell + gap) + gap * 10.0 + 2.0 * (cell + gap) + 16.0 + 4.0 * 34.0 + 24.0
+}
+
+fn main_toolbar(app: &mut FigApp, ui: &mut Ui, canvas: Rect, t: &Tokens) {
+    let (cell, gap) = (32.0, 4.0);
+    let width = main_width();
     let rect = pill(ui, &mut app.ui.nav, canvas, width, &t);
     let current = app.session.tool.tool;
     let mut x = rect.min.x + 8.0;

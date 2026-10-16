@@ -171,10 +171,12 @@ pub fn menu(app: &mut FigApp, ui: &mut Ui, t: &Tokens) -> bool {
         .flatten();
     crate::menus::separator(ui);
     if let Some(plugin) = widget {
+        crate::menus::record_recent(app, &format!("widget:{plugin}"));
         app.run("widget.insert", json!({"plugin": plugin}));
         return true;
     }
     let Some((id, command)) = chosen else { return false };
+    crate::menus::record_recent(app, &format!("plugin:{id}/{command}"));
     start(app, &id, &command);
     true
 }

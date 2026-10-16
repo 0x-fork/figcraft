@@ -7,9 +7,9 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::a11y;
-use crate::i18n::{self, tr, tr_noop, trf};
 use crate::icons::{self, Icon};
-use crate::theme::{ACCENT, Tokens, regular};
+use crate::i18n::{self, tr, tr_noop, trf};
+use crate::theme::{Tokens, regular};
 use crate::toolbar::pretty_shortcut;
 
 /// Commands the UI layer implements itself (dialogs and platform actions).
@@ -73,7 +73,28 @@ fn clipboard_png(app: &mut FigApp) -> Option<(Vec<u8>, u32, u32)> {
     Some((out.into_inner(), w, h))
 }
 
+/// The Actions palette's tab.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaletteTab {
+    #[default]
+    All,
+    Assets,
+    Plugins,
+}
+
+/// Remember a ran action for the palette's Recents (newest first, capped).
+pub fn record_recent(app: &mut FigApp, key: &str) {
+    let r = &mut app.session.prefs.recent_actions;
+    if r.first().is_some_and(|f| f == key) {
+        return;
+    }
+    r.retain(|k| k != key);
+    r.insert(0, key.to_string());
+    r.truncate(figcraft_engine::MAX_RECENT_ACTIONS);
+}
+
 pub fn invoke(app: &mut FigApp, id: &str) {
+    record_recent(app, &format!("command:{id}"));
     match id {
         "file.open" => app.open_dialog(),
         "plugin.import" => crate::plugins_ui::import_dialog(app),
@@ -612,14 +633,25 @@ fn select_layer_menu(app: &mut FigApp, ui: &mut Ui, pos: egui::Pos2, t: &Tokens)
     }
 }
 
-/// The Actions palette: fuzzy search over every command.
+/// The Actions palette's content height (the frame adds its own 8 px margins).
+const PALETTE_H: f32 = 450.0;
+
+/// The Actions palette: search over commands, assets and plugins, in Figma's shape (tabs,
+/// recents, grouped sections). Rows run on click; Enter runs the first visible row.
 fn palette(app: &mut FigApp, ctx: &egui::Context) {
     let Some(mut q) = app.ui.palette.clone() else { return };
     let t = Tokens::get(ctx);
-    let screen = ctx.content_rect();
+    // Same centre and width as the toolbar pill (it centres on the canvas, not the window),
+    // floating 8 px above it. Fixed size: switching tabs never resizes the panel.
+    let bar_w = crate::toolbar::main_width();
+    let canvas = app.canvas.rect;
+    let area = Rect::from_min_size(
+        pos2(canvas.center().x - bar_w / 2.0, canvas.max.y - 68.0 - (PALETTE_H + 16.0)),
+        vec2(bar_w, PALETTE_H + 16.0),
+    );
     let mut run: Option<String> = None;
     let mut close = false;
-    egui::Area::new(Id::new("palette")).fixed_pos(pos2(screen.center().x - 260.0, screen.min.y + 120.0)).order(egui::Order::Foreground).show(
+    egui::Area::new(Id::new("palette")).fixed_pos(area.min).order(egui::Order::Foreground).show(
         ctx,
         |ui| {
             egui::Frame::NONE
@@ -629,64 +661,353 @@ fn palette(app: &mut FigApp, ctx: &egui::Context) {
                 .shadow(egui::Shadow { offset: [0, 8], blur: 32, spread: 0, color: t.shadow })
                 .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
-                    ui.set_width(520.0);
+                    // Same outer width as the toolbar pill, and a fixed height: switching tabs
+                    // never resizes the panel.
+                    let inner = crate::toolbar::main_width() - 16.0;
+                    ui.set_width(inner);
+                    ui.set_height(PALETTE_H);
                     let r = ui.add(
                         egui::TextEdit::singleline(&mut q)
-                            .hint_text(tr("Search actions, layers and tools"))
-                            .desired_width(500.0)
+                            .hint_text(tr("Search actions, assets and plugins"))
+                            .desired_width(inner - 16.0)
                             .font(regular(14.0))
                             .frame(egui::Frame::NONE.inner_margin(egui::Margin::same(8))),
                     );
                     r.request_focus();
                     crate::widgets::select_all_on_focus(ui, &r, &q);
                     ui.add_space(4.0);
-                    let ql = q.to_lowercase();
-                    // Labels match in the UI language and in English.
-                    let matches =
-                        |label: &str, english: &str, id: &str| ql.is_empty() || [label, english, id].iter().any(|s| s.to_lowercase().contains(&ql));
-                    let mut hits: Vec<(&str, std::borrow::Cow<str>, &str)> = Vec::new();
-                    let menu_items = MENU.iter().filter(|m| UI_COMMANDS.contains(&m.id)).map(|m| (m.id, m.label));
-                    for (id, english) in figcraft_engine::all_commands().iter().map(|c| (c.id, c.label)).chain(menu_items) {
-                        let label = i18n::command(id, english);
-                        if matches(&label, english, id) {
-                            hits.push((id, label, crate::shortcuts::shortcut(id).unwrap_or("")));
-                        }
-                    }
-                    hits.sort_by_key(|h| (!h.1.to_lowercase().starts_with(&ql), h.1.len()));
-                    hits.dedup_by(|a, b| a.0 == b.0);
-                    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                        for (i, (id, label, sc)) in hits.iter().take(60).enumerate() {
-                            let w = ui.available_width();
-                            let (r, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click());
-                            if resp.hovered() || i == 0 {
-                                ui.painter().rect_filled(r, CornerRadius::same(5), if resp.hovered() { ACCENT } else { t.hover });
-                            }
-                            let col = if resp.hovered() { Color32::WHITE } else { t.text };
-                            ui.painter().text(pos2(r.min.x + 10.0, r.center().y), Align2::LEFT_CENTER, label.as_ref(), regular(12.0), col);
-                            ui.painter().text(
-                                pos2(r.max.x - 10.0, r.center().y),
-                                Align2::RIGHT_CENTER,
-                                pretty_shortcut(sc),
-                                regular(11.0),
-                                if resp.hovered() { Color32::WHITE } else { t.text_secondary },
+                    // Tabs: All, Assets, Plugins & widgets.
+                    let tabs = [(PaletteTab::All, tr("All")), (PaletteTab::Assets, tr("Assets")), (PaletteTab::Plugins, tr("Plugins & widgets"))];
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+                        for (tab, label) in tabs {
+                            let active = app.ui.palette_tab == tab;
+                            // The frame stays on for every tab (transparent when idle) so the
+                            // active pill never moves its neighbours.
+                            let resp = ui.add(
+                                egui::Button::new(egui::RichText::new(label).size(12.0).color(if active { t.text } else { t.text_secondary }))
+                                    .frame(true)
+                                    .fill(if active { t.hover } else { Color32::TRANSPARENT })
+                                    .corner_radius(CornerRadius::same(6)),
                             );
-                            if resp.clicked() || (enter && i == 0) {
-                                run = Some(id.to_string());
+                            if resp.clicked() {
+                                app.ui.palette_tab = tab;
                             }
                         }
                     });
+                    ui.add_space(4.0);
+                    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let mut first: Option<String> = None;
+                    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                        let tab = app.ui.palette_tab;
+                        if tab == PaletteTab::All {
+                            let recents: Vec<ActionRow> = app
+                                .session
+                                .prefs
+                                .recent_actions
+                                .clone()
+                                .iter()
+                                .filter_map(|key| recent_row(app, key, &q))
+                                .collect();
+                            if !recents.is_empty() {
+                                section(ui, &t, tr("Recents"), |ui| {
+                                    for row in &recents {
+                                        first.get_or_insert_with(|| row.key.clone());
+                                        if draw_row(ui, &t, row) {
+                                            run = Some(row.key.clone());
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                        if tab != PaletteTab::Plugins {
+                            for (group, rows) in command_sections(&q) {
+                                if tab == PaletteTab::Assets {
+                                    continue;
+                                }
+                                section(ui, &t, &group, |ui| {
+                                    for row in rows {
+                                        first.get_or_insert_with(|| row.key.clone());
+                                        if draw_row(ui, &t, &row) {
+                                            run = Some(row.key);
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                        if tab != PaletteTab::Assets {
+                            let plugins = plugin_rows(app, &q);
+                            let widgets = widget_rows(app, &q);
+                            if !plugins.is_empty() {
+                                section(ui, &t, tr("Plugins"), |ui| {
+                                    for row in plugins {
+                                        first.get_or_insert_with(|| row.key.clone());
+                                        if draw_row(ui, &t, &row) {
+                                            run = Some(row.key);
+                                        }
+                                    }
+                                });
+                            }
+                            if !widgets.is_empty() {
+                                section(ui, &t, tr("Widgets"), |ui| {
+                                    for row in widgets {
+                                        first.get_or_insert_with(|| row.key.clone());
+                                        if draw_row(ui, &t, &row) {
+                                            run = Some(row.key);
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                        if tab == PaletteTab::Assets {
+                            for (group, rows) in asset_sections(app, &q) {
+                                section(ui, &t, &group, |ui| {
+                                    for row in rows {
+                                        first.get_or_insert_with(|| row.key.clone());
+                                        if draw_row(ui, &t, &row) {
+                                            run = Some(row.key);
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    });
+                    if enter {
+                        if let Some(key) = first {
+                            run = Some(key);
+                        }
+                    }
                 });
         },
     );
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         close = true;
     }
-    if let Some(id) = run {
+    if let Some(key) = run {
         app.ui.palette = None;
-        invoke(app, &id);
+        run_action(app, &key);
         return;
     }
     app.ui.palette = if close { None } else { Some(q) };
     let _ = StrokeKind::Inside;
+}
+
+/// Run a palette row: `command:<id>`, `plugin:<plugin>/<command>`, `widget:<plugin>`,
+/// `component:<node>` or `style:<id>`.
+fn run_action(app: &mut FigApp, key: &str) {
+    if let Some(id) = key.strip_prefix("command:") {
+        invoke(app, id);
+    } else if let Some(rest) = key.strip_prefix("plugin:") {
+        if let Some((plugin, command)) = rest.split_once('/') {
+            record_recent(app, key);
+            crate::plugins_ui::start(app, plugin, command);
+        }
+    } else if let Some(plugin) = key.strip_prefix("widget:") {
+        record_recent(app, key);
+        app.run("widget.insert", json!({ "plugin": plugin }));
+    } else if let Some(node) = key.strip_prefix("component:") {
+        if let Ok(n) = node.parse::<u64>() {
+            let (cx, cy) = app.session.ds().map(|d| (d.view.cx, d.view.cy)).unwrap_or((0.0, 0.0));
+            app.run("instance.place", json!({ "component": n, "x": cx, "y": cy }));
+        }
+    } else if let Some(style) = key.strip_prefix("style:") {
+        if app.session.selection().is_empty() {
+            app.toast(tr("Select layers to apply the style to"));
+        } else {
+            app.run("style.apply", json!({ "style": style }));
+        }
+    }
+}
+
+/// One pickable palette row.
+pub(crate) struct ActionRow {
+    pub(crate) key: String,
+    pub(crate) label: String,
+    hint: String,
+    /// A letter tile instead of an icon (plugins carry no artwork).
+    tile: Option<char>,
+}
+
+/// A section header with its rows.
+fn section(ui: &mut Ui, t: &Tokens, name: &str, rows: impl FnOnce(&mut Ui)) {
+    ui.add_space(6.0);
+    ui.painter().text(pos2(ui.min_rect().min.x + 10.0, ui.cursor().min.y + 7.0), Align2::LEFT_TOP, name, regular(11.0), t.text_secondary);
+    ui.add_space(18.0);
+    rows(ui);
+}
+
+/// Draw one row (a letter tile for plugins, else just the label) with its right-side hint.
+/// True when clicked.
+fn draw_row(ui: &mut Ui, t: &Tokens, row: &ActionRow) -> bool {
+    let w = ui.available_width();
+    let (r, resp) = ui.allocate_exact_size(vec2(w, 34.0), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(r, CornerRadius::same(6), t.hover);
+    }
+    let mut label_x = r.min.x + 10.0;
+    if let Some(letter) = row.tile {
+        let tile = Rect::from_center_size(pos2(r.min.x + 20.0, r.center().y), vec2(18.0, 18.0));
+        ui.painter().rect_filled(tile, CornerRadius::same(5), t.hover);
+        ui.painter().text(tile.center(), Align2::CENTER_CENTER, letter.to_string(), regular(11.0), t.text);
+        label_x = r.min.x + 38.0;
+    }
+    ui.painter().text(pos2(label_x, r.center().y), Align2::LEFT_CENTER, &row.label, regular(13.0), t.text);
+    ui.painter().text(pos2(r.max.x - 10.0, r.center().y), Align2::RIGHT_CENTER, &row.hint, regular(11.0), t.text_secondary);
+    resp.clicked()
+}
+
+/// Whether `label` (or `extra`) matches the query, in any case.
+fn matches(q: &str, label: &str, extra: &str) -> bool {
+    q.is_empty() || label.to_lowercase().contains(q) || extra.to_lowercase().contains(q)
+}
+
+/// Commands grouped by top-level menu, in catalog order, filtered by the query.
+pub(crate) fn command_sections(q: &str) -> Vec<(String, Vec<ActionRow>)> {
+    let ql = q.to_lowercase();
+    let mut groups: Vec<(String, Vec<ActionRow>)> = Vec::new();
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for m in figcraft_engine::catalog::MENU.iter() {
+        if m.label == figcraft_engine::catalog::SEP || m.menu.starts_with("Plugins") || !available(m.id) || !seen.insert(m.id) {
+            continue;
+        }
+        let english = m.label;
+        let label = i18n::menu_item(m.id, english).into_owned();
+        if !matches(&ql, &label, &format!("{english} {}", m.id)) {
+            continue;
+        }
+        let group = m.menu.split('/').next().unwrap_or(&m.menu);
+        let group = tr(group).to_string();
+        let row = ActionRow {
+            key: format!("command:{}", m.id),
+            label,
+            hint: crate::shortcuts::shortcut(m.id).map(pretty_shortcut).unwrap_or_default(),
+            tile: None,
+        };
+        match groups.iter_mut().find(|(g, _)| *g == group) {
+            Some((_, rows)) => rows.push(row),
+            None => groups.push((group, vec![row])),
+        }
+    }
+    groups
+}
+
+/// Installed plugins' commands, filtered by the query.
+fn plugin_rows(app: &FigApp, q: &str) -> Vec<ActionRow> {
+    let ql = q.to_lowercase();
+    let mut rows = Vec::new();
+    for p in &app.session.prefs.plugins {
+        let m = &p.manifest;
+        for c in &m.commands {
+            let label = if m.commands.len() == 1 { m.name.clone() } else { format!("{} — {}", m.name, c.label) };
+            if !matches(&ql, &label, &m.id) {
+                continue;
+            }
+            rows.push(ActionRow {
+                key: format!("plugin:{}/{}", m.id, c.id),
+                label,
+                hint: if c.params.is_empty() { tr("Plugin").to_string() } else { c.label.clone() },
+                tile: m.name.chars().next(),
+            });
+        }
+    }
+    rows
+}
+
+/// Installed widgets, filtered by the query.
+fn widget_rows(app: &FigApp, q: &str) -> Vec<ActionRow> {
+    let ql = q.to_lowercase();
+    app.session
+        .prefs
+        .plugins
+        .iter()
+        .filter(|p| p.manifest.widget)
+        .filter(|p| matches(&ql, &p.manifest.name, &p.manifest.id))
+        .map(|p| ActionRow {
+            key: format!("widget:{}", p.manifest.id),
+            label: p.manifest.name.clone(),
+            hint: tr("Widget").to_string(),
+            tile: p.manifest.name.chars().next(),
+        })
+        .collect()
+}
+
+/// This file's components and styles, filtered by the query.
+fn asset_sections(app: &FigApp, q: &str) -> Vec<(String, Vec<ActionRow>)> {
+    let ql = q.to_lowercase();
+    let Ok(doc) = app.session.doc() else { return Vec::new() };
+    let components: Vec<ActionRow> = figcraft_engine::library::local_components(doc)
+        .iter()
+        .filter_map(|id| doc.node(*id))
+        .filter(|n| matches(&ql, &n.name, ""))
+        .map(|n| ActionRow {
+            key: format!("component:{}", n.id.0),
+            label: n.name.clone(),
+            hint: tr("Component").to_string(),
+            tile: None,
+        })
+        .collect();
+    let styles: Vec<ActionRow> = figcraft_engine::library::local_styles(doc)
+        .filter(|s| matches(&ql, &s.name, ""))
+        .map(|s| ActionRow {
+            key: format!("style:{}", s.id),
+            label: s.name.clone(),
+            hint: tr("Style").to_string(),
+            tile: None,
+        })
+        .collect();
+    let mut out = Vec::new();
+    if !components.is_empty() {
+        out.push((tr("Components").to_string(), components));
+    }
+    if !styles.is_empty() {
+        out.push((tr("Styles").to_string(), styles));
+    }
+    out
+}
+
+/// A recent action back as a row (gone commands, plugins or assets drop out).
+pub(crate) fn recent_row(app: &FigApp, key: &str, q: &str) -> Option<ActionRow> {
+    let ql = q.to_lowercase();
+    if let Some(id) = key.strip_prefix("command:") {
+        let spec = figcraft_engine::find_command(id);
+        let menu_label = figcraft_engine::catalog::MENU.iter().find(|m| m.id == id);
+        let english = menu_label.map(|m| m.label).or_else(|| spec.map(|s| s.label)).unwrap_or(id);
+        if !available(id) || !matches(&ql, english, id) {
+            return None;
+        }
+        return Some(ActionRow {
+            key: key.to_string(),
+            label: i18n::command(id, english).into_owned(),
+            hint: crate::shortcuts::shortcut(id).map(pretty_shortcut).unwrap_or_default(),
+            tile: None,
+        });
+    }
+    if let Some(rest) = key.strip_prefix("plugin:") {
+        let (pid, cid) = rest.split_once('/')?;
+        let p = app.session.prefs.plugins.iter().find(|p| p.manifest.id == pid)?;
+        let c = p.manifest.commands.iter().find(|c| c.id == cid)?;
+        let label = if p.manifest.commands.len() == 1 { p.manifest.name.clone() } else { format!("{} — {}", p.manifest.name, c.label) };
+        if !matches(&ql, &label, pid) {
+            return None;
+        }
+        return Some(ActionRow {
+            key: key.to_string(),
+            label,
+            hint: tr("Plugin").to_string(),
+            tile: p.manifest.name.chars().next(),
+        });
+    }
+    if let Some(pid) = key.strip_prefix("widget:") {
+        let p = app.session.prefs.plugins.iter().find(|p| p.manifest.id == pid && p.manifest.widget)?;
+        if !matches(&ql, &p.manifest.name, pid) {
+            return None;
+        }
+        return Some(ActionRow {
+            key: key.to_string(),
+            label: p.manifest.name.clone(),
+            hint: tr("Widget").to_string(),
+            tile: p.manifest.name.chars().next(),
+        });
+    }
+    None
 }
