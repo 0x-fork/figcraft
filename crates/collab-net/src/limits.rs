@@ -12,7 +12,9 @@ pub struct NetLimits {
     /// before: its hello.
     pub max_client_message: usize,
     pub max_hello: usize,
-    /// Largest message a client accepts from the host (a welcome carries the whole document).
+    /// Largest message a client accepts from the host (a welcome carries the whole document): the
+    /// largest file a `figcraft-server` can be set to keep (`max_file_mb`, at most 4096) and a margin,
+    /// so a client can open every file a server takes.
     pub max_server_message: usize,
     /// Messages a client may send per second on average, and in a burst; beyond that it is
     /// disconnected.
@@ -61,7 +63,7 @@ impl Default for NetLimits {
             max_connections: 64,
             max_client_message: figcraft_collab::Limits::default().max_message_bytes,
             max_hello: 64 << 10,
-            max_server_message: figcraft_collab::Limits::default().max_message_bytes,
+            max_server_message: 4097 << 20,
             rate: 100.0,
             burst: 400.0,
             hello_timeout: Duration::from_secs(10),
