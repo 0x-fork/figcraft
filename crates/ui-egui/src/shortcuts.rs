@@ -94,7 +94,8 @@ fn cached_tip(label: &'static str, key: Option<&'static str>) -> &'static str {
 
 /// Run the shortcuts this frame's keys press. `typing`: a field had the keyboard when the frame
 /// began.
-pub fn handle(app: &mut FigApp, ctx: &Context, typing: bool) {
+/// `paste_release`: this frame released a Cmd/Ctrl+V the shell swallowed ([`swallowed_paste`]).
+pub fn handle(app: &mut FigApp, ctx: &Context, typing: bool, paste_release: bool) {
     note_platform(ctx);
     // Text fields in panels own the keyboard (also the key that ends their editing).
     if typing || crate::a11y::field_focused(ctx) || app.ui.palette.is_some() {
@@ -109,18 +110,19 @@ pub fn handle(app: &mut FigApp, ctx: &Context, typing: bool) {
         text_keys(app, ctx, &events);
         return;
     }
-    // An image-only clipboard brings no paste event, just the key: paste from the key then.
+    // An image-only clipboard brings no paste event: paste from the key then. The browser sends
+    // the press; the desktop shell swallows it and sends only the release.
     let paste_event = events.iter().any(|e| matches!(e, Event::Paste(_)));
     let paste_key = events.iter().any(|e| matches!(e, Event::Key { key: Key::V, pressed: true, repeat: false, modifiers, .. } if modifiers.command && !modifiers.shift && !modifiers.alt));
-    if paste_key && !paste_event {
-        crate::menus::paste(app, None);
+    if (paste_key && !paste_event) || paste_release {
+        crate::menus::paste(app, None, None);
     }
     let now = ctx.input(|i| i.time);
     for ev in &events {
         match ev {
             Event::Copy => crate::menus::invoke(app, "edit.copy"),
             Event::Cut => crate::menus::invoke(app, "edit.cut"),
-            Event::Paste(text) => crate::menus::paste(app, Some(text)),
+            Event::Paste(text) => crate::menus::paste(app, Some(text), None),
             Event::Key { key, physical_key, pressed: true, modifiers, repeat }
                 if key_event(app, *key, *physical_key, *modifiers, *repeat, now, ctx) =>
             {
@@ -129,6 +131,38 @@ pub fn handle(app: &mut FigApp, ctx: &Context, typing: bool) {
             _ => {}
         }
     }
+}
+
+/// Whether this frame releases a Cmd/Ctrl+V whose press never arrived and that brought no paste
+/// event: egui-winit swallows the press and sends a paste event only when the clipboard holds
+/// text, so an image on the clipboard leaves just this release. Call at the start of every frame:
+/// it reads the raw events, which keys consumed by panels or the presenter still carry.
+pub fn swallowed_paste(app: &mut FigApp, ctx: &Context) -> bool {
+    let ui = &mut app.ui;
+    let mut paste = false;
+    ctx.input(|i| {
+        for ev in &i.raw.events {
+            match ev {
+                Event::Paste(_) => ui.paste_event = true,
+                Event::Key { key: Key::V, pressed: true, .. } => ui.v_pressed = true,
+                Event::Key { key: Key::V, pressed: false, modifiers, .. } => {
+                    // Shift or Alt with it is another command (paste over, paste properties).
+                    paste = !ui.v_pressed && !ui.paste_event && !modifiers.shift && !modifiers.alt;
+                    ui.v_pressed = false;
+                    ui.paste_event = false;
+                }
+                // The other keys that paste (Shift+Insert, a Paste key) end their paste event.
+                Event::Key { key: Key::Insert | Key::Paste, pressed: false, .. } => ui.paste_event = false,
+                // Keys let go in another window never come back as releases.
+                Event::WindowFocused(false) => {
+                    ui.v_pressed = false;
+                    ui.paste_event = false;
+                }
+                _ => {}
+            }
+        }
+    });
+    paste
 }
 
 /// Run the command a shortcut is bound to, with the keyboard's own twists (Escape steps out

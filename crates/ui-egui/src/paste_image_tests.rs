@@ -1,0 +1,234 @@
+//! Pasting an image copied in another app (#663). On the desktop, egui-winit swallows Cmd/Ctrl+V's
+//! press and sends a paste event only when the clipboard holds text: an image leaves just the
+//! key's release. The browser sends the press and a paste event (`web_clipboard_tests`).
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, Shape, vec2};
+use figcraft_engine::Session;
+use serde_json::json;
+
+use crate::{FigApp, Services};
+
+#[derive(Default)]
+struct Clip {
+    text: Option<String>,
+    image: Option<(u32, u32, Vec<u8>)>,
+}
+
+/// The desktop clipboard.
+struct Desktop(Rc<RefCell<Clip>>);
+
+impl Services for Desktop {
+    fn clipboard_set_text(&mut self, s: &str) {
+        *self.0.borrow_mut() = Clip { text: Some(s.into()), image: None };
+    }
+    fn clipboard_get_text(&mut self) -> Option<String> {
+        self.0.borrow().text.clone()
+    }
+    fn clipboard_get_image(&mut self) -> Option<(u32, u32, Vec<u8>)> {
+        self.0.borrow().image.clone()
+    }
+}
+
+struct Win {
+    ctx: egui::Context,
+    app: FigApp,
+    time: f64,
+    clip: Rc<RefCell<Clip>>,
+    shapes: Vec<Shape>,
+}
+
+impl Win {
+    fn new() -> Self {
+        let mut s = Session::new();
+        s.execute("shape.rectangle", &json!({"x": 10, "y": 10, "width": 100, "height": 50})).unwrap();
+        let ctx = egui::Context::default();
+        let clip = Rc::new(RefCell::new(Clip::default()));
+        let app = FigApp::new(s, Box::new(Desktop(clip.clone())));
+        let mut w = Self { ctx, app, time: 0.0, clip, shapes: Vec::new() };
+        for _ in 0..3 {
+            w.frame(vec![]);
+        }
+        w
+    }
+
+    fn frame(&mut self, events: Vec<Event>) {
+        self.frame_with(events, false);
+    }
+
+    /// `take_v`: something ahead of the app (a prototype's key trigger) consumes a V press.
+    fn frame_with(&mut self, events: Vec<Event>, take_v: bool) {
+        self.time += 1.0 / 60.0;
+        let input =
+            RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))), time: Some(self.time), events, ..Default::default() };
+        let app = &mut self.app;
+        let mut out = self.ctx.run_ui(input, |ui| {
+            if take_v {
+                ui.ctx().input_mut(|i| i.consume_key(Modifiers::NONE, Key::V));
+            }
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+        self.shapes = out.shapes.into_iter().map(|s| s.shape).collect();
+    }
+
+    fn copy_image_elsewhere(&mut self) {
+        *self.clip.borrow_mut() = Clip { text: None, image: Some((2, 2, vec![255; 16])) };
+    }
+
+    /// Cmd/Ctrl+V as egui-winit delivers it: the press brings a paste event when the clipboard
+    /// holds text and nothing otherwise; the release comes as a key event.
+    fn cmd_v(&mut self, m: Modifiers) {
+        let text = self.clip.borrow().text.clone().filter(|t| !t.is_empty());
+        self.frame(text.map(Event::Paste).into_iter().collect());
+        self.frame(vec![key(Key::V, false, m)]);
+        self.frame(vec![]);
+    }
+
+    fn named(&self, name: &str) -> usize {
+        self.app.session.doc().unwrap().nodes().filter(|n| n.name == name).count()
+    }
+
+    fn texts(&self) -> usize {
+        self.app.session.doc().unwrap().nodes().filter(|n| matches!(n.kind, figcraft_doc::NodeKind::Text(_))).count()
+    }
+
+    fn rects(&self) -> usize {
+        self.named("Rectangle")
+    }
+}
+
+const CMD: Modifiers = Modifiers::COMMAND.plus(Modifiers::CTRL);
+
+fn key(key: Key, pressed: bool, modifiers: Modifiers) -> Event {
+    Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers }
+}
+
+#[test]
+fn cmd_v_pastes_an_image_copied_elsewhere() {
+    let mut w = Win::new();
+    w.copy_image_elsewhere();
+    w.cmd_v(CMD);
+    assert_eq!(w.named("Pasted image"), 1, "the image was pasted from the key's release");
+    w.cmd_v(CMD);
+    assert_eq!(w.named("Pasted image"), 2, "and again");
+}
+
+#[test]
+fn cmd_released_before_v_still_pastes_the_image() {
+    let mut w = Win::new();
+    w.copy_image_elsewhere();
+    w.cmd_v(Modifiers::NONE);
+    assert_eq!(w.named("Pasted image"), 1);
+}
+
+#[test]
+fn text_pastes_once_from_its_paste_event() {
+    let mut w = Win::new();
+    *w.clip.borrow_mut() = Clip { text: Some("hello from another app".into()), image: None };
+    w.cmd_v(CMD);
+    assert_eq!(w.texts(), 1, "the paste event pasted the text, the release nothing more");
+    assert_eq!(w.rects(), 1);
+}
+
+#[test]
+fn text_pastes_once_when_another_key_is_let_go_first() {
+    let mut w = Win::new();
+    *w.clip.borrow_mut() = Clip { text: Some("hello".into()), image: None };
+    // Cmd+A then Cmd+V typed fast: A comes up after V went down.
+    w.frame(vec![key(Key::A, true, CMD)]);
+    w.frame(vec![Event::Paste("hello".into())]);
+    w.frame(vec![key(Key::A, false, CMD)]);
+    w.frame(vec![key(Key::V, false, CMD)]);
+    w.frame(vec![]);
+    assert_eq!(w.texts(), 1);
+    assert_eq!(w.rects(), 1);
+}
+
+#[test]
+fn a_v_press_consumed_elsewhere_does_not_paste_on_release() {
+    let mut w = Win::new();
+    w.copy_image_elsewhere();
+    w.frame_with(vec![key(Key::V, true, Modifiers::NONE)], true);
+    w.frame(vec![key(Key::V, false, Modifiers::NONE)]);
+    w.frame(vec![]);
+    assert_eq!(w.named("Pasted image"), 0);
+}
+
+#[test]
+fn the_browser_sequence_pastes_once() {
+    let mut w = Win::new();
+    w.copy_image_elsewhere();
+    w.frame(vec![key(Key::V, true, CMD)]);
+    w.frame(vec![key(Key::V, false, CMD)]);
+    w.frame(vec![]);
+    assert_eq!(w.named("Pasted image"), 1);
+}
+
+#[test]
+fn v_alone_and_other_paste_commands_paste_nothing() {
+    let mut w = Win::new();
+    w.copy_image_elsewhere();
+    w.frame(vec![key(Key::V, true, Modifiers::NONE)]);
+    w.frame(vec![key(Key::V, false, Modifiers::NONE)]);
+    w.cmd_v(CMD.plus(Modifiers::SHIFT));
+    w.cmd_v(CMD.plus(Modifiers::ALT));
+    assert_eq!(w.named("Pasted image"), 0);
+}
+
+#[test]
+fn a_paste_event_from_another_key_does_not_block_the_next_cmd_v() {
+    let mut w = Win::new();
+    *w.clip.borrow_mut() = Clip { text: Some("text".into()), image: None };
+    // Shift+Insert on Windows.
+    w.frame(vec![Event::Paste("text".into())]);
+    w.frame(vec![key(Key::Insert, false, Modifiers::SHIFT)]);
+    w.copy_image_elsewhere();
+    w.cmd_v(CMD);
+    assert_eq!(w.named("Pasted image"), 1);
+}
+
+#[test]
+fn a_v_press_lost_to_another_window_does_not_block_the_next_cmd_v() {
+    let mut w = Win::new();
+    w.copy_image_elsewhere();
+    w.frame(vec![key(Key::V, true, Modifiers::NONE), Event::WindowFocused(false)]);
+    w.frame(vec![Event::WindowFocused(true)]);
+    w.cmd_v(CMD);
+    assert_eq!(w.named("Pasted image"), 1);
+}
+
+#[test]
+fn paste_here_prefers_a_newer_image_over_copied_layers() {
+    let mut w = Win::new();
+    w.app.session.execute("select.all", &json!({})).unwrap();
+    crate::menus::invoke(&mut w.app, "edit.copy");
+    assert!(!w.app.session.clipboard.nodes.is_empty(), "layers copied");
+    w.app.session.execute("select.none", &json!({})).unwrap();
+    w.copy_image_elsewhere();
+    let at = Pos2::new(900.0, 600.0);
+    for pressed in [true, false] {
+        w.frame(vec![
+            Event::PointerMoved(at),
+            Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed, modifiers: Modifiers::NONE },
+        ]);
+    }
+    w.frame(vec![]);
+    let item = crate::live_tests::text_center(&w.shapes, "Paste here");
+    for pressed in [true, false] {
+        w.frame(vec![
+            Event::PointerMoved(item),
+            Event::PointerButton { pos: item, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE },
+        ]);
+    }
+    w.frame(vec![]);
+    assert_eq!(w.named("Pasted image"), 1, "the newer image was pasted");
+    assert_eq!(w.rects(), 1, "not the copied rectangle");
+    let p = w.app.to_page(at);
+    let doc = w.app.session.doc().unwrap();
+    let img = doc.nodes().find(|n| n.name == "Pasted image").unwrap();
+    let b = doc.world_bounds(img.id).unwrap();
+    assert!((b.x0 - p.x).abs() < 0.01 && (b.y0 - p.y).abs() < 0.01, "top-left where the menu opened: {b:?} vs {p:?}");
+}
