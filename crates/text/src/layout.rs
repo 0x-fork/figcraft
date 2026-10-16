@@ -844,7 +844,7 @@ pub(crate) fn list_markers(lists: &[ParaList]) -> Vec<String> {
                 *c = (ListStyle::None, 0);
             }
             let Some(c) = count.get_mut(d) else { return String::new() };
-            let first = usize::try_from(pl.start).unwrap_or(usize::MAX).saturating_add(1);
+            let first = usize::try_from(pl.start_offset).unwrap_or(usize::MAX).saturating_add(1);
             *c = if c.0 == pl.list { (pl.list, c.1.saturating_add(1)) } else { (pl.list, first) };
             match (pl.list, d % 3) {
                 (ListStyle::Numbered, 1) => format!("{}.", alpha(c.1)),

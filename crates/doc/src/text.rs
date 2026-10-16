@@ -215,10 +215,10 @@ pub struct ParaList {
     pub list: ListStyle,
     /// Nesting level (0 = outermost; plain paragraphs are always 0).
     pub indent: u8,
-    /// A numbered list that starts counting at this paragraph counts from `start + 1` (items
-    /// that go on counting ignore it; plain paragraphs are always 0).
+    /// A numbered list that starts counting at this paragraph counts from `start_offset + 1`
+    /// (items that go on counting ignore it; other paragraphs are always 0).
     #[serde(skip_serializing_if = "crate::node::is_default")]
-    pub start: u32,
+    pub start_offset: u32,
 }
 
 /// Character style. In runs, every field is an override; `None` means "inherit the base".
@@ -661,15 +661,18 @@ impl TextData {
     }
 
     /// Apply `f` to the list settings of the paragraphs chars `start..end` touch (plain
-    /// paragraphs stay at level 0 with no start, levels stop at [`MAX_LIST_INDENT`]); one style
-    /// for all with no nesting or start folds back into `list`.
+    /// paragraphs stay at level 0, only numbered ones keep a start, levels stop at
+    /// [`MAX_LIST_INDENT`]); one style for all with no nesting or start folds back into `list`.
     pub fn set_para_lists(&mut self, start: usize, end: usize, f: impl Fn(&mut ParaList)) {
         let (a, b) = self.para_span(start, end);
         self.fill_paragraphs();
         for pl in self.paragraphs.get_mut(a..=b).unwrap_or(&mut []) {
             f(pl);
             if pl.list == ListStyle::None {
-                *pl = ParaList::default();
+                pl.indent = 0;
+            }
+            if pl.list != ListStyle::Numbered {
+                pl.start_offset = 0;
             }
             pl.indent = pl.indent.min(MAX_LIST_INDENT);
         }
@@ -793,21 +796,24 @@ mod case_tests {
 
     #[test]
     fn list_starts_load_from_old_files_and_follow_edits() {
-        use ListStyle::{None as P, Numbered as N};
+        use ListStyle::{Bulleted as B, None as P, Numbered as N};
         // Files written before start numbers load with none, and write the same bytes.
         let old = r#"{"list":"numbered","indent":1}"#;
         let pl: ParaList = serde_json::from_str(old).unwrap();
-        assert_eq!(pl, ParaList { list: N, indent: 1, start: 0 });
+        assert_eq!(pl, ParaList { list: N, indent: 1, start_offset: 0 });
         assert_eq!(serde_json::to_string(&pl).unwrap(), old);
         // One numbered paragraph with a start keeps it (it doesn't fold into `list`).
         let mut t = TextData { characters: "Next".into(), ..Default::default() };
-        t.set_para_lists(0, 0, |p| *p = ParaList { list: N, indent: 0, start: 1 });
-        assert_eq!(t.para_list(0), ParaList { list: N, indent: 0, start: 1 });
+        t.set_para_lists(0, 0, |p| *p = ParaList { list: N, indent: 0, start_offset: 1 });
+        assert_eq!(t.para_list(0), ParaList { list: N, indent: 0, start_offset: 1 });
         // Enter copies it to the new item; different starts don't make the list mixed.
         t.replace_range(4, 4, "\nMore");
-        assert_eq!(t.para_list(1).start, 1);
-        t.set_para_lists(5, 5, |p| p.start = 0);
+        assert_eq!(t.para_list(1).start_offset, 1);
+        t.set_para_lists(5, 5, |p| p.start_offset = 0);
         assert!(t.common_para_list(0, t.char_count()).is_some_and(|p| p.list == N));
+        // Bullets have no number, so no start.
+        t.set_para_lists(0, 0, |p| *p = ParaList { list: B, indent: 1, start_offset: 4 });
+        assert_eq!(t.para_list(0), ParaList { list: B, indent: 1, start_offset: 0 });
         // A plain paragraph has none.
         t.set_para_lists(0, 0, |p| p.list = P);
         assert_eq!(t.para_list(0), ParaList::default());

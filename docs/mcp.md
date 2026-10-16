@@ -177,7 +177,8 @@ Or in a project's `.mcp.json`:
 - **Lists** are per paragraph: `listStyle` (`none`, `bulleted`, `numbered`) and `indentation` (the
   nesting level, 0–8) apply to the paragraphs chars `start`..`end` touch (all of them without a
   range); `get_node` reports one `listStyle` for the layer, or `lineTypes` and `lineIndentations`
-  per paragraph. `text.bulletList`, `text.numberList` and `text.listStyle` act on the selected
+  per paragraph, plus `listStartOffsets` when a numbered list starts past 1 (from a `.fig` file;
+  1 shows "2."). `text.bulletList`, `text.numberList` and `text.listStyle` act on the selected
   paragraphs while text is edited. Layer props: `listSpacing` (px between list items, in place of
   `paragraphSpacing`), `hangingList` (markers outside the box) and `hangingPunctuation`. While
   editing, `key` Tab / Shift+Tab nest an item or move it out, Enter on an empty item and Backspace

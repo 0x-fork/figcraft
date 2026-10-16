@@ -64,12 +64,15 @@ fn a_list_with_a_start_number_toggles_off() {
     let mut s = Session::new();
     let t = text(&mut s, "two\nthree\nfour");
     if let figcraft_doc::NodeKind::Text(td) = &mut s.doc_mut().unwrap().get_mut(t).unwrap().kind {
-        td.paragraphs =
-            vec![ParaList { list: N, indent: 0, start: 1 }, ParaList { list: N, indent: 0, start: 0 }, ParaList { list: N, indent: 0, start: 0 }];
+        let n = |start_offset| ParaList { list: N, indent: 0, start_offset };
+        td.paragraphs = vec![n(1), n(0), n(0)];
     }
+    let j = crate::inspect::node_json(s.doc().unwrap(), t, 0);
+    assert_eq!(j["listStartOffsets"], json!([1, 0, 0]), "inspect reports the start");
     s.execute("text.numberList", &json!({"ids": [t]})).unwrap();
     assert_eq!(lists(&s, t), [(P, 0); 3]);
-    assert_eq!(data(&s, t).para_list(0).start, 0, "a plain paragraph has no start");
+    assert_eq!(data(&s, t).para_list(0).start_offset, 0, "a plain paragraph has no start");
+    assert!(crate::inspect::node_json(s.doc().unwrap(), t, 0).get("listStartOffsets").is_none());
 }
 
 #[test]
@@ -132,7 +135,7 @@ fn list_keys_at_list_items() {
     for (chars, before, caret, k, shift, after, want, why) in cases {
         let mut s = Session::new();
         let t = text(&mut s, chars);
-        let ps: Vec<ParaList> = before.iter().map(|(list, indent)| ParaList { list: *list, indent: *indent, start: 0 }).collect();
+        let ps: Vec<ParaList> = before.iter().map(|(list, indent)| ParaList { list: *list, indent: *indent, start_offset: 0 }).collect();
         if let figcraft_doc::NodeKind::Text(td) = &mut s.doc_mut().unwrap().get_mut(t).unwrap().kind {
             td.paragraphs = ps;
         }
@@ -156,7 +159,7 @@ fn paragraph_lists_follow_edits() {
     // A paragraph's list stays with it as text is typed, pasted and deleted: new paragraphs copy
     // the one they split from; joined paragraphs keep the first one's.
     let mut t = TextData::new("ab\ncd\nef");
-    t.paragraphs = vec![ParaList { list: B, indent: 1, start: 0 }, ParaList::default(), ParaList { list: N, indent: 0, start: 0 }];
+    t.paragraphs = vec![ParaList { list: B, indent: 1, start_offset: 0 }, ParaList::default(), ParaList { list: N, indent: 0, start_offset: 0 }];
     let get = |t: &TextData| (0..t.paragraph_count()).map(|p| (t.para_list(p).list, t.para_list(p).indent)).collect::<Vec<_>>();
     t.replace_range(1, 1, "x\ny");
     assert_eq!(get(&t), [(B, 1), (B, 1), (P, 0), (N, 0)], "a pasted newline: a new item like it");
@@ -171,7 +174,7 @@ fn paragraph_lists_follow_edits() {
         (seed >> 33) as usize % n.max(1)
     };
     let mut t = TextData::new("a\nb\nc\nd");
-    t.paragraphs = vec![ParaList { list: B, indent: 2, start: 0 }; 4];
+    t.paragraphs = vec![ParaList { list: B, indent: 2, start_offset: 0 }; 4];
     for _ in 0..500 {
         let n = t.char_count();
         let (a, b) = (rnd(n + 2), rnd(n + 2));
