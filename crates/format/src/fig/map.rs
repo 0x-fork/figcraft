@@ -57,6 +57,10 @@ pub(super) fn to_rest(msg: &Kv, name: &str) -> (Value, Vec<String>) {
     (out, m.warnings)
 }
 
+#[cfg(test)]
+#[path = "map_image_filter_tests.rs"]
+mod image_filter_tests;
+
 /// REST importer warnings reworded for a `.fig` import (`None`: drop it).
 pub(super) fn adapt_warning(w: String) -> Option<String> {
     if w.contains("geometry=paths") {
@@ -73,6 +77,16 @@ pub(super) fn adapt_warning(w: String) -> Option<String> {
 
 fn num(n: &Kv, k: &str) -> Option<f64> {
     n.get(k).and_then(Kv::f64)
+}
+
+fn filter_number(value: &Kv) -> Option<f64> {
+    let number = match value {
+        Kv::Float(value) => f64::from(*value),
+        Kv::Int(value) => *value as f64,
+        Kv::Uint(value) => *value as f64,
+        _ => return None,
+    };
+    number.is_finite().then_some(number)
 }
 
 fn guid(v: &Kv) -> Option<String> {
@@ -462,7 +476,8 @@ impl<'a> Mapper<'a> {
 
     fn warn(&mut self, w: impl Into<String>) {
         let w = w.into();
-        if !self.warnings.contains(&w) {
+        // Capped like the REST importer's list: some warnings name fields of the file (image filters).
+        if self.warnings.len() < crate::rest::MAX_WARNINGS && !self.warnings.contains(&w) {
             self.warnings.push(w);
         }
     }
@@ -1262,11 +1277,11 @@ impl<'a> Mapper<'a> {
         let fill_style = self.style(v, "styleIdForFill", "inheritFillStyleID", "fill", &mut styles);
         let fills = own("fillPaints")
             .unwrap_or_else(|| fill_style.map_or_else(|| v.list("fillPaints"), |s| s.get("fillPaints").map(Kv::list).unwrap_or_default()));
-        o.insert("fills".into(), Value::Array(fills.iter().filter_map(paint).collect()));
+        o.insert("fills".into(), Value::Array(fills.iter().filter_map(|p| paint(p, &mut |w| self.warn(w))).collect()));
         let stroke_style = self.style(v, "styleIdForStrokeFill", "inheritFillStyleIDForStroke", "stroke", &mut styles);
         let strokes = own("strokePaints")
             .unwrap_or_else(|| stroke_style.map_or_else(|| v.list("strokePaints"), |s| s.get("fillPaints").map(Kv::list).unwrap_or_default()));
-        o.insert("strokes".into(), Value::Array(strokes.iter().filter_map(paint).collect()));
+        o.insert("strokes".into(), Value::Array(strokes.iter().filter_map(|p| paint(p, &mut |w| self.warn(w))).collect()));
         let effect_style = self.style(v, "styleIdForEffect", "inheritEffectStyleID", "effect", &mut styles);
         let effects = effect_style.map_or_else(|| v.list("effects"), |s| s.get("effects").map(Kv::list).unwrap_or_default());
         if !effects.is_empty() {
@@ -1494,7 +1509,7 @@ impl<'a> Mapper<'a> {
         }
         o.insert("style".into(), Value::Object(style));
         let Some(td) = td else { return };
-        char_styles(o, td, size);
+        char_styles(o, td, size, &mut |w| self.warn(w));
         let lines: Vec<&str> = td
             .get("lines")
             .map(Kv::list)
@@ -1828,7 +1843,7 @@ impl<'a> Mapper<'a> {
                             o.remove("styleOverrideTable");
                             if let Some(tv) = val.get("textValue") {
                                 let size = o.get("style").and_then(|s| s.get("fontSize")).and_then(Value::as_f64);
-                                char_styles(o, tv, size);
+                                char_styles(o, tv, size, &mut |w| self.warn(w));
                             }
                         }
                     }
@@ -2474,7 +2489,7 @@ fn paint_bound(p: &Kv) -> bool {
     alias(p.get("colorVar")).is_some() || p.get("stopsVar").map(Kv::list).unwrap_or_default().iter().any(|s| alias(s.get("colorVar")).is_some())
 }
 
-fn paint(p: &Kv) -> Option<Value> {
+fn paint(p: &Kv, warn: &mut dyn FnMut(String)) -> Option<Value> {
     let ty = p.get("type").and_then(Kv::str)?;
     let mut o = Obj::new();
     o.insert("type".into(), json!(ty));
@@ -2542,6 +2557,52 @@ fn paint(p: &Kv) -> Option<Value> {
             }
             if let Some(r) = num(p, "rotation") {
                 o.insert("rotation".into(), json!(r));
+            }
+            match (p.get("filterColorAdjust"), p.get("paintFilter")) {
+                (Some(_), Some(_)) => {
+                    warn("image filters are ambiguous because both filter containers are present; filter conversion was skipped".into())
+                }
+                (Some(_), None) => warn("legacy image filter container is unsupported; filter conversion was skipped".into()),
+                (None, Some(filters)) => {
+                    let mut mapped = Obj::new();
+                    let fields = [
+                        ("exposure", "exposure"),
+                        ("contrast", "contrast"),
+                        ("vibrance", "saturation"),
+                        ("temperature", "temperature"),
+                        ("tint", "tint"),
+                        ("highlights", "highlights"),
+                        ("shadows", "shadows"),
+                    ];
+                    if let Kv::Object(values) = filters {
+                        for (source, target) in fields {
+                            if let Some(value) = filters.get(source) {
+                                match filter_number(value) {
+                                    Some(value) => {
+                                        mapped.insert(target.into(), json!(value));
+                                    }
+                                    None => warn(format!("malformed image filter `{source}` was skipped")),
+                                }
+                            }
+                        }
+                        for (name, value) in values {
+                            if fields.iter().any(|(known, _)| *known == *name) {
+                                continue;
+                            }
+                            match filter_number(value) {
+                                Some(0.0) => {}
+                                Some(_) => warn(format!("nonzero unsupported image filter `{}` was skipped", crate::rest::props::clip_str(name))),
+                                None => warn(format!("malformed unsupported image filter `{}` was skipped", crate::rest::props::clip_str(name))),
+                            }
+                        }
+                    } else {
+                        warn("malformed image paintFilter container was skipped".into());
+                    }
+                    if !mapped.is_empty() {
+                        o.insert("filters".into(), Value::Object(mapped));
+                    }
+                }
+                (None, None) => {}
             }
         }
         _ => {}
@@ -2626,7 +2687,7 @@ fn variable_value(d: &Kv) -> Option<Value> {
 
 /// Per-character styles of text data `td` (`characterStyleIDs` + `styleOverrideTable`) as REST
 /// `characterStyleOverrides` + `styleOverrideTable`; `size`: the base font size.
-fn char_styles(o: &mut Obj, td: &Kv, size: Option<f64>) {
+fn char_styles(o: &mut Obj, td: &Kv, size: Option<f64>, warn: &mut dyn FnMut(String)) {
     let ids: Vec<u64> = td.get("characterStyleIDs").map(Kv::list).unwrap_or_default().iter().filter_map(Kv::f64).map(|i| i as u64).collect();
     if ids.iter().all(|i| *i == 0) {
         return;
@@ -2636,7 +2697,7 @@ fn char_styles(o: &mut Obj, td: &Kv, size: Option<f64>) {
         let Some(sid) = num(e, "styleID") else { continue };
         let mut s = text_style(&View::of(e), size);
         if let Some(fills) = e.get("fillPaints") {
-            s.insert("fills".into(), Value::Array(fills.list().iter().filter_map(paint).collect()));
+            s.insert("fills".into(), Value::Array(fills.list().iter().filter_map(|p| paint(p, warn)).collect()));
         }
         table.insert((sid as u64).to_string(), Value::Object(s));
     }
