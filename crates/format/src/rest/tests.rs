@@ -363,6 +363,7 @@ fn auto_layout_constraints_and_grids() {
          ]},
         {"id": "4", "name": "Grid", "type": "FRAME", "relativeTransform": at(200.0, 0.0), "size": {"x": 300, "y": 200},
          "layoutMode": "GRID", "gridColumnCount": 3, "gridRowCount": 2, "gridColumnGap": 4, "gridRowGap": 6,
+         "_figSource": {"gridTracks": {"columnTracks": [{"sizing": "fixed", "value": 120}] }},
          "children": [{"id": "5", "name": "Cell", "type": "RECTANGLE", "relativeTransform": at(0.0, 0.0), "size": {"x": 10, "y": 10},
                        "gridColumnAnchorIndex": 1, "gridRowAnchorIndex": 0, "gridColumnSpan": 2, "gridRowSpan": 1}]}
     ]));
@@ -389,6 +390,7 @@ fn auto_layout_constraints_and_grids() {
     assert_eq!((abs.constraints.horizontal, abs.constraints.vertical), (HConstraint::LeftRight, VConstraint::Bottom));
     let grid = named(&doc, "Grid").layout.clone().unwrap();
     assert_eq!((grid.mode, grid.grid_columns, grid.grid_rows, grid.gap, grid.cross_gap), (LayoutMode::Grid, 3, 2, 4.0, 6.0));
+    assert!(grid.column_tracks.is_empty(), "private .fig track metadata is ignored by the public REST importer");
     let cell = &named(&doc, "Cell").child_layout;
     assert_eq!((cell.grid_column, cell.grid_row, cell.grid_column_span, cell.grid_row_span), (Some(1), Some(0), 2, 1));
 }

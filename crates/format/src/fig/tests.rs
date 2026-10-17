@@ -390,6 +390,175 @@ fn named<'d>(doc: &'d figcraft_doc::Document, name: &str) -> &'d figcraft_doc::N
     doc.nodes().find(|n| n.name == name).unwrap_or_else(|| panic!("no layer {name}"))
 }
 
+/// The shared schema plus the grid sizing definitions only these tests use.
+fn grid_schema() -> Schema {
+    const NODE_FIELDS: &str = ", GridTrackMap gridColumns, GridTrackMap gridRows, GridTrackSizeMap gridColumnsSizing, GridTrackSizeMap gridRowsSizing, GUID gridColumnAnchor, GUID gridRowAnchor, uint gridColumnSpan, uint gridRowSpan, float gridColumnGap, float gridRowGap";
+    const TYPES: &str = "
+enum GridTrackSizingType FLEX FIXED HUG UNKNOWN
+message GridTrackSizeFunction GridTrackSizingType type, float value
+message GridTrackSize GridTrackSizeFunction minSizing, GridTrackSizeFunction maxSizing
+message GridTrackSizeEntry GUID id, GridTrackSize trackSize
+message GridTrackSizeMap GridTrackSizeEntry[] entries
+message GridTrackEntry GUID id, string position
+message GridTrackMap GridTrackEntry[] entries
+message Blob ";
+    let text = SCHEMA.replace("enum StackMode NONE HORIZONTAL VERTICAL\n", "enum StackMode NONE HORIZONTAL VERTICAL GRID\n").replacen(
+        "\nmessage Blob ",
+        &format!("{NODE_FIELDS}{TYPES}"),
+        1,
+    );
+    Schema::parse(&text).unwrap()
+}
+
+fn track_size(kind: &'static str, value: f64) -> Kv<'static> {
+    let sizing = || o(vec![("type", e(kind)), ("value", f(value))]);
+    o(vec![("minSizing", sizing()), ("maxSizing", sizing())])
+}
+
+fn ranged_track_size(min: Kv<'static>, max: Kv<'static>) -> Kv<'static> {
+    o(vec![("minSizing", min), ("maxSizing", max)])
+}
+
+fn track_map_entry(id: u64, size: Kv<'static>) -> Kv<'static> {
+    o(vec![("id", g(id)), ("trackSize", size)])
+}
+
+fn positioned_track(id: u64, position: &'static str) -> Kv<'static> {
+    o(vec![("id", g(id)), ("position", s(position))])
+}
+
+fn unpositioned_track(id: u64) -> Kv<'static> {
+    o(vec![("id", g(id))])
+}
+
+#[test]
+fn grid_tracks_import_by_guid_and_keep_track_order() {
+    let cols = arr(vec![positioned_track(13, "$"), unpositioned_track(10), positioned_track(12, "#"), unpositioned_track(11)]);
+    let rows = arr(vec![positioned_track(21, "\""), positioned_track(20, "!")]);
+    // Sizing entries intentionally differ from track order. Their GUIDs define the join.
+    let col_sizes = arr(vec![
+        track_map_entry(12, track_size("FLEX", 1.0)),
+        track_map_entry(10, track_size("FIXED", 120.0)),
+        track_map_entry(13, track_size("FLEX", 2.0)),
+        track_map_entry(11, track_size("HUG", 80.0)),
+    ]);
+    let row_sizes = arr(vec![track_map_entry(21, track_size("HUG", 30.0)), track_map_entry(20, track_size("FIXED", 50.0))]);
+    let nodes = vec![
+        node(0, None, "DOCUMENT", "Document", vec![]),
+        node(1, Some((0, "!")), "CANVAS", "Page", vec![]),
+        node(
+            2,
+            Some((1, "!")),
+            "FRAME",
+            "Grid",
+            vec![
+                ("size", xy(600.0, 300.0)),
+                ("transform", at(0.0, 0.0)),
+                ("stackMode", e("GRID")),
+                ("gridColumns", o(vec![("entries", cols)])),
+                ("gridRows", o(vec![("entries", rows)])),
+                ("gridColumnsSizing", o(vec![("entries", col_sizes)])),
+                ("gridRowsSizing", o(vec![("entries", row_sizes)])),
+                ("gridColumnGap", f(10.0)),
+                ("gridRowGap", f(12.0)),
+            ],
+        ),
+        node(
+            3,
+            Some((2, "!")),
+            "RECTANGLE",
+            "Hug child",
+            vec![
+                ("size", xy(80.0, 30.0)),
+                ("transform", at(0.0, 0.0)),
+                ("gridColumnAnchor", g(11)),
+                ("gridRowAnchor", g(21)),
+                ("gridColumnSpan", u(2)),
+                ("gridRowSpan", u(1)),
+            ],
+        ),
+    ];
+    let bytes = canvas(&grid_schema(), &o(vec![("nodeChanges", arr(nodes))]));
+    let (doc, warnings) = import(&bytes, "Grid tracks").unwrap();
+    let grid = named(&doc, "Grid").layout.as_ref().unwrap();
+    assert_eq!((grid.mode, grid.grid_columns, grid.grid_rows, grid.gap, grid.cross_gap), (figcraft_doc::LayoutMode::Grid, 4, 2, 10.0, 12.0));
+    assert_eq!(
+        grid.column_tracks,
+        vec![
+            figcraft_doc::GridTrack::fixed(120.0),
+            figcraft_doc::GridTrack::hug(),
+            figcraft_doc::GridTrack::fill(1.0),
+            figcraft_doc::GridTrack::fill(2.0),
+        ]
+    );
+    assert_eq!(grid.row_tracks, vec![figcraft_doc::GridTrack::fixed(50.0), figcraft_doc::GridTrack::hug()]);
+    let child = &named(&doc, "Hug child").child_layout;
+    assert_eq!((child.grid_column, child.grid_row, child.grid_column_span, child.grid_row_span), (Some(1), Some(1), 2, 1));
+    assert!(!warnings.iter().any(|w| w.contains("grid track")), "{warnings:?}");
+}
+
+#[test]
+fn malformed_grid_tracks_warn_and_keep_equal_track_fallbacks() {
+    let tracks = arr(vec![positioned_track(30, "!"), positioned_track(31, "\""), positioned_track(32, "#"), positioned_track(33, "$")]);
+    let sizing = arr(vec![
+        track_map_entry(30, track_size("FIXED", -1.0)),
+        track_map_entry(31, ranged_track_size(o(vec![("type", e("FLEX")), ("value", f(1.0))]), o(vec![("type", e("FLEX")), ("value", f(2.0))]))),
+        track_map_entry(33, track_size("UNKNOWN", 5.0)),
+        track_map_entry(34, track_size("FLEX", 3.0)),
+    ]);
+    let nodes = vec![
+        node(0, None, "DOCUMENT", "Document", vec![]),
+        node(1, Some((0, "!")), "CANVAS", "Page", vec![]),
+        node(
+            2,
+            Some((1, "!")),
+            "FRAME",
+            "Grid",
+            vec![
+                ("size", xy(100.0, 100.0)),
+                ("transform", at(0.0, 0.0)),
+                ("stackMode", e("GRID")),
+                ("gridColumns", o(vec![("entries", tracks)])),
+                ("gridColumnsSizing", o(vec![("entries", sizing)])),
+            ],
+        ),
+    ];
+    let bytes = canvas(&grid_schema(), &o(vec![("nodeChanges", arr(nodes))]));
+    let (doc, warnings) = import(&bytes, "Malformed grid tracks").unwrap();
+    let layout = named(&doc, "Grid").layout.as_ref().unwrap();
+    assert_eq!(layout.column_tracks, vec![figcraft_doc::GridTrack::default(); 4]);
+    assert!(warnings.iter().any(|w| w.contains("grid track sizing is unsupported or malformed")), "{warnings:?}");
+    assert!(warnings.iter().any(|w| w.contains("stale or invalid grid track sizing entries")), "{warnings:?}");
+}
+
+#[test]
+fn oversized_grid_track_lists_warn_and_use_default_tracks() {
+    let oversized: Vec<Kv<'static>> = (0..1_001).map(|i| unpositioned_track(100 + i)).collect();
+    let sizing = vec![track_map_entry(100, track_size("FIXED", 40.0))];
+    let nodes = vec![
+        node(0, None, "DOCUMENT", "Document", vec![]),
+        node(1, Some((0, "!")), "CANVAS", "Page", vec![]),
+        node(
+            2,
+            Some((1, "!")),
+            "FRAME",
+            "Grid",
+            vec![
+                ("size", xy(100.0, 100.0)),
+                ("transform", at(0.0, 0.0)),
+                ("stackMode", e("GRID")),
+                ("gridColumns", o(vec![("entries", arr(oversized))])),
+                ("gridColumnsSizing", o(vec![("entries", arr(sizing))])),
+            ],
+        ),
+    ];
+    let bytes = canvas(&grid_schema(), &o(vec![("nodeChanges", arr(nodes))]));
+    let (doc, warnings) = import(&bytes, "Oversized grid tracks").unwrap();
+    let layout = named(&doc, "Grid").layout.as_ref().unwrap();
+    assert!(layout.column_tracks.is_empty(), "{:?}", layout.column_tracks.len());
+    assert!(warnings.iter().any(|w| w.contains("grid track list exceeds 1000 entries")), "{warnings:?}");
+}
+
 #[test]
 fn kiwi_round_trip() {
     let sc = schema();

@@ -16,7 +16,8 @@
 //!
 //! Instances come out with their own layers as the file lists them. Linking those layers to the
 //! main component's (`source`) and deriving overrides is left to the caller (the engine does it
-//! after loading), since that needs the component model.
+//! after loading), since that needs the component model. The private .fig entry point additionally
+//! preserves explicit GUID/expansion provenance before the engine derives overrides.
 
 #[cfg(test)]
 mod blur_tests;
@@ -24,8 +25,11 @@ mod blur_tests;
 mod conditional_tests;
 #[cfg(test)]
 mod effects_tests;
+mod fig_sources;
 #[cfg(test)]
 mod gamepad_tests;
+#[cfg(test)]
+mod import_regression_tests;
 pub(crate) mod props;
 pub(crate) mod proto;
 #[cfg(test)]
@@ -53,6 +57,10 @@ pub use variables::export as export_variables;
 pub const MAX_NODES: usize = 200_000;
 /// Deepest layer nesting followed.
 const MAX_DEPTH: usize = 256;
+/// Private .fig provenance, consumed only by `import_fig`.
+pub(crate) const FIG_SOURCE_FIELD: &str = "_figSource";
+/// Hidden .fig library context; accepted only by [`import_fig`].
+pub(crate) const FIG_LIBRARY_CONTEXTS_FIELD: &str = "_figLibraryContexts";
 /// Longest SVG path string read from one geometry entry.
 const MAX_PATH_BYTES: usize = 4 << 20;
 /// Most path elements in one vector.
@@ -138,12 +146,22 @@ pub fn import(v: &Value, images: ImageResolver) -> Result<(Document, Vec<String>
 /// in the file JSON (a `meta` with `variableCollections`, or `variableCollections` and
 /// `variables` at the top level) are read too; the first definition of an id wins.
 pub fn import_with(v: &Value, variables: Option<&Value>, images: ImageResolver) -> Result<(Document, Vec<String>), FormatError> {
+    import_impl(v, variables, images, false)
+}
+
+/// Internal .fig JSON path: GUID provenance is not part of the public REST import contract.
+pub(crate) fn import_fig(v: &Value, images: ImageResolver) -> Result<(Document, Vec<String>), FormatError> {
+    import_impl(v, None, images, true)
+}
+
+fn import_impl(v: &Value, variables: Option<&Value>, images: ImageResolver, fig_sources: bool) -> Result<(Document, Vec<String>), FormatError> {
     let entries: Vec<&Value> = if is_document(v) { vec![v] } else { nodes_entries(v).collect() };
     if entries.is_empty() {
         return Err(FormatError::Corrupt("not a REST API file JSON (no `document`)".into()));
     }
     let name = text(v, "name").filter(|n| !n.trim().is_empty()).map_or("Imported file", clip_str);
     let mut cx = Ctx::new(Document::new(name), images);
+    cx.fig_sources = fig_sources.then(|| fig_sources::Sources::new(MAX_NODES));
     let blank = cx.doc.first_page();
     let mut loose: Option<NodeId> = None;
     for e in &entries {
@@ -178,6 +196,12 @@ pub fn import_with(v: &Value, variables: Option<&Value>, images: ImageResolver) 
             None => cx.warn("entries without a node type were skipped"),
         }
     }
+    if fig_sources {
+        for context in v.get(FIG_LIBRARY_CONTEXTS_FIELD).and_then(Value::as_array).into_iter().flatten() {
+            let store = cx.doc.ensure_library_store();
+            cx.build(context, store, Space::default(), None, 0, false);
+        }
+    }
     // Drop the empty page the new document started with once real pages exist.
     if let Some(p) = blank
         && cx.doc.pages.len() > 1
@@ -210,7 +234,7 @@ fn style_binding(slot: &str, key: &str) -> Option<String> {
 /// Put back the shape a layer was before the `.fig` export wrote it as the outline of its stroke
 /// (`outlinedStroke`: `{kind, fills, strokes, stroke}` as the document holds them). Anything that
 /// isn't such a shape is ignored.
-fn restore_stroke(n: &mut Node, original: &Value) {
+fn restore_stroke(n: &mut Node, original: &Value) -> bool {
     #[derive(serde::Deserialize)]
     struct Original {
         kind: NodeKind,
@@ -218,16 +242,16 @@ fn restore_stroke(n: &mut Node, original: &Value) {
         strokes: Vec<figcraft_doc::color::Paint>,
         stroke: figcraft_doc::StrokeProps,
     }
-    let Ok(mut o) = serde_json::from_value::<Original>(original.clone()) else { return };
+    let Ok(mut o) = serde_json::from_value::<Original>(original.clone()) else { return false };
     match &mut o.kind {
         NodeKind::Vector { network } => {
             if network.vertices.len() + network.segments.len() > MAX_PATH_ELEMENTS {
-                return;
+                return false;
             }
             network.sanitize();
         }
         NodeKind::Line | NodeKind::Ellipse { .. } | NodeKind::Polygon { .. } | NodeKind::Star { .. } | NodeKind::Rectangle => {}
-        _ => return,
+        _ => return false,
     }
     let sp = &mut o.stroke;
     sp.weight = sp.weight.clamp(0.0, props::MAX_SIZE);
@@ -237,6 +261,28 @@ fn restore_stroke(n: &mut Node, original: &Value) {
     o.fills.truncate(64);
     o.strokes.truncate(64);
     (n.kind, n.fills, n.strokes, n.stroke) = (o.kind, o.fills, o.strokes, o.stroke);
+    true
+}
+
+/// A stroke-only vector imported as the outline of its stroke: the stroke paints fill the
+/// outline, and the stroke's shared style and colour variables move with them. The hidden fills
+/// it replaces go, with their style and bindings.
+fn outline_stroke(n: &mut Node) {
+    n.fills = std::mem::take(&mut n.strokes);
+    n.styles.fill = n.styles.stroke.take();
+    let bound = std::mem::take(&mut n.bound);
+    for (key, var) in bound {
+        let moved = match key.as_str() {
+            "fill" => continue,
+            k if k.starts_with("fills/") => continue,
+            "stroke" => "fill".to_string(),
+            k => match k.strip_prefix("strokes/") {
+                Some(rest) => format!("fills/{rest}"),
+                None => key,
+            },
+        };
+        n.bound.insert(moved, var);
+    }
 }
 
 fn children(v: &Value) -> &[Value] {
@@ -291,6 +337,7 @@ pub(crate) struct Ctx<'a> {
     count: usize,
     /// REST node id → imported node.
     ids: BTreeMap<String, NodeId>,
+    fig_sources: Option<fig_sources::Sources<'a>>,
     component_meta: BTreeMap<&'a str, &'a Value>,
     set_meta: BTreeMap<&'a str, &'a Value>,
     style_meta: BTreeMap<&'a str, &'a Value>,
@@ -321,6 +368,7 @@ impl<'a> Ctx<'a> {
             warnings: Warnings::default(),
             count: 0,
             ids: BTreeMap::new(),
+            fig_sources: None,
             component_meta: BTreeMap::new(),
             set_meta: BTreeMap::new(),
             style_meta: BTreeMap::new(),
@@ -411,7 +459,10 @@ impl<'a> Ctx<'a> {
         }
         self.count += 1;
         if let Some(rid) = text(j, "id") {
-            self.ids.entry(rid.to_string()).or_insert(id);
+            let primary = *self.ids.entry(rid.to_string()).or_insert(id) == id;
+            if let Some(sources) = &mut self.fig_sources {
+                sources.record(id, j, primary);
+            }
         }
         if ty == "INSTANCE" {
             self.instances.push((id, j));
@@ -548,7 +599,7 @@ impl<'a> Ctx<'a> {
             if let Some(c) = flag(j, "clipsContent") {
                 n.clip = c;
             }
-            n.layout = props::auto_layout(j);
+            n.layout = props::auto_layout(j, self.fig_sources.is_some());
             n.grids = props::layout_grids(j);
         }
         n.child_layout = props::child_layout(j, n.layout.as_ref().map(|l| l.mode), parent_mode);
@@ -558,9 +609,7 @@ impl<'a> Ctx<'a> {
                 n.prop_refs.insert(field.clone(), p.to_string());
             }
         }
-        if matches!(n.kind, NodeKind::Vector { .. }) {
-            self.vector(n, j);
-        }
+        let outlined = matches!(n.kind, NodeKind::Vector { .. }) && self.vector(n, j);
         if matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. }) {
             let defs = self.prop_defs(n.id, j);
             match &mut n.kind {
@@ -581,20 +630,24 @@ impl<'a> Ctx<'a> {
             self.overlay_meta.entry(rid).or_insert(j);
         }
         self.bindings(n, j);
-        if let Some(original) = j.get("outlinedStroke") {
-            restore_stroke(n, original);
+        let restored = j.get("outlinedStroke").is_some_and(|original| restore_stroke(n, original));
+        // Styles and bindings were read against the stroke: they follow its paints to the fill.
+        if outlined && !restored {
+            outline_stroke(n);
         }
     }
 
     /// A vector's network: the editable one when the JSON carries it (`vectorNetwork`, our
     /// extension, written by the `.fig` import), else from its geometry. A stroke-only vector
-    /// uses the stroke outline, painted with the stroke paints (exact look, editable as a shape).
-    fn vector(&mut self, n: &mut Node, j: &Value) {
+    /// uses the stroke outline, painted with the stroke paints (exact look, editable as a shape):
+    /// returns whether it does, and the caller moves the paints with [`outline_stroke`] once the
+    /// styles and variables of the stroke are read.
+    fn vector(&mut self, n: &mut Node, j: &Value) -> bool {
         if let Some(net) = j.get("vectorNetwork") {
             match network(net) {
                 Some(network) => {
                     n.kind = NodeKind::Vector { network };
-                    return;
+                    return false;
                 }
                 None => self.warn("invalid or oversized vector networks import as outlines"),
             }
@@ -609,17 +662,15 @@ impl<'a> Ctx<'a> {
             (None, Some(s)) => (s, true),
             (None, None) => {
                 self.warn("vectors without geometry are empty (export the file JSON with geometry=paths)");
-                return;
+                return false;
             }
         };
         let mut network = VectorNetwork::from_path(&path);
         for r in &mut network.regions {
             r.winding = winding;
         }
-        if outline {
-            n.fills = std::mem::take(&mut n.strokes);
-        }
         n.kind = NodeKind::Vector { network };
+        outline
     }
 
     /// The paths of a `fillGeometry` / `strokeGeometry` list (node-local SVG path data).
@@ -822,6 +873,12 @@ impl<'a> Ctx<'a> {
             }
         }
         self.resolve_instances();
+        if let Some(sources) = self.fig_sources.take() {
+            let missing = sources.apply(&mut self.doc, &self.ids);
+            if missing > 0 {
+                self.warn(format!("{missing} .fig instance source link(s) could not be resolved and were left unlinked"));
+            }
+        }
         self.rename_props();
         for (id, j) in std::mem::take(&mut self.protos) {
             let list = self.interactions(j);
