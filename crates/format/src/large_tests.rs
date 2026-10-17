@@ -211,7 +211,9 @@ fn document_json_may_unpack_in_proportion_to_its_packed_size() {
     assert_eq!(document_limit(MB, 2 * MB), MAX_MEMBER);
     // A real 900 000-layer document saved by us packs 1 477 139 810 bytes into 244 362 923, and
     // didn't open again under the 512 MB cap.
-    assert!(document_limit(244_362_923, 260 * MB) > 1_477_139_810);
+    if cfg!(not(target_pointer_width = "32")) {
+        assert!(document_limit(244_362_923, 260 * MB) > 1_477_139_810);
+    }
     // The packed size an archive claims counts only up to the archive's own size.
     assert_eq!(document_limit(u64::MAX, MB), MAX_MEMBER);
     // Never more than the ceiling.

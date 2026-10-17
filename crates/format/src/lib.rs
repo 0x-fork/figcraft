@@ -42,8 +42,12 @@ const MAX_MEMBER: u64 = 512 * 1024 * 1024;
 /// `document.json` may unpack to [`DOCUMENT_RATIO`] times what it takes in the archive, within
 /// [`MAX_MEMBER`] and [`MAX_DOCUMENT`]: a large document saved by us (a 900 000-layer file packs
 /// 1.48 GB into 244 MB) opens again, while a small archive still can't unpack into gigabytes.
+/// 32-bit targets (wasm32) have a 4 GB address space in all, so their ceiling is lower.
 const DOCUMENT_RATIO: u64 = 16;
+#[cfg(not(target_pointer_width = "32"))]
 const MAX_DOCUMENT: u64 = 4 * 1024 * 1024 * 1024;
+#[cfg(target_pointer_width = "32")]
+const MAX_DOCUMENT: u64 = 1024 * 1024 * 1024;
 /// Most versions a file keeps: saving more is refused, extra entries in a file are skipped.
 pub const MAX_VERSIONS: usize = 100;
 /// Longest version name and description kept (chars).

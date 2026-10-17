@@ -629,6 +629,8 @@ fn large_files_get_a_larger_value_budget() {
     // A real 400 000-layer file: an 83.5 MB canvas whose message unpacks to 334 MB and holds
     // 30.5 million values was refused as "too many values".
     assert!(kiwi::value_budget(83_491_232) > 30_514_899);
+    // A real 194 MB design-system file (UX4G): a 39.5 MB canvas holding 29.7 million values.
+    assert!(kiwi::value_budget(39_528_420) > 29_703_730);
     // Still bounded by the largest canvas read.
     assert!(kiwi::value_budget(MAX_CANVAS as usize) <= 128 << 20);
 }
