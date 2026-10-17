@@ -876,6 +876,16 @@ fn system_fonts_opted_out() -> bool {
     std::env::var_os("FIGCRAFT_NO_SYSTEM_FONTS").is_some_and(|v| !v.is_empty() && v != "0")
 }
 
+/// Every font text can use is known: the system fonts were indexed, or there are none to index
+/// (opted out, or the web). Until then a family the scan would find counts as missing.
+pub fn installed_fonts_known() -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    if !system_fonts_opted_out() {
+        return system_fonts_scanned();
+    }
+    true
+}
+
 /// Index the system fonts the first time the font database is used (headless apps: a run that
 /// lays out no text never pays for the scan). The desktop app scans in the background instead.
 pub fn scan_system_fonts_on_demand() {

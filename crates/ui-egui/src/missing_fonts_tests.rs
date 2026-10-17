@@ -16,11 +16,10 @@ fn saved(name: &str, families: &[&str]) -> String {
     path
 }
 
-/// The installed fonts are indexed, as the desktop app does at startup; false when this machine
-/// opted out (nothing would ever count as known).
+/// The installed fonts are indexed, as the desktop app does at startup.
 fn fonts_indexed() -> bool {
     figcraft_text::scan_system_fonts();
-    figcraft_text::system_fonts_scanned()
+    figcraft_text::installed_fonts_known()
 }
 
 fn listed(u: &Ui) -> Value {
@@ -42,11 +41,12 @@ fn opening_a_file_lists_its_missing_fonts_and_not_the_installed_ones() {
     u.app.run("file.open", json!({"path": path}));
     u.frame(vec![]);
     assert_eq!(listed(&u), Value::Null);
+    u.app.run("file.close", json!({}));
 
     u.app.run_user("file.open", json!({"path": path}));
     std::fs::remove_file(&path).unwrap();
     u.frame(vec![]);
-    assert_eq!(listed(&u), json!({"families": [{"family": "FigCraft Missing UI", "layers": 2}]}));
+    assert_eq!(listed(&u), json!({"families": [{"family": "FigCraft Missing UI", "layers": 2}], "indexing": false}));
     u.frame(vec![]);
     let shown = u.frame_output(vec![]).shapes;
     assert!(crate::import_report_tests::shown_texts(shown).iter().any(|t| t == "2 text layers"));
@@ -99,9 +99,10 @@ fn it_waits_for_the_import_report_to_close() {
 
 #[test]
 fn text_menu_shows_the_window_for_the_file_in_front_even_with_nothing_missing() {
+    assert!(fonts_indexed());
     let mut u = Ui::new(Session::new());
     assert!(u.app.run("text.missingFonts", json!({})).is_some());
-    assert_eq!(listed(&u), json!({"families": []}));
+    assert_eq!(listed(&u), json!({"families": [], "indexing": false}));
     u.frame(vec![]);
     let shown = u.frame_output(vec![]).shapes;
     assert!(crate::import_report_tests::shown_texts(shown).iter().any(|t| t == "All the fonts this file uses are installed"));
@@ -109,4 +110,40 @@ fn text_menu_shows_the_window_for_the_file_in_front_even_with_nothing_missing() 
         vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }];
     u.frame(escape);
     assert_eq!(listed(&u), Value::Null, "Escape closes it");
+}
+
+#[test]
+fn asked_for_before_the_fonts_are_indexed_it_lists_them_once_they_are() {
+    assert!(fonts_indexed());
+    let path = saved("indexing", &["FigCraft Missing Indexing"]);
+    let mut u = Ui::new(Session::new());
+    u.app.run("file.open", json!({"path": path}));
+    std::fs::remove_file(&path).unwrap();
+    // As Text ▸ Missing fonts leaves it while the startup scan is still running.
+    let uid = u.app.session.ds().unwrap().uid;
+    u.app.ui.missing_fonts = Some(crate::missing_fonts::Shown { uid, families: Vec::new(), indexing: true });
+    u.frame(vec![]);
+    assert_eq!(listed(&u), json!({"families": [{"family": "FigCraft Missing Indexing", "layers": 2}], "indexing": false}));
+}
+
+#[test]
+fn placing_images_or_clearing_recents_does_not_bring_it_back() {
+    assert!(fonts_indexed());
+    let path = saved("place", &["FigCraft Missing Place"]);
+    let svg = std::env::temp_dir().join(format!("figcraft-missing-fonts-place-{}.svg", std::process::id()));
+    std::fs::write(&svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>"#).unwrap();
+    let mut u = Ui::new(Session::new());
+    u.app.run_user("file.open", json!({"path": path}));
+    u.frame(vec![]);
+    assert_eq!(listed(&u)["families"][0]["family"], "FigCraft Missing Place");
+    u.app.ui.missing_fonts = None;
+    // A placed SVG, the same file opened again (it only comes to the front), Clear recent.
+    assert!(u.app.run_user("file.import", json!({"path": svg.to_string_lossy()})).is_some());
+    assert!(u.app.run_user("file.open", json!({"path": path})).is_some());
+    u.app.run_user("file.openRecent", json!({"clear": true}));
+    std::fs::remove_file(&path).unwrap();
+    std::fs::remove_file(&svg).unwrap();
+    u.frame(vec![]);
+    assert!(u.app.ui.font_checks.is_empty());
+    assert_eq!(listed(&u), Value::Null);
 }

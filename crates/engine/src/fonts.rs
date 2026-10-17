@@ -21,7 +21,7 @@ pub struct Missing {
 
 /// The families `doc` names that the font database doesn't have, by name. On the desktop the
 /// installed fonts are indexed in the background: ask once that's done
-/// (`figcraft_text::system_fonts_scanned`), or every installed family counts as missing.
+/// (`figcraft_text::installed_fonts_known`), or every installed family counts as missing.
 pub fn missing(doc: &Document) -> Vec<Missing> {
     // Lower-case family → (spelling, layers).
     let mut used: BTreeMap<String, (String, usize)> = BTreeMap::new();

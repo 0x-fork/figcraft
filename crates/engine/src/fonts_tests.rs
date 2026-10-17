@@ -112,7 +112,10 @@ fn blank_families_and_aliases_are_handled() {
     doc.get_mut(t).unwrap().bound.insert("fontFamily".into(), "V:alias".into());
     let other = text(&mut s, "FigCraft Missing G");
     s.doc_mut().unwrap().get_mut(other).unwrap().bound.insert("fontFamily".into(), "V:cycle".into());
-    // The bound layer takes the value its alias resolves to; the cycle resolves to nothing.
+    // The bound layer takes the value its alias resolves to (bindings are applied after the next
+    // command); the cycle resolves to nothing.
+    let NodeKind::Text(bound) = &s.doc().unwrap().node(t).unwrap().kind else { panic!() };
+    assert_eq!(bound.style.font_family, "FigCraft Missing F");
     assert_eq!(families(&mut s), vec![("FigCraft Missing F".to_string(), 1), ("FigCraft Missing G".to_string(), 1)]);
 }
 
