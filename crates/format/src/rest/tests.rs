@@ -194,7 +194,7 @@ fn image_filter_tint_turns_magenta_positive_into_native_green_positive() {
             "fills": [{"type": "IMAGE", "imageRef": "tint", "filters": {"tint": tint}}]
         })
     };
-    let (doc, warnings) = one(json!([rect("Magenta", 0.75), rect("Green", -0.5)]));
+    let (doc, warnings) = one(json!([rect("Magenta", 0.75), rect("Green", -0.5), rect("Neutral", 0.0)]));
     let image = |name: &str| {
         let PaintKind::Image(image) = &named(&doc, name).fills[0].kind else { panic!("{name} is not an image fill") };
         image
@@ -202,6 +202,7 @@ fn image_filter_tint_turns_magenta_positive_into_native_green_positive() {
     // The same sign as a `.fig` import (`fig::tests::image_filters`).
     assert!(close(f64::from(image("Magenta").filters.tint), -0.75));
     assert!(close(f64::from(image("Green").filters.tint), 0.5));
+    assert!(image("Neutral").filters.tint.is_sign_positive(), "no negative zero");
     assert!(!warnings.iter().any(|w| w.contains("approximate renderer")), "{warnings:?}");
 }
 
