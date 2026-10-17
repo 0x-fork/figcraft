@@ -108,9 +108,14 @@ fn lookup(lang: usize, key: &str) -> Option<&'static Text> {
 /// The UI string for `key` (its English text) in the current language. One English text that needs
 /// two translations gets a context after `|` ("Fill|sizing"); the English catalog maps it back.
 pub fn tr(key: &str) -> &str {
-    match lookup(CURRENT.load(Ordering::Relaxed), key) {
-        Some(Text::Plain(s) | Text::Plural { other: s, .. }) => s,
-        None => key,
+    try_tr(key).unwrap_or(key)
+}
+
+/// [`tr`] for text that comes from data and may have no catalog entry (an importer's notes, say):
+/// `None` when the catalog doesn't have it.
+pub fn try_tr(key: &str) -> Option<&str> {
+    match lookup(CURRENT.load(Ordering::Relaxed), key)? {
+        Text::Plain(s) | Text::Plural { other: s, .. } => Some(s),
     }
 }
 
@@ -163,6 +168,9 @@ enum Plural {
 /// CLDR integer rules. Existing one/other catalogs may omit the extra forms.
 fn plural(code: &str, n: usize) -> Plural {
     match code {
+        "cs" if n == 1 => Plural::One,
+        "cs" if (2..=4).contains(&n) => Plural::Few,
+        "cs" => Plural::Other,
         "ru" if n % 10 == 1 && n % 100 != 11 => Plural::One,
         "ru" if (2..=4).contains(&(n % 10)) && !(12..=14).contains(&(n % 100)) => Plural::Few,
         "ru" => Plural::Many,
@@ -174,7 +182,7 @@ fn plural(code: &str, n: usize) -> Plural {
 }
 
 // CLDR's million-count "many" in French, Spanish and Portuguese still reads their existing
-// "other" wording. Only Russian currently supplies separate few/many forms.
+// "other" wording. Czech supplies separate few forms; Russian supplies few/many forms.
 
 /// Whether count `n` takes the "one" form: 0 and 1 in French and Brazilian Portuguese, never in
 /// Japanese, Korean and Chinese (no plural forms: always "other"), 1 elsewhere (CLDR's integer rules).
