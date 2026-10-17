@@ -114,6 +114,8 @@ Or in a project's `.mcp.json`:
     columns (vertical layouts wrap top to bottom into new columns).
   - `object.convertToGroup` / `object.convertToFrame` turn a frame into a group or back in place
     (layers stay put; a group has no auto layout, fill, stroke, corner radius, clipping or grids).
+  - `object.convertToSection` turns a frame on the page or in a section into a section in place, and
+    `object.convertToFrame` turns a section back into a frame (keeping its fill, not clipping).
   - `contentAlign` (wrapping layouts): `auto` (default) packs the lines `crossGap` apart at the
     start, centre or end `crossAlign` names (lines of nothing but fill children stretch instead);
     `spaceBetween` puts the free space between the lines (one line, or no free space: like `auto`).
@@ -128,10 +130,10 @@ Or in a project's `.mcp.json`:
     resolved `gridCell`.
 - **Every menu action is a command** (`list_commands`), and most commands act on `ids` when given,
   else on the selection. New layers become the selection.
-- Colours are `"#RRGGBB"` or `"#RRGGBBAA"`. Inside fills, strokes and effects passed through the MCP
-  tools, `color` may also be a hex string and gradients can be written
-  `{"type": "linearGradient", "stops": ["#7048E8", "#1098AD"]}`; the server converts them to the
-  engine's paint JSON.
+- Colours are `"#RRGGBB"` or `"#RRGGBBAA"`. Inside fills and strokes, `color` may also be a hex
+  string and gradients can be written `{"type": "linearGradient", "stops": ["#7048E8", "#1098AD"]}`;
+  the engine reads them as its paint JSON, so `run_command`, `figcraft-cli run` and the control
+  channel take them too. Effects passed through the MCP tools may use hex `color` strings as well.
 - **Blend modes**: `blend` on a layer (`node.set`) or a paint (`fill.set` / `stroke.set`) is a
   menu label or CSS keyword (`"Normal"`, `"pass through"`, `"multiply"`, `"plusDarker"`, ...;
   `normal` is Normal). Groups and frames start as pass-through: their children blend with what is
@@ -177,7 +179,8 @@ Or in a project's `.mcp.json`:
 - **Lists** are per paragraph: `listStyle` (`none`, `bulleted`, `numbered`) and `indentation` (the
   nesting level, 0–8) apply to the paragraphs chars `start`..`end` touch (all of them without a
   range); `get_node` reports one `listStyle` for the layer, or `lineTypes` and `lineIndentations`
-  per paragraph. `text.bulletList`, `text.numberList` and `text.listStyle` act on the selected
+  per paragraph, plus `listStartOffsets` when a numbered list starts past 1 (from a `.fig` file;
+  1 shows "2."). `text.bulletList`, `text.numberList` and `text.listStyle` act on the selected
   paragraphs while text is edited. Layer props: `listSpacing` (px between list items, in place of
   `paragraphSpacing`), `hangingList` (markers outside the box) and `hangingPunctuation`. While
   editing, `key` Tab / Shift+Tab nest an item or move it out, Enter on an empty item and Backspace
@@ -219,7 +222,7 @@ Or in a project's `.mcp.json`:
 |---|---|
 | `list_commands {filter?}` | Every command: id, label, menu, shortcut, undoable, params doc. |
 | `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, Leptos, SwiftUI or Jetpack Compose for a layer; components take their properties as parameters and instances are calls, see Dev Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names; `colorFormat`: hex, rgb, css, hsl or hsb), `inspect.assets` (layers under the selection with export settings, icons and images, each with its `kind`), `inspect.code` takes `unit: rem` and `rootFontSize` for CSS, HTML, React and Leptos, `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`, `codeConnect.set` (components linked to real code, see Dev Mode below)). |
-| `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing for open documents and their document state. Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. |
+| `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing for open documents and their document state. Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. A step can use what an earlier step returned: `{"$step": n}` anywhere in its params becomes the `id` in step n's result (zero-based), and `{"$step": n, "field": "…"}` another field of it (see Step references below). |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
 | `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`; marking again clears "Changed"), a section's `sectionContentsHidden`, text…); returns the updated layers. |
 | `inspect_document {depth, allPages}` | The document as JSON (layer tree, styles, selection, history). |
@@ -227,7 +230,7 @@ Or in a project's `.mcp.json`:
 | `select {ids}` | Replace the selection (`[]` deselects). |
 | `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?, contentsOnly?, includeBoundingBox?, svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?}` | png, jpg, svg, webp, pdf, or `fig`: the whole file as `.fig`, experimental (see Exporting `.fig` files below); `size` is `2x`, `512w` or `512h`. The image covers what the layers paint (shadows towards their offset, strokes, unclipped children, a mask group's mask; hidden layers take no room; a slice is its area with everything under it); `contentsOnly: false` also draws every other layer showing in that area, `includeBoundingBox` exports the layers' own boxes; SVG: `svgOutlineText: false` keeps `<text>`, `svgIdAttribute` writes unique ids from layer names, `svgSimplifyStroke: false` writes every stroke as an outline. The same options go in export settings (`export.add` / `export.update`). PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?, assets?}` (every layer once per setting, named `<layer><suffix>.<format>`, a slash in a layer name making a folder; `assets: true` exports the Inspect tab's assets instead: icons as SVG, images as PNG). |
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window in front when attached, a window id (see Windows below) that window. |
-| `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` (best effort, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. |
+| `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` (best effort, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. `open_file` returns `opened` (for a file opened anew, a `summary` of `name`, `pages`, `layers` and `images`, and `warnings` or `repairs`; a file that was already open just gives its `index`) and the document's `document` outline. |
 | `undo` / `redo` | Step through history. |
 | `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. A dragged layer drops into the frame or auto layout slot under the pointer, except one inside a group, a boolean group or an instance (outside its slots), which only moves. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). |
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity, arrows that pan the view when nothing is selected; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
@@ -301,9 +304,9 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   given, are or are in; default the selection) out of the library the file publishes, or let them
   back in (`on: false`; without `on` it toggles). The sign of it is the name: hiding puts a `.`
   before it, showing takes the leading `.` and `_` away. Returns `{ids, hidden}`; one undo step.
-- New files and pages: `file.new` and `page.add` give a page the colour `#F5F5F5`. Only the app
-  with its dark theme showing makes them `#1E1E1E`; headless sessions (the CLI, this server) have
-  no theme. Text made with `text.create` or `node.create` is black whatever the page here; in the
+- New files and pages: `file.new` gives its page the colour `#F5F5F5`. Only the app with its dark
+  theme showing makes it `#1E1E1E`; headless sessions (the CLI, this server) have no theme.
+  `page.add` gives the new page the current page's colour, wherever it runs. Text made with `text.create` or `node.create` is black whatever the page here; in the
   app (the control channel, `--attach`) it is white on a dark page unless `props` name a `fill`,
   as the Text tool (`pointer` with `tool.text`) makes it everywhere.
 - `transform.rotationOrigin {on?}` (`Alt+R`): show or hide the selection's rotation origin handle
@@ -333,7 +336,8 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   `$$` a dollar sign. Layers are numbered in stacking order, bottom first. Returns `{names}`.
 - Pages: `page.add {name?}` (a name starting with `-` adds a divider: an empty page shown as a line
   in the pages list, never opened and holding no layers), `page.list` (each page's `divider`),
-  `page.rename`, `page.move {id, index}`, `page.duplicate` ("Copy of …", after its source),
+  `page.rename`, `page.move {id, index}`, `page.duplicate` ("Copy of …", after its source, with its colour,
+  flows (starting at the copied frames), prototype settings and guides),
   `page.delete` (the last page that isn't a divider stays).
 - `component.list`: each component's `folder` (the Assets panel's folders: its page, the frames
   holding it, then its name's slash parts) and `label` (the name on its tile).
@@ -349,7 +353,10 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   nested layers), Escape or a click drops it.
 - `pref.reduceMotion {on?}`: reduced motion (the interface's own animations off; the system's
   accessibility setting turns it on too). Prototype transitions still play.
-- `pref.language {language: system|en|es|es-419|fr|de|pt-BR|ja|ko|zh-Hans|…}`: the app's interface language, applied live ("system":
+- `pref.autoSave {on?}`: files that have a path save themselves a few seconds after they change
+  (off by default; the desktop app's timer does it, so scripts still call `file.save`).
+- `pref.language {language: system|en|cs|ru|es|es-419|fr|de|pt-BR|ja|ko|zh-Hans|…}`: the app's interface language, applied live ("system":
+- `pref.language {language: system|en|es|es-419|fr|de|pt-BR|ja|ko|sv|zh-Hans|…}`: the app's interface language, applied live ("system":
   the OS or browser language; a language without a catalog shows English). Command ids, labels and
   every result stay English.
 
@@ -764,10 +771,12 @@ skipped. The result's `opened.warnings` list what was approximated or skipped.
 ending in `.fig`) writes the whole document as a `.fig` file, from the same public format notes the
 import uses: the layer tree, geometry, paints with image bytes, strokes, effects, text with styled
 runs, vector networks, auto layout, constraints, components, sets, instances with their overrides
-and property values, and prototype interactions. `warnings` lists what was left out (shared style
-links, variables, comments, Dev Mode data and the like). Only round trips through FigCraft's own
-importer are verified; other apps may not open every file. Without `path` the file comes back as
-base64 `data`. Check one by opening it again:
+and property values, variable collections with their modes, variables and bindings, shared styles
+with their layer links, and prototype interactions. `warnings` lists what was left out (comments,
+Dev Mode data, some bindings and settings and the like). Round trips through FigCraft's own
+importer are tested, and the example documents and small test files were opened in other software
+(`docs/file-format-parity.md` says what was checked); other apps may not open every file. Without
+`path` the file comes back as base64 `data`. Check one by opening it again:
 
 ```text
 {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"export","arguments":{"format":"fig","path":"/tmp/handoff.fig"}}}
@@ -1090,6 +1099,11 @@ only: a host stops hosting it, a guest leaves it.
   pointer. Your selection, page and view go out by themselves when they change.
 - `collab.follow {client}` follows that person's viewport; `collab.follow {}` stops (so does any
   pan or zoom of your own, or Escape).
+- `collab.removePerson {client}` removes that person from the session: they are told the session
+  is over for them (they keep their copy and don't reconnect), and their address can't join the
+  file again while the session runs. Only the person hosting, or the owner of a
+  file on a server (with its owner token), can; a server older than this request says it can't.
+  Returns `{removed, name}`.
 - `collab.cursorChat {text}` shows `text` next to your cursor for everyone in the session (put the
   cursor somewhere first with `collab.cursor`): at most 100 characters, control characters become
   spaces, `""` closes it. Others see it fade 5 seconds after its last change, so send it again to
@@ -1383,7 +1397,8 @@ siblings and the frame's edges) along those axes, keeping whole pixels in the fr
 
 `guide.select {index, frame? | page?}` selects a guide (and deselects the layers; `{}` deselects
 it), as clicking one does in the app; `guide.remove {}` without an index removes the selected one
-(the context menu's Remove guide). While a guide is selected and no layer is, Delete removes it,
+(the context menu's Remove guide), and removing another guide keeps the selected one selected.
+While a guide is selected and no layer is, Delete removes it,
 the arrows across it nudge it (Shift: the big nudge) and Escape deselects it. In the app, a guide
 dragged out of a ruler and dropped on a frame becomes the guide of the top-level frame there, along
 the frame's axis nearer the ruler's; Alt-dragging a guide drops a copy, and holding Alt while
@@ -1406,6 +1421,12 @@ turned off 0°.
   With `pointer`, `alt: true` hovers measure (add `cmd` for nested layers, `shift` for padding) and
   `alt` drags show live distances to the neighbours; `inspect_ui` reports them under
   `tool.overlay` (`guides`, and `measure_box` for the box measured to).
+- **Duplicating at a spacing**: a copy Alt-dragged off a layer with `pointer` snaps to that layer
+  too (its edges, centres and equal spacing). `edit.duplicate {ids?, dx?, dy?}` without `dx`/`dy`
+  repeats the last duplicate's page offset while its copies are what it duplicates (and still the
+  selection), measured when it runs: Alt-drag or duplicate and move a copy, then each
+  `edit.duplicate` steps out the next one as far again. Copies placed by an auto layout set no
+  step; explicit `dx`/`dy` always win.
 - **Scale tool** (`tool.scale`, K): dragging a selection handle with `pointer` scales everything by
   one factor (sizes and positions whatever the constraints, strokes, effects, corner radii, auto
   layout spacing, min/max sizes, layout grids, guides, tiled images, text), one undo step per drag,
@@ -1509,6 +1530,29 @@ Align and distribute as one undo step:
   {"command":"distribute.horizontal","params":{"ids":[3,4,5]}}]}}}
 ```
 
-The end-to-end tests in `crates/mcp/tests/agent_tasks.rs` are worked examples of ten realistic
-tasks (auto layout, components and overrides, gradients and shadows, paint styles, Light/Dark
-variables, align/distribute/group, boolean subtract + flatten, export, undo/redo, drawing with tools).
+### Step references
+
+A step in a `batch` can use what an earlier step returned. `{"$step": n}` anywhere in a step's
+params (a value, an item in `ids`, a nested field) is replaced by the `id` in the result of step `n`
+(zero-based) before the step runs; `{"$step": n, "field": "name"}` takes another field of that
+result. This builds a nested tree in one call and one undo step, without guessing ids:
+
+```json
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"batch","arguments":{"label":"Card","commands":[
+  {"command":"node.create","params":{"type":"frame","name":"Card","props":{"layout":"vertical","gap":12}}},
+  {"command":"node.create","params":{"type":"text","parent":{"$step":0},"text":"Ada Lovelace"}},
+  {"command":"node.create","params":{"type":"frame","parent":{"$step":0},"name":"Button"}},
+  {"command":"node.create","params":{"type":"text","parent":{"$step":2},"text":"Follow"}}]}}}
+```
+
+A reference to the same or a later step, a negative or non-integer index, a missing `field` or any
+other key next to `$step` fails the whole batch, which is rolled back. Only an object whose keys are
+`$step` (and optionally `field`) is a reference: text such as `"$step 0"` is left as written. The
+`$step` key is reserved in step params: an object holding it anywhere (in plugin data or a variable
+value too) is read as a reference. A step that is itself a `command.batch` is passed on as written,
+so the references in its steps are to its own steps, not the outer batch's.
+
+The end-to-end tests in `crates/mcp/tests/agent_tasks.rs` are worked examples of realistic tasks
+(auto layout, a card built in one batch with step references, components and overrides, gradients
+and shadows, paint styles, Light/Dark variables, align/distribute/group, boolean subtract + flatten,
+export, undo/redo, drawing with tools).

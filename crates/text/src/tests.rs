@@ -416,3 +416,68 @@ fn arrows_move_visually_through_right_to_left_runs() {
     // Plain left-to-right lines step by char (the caller's default).
     assert!(layout(&TextData::new("plain"), None, None).visual_step(1, true).is_none());
 }
+
+#[test]
+fn selection_through_text_end_stays_inside_auto_width_box() {
+    if !have_fonts() {
+        return;
+    }
+    for size in [12.0, 24.0, 96.0] {
+        let mut t = TextData::new("Hello world");
+        t.style.font_size = size;
+        let l = layout(&t, None, None);
+        let n = "Hello world".chars().count();
+        let right = l.selection_rects(0, n).last().map_or(f64::NAN, |r| r.x1);
+        assert!(right <= l.width.ceil(), "size {size}: right {right} > ceil(width) {}", l.width.ceil());
+    }
+    // A selected paragraph break still shows past the end of its line.
+    let t = TextData::new("Hello\nworld");
+    let l = layout(&t, None, None);
+    let r = l.selection_rects(0, 6);
+    let first = r.first().map_or(f64::NAN, |r| r.x1);
+    assert!(first > l.caret(5).0 + 1.0, "{first}");
+}
+
+/// The selection rect drawn on line `li` of `l`, if any.
+fn rect_on(l: &TextLayout, rects: &[figcraft_geom::Rect], li: usize) -> Option<figcraft_geom::Rect> {
+    let top = l.lines.get(li)?.top;
+    rects.iter().find(|r| (r.y0 - top).abs() < 1e-6).copied()
+}
+
+#[test]
+fn select_all_highlights_an_empty_last_line() {
+    if !have_fonts() {
+        return;
+    }
+    // "Hello\n": the trailing break leaves an empty second line (#665).
+    let l = layout(&TextData::new("Hello\n"), None, None);
+    assert_eq!(l.lines.len(), 2);
+    let Some(r) = rect_on(&l, &l.selection_rects(0, 6), 1) else { panic!("no highlight on the empty last line") };
+    // A paragraph-break mark at the line's start, not at the end of "Hello" above.
+    assert!(r.x0.abs() < 1e-6 && (r.width() - 4.0).abs() < 1e-6, "{r:?}");
+    assert!(rect_on(&l, &l.selection_rects(5, 6), 1).is_some());
+    // Selecting part of the first line, or a caret, leaves the empty line alone.
+    assert!(l.selection_rects(0, 1).iter().all(|r| r.y0 < l.lines[1].top - 1e-6), "{:?}", l.selection_rects(0, 1));
+    assert!(l.selection_rects(6, 6).is_empty());
+    // A right-to-left paragraph marks its empty last line too.
+    let rtl = layout(&TextData::new("\u{5E9}\u{5DC}\u{5D5}\u{5DD}\n"), None, None);
+    let Some(r) = rect_on(&rtl, &rtl.selection_rects(0, 5), 1) else { panic!("no highlight on the empty right-to-left line") };
+    assert!(r.x0.abs() < 1e-6 && (r.width() - 4.0).abs() < 1e-6, "{r:?}");
+}
+
+#[test]
+fn selection_after_a_line_break_starts_at_the_line_start() {
+    if !have_fonts() {
+        return;
+    }
+    // Not at the end of the line above, where `caret` puts the index after the break.
+    let l = layout(&TextData::new("Hello\nworld"), None, None);
+    let Some(r) = rect_on(&l, &l.selection_rects(0, 11), 1) else { panic!("no highlight on the second line") };
+    assert!(r.x0.abs() < 1e-6 && r.x1 > l.caret(10).0, "{r:?}");
+    // An empty line in the middle shows its break mark at its start.
+    let m = layout(&TextData::new("Hello\n\nworld"), None, None);
+    let Some(r) = rect_on(&m, &m.selection_rects(0, 12), 1) else { panic!("no highlight on the empty line") };
+    assert!(r.x0.abs() < 1e-6 && (r.width() - 4.0).abs() < 1e-6, "{r:?}");
+    // A break followed by text still doesn't highlight the next line's start.
+    assert!(rect_on(&l, &l.selection_rects(0, 6), 1).is_none());
+}

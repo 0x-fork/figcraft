@@ -43,7 +43,32 @@ fn starts(l: &TextLayout) -> Vec<(f64, Option<f64>)> {
 }
 
 fn pl(list: ListStyle, indent: u8) -> ParaList {
-    ParaList { list, indent }
+    ParaList { list, indent, start_offset: 0 }
+}
+
+fn from(list: ListStyle, indent: u8, start_offset: u32) -> ParaList {
+    ParaList { list, indent, start_offset }
+}
+
+#[test]
+fn numbered_lists_count_from_their_start() {
+    use ListStyle::{Bulleted as B, None as P, Numbered as N};
+    let cases: Vec<(Vec<ParaList>, Vec<&str>, &str)> = vec![
+        (vec![from(N, 0, 1)], vec!["2."], "a one-item list started at 2 (#686)"),
+        (vec![from(N, 0, 3), pl(N, 0), pl(N, 0)], vec!["4.", "5.", "6."], "the items after the first count on from it"),
+        (vec![from(N, 0, 3), from(N, 0, 3), from(N, 0, 3)], vec!["4.", "5.", "6."], "items that go on counting ignore their own start"),
+        (vec![from(N, 0, 1), pl(P, 0), from(N, 0, 1)], vec!["2.", "", "2."], "a list after a plain paragraph starts from its own start"),
+        (vec![pl(N, 0), from(N, 1, 1), pl(N, 1)], vec!["1.", "b.", "c."], "a nested level starts from its first item's start"),
+        (vec![from(B, 0, 4), pl(B, 0)], vec!["\u{2022}", "\u{2022}"], "bullets have no number"),
+        (vec![from(N, 0, 4_000), pl(N, 2)], vec!["4001.", "i."], "big starts"),
+    ];
+    for (lists, want, why) in cases {
+        assert_eq!(list_markers(&lists), want, "{why}");
+    }
+    // The largest start never overflows, on 32-bit targets too.
+    let max = list_markers(&[from(N, 0, u32::MAX), pl(N, 0), pl(N, 0)]);
+    assert_eq!(max.len(), 3);
+    assert!(max.iter().all(|m| m.starts_with("429496729")), "{max:?}");
 }
 
 #[test]
@@ -130,14 +155,23 @@ fn hanging_punctuation_outside_the_aligned_edge() {
     t.auto_resize = TextAutoResize::Height;
     let Some(plain) = laid(&t) else { return };
     let open = plain.glyphs[0].advance;
+    // Kerning may draw a glyph off its pen position (an x offset, e.g. Helvetica Neue's "re"), so
+    // each hanging line is checked against the same line set flush: every glyph moves by exactly
+    // the hanging mark's advance, which puts the letters' pen edge on the box edge.
+    let moved = |a: &TextLayout, b: &TextLayout, by: f64| {
+        a.glyphs.len() == b.glyphs.len() && a.glyphs.iter().zip(&b.glyphs).all(|(a, b)| (a.x - b.x - by).abs() < EPS)
+    };
     t.hanging_punctuation = true;
     let l = laid(&t).unwrap();
-    assert!((l.glyphs[0].x + open).abs() < EPS && l.glyphs[1].x.abs() < EPS, "left: the quote hangs, Q starts the line");
+    assert!(plain.glyphs[0].x.abs() < EPS && moved(&l, &plain, -open), "left: the quote hangs, Q starts the line");
     t.align_h = TextAlignH::Right;
+    t.hanging_punctuation = false;
+    let flush = laid(&t).unwrap();
+    t.hanging_punctuation = true;
     let l = laid(&t).unwrap();
-    let last = l.glyphs.last().unwrap();
-    let before = &l.glyphs[l.glyphs.len() - 2];
-    assert!((before.x + before.advance - 400.0).abs() < EPS && last.x >= 400.0 - EPS, "right: the full stop hangs past the edge");
+    let stop = l.glyphs.last().unwrap().advance;
+    let edge = flush.lines[0].x + flush.lines[0].width;
+    assert!((edge - 400.0).abs() < EPS && moved(&l, &flush, stop), "right: the full stop hangs past the edge");
     t.align_h = TextAlignH::Center;
     let (a, b) = (laid(&t).unwrap(), {
         t.hanging_punctuation = false;
