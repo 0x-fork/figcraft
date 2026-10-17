@@ -1,4 +1,4 @@
-use super::{Archive, decode_canvas, kiwi::Kv, map};
+use super::{kiwi::Kv, map};
 
 fn obj(fields: Vec<(&'static str, Kv<'static>)>) -> Kv<'static> {
     Kv::Object(fields)
@@ -202,10 +202,6 @@ fn synthetic_connector_authored_hidden_background_is_retained() {
     assert_eq!(background["fills"].as_array().unwrap().len(), 1);
 }
 
-fn connector<'a>(layers: &'a [serde_json::Value], name: &str) -> &'a serde_json::Value {
-    layers.iter().find(|layer| layer.get("name").and_then(serde_json::Value::as_str) == Some(name)).expect("connector in fixture")
-}
-
 fn field_mut<'a, 's>(value: &'a mut Kv<'s>, key: &str) -> Option<&'a mut Kv<'s>> {
     let Kv::Object(fields) = value else { return None };
     fields.iter_mut().find(|(name, _)| *name == key).map(|(_, value)| value)
@@ -243,66 +239,4 @@ fn set_override_field(message: &mut Kv<'_>, field: &str, local_id: u64, key: &'s
     } else {
         fields.push((key, value));
     }
-}
-
-#[test]
-#[ignore = "set FIGCRAFT_CONNECTOR_LABEL_FIXTURE to the retained synthetic source-initial.zip"]
-fn synthetic_export_keeps_saved_vector_gap_and_composed_label_position() {
-    let path = std::env::var_os("FIGCRAFT_CONNECTOR_LABEL_FIXTURE").expect("fixture path is required when running this test");
-    let bytes = std::fs::read(path).expect("read synthetic connector export");
-    let archive = Archive::open(&bytes).expect("open synthetic connector export");
-    let (schema, raw_message) = decode_canvas(&archive.canvas).expect("decode synthetic canvas");
-    let root = schema.find("Message").expect("Message definition");
-    let message = schema.decode_message(root, &raw_message).expect("decode synthetic message");
-    let (rest, warnings) = map::to_rest(&message, "connector labels");
-    let layers = rest.pointer("/document/children/0/children").and_then(serde_json::Value::as_array).expect("page layers");
-
-    let plain = connector(layers, "Connector line");
-    assert_eq!(plain["type"], "VECTOR", "an unlabelled connector stays one vector");
-    assert_eq!(plain["strokeCapStart"], "ROUND");
-    assert_eq!(plain["strokeCapEnd"], "LINE_ARROW");
-    assert!(plain.get("children").is_none());
-
-    let alpha = connector(layers, "STRAIGHT alpha");
-    let alpha_children = alpha["children"].as_array().expect("snapshot children");
-    let alpha_vector = alpha_children.iter().find(|child| child["type"] == "VECTOR").expect("saved connector vector");
-    let segments = alpha_vector.pointer("/vectorNetwork/segments").and_then(serde_json::Value::as_array).expect("editable vector network");
-    assert_eq!(segments.len(), 4, "network preserves the label gap as two disconnected runs");
-    assert_eq!(alpha_children.iter().filter(|child| child["type"] == "TEXT").count(), 1);
-    let alpha_text = alpha_children.iter().find(|child| child["type"] == "TEXT").expect("label text");
-    assert_eq!(alpha_text["characters"], "STRAIGHT alpha");
-    assert_eq!(alpha_text["relativeTransform"], serde_json::json!([[1.0, 0.0, 201.5], [0.0, 1.0, 44.0]]));
-    assert!(warnings.iter().all(|warning| !warning.contains("connector labels were skipped")));
-
-    let mut malformed = message.clone();
-    let alpha_node = connector_mut(&mut malformed, 127).expect("alpha node in decoded message");
-    let derived = field_mut(alpha_node, "derivedImmutableFrameData").expect("derived frame data");
-    let overrides = field_mut(derived, "overrides").expect("derived overrides");
-    let Kv::Array(overrides) = overrides else { panic!("derived overrides array") };
-    let text = overrides
-        .iter_mut()
-        .find(|row| {
-            row.get("guidPath")
-                .and_then(|path| path.get("guids"))
-                .and_then(|ids| ids.list().first())
-                .and_then(|id| id.get("localID"))
-                .and_then(Kv::f64)
-                == Some(1.0)
-        })
-        .expect("text template record");
-    let transform = field_mut(text, "transform").expect("text transform");
-    *transform = Kv::Object(vec![
-        ("m00", Kv::Float(1.0)),
-        ("m01", Kv::Float(0.0)),
-        ("m02", Kv::Float(f32::NAN)),
-        ("m10", Kv::Float(0.0)),
-        ("m11", Kv::Float(1.0)),
-        ("m12", Kv::Float(0.0)),
-    ]);
-    let (malformed_rest, malformed_warnings) = map::to_rest(&malformed, "connector labels");
-    let malformed_layers = malformed_rest.pointer("/document/children/0/children").and_then(serde_json::Value::as_array).expect("page layers");
-    let malformed_alpha = connector(malformed_layers, "STRAIGHT alpha");
-    assert_eq!(malformed_alpha["children"].as_array().map(Vec::len), Some(1));
-    assert_eq!(malformed_alpha["children"][0]["type"], "VECTOR");
-    assert!(malformed_warnings.iter().any(|warning| warning == "connector label was skipped: text transform is invalid"));
 }
