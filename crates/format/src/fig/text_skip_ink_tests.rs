@@ -56,7 +56,7 @@ fn raw(base: Option<Kv<'static>>, runs: Vec<Kv<'static>>, chars: &str, ids: Vec<
     }
     nodes.push(node(11, "TEXT", "Label", Some(2), layer));
     let message = object(vec![("nodeChanges", Kv::Array(nodes))]);
-    super::map::to_rest(&message, "Synthetic skip ink").0
+    super::map::to_rest(&message, "Synthetic skip ink", crate::rest::MAX_NODES).0
 }
 
 fn imported(value: &Value) -> Document {
@@ -162,7 +162,7 @@ fn instance_path_override_preserves_explicit_false_over_true_main() {
             instance,
         ]),
     )]);
-    let value = super::map::to_rest(&message, "Instance skip ink").0;
+    let value = super::map::to_rest(&message, "Instance skip ink", crate::rest::MAX_NODES).0;
     let copy = value["document"]["children"][0]["children"].as_array().unwrap().iter().find(|n| n["name"] == "Copy").unwrap();
     let label = copy["children"].as_array().unwrap().iter().find(|n| n["name"] == "Label").unwrap();
     assert_eq!(label["style"]["textDecorationSkipInk"], false);

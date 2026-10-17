@@ -102,7 +102,8 @@ fn synthetic_connector(version: f32, include_text: bool, text_x: f32) -> Kv<'sta
 }
 
 fn map_synthetic(version: f32, include_text: bool, text_x: f32) -> (serde_json::Value, Vec<String>) {
-    map::to_rest(&synthetic_connector(version, include_text, text_x), "synthetic")
+    let (rest, warnings, _) = map::to_rest(&synthetic_connector(version, include_text, text_x), "synthetic", crate::rest::MAX_NODES);
+    (rest, warnings)
 }
 
 fn find_node<'a>(doc: &'a figcraft_doc::Document, name: &str) -> &'a figcraft_doc::Node {
@@ -176,7 +177,7 @@ fn synthetic_connector_unsupported_version_uses_legacy_warning() {
 fn synthetic_connector_malformed_label_bounds_or_transform_keep_vector() {
     let mut malformed_bounds = synthetic_connector(1.0, true, 8.5);
     set_override_field(&mut malformed_bounds, "derivedImmutableFrameData", 1, "size", point(f32::NAN, 24.0));
-    let (rest, warnings) = map::to_rest(&malformed_bounds, "synthetic");
+    let (rest, warnings, _) = map::to_rest(&malformed_bounds, "synthetic", crate::rest::MAX_NODES);
     let connector = &rest["document"]["children"][0]["children"][0];
     assert_eq!(connector["children"].as_array().unwrap().len(), 1);
     assert_eq!(connector["children"][0]["type"], "VECTOR");
@@ -184,7 +185,7 @@ fn synthetic_connector_malformed_label_bounds_or_transform_keep_vector() {
 
     let mut malformed_transform = synthetic_connector(1.0, true, 8.5);
     set_override_field(&mut malformed_transform, "derivedImmutableFrameData", 1, "transform", transform(f32::NAN, 3.0));
-    let (rest, warnings) = map::to_rest(&malformed_transform, "synthetic");
+    let (rest, warnings, _) = map::to_rest(&malformed_transform, "synthetic", crate::rest::MAX_NODES);
     let connector = &rest["document"]["children"][0]["children"][0];
     assert_eq!(connector["children"].as_array().unwrap().len(), 1);
     assert_eq!(connector["children"][0]["type"], "VECTOR");
@@ -195,7 +196,7 @@ fn synthetic_connector_malformed_label_bounds_or_transform_keep_vector() {
 fn synthetic_connector_authored_hidden_background_is_retained() {
     let mut message = synthetic_connector(1.0, true, 8.5);
     set_override_field(&mut message, "nodeGenerationData", 2, "fillPaints", Kv::Array(vec![paint()]));
-    let (rest, _) = map::to_rest(&message, "synthetic");
+    let (rest, _, _) = map::to_rest(&message, "synthetic", crate::rest::MAX_NODES);
     let connector = &rest["document"]["children"][0]["children"][0];
     let background = connector["children"].as_array().unwrap().iter().find(|child| child["type"] == "RECTANGLE").expect("authored background");
     assert_eq!(background["visible"], false);

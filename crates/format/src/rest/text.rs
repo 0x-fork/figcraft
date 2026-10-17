@@ -233,10 +233,12 @@ fn runs(cx: &mut Ctx, v: &Value, td: &TextData) -> Vec<StyleRun> {
     out
 }
 
-/// Each paragraph's list type and nesting level from `lineTypes` and `lineIndentations`.
+/// Each paragraph's list type, nesting level and start number from `lineTypes`,
+/// `lineIndentations` and (from `.fig` files) `listStartOffsets`.
 fn lists(v: &Value, td: &mut TextData) {
     let types = list(v, "lineTypes");
     let indents = list(v, "lineIndentations");
+    let starts = list(v, "listStartOffsets");
     td.paragraphs = types
         .iter()
         .enumerate()
@@ -247,6 +249,7 @@ fn lists(v: &Value, td: &mut TextData) {
                 _ => ListStyle::None,
             },
             indent: indents.get(i).and_then(Value::as_f64).filter(|d| d.is_finite()).map_or(0, |d| d.clamp(0.0, 255.0) as u8),
+            start_offset: starts.get(i).and_then(Value::as_f64).filter(|n| n.is_finite()).map_or(0, |n| n.clamp(0.0, f64::from(u32::MAX)) as u32),
         })
         .collect();
     // Clamp the levels and fold one style for all back into the layer's list style.
