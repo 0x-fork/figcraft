@@ -114,6 +114,8 @@ Or in a project's `.mcp.json`:
     columns (vertical layouts wrap top to bottom into new columns).
   - `object.convertToGroup` / `object.convertToFrame` turn a frame into a group or back in place
     (layers stay put; a group has no auto layout, fill, stroke, corner radius, clipping or grids).
+  - `object.convertToSection` turns a frame on the page or in a section into a section in place, and
+    `object.convertToFrame` turns a section back into a frame (keeping its fill, not clipping).
   - `contentAlign` (wrapping layouts): `auto` (default) packs the lines `crossGap` apart at the
     start, centre or end `crossAlign` names (lines of nothing but fill children stretch instead);
     `spaceBetween` puts the free space between the lines (one line, or no free space: like `auto`).
@@ -177,7 +179,8 @@ Or in a project's `.mcp.json`:
 - **Lists** are per paragraph: `listStyle` (`none`, `bulleted`, `numbered`) and `indentation` (the
   nesting level, 0–8) apply to the paragraphs chars `start`..`end` touch (all of them without a
   range); `get_node` reports one `listStyle` for the layer, or `lineTypes` and `lineIndentations`
-  per paragraph. `text.bulletList`, `text.numberList` and `text.listStyle` act on the selected
+  per paragraph, plus `listStartOffsets` when a numbered list starts past 1 (from a `.fig` file;
+  1 shows "2."). `text.bulletList`, `text.numberList` and `text.listStyle` act on the selected
   paragraphs while text is edited. Layer props: `listSpacing` (px between list items, in place of
   `paragraphSpacing`), `hangingList` (markers outside the box) and `hangingPunctuation`. While
   editing, `key` Tab / Shift+Tab nest an item or move it out, Enter on an empty item and Backspace
@@ -227,7 +230,7 @@ Or in a project's `.mcp.json`:
 | `select {ids}` | Replace the selection (`[]` deselects). |
 | `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?, contentsOnly?, includeBoundingBox?, svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?}` | png, jpg, svg, webp, pdf, or `fig`: the whole file as `.fig`, experimental (see Exporting `.fig` files below); `size` is `2x`, `512w` or `512h`. The image covers what the layers paint (shadows towards their offset, strokes, unclipped children, a mask group's mask; hidden layers take no room; a slice is its area with everything under it); `contentsOnly: false` also draws every other layer showing in that area, `includeBoundingBox` exports the layers' own boxes; SVG: `svgOutlineText: false` keeps `<text>`, `svgIdAttribute` writes unique ids from layer names, `svgSimplifyStroke: false` writes every stroke as an outline. The same options go in export settings (`export.add` / `export.update`). PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?, assets?}` (every layer once per setting, named `<layer><suffix>.<format>`, a slash in a layer name making a folder; `assets: true` exports the Inspect tab's assets instead: icons as SVG, images as PNG). |
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window in front when attached, a window id (see Windows below) that window. |
-| `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` (best effort, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. |
+| `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` (best effort, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. `open_file` returns `opened` (for a file opened anew, a `summary` of `name`, `pages`, `layers` and `images`, and `warnings` or `repairs`; a file that was already open just gives its `index`) and the document's `document` outline. |
 | `undo` / `redo` | Step through history. |
 | `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. A dragged layer drops into the frame or auto layout slot under the pointer, except one inside a group, a boolean group or an instance (outside its slots), which only moves. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). |
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity, arrows that pan the view when nothing is selected; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
@@ -333,7 +336,8 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   `$$` a dollar sign. Layers are numbered in stacking order, bottom first. Returns `{names}`.
 - Pages: `page.add {name?}` (a name starting with `-` adds a divider: an empty page shown as a line
   in the pages list, never opened and holding no layers), `page.list` (each page's `divider`),
-  `page.rename`, `page.move {id, index}`, `page.duplicate` ("Copy of …", after its source),
+  `page.rename`, `page.move {id, index}`, `page.duplicate` ("Copy of …", after its source, with its colour,
+  flows (starting at the copied frames), prototype settings and guides),
   `page.delete` (the last page that isn't a divider stays).
 - `component.list`: each component's `folder` (the Assets panel's folders: its page, the frames
   holding it, then its name's slash parts) and `label` (the name on its tile).
@@ -352,6 +356,7 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
 - `pref.autoSave {on?}`: files that have a path save themselves a few seconds after they change
   (off by default; the desktop app's timer does it, so scripts still call `file.save`).
 - `pref.language {language: system|en|cs|ru|es|es-419|fr|de|pt-BR|ja|ko|zh-Hans|…}`: the app's interface language, applied live ("system":
+- `pref.language {language: system|en|es|es-419|fr|de|pt-BR|ja|ko|sv|zh-Hans|…}`: the app's interface language, applied live ("system":
   the OS or browser language; a language without a catalog shows English). Command ids, labels and
   every result stay English.
 
@@ -766,10 +771,12 @@ skipped. The result's `opened.warnings` list what was approximated or skipped.
 ending in `.fig`) writes the whole document as a `.fig` file, from the same public format notes the
 import uses: the layer tree, geometry, paints with image bytes, strokes, effects, text with styled
 runs, vector networks, auto layout, constraints, components, sets, instances with their overrides
-and property values, and prototype interactions. `warnings` lists what was left out (shared style
-links, variables, comments, Dev Mode data and the like). Only round trips through FigCraft's own
-importer are verified; other apps may not open every file. Without `path` the file comes back as
-base64 `data`. Check one by opening it again:
+and property values, variable collections with their modes, variables and bindings, shared styles
+with their layer links, and prototype interactions. `warnings` lists what was left out (comments,
+Dev Mode data, some bindings and settings and the like). Round trips through FigCraft's own
+importer are tested, and the example documents and small test files were opened in other software
+(`docs/file-format-parity.md` says what was checked); other apps may not open every file. Without
+`path` the file comes back as base64 `data`. Check one by opening it again:
 
 ```text
 {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"export","arguments":{"format":"fig","path":"/tmp/handoff.fig"}}}
@@ -1390,7 +1397,8 @@ siblings and the frame's edges) along those axes, keeping whole pixels in the fr
 
 `guide.select {index, frame? | page?}` selects a guide (and deselects the layers; `{}` deselects
 it), as clicking one does in the app; `guide.remove {}` without an index removes the selected one
-(the context menu's Remove guide). While a guide is selected and no layer is, Delete removes it,
+(the context menu's Remove guide), and removing another guide keeps the selected one selected.
+While a guide is selected and no layer is, Delete removes it,
 the arrows across it nudge it (Shift: the big nudge) and Escape deselects it. In the app, a guide
 dragged out of a ruler and dropped on a frame becomes the guide of the top-level frame there, along
 the frame's axis nearer the ruler's; Alt-dragging a guide drops a copy, and holding Alt while

@@ -325,8 +325,10 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
     let mut dbw = db().write().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut fallbacks = dbw.fallbacks();
     let mut faces: Vec<Option<Arc<Face>>> = Vec::with_capacity(styles.len());
+    let mut style_fallbacks: Vec<Vec<Arc<Face>>> = Vec::with_capacity(styles.len());
     for s in &styles {
         faces.push(dbw.find(&s.font_family, &s.font_style).or_else(|| dbw.default_face()));
+        style_fallbacks.push(dbw.fallbacks_for(&s.font_style));
     }
     // Colour emoji are their own, large faces (Apple Color Emoji is ~180 MB): they are read only
     // for a text with emoji, or with characters nothing above covers.
@@ -371,6 +373,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                 if c == '\n' || primary.has_char(c) {
                     return primary.clone();
                 }
+                let fallbacks = style_fallbacks.get(st_idx).unwrap_or(&fallbacks);
                 fallbacks.iter().find(|f| f.has_char(c)).cloned().unwrap_or_else(|| primary.clone())
             };
             let first = chars.get(seg_start).copied().unwrap_or(' ');
@@ -824,8 +827,8 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
 }
 
 /// The markers of a text's paragraphs ("" for plain ones). Numbers count the items of one list at
-/// one level, restarting after a plain paragraph, a shallower item or the other kind of list;
-/// levels go 1. a. i. and • ◦ ▪, then round again.
+/// one level, restarting after a plain paragraph, a shallower item or the other kind of list,
+/// from the first item's start number; levels go 1. a. i. and • ◦ ▪, then round again.
 pub(crate) fn list_markers(lists: &[ParaList]) -> Vec<String> {
     const BULLETS: [&str; 3] = ["\u{2022}", "\u{25E6}", "\u{25AA}"];
     let mut count = [(ListStyle::None, 0usize); figcraft_doc::MAX_LIST_INDENT as usize + 1];
@@ -841,7 +844,8 @@ pub(crate) fn list_markers(lists: &[ParaList]) -> Vec<String> {
                 *c = (ListStyle::None, 0);
             }
             let Some(c) = count.get_mut(d) else { return String::new() };
-            *c = if c.0 == pl.list { (pl.list, c.1 + 1) } else { (pl.list, 1) };
+            let first = usize::try_from(pl.start_offset).unwrap_or(usize::MAX).saturating_add(1);
+            *c = if c.0 == pl.list { (pl.list, c.1.saturating_add(1)) } else { (pl.list, first) };
             match (pl.list, d % 3) {
                 (ListStyle::Numbered, 1) => format!("{}.", alpha(c.1)),
                 (ListStyle::Numbered, 2) => format!("{}.", roman(c.1)),
@@ -1187,6 +1191,12 @@ impl TextLayout {
         Some(next.unwrap_or(if right != line.rtl { index + 1 } else { index.saturating_sub(1) }))
     }
 
+    /// Left edge of a left-to-right line's first char (its end when it has none).
+    fn line_start_x(&self, line: &Line) -> f64 {
+        let gl = self.glyphs.get(line.glyph_start..line.glyph_end).unwrap_or(&[]);
+        gl.iter().find(|g| g.char_end > g.char_start).map_or_else(|| self.line_end_x(line), |g| g.x)
+    }
+
     /// Where a line's text ends: its right edge, or its left edge for a right-to-left paragraph.
     fn line_end_x(&self, line: &Line) -> f64 {
         let glyphs = self.glyphs.get(line.glyph_start..line.glyph_end).unwrap_or(&[]).iter().filter(|g| g.char_end > g.char_start);
@@ -1247,7 +1257,16 @@ impl TextLayout {
         let (a, b) = (start.min(end), start.max(end));
         let mut out = Vec::new();
         for (li, line) in self.lines.iter().enumerate() {
-            if b <= line.char_start || a > line.char_end || (a == line.char_end && li + 1 < self.lines.len()) {
+            let last = li + 1 == self.lines.len();
+            // The empty line after a trailing break has no chars, but a selection reaching the
+            // end of the text covers it: it shows a paragraph-break mark at the line's start.
+            let trailing_empty = last && a < b && b >= line.char_start && line.char_start == line.char_end;
+            if (b <= line.char_start && !trailing_empty) || a > line.char_end || (a == line.char_end && !last) {
+                continue;
+            }
+            if trailing_empty {
+                let x = self.line_end_x(line);
+                out.push(Rect::new(x, line.top, x + 4.0, line.top + line.height));
                 continue;
             }
             let gl = self.glyphs.get(line.glyph_start..line.glyph_end).unwrap_or(&[]);
@@ -1255,10 +1274,12 @@ impl TextLayout {
                 out.extend(Self::mixed_selection(gl, a, b, line));
                 continue;
             }
-            let (x0, _) = self.caret(a.max(line.char_start));
+            // From the line's own start: `caret(char_start)` after a hard break is the end of the
+            // line above.
+            let x0 = if a <= line.char_start { self.line_start_x(line) } else { self.caret(a).0 };
             let x1 = if b >= line.char_end {
                 // The last line has no paragraph break to show, so it ends at its glyphs.
-                self.line_end_x(line) + if line.para_end && li + 1 < self.lines.len() && b > line.char_end.saturating_sub(1) { 4.0 } else { 0.0 }
+                self.line_end_x(line) + if line.para_end && !last && b > line.char_end.saturating_sub(1) { 4.0 } else { 0.0 }
             } else {
                 self.caret(b).0
             };

@@ -191,6 +191,25 @@ fn a_toast_wakes_the_ui_only_to_go_away() {
 }
 
 #[test]
+fn a_toast_raised_by_a_slow_frame_still_shows_for_3_s() {
+    let (mut h, _) = document();
+    h.settle();
+    // The Open dialog and a failed open block the frame that raises the error: the next frame
+    // comes 5 s after it started.
+    h.app.toast("can't open file.fig");
+    h.frame(vec![]);
+    h.time += 5.0;
+    h.frame(vec![]);
+    assert!(h.app.ui.toast.is_some(), "shown, not expired by the wait");
+    h.time += 2.0;
+    h.frame(vec![]);
+    assert!(h.app.ui.toast.is_some());
+    h.time += 1.5;
+    h.frame(vec![]);
+    assert!(h.app.ui.toast.is_none(), "gone after 3 s");
+}
+
+#[test]
 fn a_finished_background_render_wakes_the_ui() {
     let ctx = egui::Context::default();
     let wakes = Arc::new(AtomicUsize::new(0));
@@ -290,6 +309,26 @@ fn an_animated_gif_wakes_only_the_presenter_and_only_at_its_frames() {
     assert!(delays[5..].iter().any(|d| *d > Duration::from_millis(20)), "it doesn't draw every frame: {delays:?}");
     h.app.ui.present = None;
     h.assert_idle("the presenter closed");
+}
+
+#[test]
+fn cjk_names_are_looked_for_in_edits_not_on_every_pan() {
+    let mut s = Session::new();
+    let a = s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap()["id"].clone();
+    let b = s.execute("shape.rectangle", &json!({"x": 20, "y": 0, "width": 10, "height": 10})).unwrap()["id"].clone();
+    s.execute("node.set", &json!({"id": a, "name": "中文"})).unwrap();
+    let mut h = Harness::new(s);
+    let ctx = h.ctx.clone();
+    assert_eq!(h.app.cjk_needed(&ctx, 0), crate::cjk::HAN, "the first look reads every name");
+    // A pan or zoom changes the revision but not the document: its hundreds of thousands of
+    // names aren't read again (that took 70 ms a frame in a 900 000-layer file).
+    let revision = h.app.session.ds().unwrap().revision;
+    h.run("view.set", json!({"zoom": 2, "cx": 300, "cy": 200}));
+    assert_ne!(h.app.session.ds().unwrap().revision, revision);
+    assert_eq!(h.app.cjk_needed(&ctx, 0), 0);
+    // An edit is read: the layers it changed.
+    h.run("node.set", json!({"id": b, "name": "한국어"}));
+    assert_eq!(h.app.cjk_needed(&ctx, 0), crate::cjk::HANGUL);
 }
 
 #[test]

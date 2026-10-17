@@ -30,6 +30,11 @@ fontVariations / variationSettings ({axis: number}, e.g. {\"wght\": 550, \"wdth\
 arcInner, booleanOperation (a boolean group's operation, or an operand's own; null: the group's), operandOperation (a layer in a boolean \
 group: how it combines with the operands below it; null: the group's), constrainProportions, description, interactions, overflow, pluginData {k: v}";
 
+/// CRLF, bare CR, U+2028 and U+2029 become LF, the only line ending text layout understands (editor insertion does the same).
+pub(crate) fn normalize_line_endings(s: &str) -> String {
+    s.replace("\r\n", "\n").replace(['\r', '\u{2028}', '\u{2029}'], "\n")
+}
+
 /// camelCase object keys → snake_case (accept the inspect/camel forms for serde-backed values).
 pub fn snake(v: &Value) -> Value {
     match v {
@@ -649,7 +654,7 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 let n = doc.get_mut(id)?;
                 let t = text_mut(cmd, n)?;
                 let len = t.char_count();
-                t.replace_range(0, len, &s);
+                t.replace_range(0, len, &normalize_line_endings(&s));
                 n.overrides.insert("characters".into());
             }
             "fontFamily"
@@ -828,12 +833,14 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
     if !unknown.is_empty() {
         return Err(bad(cmd, format!("unknown properties: {} (known: {KEYS})", unknown.join(", "))));
     }
-    // Inside an instance, record which property groups were overridden (an instance's own export
-    // settings and interactions are its own, not overrides).
+    // Inside an instance, record which property groups were overridden (an instance's own
+    // resizing, export settings and interactions are its own, not overrides).
     let own_root = matches!(doc.get(id)?.kind, NodeKind::Instance { .. }) && !crate::components::inside_instance(doc, id);
     let n = doc.get_mut(id)?;
     if n.source.is_some() {
-        for g in props.keys().map(|k| override_group(k)).filter(|g| *g != "other" && !(own_root && matches!(*g, "exports" | "interactions"))) {
+        for g in
+            props.keys().map(|k| override_group(k)).filter(|g| *g != "other" && !(own_root && matches!(*g, "resizing" | "exports" | "interactions")))
+        {
             n.overrides.insert(g.to_string());
         }
     }
@@ -855,7 +862,8 @@ pub fn override_group(k: &str) -> &'static str {
         "features" | "fontFeatures" | "openTypeFeatures" | "listStyle" | "indentation" | "listSpacing" | "maxLines" | "variationSettings"
         | "hangingPunctuation" | "hangingList" => "textStyle",
         "cornerRadius" | "cornerSmoothing" | "topLeftRadius" | "topRightRadius" | "bottomRightRadius" | "bottomLeftRadius" => "corners",
-        "width" | "height" | "w" | "h" | "sizingH" | "sizingV" => "size",
+        "width" | "height" | "w" | "h" => "size",
+        "sizingH" | "sizingV" | "layoutSizingHorizontal" | "layoutSizingVertical" | "minWidth" | "maxWidth" | "minHeight" | "maxHeight" => "resizing",
         "gap" | "itemSpacing" | "columnGap" | "crossGap" | "counterAxisSpacing" | "rowGap" => "gap",
         "padding" | "paddingTop" | "paddingRight" | "paddingBottom" | "paddingLeft" | "paddingHorizontal" | "paddingVertical" => "padding",
         "mainAlign" | "primaryAxisAlignItems" | "crossAlign" | "counterAxisAlignItems" | "contentAlign" | "counterAxisAlignContent" => "alignment",

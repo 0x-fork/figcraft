@@ -186,9 +186,10 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
                 remember_family(ui.ctx(), &f);
                 apply_style(app, "fontFamily", json!(f));
                 ui.close();
-            } else if let Some(f) = pick.highlighted {
-                // The canvas shows the family the arrow keys are on.
-                app.preview_text(ui.ctx(), "text.style", text_style_params(ids, range, json!({"fontFamily": f})));
+            } else if let Some(h) = pick.hovered.or(pick.highlighted) {
+                // The canvas shows the hovered family (or the one the arrow keys are on);
+                // closing without picking ends the preview.
+                app.preview_text(ui.ctx(), "text.style", text_style_params(ids, range, json!({"fontFamily": h})));
             }
         });
     });
@@ -256,18 +257,18 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
         let lh = uniform(styles, |s| s.line_height);
         let lh_label = lh.map(|l| l.label()).unwrap_or_else(|| tr(MIXED).into());
         let field = SpacingField { field: "lineHeight", id: Id::new("ty_lh"), glyph: LeadGlyph::LineHeight, tip: tr("Line height") };
-        if let Some(v) = spacing_field(app, ui, ids, &field, &lh_label, half, editing)
-            && let Some(v) = parse_line_height(&v, lh)
+        if let Some(edit) = spacing_field(app, ui, ids, &field, &lh_label, half, editing)
+            && let Some(v) = parse_line_height(&edit.text(), lh)
         {
-            apply_style(app, "lineHeight", v);
+            commit_spacing(app, ids, range, &field, &edit, v);
         }
         let ls = uniform(styles, |s| s.letter_spacing);
         let ls_label = ls.map(|l| l.label()).unwrap_or_else(|| tr(MIXED).into());
         let field = SpacingField { field: "letterSpacing", id: Id::new("ty_ls"), glyph: LeadGlyph::LetterSpacing, tip: tr("Letter spacing") };
-        if let Some(v) = spacing_field(app, ui, ids, &field, &ls_label, half, editing)
-            && let Some(v) = parse_letter_spacing(&v, ls)
+        if let Some(edit) = spacing_field(app, ui, ids, &field, &ls_label, half, editing)
+            && let Some(v) = parse_letter_spacing(&edit.text(), ls)
         {
-            apply_style(app, "letterSpacing", v);
+            commit_spacing(app, ids, range, &field, &edit, v);
         }
     });
 }
@@ -287,10 +288,12 @@ fn paragraph_rows(
     let resize = common(doc, ids, |n| n.kind.text().map(|t| t.auto_resize)).flatten();
     row(ui, 32.0, |ui| {
         let ps_label = ps.map(trim_num).unwrap_or_else(|| tr(MIXED).into());
-        if let Some(v) = lead_field(ui, Id::new("ty_ps"), LeadGlyph::ParagraphSpacing, &ps_label, half, tr("Paragraph spacing"))
-            && let Some(v) = widgets::eval(&v, ps)
+        let field =
+            SpacingField { field: "paragraphSpacing", id: Id::new("ty_ps"), glyph: LeadGlyph::ParagraphSpacing, tip: tr("Paragraph spacing") };
+        if let Some(edit) = spacing_input(ui, &field, &ps_label, half)
+            && let Some(v) = widgets::eval(&edit.text(), ps)
         {
-            app.set_props(ids, json!({"paragraphSpacing": v.clamp(0.0, 10_000.0)}));
+            commit_spacing(app, ids, None, &field, &edit, json!(v.clamp(0.0, 10_000.0)));
         }
         let items =
             [(Icon::Hug, tr("Auto width")), (Icon::LayoutV, tr("Auto height")), (Icon::Fixed, tr("Fixed size")), (Icon::Dots, tr("Truncate text"))];
@@ -942,8 +945,7 @@ fn paint_lead(p: &egui::Painter, r: Rect, g: LeadGlyph, col: Color32) {
     }
 }
 
-/// A text field with a leading glyph (line height, letter spacing…). Returns the committed text.
-/// Line height or letter spacing: which property, its field id, glyph and tooltip.
+/// Line height, letter spacing or paragraph spacing: property, field id, glyph and tooltip.
 struct SpacingField {
     field: &'static str,
     id: Id,
@@ -951,16 +953,61 @@ struct SpacingField {
     tip: &'static str,
 }
 
+enum SpacingEdit {
+    Typed(String),
+    Scrub(f64, bool),
+}
+
+impl SpacingEdit {
+    fn text(&self) -> String {
+        match self {
+            Self::Typed(text) => text.clone(),
+            Self::Scrub(value, _) => trim_num(*value),
+        }
+    }
+}
+
+/// Keep typed unit parsing and character-range targeting; only a scrub outside a text-editing
+/// session needs its own interaction. The editing session already owns its undo step.
+fn commit_spacing(app: &mut FigApp, ids: &[NodeId], range: Option<(NodeId, usize, usize)>, field: &SpacingField, edit: &SpacingEdit, value: Value) {
+    let props = json!({field.field: value});
+    match edit {
+        SpacingEdit::Scrub(_, done) if figcraft_engine::textedit::selected_range(&app.session).is_none() => {
+            live(app, field.tip, "node.set", json!({"ids": ids, "props": props}), *done);
+        }
+        _ => commit_text(app, ids, range, props),
+    }
+}
+
+/// The original text editor plus the same leading-icon scrub gesture as ordinary number fields.
+/// Auto and Mixed have no numeric starting value and remain unchanged by dragging.
+fn spacing_input(ui: &mut Ui, field: &SpacingField, value: &str, width: f32) -> Option<SpacingEdit> {
+    let rect = Rect::from_min_size(ui.cursor().min, vec2(24.0, FIELD_H));
+    let typed = lead_field(ui, field.id, field.glyph, value, width, field.tip);
+    if ui.data(|d| d.get_temp::<String>(field.id.with("editing")).is_some()) {
+        return typed.map(SpacingEdit::Typed);
+    }
+    let response = ui.interact(rect, field.id.with("lead"), Sense::drag());
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    let numeric = value.trim_end_matches('%').parse::<f64>().ok();
+    match widgets::scrub(ui, field.id, &response, numeric, 1.0) {
+        Some(FieldEdit::Scrub(v, done)) => Some(SpacingEdit::Scrub(v, done)),
+        _ => typed.map(SpacingEdit::Typed),
+    }
+}
+
 /// A spacing field that whole layers can bind to a number variable (in pixels): the variable's
 /// chip when bound, else the editable field with a variable button on hover. While a text range is
-/// selected it only takes values. Returns the typed text.
-fn spacing_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], f: &SpacingField, value: &str, width: f32, range: bool) -> Option<String> {
+/// selected it only takes values. Returns a typed commit or a live scrub.
+fn spacing_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], f: &SpacingField, value: &str, width: f32, range: bool) -> Option<SpacingEdit> {
     let rect = Rect::from_min_size(ui.cursor().min, vec2(width, FIELD_H));
     if !range && crate::variable_ui::bound_chip(app, ui, ids, f.field, VariableType::Number, rect) {
         ui.allocate_rect(rect, Sense::hover());
         return None;
     }
-    let out = lead_field(ui, f.id, f.glyph, value, width, f.tip);
+    let out = spacing_input(ui, f, value, width);
     if !range && ui.data(|d| d.get_temp::<String>(f.id.with("editing")).is_none()) {
         crate::variable_ui::bind_button(ui, rect, ids, f.field, VariableType::Number);
     }
@@ -1000,6 +1047,7 @@ fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, ti
                     .desired_width(text_rect.width() - 6.0),
             );
             crate::a11y::own_focus(&r);
+            crate::widgets::select_all_on_focus(ui, &r, &text);
             // The Enter that started the edit (from the keyboard) doesn't end it.
             let enter = !started && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
@@ -1021,9 +1069,13 @@ fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, ti
 }
 
 /// "Auto", "24", "150%" → the `lineHeight` value. A bare number keeps the current unit when it is
-/// a percentage, else means pixels.
+/// a percentage, else means pixels. Empty text means Auto, except on a Mixed field (`cur` is
+/// `None`), where nothing typed is an untouched field and commits nothing.
 pub(crate) fn parse_line_height(s: &str, cur: Option<LineHeight>) -> Option<Value> {
     let s = s.trim();
+    if s.is_empty() && cur.is_none() {
+        return None;
+    }
     if s.is_empty() || s.eq_ignore_ascii_case("auto") {
         return Some(json!("auto"));
     }
@@ -1061,6 +1113,23 @@ pub(crate) fn parse_letter_spacing(s: &str, cur: Option<LetterSpacing>) -> Optio
     }
 }
 
+/// A [`parse_line_height`] value as a [`LineHeight`]: "auto", "150%" or a number of pixels.
+pub(crate) fn line_height_of(v: &Value) -> Option<LineHeight> {
+    match v {
+        Value::String(s) if s.eq_ignore_ascii_case("auto") => Some(LineHeight::Auto),
+        Value::String(s) => s.strip_suffix('%')?.trim().parse().ok().filter(|p: &f64| p.is_finite()).map(LineHeight::Percent),
+        other => other.as_f64().filter(|v| v.is_finite()).map(LineHeight::Pixels),
+    }
+}
+
+/// A [`parse_letter_spacing`] value as a [`LetterSpacing`]: "2%" or a number of pixels.
+pub(crate) fn letter_spacing_of(v: &Value) -> Option<LetterSpacing> {
+    match v {
+        Value::String(s) => s.strip_suffix('%')?.trim().parse().ok().filter(|p: &f64| p.is_finite()).map(LetterSpacing::Percent),
+        other => other.as_f64().filter(|v| v.is_finite()).map(LetterSpacing::Pixels),
+    }
+}
+
 // ---- Font picker ----
 
 const RECENT_KEY: &str = "figcraft_recent_fonts";
@@ -1093,9 +1162,12 @@ pub(crate) struct FontPick {
     pub picked: Option<String>,
     /// The family Up and Down are on (Enter picks it).
     pub highlighted: Option<String>,
+    /// The family the pointer is over (the caller previews it on the canvas).
+    pub hovered: Option<String>,
 }
 
 /// The searchable family list: click a family, or step through it with Up and Down and press Enter.
+/// Hovering a family previews it on the canvas (closing without picking restores the original).
 pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool) -> FontPick {
     let t = Tokens::get(ui.ctx());
     let q_id = Id::new("font_query");
@@ -1112,6 +1184,7 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
             - i.count_and_consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) as i64
     });
     let search = ui.add(egui::TextEdit::singleline(&mut q).hint_text(tr("Search fonts")).desired_width(ui.available_width()).font(regular(11.5)));
+    crate::widgets::select_all_on_focus(ui, &search, &q);
     if just_opened {
         search.request_focus();
     }
@@ -1179,10 +1252,11 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
             PickRow::Family(f) => Some(f.clone()),
             PickRow::Header(_) => None,
         });
-        return FontPick { picked: hi.and_then(family).or(first), highlighted: None };
+        return FontPick { picked: hi.and_then(family).or(first), highlighted: None, hovered: None };
     }
     let mut budget = 4;
     let mut picked = None;
+    let mut hovered_family = None;
     let mut area = egui::ScrollArea::vertical().max_height(LIST_HEIGHT).auto_shrink([false, true]);
     if let Some(y) = offset {
         area = area.vertical_scroll_offset(y);
@@ -1228,12 +1302,15 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
                     if resp.clicked() {
                         picked = Some(f.clone());
                     }
+                    if resp.hovered() {
+                        hovered_family = Some(f.clone());
+                    }
                 }
             }
         }
     });
     ui.data_mut(|d| d.insert_temp(hi_id.with("view"), (shown.state.offset.y, shown.inner_rect.height())));
-    FontPick { highlighted: hi.and_then(family), picked }
+    FontPick { highlighted: hi.and_then(family), picked, hovered: hovered_family }
 }
 
 #[cfg(test)]
@@ -1273,6 +1350,9 @@ mod tests {
         assert_eq!(parse_line_height("130", Some(LineHeight::Percent(120.0))), Some(json!("130%")));
         assert_eq!(parse_line_height("-5", Some(LineHeight::Pixels(10.0))), Some(json!(0.0)));
         assert_eq!(parse_line_height("abc", None), None);
+        // Enter on an untouched Mixed field commits nothing; typing Auto still does.
+        assert_eq!(parse_line_height("", None), None);
+        assert_eq!(parse_line_height("  ", None), None);
         assert_eq!(parse_letter_spacing("2%", None), Some(json!("2%")));
         assert_eq!(parse_letter_spacing("1.5px", None), Some(json!(1.5)));
         assert_eq!(parse_letter_spacing("-1", None), Some(json!("-1%")));

@@ -357,8 +357,8 @@ pub struct DocState {
     versions_changed: bool,
     /// A version shown in place of the document (read-only).
     pub preview: Option<VersionPreview>,
-    /// The document under a live text preview (a hovered text style or font instance, a dragged
-    /// axis slider): `doc` shows the preview until [`textpreview::end`] puts this back.
+    /// The document under a live text preview (a hovered font family or style, text style or
+    /// font instance, a dragged axis slider): `doc` shows the preview until [`textpreview::end`] puts this back.
     pub text_preview: Option<Arc<Document>>,
     /// The document as of the last version saved or restored (none yet): autosaves, restores and
     /// merges only add a checkpoint for changes since.
@@ -390,7 +390,8 @@ pub struct VersionPreview {
 /// Why edits are refused while a version is shown.
 pub const PREVIEW_READ_ONLY: &str = "you're viewing an earlier version: restore it or go back to the current version to edit";
 
-/// Commands that first end a version preview: they act on the document itself.
+/// Commands that first end a version preview: they act on the document itself. Saving does so
+/// only with a native destination; export copies and pending format choices keep the preview.
 const ENDS_PREVIEW: &[&str] = &["file.save", "file.saveAs", "file.close", "file.revert", "file.saveVersion", "file.duplicate", "version.restore"];
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -401,6 +402,8 @@ impl DocState {
             doc.repair();
         }
         doc.link_layer_text_styles();
+        cmd::styles::apply_paint_bindings_on_load(&mut doc);
+        // Initial import settlement belongs to the saved baseline, not the user's first edit.
         let page = doc.current_page.filter(|p| doc.pages.contains(p)).or_else(|| doc.first_page()).unwrap_or(NodeId(0));
         let doc = Arc::new(doc);
         let mut st = Self {
@@ -606,6 +609,9 @@ pub struct Prefs {
     /// The widths of the main window's left and right panels (the interface keeps them within its
     /// limits; other windows have their own while they are open).
     pub panel_widths: (f32, f32),
+    /// The height asked for the main window's pages list, dragged at its lower edge (`None`: a
+    /// share of the panel; the interface keeps it within its limits).
+    pub pages_height: Option<f32>,
     /// The interface language: a language code ("en", "es", "pt-BR") or "system" (the OS or browser
     /// language). Languages without a catalog show English.
     pub language: String,
@@ -652,7 +658,15 @@ pub struct Prefs {
     pub home_sort: String,
     /// Which way: `"desc"` (newest first, Z to A) or `"asc"`.
     pub home_order: String,
+    /// Recently run actions (the Actions palette's Recents), newest first, at most
+    /// [`MAX_RECENT_ACTIONS`]. Entries are `command:<id>`, `plugin:<plugin>/<command>` or
+    /// `widget:<plugin>`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recent_actions: Vec<String>,
 }
+
+/// Recently run actions kept for the Actions palette (newest first).
+pub const MAX_RECENT_ACTIONS: usize = 5;
 
 impl Default for Prefs {
     fn default() -> Self {
@@ -666,6 +680,7 @@ impl Default for Prefs {
             show_dimensions: true,
             theme: "system".into(),
             panel_widths: (240.0, 240.0),
+            pages_height: None,
             language: "system".into(),
             user_name: cmd::comment::DEFAULT_AUTHOR.into(),
             reduce_motion: false,
@@ -681,6 +696,7 @@ impl Default for Prefs {
             home_views: BTreeMap::new(),
             home_sort: "modified".into(),
             home_order: "desc".into(),
+            recent_actions: Vec::new(),
         }
     }
 }
@@ -721,7 +737,8 @@ pub struct Session {
     /// dark page colour while it is dark (added pages take the current page's). Headless sessions (CLI, MCP, exports) have no
     /// theme, so what scripts make is the same everywhere.
     pub ui_dark: Option<bool>,
-    /// Command log (id + params) for actions/automation.
+    /// Command log (id + params) for actions/automation. File imports that carry the file bytes
+    /// (`file.import` with `data`) are not logged, so the log never holds a copy of a pasted file.
     pub journal: Vec<(String, Value)>,
     /// Recently used colours.
     pub recent_colors: Vec<figcraft_color::Color>,
@@ -743,6 +760,19 @@ pub struct Session {
 impl Default for Session {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Whether a command, or a batch wrapping one, imports a file passed as Base64 `data`.
+fn command_carries_import_bytes(id: &str, params: &Value) -> bool {
+    match id {
+        "file.import" => params::get(params, "data").is_some(),
+        "command.batch" => params.get("commands").and_then(Value::as_array).is_some_and(|commands| {
+            commands.iter().any(|c| {
+                c.get("command").and_then(Value::as_str).zip(c.get("params")).is_some_and(|(id, params)| command_carries_import_bytes(id, params))
+            })
+        }),
+        _ => false,
     }
 }
 
@@ -870,6 +900,7 @@ impl Session {
         // Every other command acts on the document itself, not on a live text preview.
         textpreview::end(self);
         if ENDS_PREVIEW.contains(&id)
+            && (!matches!(id, "file.save" | "file.saveAs") || cmd::file::save_ends_preview(self, id, params))
             && let Ok(ds) = self.ds_mut()
         {
             ds.end_preview();
@@ -878,16 +909,21 @@ impl Session {
         let result = guard::run(id, || (spec.run)(self, params))
             .and_then(|v| self.check_instance_structure(id, &before).map(|()| v))
             .and_then(|v| self.check_preview(id, &before).map(|()| v))
-            .and_then(|v| self.check_live_access(id, &before).map(|()| v));
+            .and_then(|v| self.check_live_access(id, &before).map(|()| v))
+            .and_then(|v| self.check_finite_geometry(id, &before).map(|()| v));
         match &result {
             Ok(_) => {
                 self.after_command(spec, before);
                 if spec.history && id != "edit.repeat" {
                     self.last_command = Some((id.to_string(), params.clone()));
                 }
-                self.journal.push((id.to_string(), params.clone()));
-                if self.journal.len() > 5000 {
-                    self.journal.drain(..1000);
+                // Imported bytes already live in the document: a Base64 copy in the log would stay
+                // for the whole session.
+                if !command_carries_import_bytes(id, params) {
+                    self.journal.push((id.to_string(), params.clone()));
+                    if self.journal.len() > 5000 {
+                        self.journal.drain(..1000);
+                    }
                 }
             }
             Err(_) => {
@@ -914,6 +950,22 @@ impl Session {
             return Ok(());
         }
         Err(EngineError::Disabled(id.to_string(), PREVIEW_READ_ONLY.into()))
+    }
+
+    /// A layer's position and size stay finite: infinity and NaN are written as `null`, so a file
+    /// holding them saves but can't be reopened. Refuse such an edit (it is rolled back).
+    fn check_finite_geometry(&self, id: &str, before: &Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>) -> Result<()> {
+        let Some((bdoc, _, _, uid)) = before else { return Ok(()) };
+        let Some(ds) = self.docs.iter().find(|d| d.uid == *uid) else { return Ok(()) };
+        if Arc::ptr_eq(&ds.doc, bdoc) {
+            return Ok(());
+        }
+        let broken = |n: &Node| !(n.transform.as_coeffs().iter().all(|c| c.is_finite()) && n.width.is_finite() && n.height.is_finite());
+        let untouched = |n: &Node| bdoc.node_arc(n.id).zip(ds.doc.node_arc(n.id)).is_some_and(|(a, b)| Arc::ptr_eq(a, b));
+        match ds.doc.nodes().find(|n| broken(n) && !untouched(n)) {
+            Some(n) => Err(bad(id, format!("\"{}\" would get a position or size beyond the number range", n.name))),
+            None => Ok(()),
+        }
     }
 
     /// A live session's document you may only view (or that is on its way to a server) is
@@ -1135,11 +1187,20 @@ impl Session {
         self.grouped(label, |s| {
             let mut results: Vec<Value> = Vec::with_capacity(cmds.len());
             for (step, (id, p)) in cmds.iter().enumerate() {
-                let p = if id == "command.batch" { p.clone() } else { resolve_step_refs(p, &results, step, 0)? };
-                results.push(s.execute(id, &p)?);
+                let v = s.batch_step(&results, step, id, p)?;
+                results.push(v);
             }
             Ok(results)
         })
+    }
+
+    /// One step of a batch: `{"$step": n}` in `params` resolves against `results` (the results of
+    /// the steps before it), then the command runs. [`Session::batch`] runs a list of these as one
+    /// undo step; a caller with its own list — the CLI's script runner — uses this so its steps
+    /// resolve `$step` the same way, inside its own [`Session::grouped`].
+    pub fn batch_step(&mut self, results: &[Value], step: usize, cmd: &str, params: &Value) -> Result<Value> {
+        let p = if cmd == "command.batch" { params.clone() } else { resolve_step_refs(params, results, step, 0)? };
+        self.execute(cmd, &p)
     }
 
     /// Run `f` as one undo step called `label`: the commands it executes push no steps of their
@@ -1236,8 +1297,8 @@ pub fn changed_nodes(doc: &Document, before: &Document) -> Vec<NodeId> {
 pub fn normalize(doc: &mut Document, before: &Document) {
     // Only what was touched since the last normalisation (edited, added or removed).
     let mut touched: BTreeSet<NodeId> = doc.take_dirty();
-    // A variable edit changes no layer directly, but bound layers must follow it.
-    if touched.is_empty() && doc.variables == before.variables {
+    // A variable or style edit changes no layer directly, but bound and linked layers must follow it.
+    if touched.is_empty() && doc.variables == before.variables && doc.styles == before.styles {
         return;
     }
     let m = measure::TextMeasure;
@@ -1500,6 +1561,8 @@ mod cursor_tests;
 #[cfg(test)]
 mod dark_page_text_tests;
 #[cfg(test)]
+mod design_paste_tests;
+#[cfg(test)]
 mod dev_resources_tests;
 #[cfg(test)]
 mod devcompare_tests;
@@ -1528,6 +1591,8 @@ mod fig_export_tests;
 #[cfg(test)]
 mod fig_import_tests;
 #[cfg(test)]
+mod finite_geometry_tests;
+#[cfg(test)]
 mod frame_guides_tests;
 #[cfg(test)]
 mod frame_label_tests;
@@ -1548,9 +1613,17 @@ mod history_behaviour_tests;
 #[cfg(test)]
 mod html_codegen_tests;
 #[cfg(test)]
+mod huge_stroke_tests;
+#[cfg(test)]
+mod id_params_behaviour_tests;
+#[cfg(test)]
 mod import_export_tests;
 #[cfg(test)]
+mod import_journal_tests;
+#[cfg(test)]
 mod inspect_behaviour_tests;
+#[cfg(test)]
+mod instance_resizing_tests;
 #[cfg(test)]
 mod interaction_rollback_tests;
 #[cfg(test)]
@@ -1558,7 +1631,11 @@ mod invite_links_tests;
 #[cfg(test)]
 mod keymap_tests;
 #[cfg(test)]
+mod library_range_styles_tests;
+#[cfg(test)]
 mod library_variables_tests;
+#[cfg(test)]
+mod line_endings_tests;
 #[cfg(test)]
 mod live_access_tests;
 #[cfg(test)]
@@ -1587,6 +1664,14 @@ mod online_tests;
 mod open_issues_tests;
 #[cfg(test)]
 mod outline_options_tests;
+#[cfg(test)]
+mod page_clipboard_tests;
+#[cfg(test)]
+mod page_copy_navigation_tests;
+#[cfg(test)]
+mod page_target_tests;
+#[cfg(test)]
+mod paint_index_tests;
 #[cfg(test)]
 mod paint_reorder_tests;
 #[cfg(test)]
@@ -1635,6 +1720,8 @@ mod rotated_guides_tests;
 mod rotated_select_tests;
 #[cfg(test)]
 mod rotation_origin_tests;
+#[cfg(test)]
+mod save_format_tests;
 #[cfg(test)]
 mod scale_tool_tests;
 #[cfg(test)]
@@ -1703,6 +1790,8 @@ mod variables_io_tests;
 mod vector_behaviour_tests;
 #[cfg(test)]
 mod vector_multi_behaviour_tests;
+#[cfg(test)]
+mod vector_offset_tests;
 #[cfg(test)]
 mod version_preview_tests;
 #[cfg(test)]

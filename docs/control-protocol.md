@@ -18,7 +18,8 @@ reply:    {"id": 1, "ok": true, "result": ...}
 
 Requests are queued and run on the UI thread at the start of the next frame, so replies reflect the
 real UI state. A request that the UI doesn't answer within 60 s gets a timeout error. A line that is
-not JSON gets `{"id": null, "ok": false, "error": "bad JSON: …"}`. The implementation is in
+not JSON gets `{"id": null, "ok": false, "error": "bad JSON: …"}` and ends the connection (so an
+HTTP request a web page makes the browser send here never runs). The implementation is in
 `crates/ui-egui/src/control.rs` (methods) and `apps/figcraft/src/control_server.rs` (socket).
 
 A request line is limited to **32 MiB before the newline**, including whitespace. The reader stops
@@ -116,7 +117,13 @@ zoom preview or the refined image (`canvas.quality`: `preview` or `refined`) and
 asking for a render to its preview and its refined image being handed to egui as the canvas
 texture (`canvas.previewLatencyMs`, `canvas.refineLatencyMs`, on a monotonic clock, rendering
 included in the browser too; the GPU upload and presenting the frame come after; `null` until
-there was one). While a prototype plays, `presenter`
+there was one). `importReport` holds the Import report window's content (`{name, pages, layers, images, appended, placed, warnings, warningCount}`,
+`null` while none is open). The window opens only for a file the user opened or imported in the app
+(File ▸ Open or Import, Open recent, a recent file on the home screen, a drop, a paste, the system's open event).
+Emulated user input counts as the user's action: `ui.input` and `ui.key` (for example a Cmd+V paste or a click
+on a menu item) can open it. Commands sent through this channel with `engine.execute`, MCP, `window.new {path}`
+and files named on the command line never open it.
+`file.open` and `file.import` return the counts as `summary`. While a prototype plays, `presenter`
 (full window) and `preview` (the preview pane) hold the player's state: the `current` frame and its
 `name`, `start`, `history`, open `overlays`, how many delayed mouse triggers are `waiting`, the screen's `scroll` offset and `scrollRange`, the
 `device` (and whether it is turned to `landscape`, its `deviceColor`) and the `viewport` of the frame
