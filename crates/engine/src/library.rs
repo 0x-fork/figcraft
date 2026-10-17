@@ -459,6 +459,8 @@ struct Entry {
 const RACY_STAMP: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl Entry {
+    /// A file stamped in the future (clock skew, unpacked archives) never settles: it is re-read on
+    /// every load until the clock passes it.
     fn still_valid(&self, now: &Stamp) -> bool {
         let settled = match (now.modified, self.read_at) {
             (Some(modified), Some(read_at)) => modified.checked_add(RACY_STAMP).is_some_and(|t| t < read_at),
