@@ -12,6 +12,8 @@
 //! tables, …) come in as the closest frames, text and vectors. Anything not understood is skipped
 //! with a warning; malformed input never panics.
 
+#[cfg(test)]
+mod connector_label_tests;
 mod export;
 #[cfg(test)]
 mod export_tests;
@@ -21,7 +23,20 @@ pub mod kiwi;
 mod map;
 mod network;
 #[cfg(test)]
+mod slot_tests;
+#[cfg(test)]
+mod source_identity_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod text_paragraph_tests;
+mod text_path;
+#[cfg(test)]
+mod text_path_tests;
+#[cfg(test)]
+mod text_skip_ink_tests;
+#[cfg(test)]
+mod text_style_tests;
 
 use std::io::Read;
 
@@ -64,7 +79,7 @@ pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), Forma
     let file_name = archive.file_name.as_deref().filter(|n| !n.trim().is_empty()).unwrap_or(name);
     let (json, mut warnings) = map::to_rest(&msg, file_name);
     let images = |r: &str| archive.image(r);
-    let (doc, more) = crate::rest::import(&json, &images)?;
+    let (doc, more) = crate::rest::import_fig(&json, &images)?;
     warnings.extend(more.into_iter().filter_map(map::adapt_warning));
     Ok((doc, warnings))
 }
