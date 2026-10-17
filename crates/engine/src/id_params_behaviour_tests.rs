@@ -149,3 +149,13 @@ fn an_image_and_an_instance_parent_are_checked_the_same_way() {
     let inst = failed(s.execute("instance.create", &json!({"component": 99999, "parent": {"$step": 0}})));
     assert!(inst.is_some(), "instance.create refuses both a bad component and a bad parent");
 }
+
+#[test]
+fn a_huge_bad_value_is_cut_short_in_the_error() {
+    let mut s = Session::new();
+    card(&mut s);
+    let junk = "é".repeat(10_000);
+    let msg = failed(s.execute("node.set", &json!({"ids": junk, "props": {"name": "renamed"}}))).unwrap_or_else(|| panic!("must fail"));
+    assert!(msg.contains("`ids` must be an array") && msg.ends_with("…)"), "{msg}");
+    assert!(msg.chars().count() < 200, "{} chars", msg.chars().count());
+}
