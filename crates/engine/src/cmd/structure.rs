@@ -764,20 +764,20 @@ fn area_index(cmd: &str, p: &Value) -> Result<Option<usize>> {
     }
 }
 
-/// Segments listed by more than one loop (of any region): reversing a loop must leave them as they
-/// are, or a neighbouring area that shares the segment would turn round with it — flipping the
-/// neighbour's fill or stroke. Reversing the loop's list already flips this loop's traversal of the
-/// shared segment, so its stored direction is left alone.
-fn shared_segments(net: &VectorNetwork) -> std::collections::HashSet<usize> {
-    let mut count = std::collections::HashMap::<usize, u32>::new();
-    for region in &net.regions {
-        for lp in &region.loops {
-            for &s in lp {
-                *count.entry(s).or_insert(0) += 1;
+/// Segments another one- or two-segment loop lists: a short loop takes its direction from the ends
+/// its segments are stored with, so re-storing one of those would turn that loop round too. A loop
+/// of three or more segments is left out: its ring is walked in list order, which the stored ends
+/// don't decide.
+fn short_loop_segments(net: &VectorNetwork, skip: (usize, usize)) -> std::collections::HashSet<usize> {
+    let mut out = std::collections::HashSet::new();
+    for (r, region) in net.regions.iter().enumerate() {
+        for (l, lp) in region.loops.iter().enumerate() {
+            if (r, l) != skip && lp.len() <= 2 {
+                out.extend(lp.iter().copied());
             }
         }
     }
-    count.into_iter().filter(|(_, c)| *c > 1).map(|(s, _)| s).collect()
+    out
 }
 
 fn fill_rule(s: &mut Session, p: &Value) -> Result<Value> {
@@ -813,41 +813,66 @@ fn fill_rule(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"regions": count, "rule": rule_id(rule)}))
 }
 
+/// One loop of a vector, worked out but not yet written back: its segments in the new order and,
+/// for a loop of one or two segments, the one to store the other way.
+struct LoopFlip {
+    id: NodeId,
+    turned: Vec<usize>,
+    store: Option<usize>,
+}
+
 /// Turn one loop of a filled area round: its segments are walked the other way, so the area it
 /// bounds counts the other way in the winding (which turns a hole into a filled part and back).
+///
+/// How a loop is walked depends on how many segments it has:
+/// - three or more: the order they are listed in, each segment turned to continue from the point
+///   reached. Reversing the list is therefore enough, and the stored ends are left alone (a shared
+///   segment's ends belong to its neighbour too);
+/// - two: the same ring either way round, so one of the two has to be stored the other way instead;
+/// - one: only its stored ends say which way it runs, so they are swapped.
+///
+/// A short loop can only turn round by re-storing a segment, which is refused when another short
+/// loop lists that segment too: it would turn that area round as well.
 fn reverse_loop(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = req_targets("vector.reverseLoop", s, p)?;
-    let region = req_index("vector.reverseLoop", p, "region")?;
-    let index = req_index("vector.reverseLoop", p, "loop")?;
+    let cmd = "vector.reverseLoop";
+    let ids = req_targets(cmd, s, p)?;
+    let region = req_index(cmd, p, "region")?;
+    let index = req_index(cmd, p, "loop")?;
     let doc = s.doc_mut()?;
-    let mut reversed = false;
+    // Work every loop out before touching the document: one that can't turn round refuses the call
+    // and the others stay as they were.
+    let mut flips: Vec<LoopFlip> = Vec::new();
     for id in ids {
+        let Some(NodeKind::Vector { network }) = doc.node(id).map(|n| &n.kind) else { continue };
+        let Some(loop_) = network.regions.get(region).and_then(|r| r.loops.get(index)) else { continue };
+        if loop_.is_empty() {
+            continue;
+        }
+        let mut store = None;
+        if loop_.len() <= 2 {
+            let busy = short_loop_segments(network, (region, index));
+            let Some(pick) = loop_.iter().copied().filter(|s| !busy.contains(s)).min() else {
+                return Err(EngineError::Disabled(
+                    cmd.into(),
+                    "the loop shares its segments with another one- or two-segment loop, so turning it round would turn that one round too".into(),
+                ));
+            };
+            store = Some(pick);
+        }
+        flips.push(LoopFlip { id, turned: loop_.iter().rev().copied().collect(), store });
+    }
+    if flips.is_empty() {
+        return Err(EngineError::Disabled(cmd.into(), "no such loop (select a vector with filled areas)".into()));
+    }
+    for LoopFlip { id, turned, store } in flips {
         let Some(net) = network_mut(doc, id) else { continue };
-        let Some(loop_) = net.regions.get(region).and_then(|r| r.loops.get(index)).cloned() else { continue };
-        // A loop is walked in the order its segments are listed, so the list turned round walks the
-        // ring the other way. A loop of one or two segments only turns round when its segments are
-        // stored the other way too (list reversal alone is a no-op for them).
-        // A segment shared with another loop must NOT be swapped: it belongs to a neighbouring area
-        // whose winding we leave alone, and reversing the list already flips this loop's traversal
-        // of it.
-        let shared = shared_segments(net);
-        let turned: Vec<usize> = loop_.iter().rev().copied().collect();
-        for &seg in &turned {
-            if shared.contains(&seg) {
-                continue;
-            }
-            if let Some(seg) = net.segments.get_mut(seg) {
-                std::mem::swap(&mut seg.a, &mut seg.b);
-                std::mem::swap(&mut seg.ta, &mut seg.tb);
-            }
+        if let Some(seg) = store.and_then(|i| net.segments.get_mut(i)) {
+            std::mem::swap(&mut seg.a, &mut seg.b);
+            std::mem::swap(&mut seg.ta, &mut seg.tb);
         }
         if let Some(l) = net.regions.get_mut(region).and_then(|r| r.loops.get_mut(index)) {
             *l = turned;
-            reversed = true;
         }
-    }
-    if !reversed {
-        return Err(EngineError::Disabled("vector.reverseLoop".into(), "no such loop (select a vector with filled areas)".into()));
     }
     Ok(json!({"reversed": true}))
 }

@@ -37,8 +37,8 @@ fn ring() -> VectorNetwork {
     net
 }
 
-/// A selected vector layer holding `ring()`.
-fn ringed(s: &mut Session) -> NodeId {
+/// A selected vector layer holding `network`.
+fn vector_layer(s: &mut Session, network: VectorNetwork) -> NodeId {
     let id = s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 100, "height": 100})).unwrap()["id"].as_u64().unwrap();
     let id = NodeId(id);
     ex(s, "vector.edit.begin", json!({"id": id}));
@@ -46,12 +46,17 @@ fn ringed(s: &mut Session) -> NodeId {
     {
         let doc = s.doc_mut().unwrap();
         match &mut doc.get_mut(id).unwrap().kind {
-            NodeKind::Vector { network } => *network = ring(),
+            NodeKind::Vector { network: net } => *net = network,
             other => panic!("not a vector: {other:?}"),
         }
     }
     ex(s, "select.set", json!({"ids": [id]}));
     id
+}
+
+/// A selected vector layer holding `ring()`.
+fn ringed(s: &mut Session) -> NodeId {
+    vector_layer(s, ring())
 }
 
 /// Two 50 × 100 squares side by side share the vertical edge between them: one segment listed by
@@ -91,19 +96,43 @@ fn two_squares() -> VectorNetwork {
 
 /// A selected vector layer holding [`two_squares`].
 fn squared(s: &mut Session) -> NodeId {
-    let id = s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 100, "height": 100})).unwrap()["id"].as_u64().unwrap();
-    let id = NodeId(id);
-    ex(s, "vector.edit.begin", json!({"id": id}));
-    ex(s, "vector.edit.end", json!({}));
-    {
-        let doc = s.doc_mut().unwrap();
-        match &mut doc.get_mut(id).unwrap().kind {
-            NodeKind::Vector { network } => *network = two_squares(),
-            other => panic!("not a vector: {other:?}"),
-        }
+    vector_layer(s, two_squares())
+}
+
+/// Two areas of two segments each over the same line: one curve above it and one below. Both areas
+/// list the line's segment — the first area first (`[line, above]`), the second area last
+/// (`[below, line]`) — and a two-segment ring reads the same whichever way its list is turned, so
+/// these only turn round when a segment is stored the other way.
+fn two_lenses() -> VectorNetwork {
+    // 0:A(0,0) 1:B(100,0)
+    // s0 A→B the straight line both areas use; s1 B→A curving above it; s2 A→B curving below it.
+    VectorNetwork {
+        vertices: vec![Vertex::new(0.0, 0.0), Vertex::new(100.0, 0.0)],
+        segments: vec![
+            Segment::line(0, 1),
+            Segment { a: 1, b: 0, ta: (0.0, -50.0), tb: (0.0, -50.0) },
+            Segment { a: 0, b: 1, ta: (0.0, 50.0), tb: (0.0, 50.0) },
+        ],
+        regions: vec![
+            Region { loops: vec![vec![0, 1]], winding: WindingRule::NonZero },
+            Region { loops: vec![vec![2, 0]], winding: WindingRule::NonZero },
+        ],
     }
-    ex(s, "select.set", json!({"ids": [id]}));
-    id
+}
+
+/// A selected vector layer holding [`two_lenses`].
+fn lensed(s: &mut Session) -> NodeId {
+    vector_layer(s, two_lenses())
+}
+
+/// Two areas whose only loop is the same closed segment (a curve the path closes with a straight
+/// line): a one-segment loop's direction is its segment's stored ends, and both areas read them.
+fn one_shared_segment() -> VectorNetwork {
+    VectorNetwork {
+        vertices: vec![Vertex::new(0.0, 0.0), Vertex::new(100.0, 0.0)],
+        segments: vec![Segment { a: 0, b: 1, ta: (0.0, -60.0), tb: (0.0, -60.0) }],
+        regions: vec![Region { loops: vec![vec![0]], winding: WindingRule::NonZero }, Region { loops: vec![vec![0]], winding: WindingRule::NonZero }],
+    }
 }
 
 /// The point in the middle of the hole, and one on the square's left band.
@@ -225,4 +254,53 @@ fn reversing_a_loop_shared_with_a_neighbour_leaves_its_segment_and_fill_alone() 
     // Undo restores the shared segment and the loop.
     s.undo().unwrap();
     assert_eq!(net(&s, id).segments[SHARED], before, "undo restores the shared segment too");
+}
+
+#[test]
+fn a_two_segment_loop_turns_round_with_its_shared_segment_listed_first_or_last() {
+    let mut s = Session::new();
+    let id = lensed(&mut s);
+    const SHARED: usize = 0;
+    const ABOVE: Point = Point::new(50.0, -25.0);
+    const BELOW: Point = Point::new(50.0, 25.0);
+    let n = net(&s, id);
+    assert_eq!(n.regions.len(), 2, "two areas over the same line");
+    assert_eq!((n.regions[0].loops[0][0], n.regions[0].loops[0].len()), (SHARED, 2), "the shared segment is listed first");
+    assert_eq!((n.regions[1].loops[0][1], n.regions[1].loops[0].len()), (SHARED, 2), "and last");
+    assert!(n.region_contains(0, ABOVE), "the area above the line fills");
+    assert!(n.region_contains(1, BELOW), "the area below it fills");
+    let (above, below) = (n.region_winding(0, ABOVE).unwrap(), n.region_winding(1, BELOW).unwrap());
+    assert_ne!(above, 0, "the area above winds once");
+    assert_ne!(below, 0, "the area below winds once");
+    let shared = n.segments[SHARED];
+    // Turn the area that lists the shared segment first round: a two-segment ring reads the same
+    // either way, so this only works by storing one of its segments the other way.
+    assert_eq!(ex(&mut s, "vector.reverseLoop", json!({"id": id, "region": 0, "loop": 0}))["reversed"], json!(true));
+    let n = net(&s, id);
+    assert_eq!(n.segments[SHARED], shared, "the shared segment keeps its ends");
+    assert!(n.region_contains(0, ABOVE), "the area still fills");
+    assert_eq!(n.region_winding(0, ABOVE), Some(-above), "it really turned round");
+    assert_eq!(n.region_winding(1, BELOW), Some(below), "the neighbour did not");
+    // And the area that lists it last.
+    ex(&mut s, "vector.reverseLoop", json!({"id": id, "region": 1, "loop": 0}));
+    let n = net(&s, id);
+    assert_eq!(n.segments[SHARED], shared, "still untouched");
+    assert_eq!(n.region_winding(1, BELOW), Some(-below), "the second area really turned round");
+    assert_eq!(n.region_winding(0, ABOVE), Some(-above), "the first stays as it was");
+    // Undo turns each back.
+    s.undo().unwrap();
+    assert_eq!(net(&s, id).region_winding(1, BELOW), Some(below), "undo turns the second back");
+    s.undo().unwrap();
+    assert_eq!(net(&s, id).region_winding(0, ABOVE), Some(above), "and the first");
+}
+
+#[test]
+fn a_one_segment_loop_shared_with_another_is_refused_instead_of_claiming_a_turn() {
+    let mut s = Session::new();
+    let id = vector_layer(&mut s, one_shared_segment());
+    let before = net(&s, id);
+    let err = s.execute("vector.reverseLoop", &json!({"id": id, "region": 0, "loop": 0})).unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("shares its segments"), "the error says why: {message}");
+    assert_eq!(net(&s, id), before, "nothing changed");
 }
