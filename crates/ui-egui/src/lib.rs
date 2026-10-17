@@ -502,6 +502,8 @@ pub struct UiState {
     pub paste_event: bool,
     /// The window got the focus back since the last V release.
     pub refocused: bool,
+    /// The modifiers held, as of the last raw event that told: a paste event doesn't carry them.
+    pub held: egui::Modifiers,
     /// When (UI clock, seconds) open documents next get an autosave checkpoint.
     pub next_autosave: f64,
     /// With auto-save on: when (UI clock, seconds) files with unsaved changes are next saved, and
@@ -598,6 +600,7 @@ impl Default for UiState {
             v_pressed: false,
             paste_event: false,
             refocused: false,
+            held: egui::Modifiers::NONE,
             next_autosave: 0.0,
             auto_save_at: None,
             auto_saving: Vec::new(),
@@ -1294,7 +1297,7 @@ impl FigApp {
         // even if it lets go during the frame (Enter commits it), or as it began (egui drops the
         // focus on Escape before the frame, which cancels the field's edit and nothing else).
         let typing = std::mem::take(&mut self.field_focus) || a11y::field_focused(&ctx);
-        let paste_release = shortcuts::swallowed_paste(self, &ctx);
+        let swallowed = shortcuts::swallowed_paste(self, &ctx);
         // A dialog that closed acts first, in the window it was opened from.
         self.poll_dialog(&ctx);
         // Control requests run first so their results reflect this frame.
@@ -1410,7 +1413,7 @@ impl FigApp {
         branch_ui::keys(self, &ctx);
         live::dialog_keys(self, &ctx);
         dialogs::keys(self, &ctx);
-        shortcuts::handle(self, &ctx, typing, paste_release);
+        shortcuts::handle(self, &ctx, typing, swallowed);
         menus::popups(self, &ctx);
         variable_ui::picker(self, &ctx);
         style_picker::show(self, &ctx);
