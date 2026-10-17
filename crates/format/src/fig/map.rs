@@ -1192,7 +1192,7 @@ impl<'a> Mapper<'a> {
     fn network(&mut self, o: &mut Obj, v: &View<'a>) -> bool {
         let Some(vd) = v.get("vectorData") else { return false };
         let Some(blob) = num(vd, "vectorNetworkBlob").and_then(|i| self.blobs.get(i as usize)).copied() else { return false };
-        let Some((net, _)) = network::decode_styled(blob) else {
+        let Some(net) = network::decode(blob) else {
             self.warn("damaged vector networks import as outlines");
             return false;
         };

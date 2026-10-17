@@ -268,8 +268,8 @@ fn per_segment_stroke_styles_are_reported() {
         let mut blob = square_blob();
         // The first segment's style id follows the counts and the vertices (12 bytes each).
         blob[12 + 4 * 12..12 + 4 * 12 + 4].copy_from_slice(&segment_style.to_le_bytes());
-        let (net, styled) = network::decode_styled(&blob).unwrap();
-        assert_eq!((net.segments.len(), net.segments[0].style, styled), (4, segment_style, 1));
+        let net = network::decode(&blob).unwrap();
+        assert_eq!((net.segments.len(), net.segments[0].style), (4, segment_style));
         let mut message = tail_message();
         let Kv::Object(fields) = &mut message else { panic!() };
         let Kv::Array(blobs) = &mut fields.iter_mut().find(|(key, _)| *key == "blobs").unwrap().1 else { panic!() };
@@ -278,7 +278,7 @@ fn per_segment_stroke_styles_are_reported() {
         assert_eq!(network_of(&doc, "Wave").segments.len(), 4);
         warnings
     };
-    assert_eq!(network::decode_styled(&square_blob()).unwrap().1, 0);
+    assert!(network::decode(&square_blob()).unwrap().segments.iter().all(|s| s.style == 0));
     let plain = import(&tail_canvas(), "Tail").unwrap().1;
     assert!(!plain.iter().any(|w| w.contains("vector segments")), "{plain:?}");
     let uninterpreted = |w: &String| w.contains("style settings of some vector segments aren't supported; those segments use the layer's stroke");
@@ -367,9 +367,9 @@ fn unreadable_conditions_skip_the_conditional() {
 #[test]
 fn damaged_network_blobs_never_panic() {
     let good = square_blob();
-    assert!(network::decode_styled(&good).is_some());
+    assert!(network::decode(&good).is_some());
     for cut in 0..good.len() {
-        assert!(network::decode_styled(&good[..cut]).is_none(), "{cut}");
+        assert!(network::decode(&good[..cut]).is_none(), "{cut}");
     }
     let mut r = Lcg(5);
     for _ in 0..5000 {
@@ -378,7 +378,7 @@ fn damaged_network_blobs_never_panic() {
             let i = (r.next() as usize) % m.len();
             m[i] ^= 1 << (r.next() % 8);
         }
-        if let Some((net, _)) = network::decode_styled(&m) {
+        if let Some(net) = network::decode(&m) {
             assert!(net.segments.iter().all(|s| s.a < net.vertices.len() && s.b < net.vertices.len()));
             assert!(net.regions.iter().flat_map(|r| &r.loops).flatten().all(|i| *i < net.segments.len()));
             assert!(net.vertices.iter().all(|v| v.x.is_finite() && v.y.is_finite()));
@@ -387,13 +387,13 @@ fn damaged_network_blobs_never_panic() {
     // Counts larger than the blob, and indices out of range.
     let mut huge = vec![0xff; 12];
     huge.extend_from_slice(&[0; 64]);
-    assert!(network::decode_styled(&huge).is_none());
+    assert!(network::decode(&huge).is_none());
     let mut bad = arrow_blob();
     bad[12 + 24 + 4..12 + 24 + 8].copy_from_slice(&7u32.to_le_bytes());
-    assert!(network::decode_styled(&bad).is_none());
+    assert!(network::decode(&bad).is_none());
     for _ in 0..2000 {
         let junk: Vec<u8> = (0..(r.next() % 120)).map(|_| r.next() as u8).collect();
-        let _ = network::decode_styled(&junk);
+        let _ = network::decode(&junk);
     }
 }
 
@@ -409,15 +409,14 @@ fn segment_styles_round_trip_without_changing_geometry() {
         regions: vec![],
     };
     let bytes = network::encode(&original);
-    let (decoded, styled) = network::decode_styled(&bytes).unwrap();
-    assert_eq!(styled, 2);
+    let decoded = network::decode(&bytes).unwrap();
     assert_eq!(decoded.segments.len(), 3);
     for (got, want) in decoded.segments.iter().zip(&original.segments) {
         assert_eq!(got.style, want.style);
         assert_eq!((got.a, got.ta, got.b, got.tb), (want.a, want.ta, want.b, want.tb));
     }
     for cut in 0..bytes.len() {
-        assert!(network::decode_styled(&bytes[..cut]).is_none(), "truncated at {cut}");
+        assert!(network::decode(&bytes[..cut]).is_none(), "truncated at {cut}");
     }
 }
 
