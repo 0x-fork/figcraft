@@ -66,7 +66,7 @@ pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), Forma
     let file_name = archive.file_name.as_deref().filter(|n| !n.trim().is_empty()).unwrap_or(name);
     let (json, mut warnings) = map::to_rest(&msg, file_name);
     let embedded = embedded_images(&msg);
-    let images = |r: &str| archive.image(r).or_else(|| embedded.get(r).cloned());
+    let images = |r: &str| archive.image(r).or_else(|| embedded.get(r).map(|b| b.to_vec()));
     let (doc, more) = crate::rest::import(&json, &images)?;
     warnings.extend(more.into_iter().filter_map(map::adapt_warning));
     Ok((doc, warnings))
@@ -100,8 +100,9 @@ fn corrupt(msg: impl Into<String>) -> FormatError {
 /// Image bytes that travel inside the message, by image hash (lowercase hex): a paint's
 /// `image.dataBlob` indexes the message's `blobs`. Copies written by plugins and other tools embed
 /// their images this way, and a bare canvas (what the clipboard carries) has no `images/`. The
-/// walk is iterative (no recursion on nested data) and skips blobs larger than [`MAX_IMAGE`].
-fn embedded_images(msg: &Kv) -> BTreeMap<String, Vec<u8>> {
+/// walk is iterative (no recursion on nested data) and skips blobs larger than [`MAX_IMAGE`]. The
+/// bytes stay borrowed from the message; only images a paint asks for are copied.
+fn embedded_images<'m>(msg: &'m Kv) -> BTreeMap<String, &'m [u8]> {
     let blobs = msg.get("blobs").map(Kv::list).unwrap_or_default();
     let mut found = BTreeMap::new();
     let mut pending = vec![msg];
@@ -109,7 +110,7 @@ fn embedded_images(msg: &Kv) -> BTreeMap<String, Vec<u8>> {
         match value {
             Kv::Object(fields) => {
                 if let Some((hash, bytes)) = value.get("image").and_then(|image| embedded_image(image, blobs)) {
-                    found.entry(hash).or_insert_with(|| bytes.to_vec());
+                    found.entry(hash).or_insert(bytes);
                 }
                 pending.extend(fields.iter().filter(|(name, _)| *name != "blobs").map(|(_, field)| field));
             }
