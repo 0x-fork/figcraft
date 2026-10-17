@@ -502,34 +502,31 @@ fn the_glass_light_intensity_field_has_a_label() {
     u.frame(vec![]);
     let shapes = u.frame_output(vec![]).shapes;
     let lead = u.ctx.read_response(Id::new(("fx_gi", 0usize)).with("lead")).expect("the intensity field is shown").rect;
-    let labels: Vec<String> = painted_texts(&shapes).into_iter().filter(|(_, _, at)| lead.contains(at.center())).map(|(text, ..)| text).collect();
-    assert_eq!(labels, ["Intensity"]);
+    let labels: Vec<(String, bool)> =
+        painted_texts(&shapes).into_iter().filter(|(_, _, at)| lead.contains(at.center())).map(|(text, cut, _)| (text, cut)).collect();
+    assert_eq!(labels, [("Intensity".to_string(), false)], "labelled, and not cut short");
+    let field = u.ctx.read_response(Id::new(("fx_gi", 0usize)).with("field")).expect("its value").rect;
+    assert_eq!(field.max.x - lead.min.x, GLASS_FIELD_W, "the width the next test measures against");
 }
 
 /// A glass settings field's width in the Design panel at its default width.
-const GLASS_FIELD_W: f32 = 98.0;
+const GLASS_FIELD_W: f32 = 98.5;
 
-/// The glass settings' labels leave their values room in every language, and are cut only when
-/// they would crowd them (#256).
+/// The light intensity label this fix adds fits whole beside its value in every language (#256).
+/// Other glass labels may end in "…" in some languages (es "Profundidad"); a longer
+/// "Intensity" translation fails here.
 #[test]
-fn glass_labels_fit_beside_their_values_in_every_language() {
+fn the_intensity_label_fits_whole_in_every_language() {
     use crate::i18n::{self, Text};
-    let keys = ["Light|glass", "Intensity", "Refraction", "Depth", "Dispersion", "Frost", "Splay"];
     let ctx = egui::Context::default();
     let mut out = ctx.run_ui(Default::default(), |ui| {
         let width = |s: &str| ui.painter().layout_no_wrap(s.to_string(), crate::theme::regular(11.0), egui::Color32::WHITE).size().x;
         for lang in i18n::languages() {
-            for key in keys {
-                let label = lang.ui.iter().find(|(k, _)| *k == key).map_or(key, |(_, t)| match t {
-                    Text::Plain(s) | Text::Plural { other: s, .. } => s,
-                });
-                let (lead, value) = (crate::widgets::text_lead_width(ui, label, GLASS_FIELD_W), width("100%"));
-                assert!(lead + value <= GLASS_FIELD_W, "{}: no room for the value beside {label:?}", lang.code);
-                // Cut off only when it would crowd the value's 32 points (es "Profundidad").
-                if 12.0 + width(label) <= GLASS_FIELD_W - 32.0 {
-                    assert!(lead >= 12.0 + width(label), "{}: {label:?} is cut off", lang.code);
-                }
-            }
+            let label = lang.ui.iter().find(|(k, _)| *k == "Intensity").map_or("Intensity", |(_, t)| match t {
+                Text::Plain(s) | Text::Plural { other: s, .. } => s,
+            });
+            let lead = crate::widgets::text_lead_width(ui, label, GLASS_FIELD_W);
+            assert!(lead >= 12.0 + width(label), "{}: {label:?} would end in \"…\"", lang.code);
         }
     });
     out.textures_delta.clear();

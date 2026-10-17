@@ -223,7 +223,12 @@ fn number_field_impl(
     }
     match lead {
         Lead::Text(s) => {
-            crate::bidi::paint_name(ui.painter(), pos2(lead_rect.min.x + 8.0, rect.center().y), s, regular(11.0), t.text_secondary, lead_w - 12.0);
+            let galley = crate::bidi::name_galley(ui.painter(), s, regular(11.0), t.text_secondary, lead_w - 12.0);
+            // A label cut short shows whole on hover.
+            if galley.elided {
+                lead_resp.clone().on_hover_text(s);
+            }
+            ui.painter().galley(pos2(lead_rect.min.x + 8.0, rect.center().y - galley.size().y / 2.0), galley, t.text_secondary);
         }
         Lead::Icon(i, _) => {
             icons::paint(ui.painter(), Rect::from_center_size(lead_rect.center() + vec2(1.0, 0.0), vec2(14.0, 14.0)), i, t.icon_secondary)
@@ -347,7 +352,8 @@ fn number_field_impl(
                 None => empty.to_string(),
             };
             let col = if value.is_some() { t.text } else { t.text_secondary };
-            ui.painter().with_clip_rect(edit_rect).text(pos2(edit_rect.min.x, rect.center().y), Align2::LEFT_CENTER, s, regular(11.0), col);
+            // A value too long for its room ends in "…", so a cut number never reads as another.
+            crate::bidi::paint_name(ui.painter(), pos2(edit_rect.min.x, rect.center().y), &s, regular(11.0), col, edit_rect.width());
         }
     }
     // The variable button shows while the pointer is over a bindable field.
