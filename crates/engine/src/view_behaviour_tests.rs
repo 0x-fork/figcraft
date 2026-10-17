@@ -756,6 +756,10 @@ fn view_toggles_are_kept_for_the_next_launch() {
     for (cmd, on, _, _) in &rows {
         ex(&mut s, cmd, json!({"on": on}));
     }
+    // Modes stay with their file: a new one never opens in outline mode or soft-proofing.
+    for cmd in ["view.outlines", "view.outlinesSelection", "view.proofSrgb"] {
+        ex(&mut s, cmd, json!({"on": true}));
+    }
     // The app writes its preferences as JSON and reads them back at the next launch.
     let saved = serde_json::to_value(&s.prefs).unwrap();
     let mut next = Session::empty();
@@ -765,4 +769,5 @@ fn view_toggles_are_kept_for_the_next_launch() {
     for (cmd, on, get, why) in rows {
         assert_eq!(get(view), on, "{cmd}: {why}");
     }
+    assert!(!view.outlines && !view.outlines_selection && !view.proof_srgb, "{view:?}");
 }
