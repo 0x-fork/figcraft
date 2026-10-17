@@ -12,7 +12,7 @@ fn image_filter_schema() -> Schema {
              message PaintFilterMessage float tint, float shadows, float highlights, float detail, float exposure, float vignette, float temperature, float vibrance, float contrast, float brightness, float mystery\n\
              message Paint ",
         )
-        .replace("ImageScaleMode imageScaleMode\n", "ImageScaleMode imageScaleMode, PaintFilterMessage paintFilter, FilterColorAdjust filterColorAdjust\n");
+        .replace("message Paint PaintType type,", "message Paint PaintFilterMessage paintFilter, FilterColorAdjust filterColorAdjust, PaintType type,");
     Schema::parse(&text).unwrap()
 }
 
