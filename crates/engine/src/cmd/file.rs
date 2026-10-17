@@ -520,7 +520,6 @@ fn load_with(
             if loaded.doc.name.is_empty() {
                 loaded.doc.name = file_stem(name_hint);
             }
-            super::styles::apply_paint_bindings_on_load(&mut loaded.doc);
             Ok((loaded, false))
         }
     }
