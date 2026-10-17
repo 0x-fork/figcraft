@@ -297,6 +297,10 @@ struct Inst<'a> {
     path: Vec<String>,
     overrides: Rc<Overrides<'a>>,
     props: Rc<BTreeMap<String, &'a Kv<'a>>>,
+    /// Slot property GUID → private slot-content node GUID.
+    slot_contents: Rc<BTreeMap<String, String>>,
+    /// Layers imported from a slot's independent content subtree.
+    slot_content: bool,
     /// Mains being expanded (an instance inside its own main stops there).
     symbols: Vec<String>,
 }
@@ -770,7 +774,13 @@ impl<'a> Mapper<'a> {
         // Private provenance for the .fig importer; ordinary REST import ignores it.
         o.insert(
             crate::rest::FIG_SOURCE_FIELD.into(),
-            json!({"origin": id, "expanded": inst.is_some(), "wireFrame": own == "FRAME", "wireInstance": own == "INSTANCE"}),
+            json!({
+                "origin": id,
+                "expanded": inst.is_some(),
+                "wireFrame": own == "FRAME",
+                "wireInstance": own == "INSTANCE",
+                "slotContent": inst.is_some_and(|i| i.slot_content),
+            }),
         );
         o.insert("type".into(), json!(ty));
         copy_str(&mut o, &view, "name", "name");
@@ -799,6 +809,16 @@ impl<'a> Mapper<'a> {
             self.component(&mut o, &view, &rest_id);
         }
         self.prop_refs(&mut o, &view, inst);
+        let slot_content = if own == "FRAME" {
+            prop_ref(&view, "SLOT_CONTENT_ID").and_then(|def| inst.and_then(|i| i.slot_contents.get(&def).cloned()))
+        } else {
+            None
+        };
+        if slot_content.is_some()
+            && let Some(source) = o.get_mut(crate::rest::FIG_SOURCE_FIELD).and_then(Value::as_object_mut)
+        {
+            source.insert("slotOverride".into(), json!(true));
+        }
         let child_space = if matches!(ty, "GROUP" | "BOOLEAN_OPERATION") { space * view.transform().unwrap_or_default() } else { Affine::IDENTITY };
         let mut kids = Vec::new();
         if ty == "INSTANCE" {
@@ -809,6 +829,14 @@ impl<'a> Mapper<'a> {
                     // The main's branch can live outside the cached context being mapped.
                     kids.extend(self.layer_filtered(&c, Some(&sub), child_space, Some(&view), fit, depth + 1, None));
                 }
+            }
+        } else if let Some(content) = slot_content {
+            let mut content_inst = inst.cloned();
+            if let Some(content_inst) = &mut content_inst {
+                content_inst.slot_content = true;
+            }
+            for c in self.children(&content) {
+                kids.extend(self.layer_filtered(&c, content_inst.as_ref(), child_space, Some(&view), None, depth + 1, included));
             }
         } else {
             // Inside an instance a layer's children are its main's: they follow it from the main's
@@ -1338,6 +1366,11 @@ impl<'a> Mapper<'a> {
                     None => continue,
                 },
                 "VARIANT" => json!({"type": "VARIANT"}),
+                "SLOT" => {
+                    self.warn_non_default_slot_config(d);
+                    self.warn_dropped_slot_preferred_values(d);
+                    json!({"type": "SLOT"})
+                }
                 _ => {
                     self.warn(format!("{} component properties are not supported and were skipped", ty.to_ascii_lowercase()));
                     continue;
@@ -1354,6 +1387,34 @@ impl<'a> Mapper<'a> {
         }
     }
 
+    /// Preferred slot values are source component keys, but this mapper has no proven way to map
+    /// those keys to file GUIDs. They are dropped instead of guessing native NodeIds.
+    fn warn_dropped_slot_preferred_values(&mut self, def: &Kv<'a>) {
+        let entries = def.get("preferredValues").and_then(|v| v.get("instanceSwapValues")).map(Kv::list).unwrap_or_default();
+        if !entries.is_empty() {
+            self.warn("preferred slot component keys cannot be resolved to file nodes and were skipped");
+        }
+    }
+
+    fn warn_non_default_slot_config(&mut self, def: &Kv<'a>) {
+        let Some(config) = def.get("slotPropConfig") else { return };
+        let non_default = [
+            ("stretchChildOnInsert", Some(false)),
+            ("displayByDefault", Some(false)),
+            ("minChildren", None),
+            ("maxChildren", None),
+            ("allowPreferredValuesOnly", Some(false)),
+        ]
+        .into_iter()
+        .any(|(field, bool_default)| {
+            let Some(value) = config.get(field) else { return false };
+            if let Some(default) = bool_default { value.bool() != Some(default) } else { value.f64() != Some(0.0) }
+        });
+        if non_default {
+            self.warn("non-default slot settings are not represented and were skipped");
+        }
+    }
+
     /// A layer's component property references, and inside an instance the values they take.
     fn prop_refs(&mut self, o: &mut Obj, v: &View<'a>, inst: Option<&Inst<'a>>) {
         let mut refs = Obj::new();
@@ -1362,6 +1423,7 @@ impl<'a> Mapper<'a> {
                 Some("VISIBLE") => "visible",
                 Some("TEXT_DATA") => "characters",
                 Some("OVERRIDDEN_SYMBOL_ID") => "mainComponent",
+                Some("SLOT_CONTENT_ID") => "slot",
                 _ => continue,
             };
             let Some(def) =
@@ -1369,7 +1431,11 @@ impl<'a> Mapper<'a> {
             else {
                 continue;
             };
-            if let Some((name, _)) = self.prop_defs.get(&def) {
+            // Expanded frames must follow their main frame's source link. A direct slot reference
+            // makes the engine resolve ownership against the instance, where the property is not defined.
+            if !(field == "slot" && inst.is_some())
+                && let Some((name, _)) = self.prop_defs.get(&def)
+            {
                 refs.insert(field.into(), json!(name));
             }
             let Some(val) = inst.and_then(|i| i.props.get(&def)) else { continue };
@@ -1501,15 +1567,50 @@ impl<'a> Mapper<'a> {
             rows.sort_by_key(|row| (std::cmp::Reverse(row.source_depth), row.ordinal));
         }
         let mut all_props: BTreeMap<String, &'a Kv<'a>> = outer.map(|i| (*i.props).clone()).unwrap_or_default();
+        let mut slot_contents: BTreeMap<String, String> = outer.map(|i| (*i.slot_contents).clone()).unwrap_or_default();
         for a in assignments {
             if let (Some(d), Some(val)) = (a.get("defID").and_then(guid), a.get("value")) {
                 all_props.entry(d).or_insert(val);
             }
+            let Some(def) = a.get("defID").and_then(guid) else { continue };
+            if self.prop_defs.get(&def).is_none_or(|(_, ty)| *ty != "SLOT") {
+                continue;
+            }
+            let var_value = a.get("varValue");
+            if var_value.and_then(|v| v.get("dataType")).and_then(Kv::str) != Some("SLOT_CONTENT_ID") {
+                self.warn("malformed slot content assignment was skipped");
+                continue;
+            }
+            let target = var_value.and_then(|v| v.get("value")).and_then(|v| v.get("slotContentIdValue")).and_then(|v| v.get("guid")).and_then(guid);
+            let Some(target) = target else {
+                self.warn("malformed slot content assignment was skipped");
+                continue;
+            };
+            if target == "4294967295:4294967295" {
+                self.warn("slot content assignment uses the empty GUID sentinel and was skipped");
+                continue;
+            }
+            if !self.nodes.get(&target).is_some_and(|n| n.get("isSlotContent").and_then(Kv::bool) == Some(true)) {
+                self.warn("slot content assignment target is missing or is not slot content");
+                continue;
+            }
+            slot_contents.entry(def).or_insert(target);
         }
         let mut symbols = outer.map(|i| i.symbols.clone()).unwrap_or_default();
         symbols.push(sym.clone());
         let root = outer.map_or_else(|| rest_id.to_string(), |i| i.root.clone());
-        Some((Inst { root, path: own_path, overrides: Rc::new(overrides), props: Rc::new(all_props), symbols }, sym))
+        Some((
+            Inst {
+                root,
+                path: own_path,
+                overrides: Rc::new(overrides),
+                props: Rc::new(all_props),
+                slot_contents: Rc::new(slot_contents),
+                slot_content: false,
+                symbols,
+            },
+            sym,
+        ))
     }
 
     fn prototype(&mut self, o: &mut Obj, v: &View<'a>) {

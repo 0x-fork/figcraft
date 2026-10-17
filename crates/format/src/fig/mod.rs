@@ -21,6 +21,8 @@ pub mod kiwi;
 mod map;
 mod network;
 #[cfg(test)]
+mod slot_tests;
+#[cfg(test)]
 mod source_identity_tests;
 #[cfg(test)]
 mod tests;

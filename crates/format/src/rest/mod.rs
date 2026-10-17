@@ -451,6 +451,10 @@ impl<'a> Ctx<'a> {
         let id = self.doc.alloc_id();
         let label = kind.label();
         let mut n = Node::new(id, kind, text(j, "name").map_or(label, clip_str), w, h);
+        if self.fig_sources.is_some() && j.get(FIG_SOURCE_FIELD).and_then(|source| source.get("slotOverride")).and_then(Value::as_bool) == Some(true)
+        {
+            n.overrides.insert("slot".into());
+        }
         n.transform = local(space.world, world);
         self.common(&mut n, j, parent_mode);
         let (container, follows, mode) = (n.kind.is_container(), n.kind.bounds_follow_children(), n.layout.as_ref().map(|l| l.mode));
@@ -605,7 +609,8 @@ impl<'a> Ctx<'a> {
         n.child_layout = props::child_layout(j, n.layout.as_ref().map(|l| l.mode), parent_mode);
         n.exports = props::export_settings(j);
         for (field, prop) in j.get("componentPropertyReferences").and_then(Value::as_object).into_iter().flatten() {
-            if let (Some(p), true) = (prop.as_str(), matches!(field.as_str(), "visible" | "characters" | "mainComponent")) {
+            let supported = matches!(field.as_str(), "visible" | "characters" | "mainComponent") || (field == "slot" && self.fig_sources.is_some());
+            if let (Some(p), true) = (prop.as_str(), supported) {
                 n.prop_refs.insert(field.clone(), p.to_string());
             }
         }
@@ -709,6 +714,7 @@ impl<'a> Ctx<'a> {
                     continue;
                 }
                 Some("VARIANT") => continue,
+                Some("SLOT") if self.fig_sources.is_some() => PropDef::Slot { preferred: Vec::new() },
                 _ => {
                     self.warn("unknown component property types were skipped");
                     continue;
