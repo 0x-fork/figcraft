@@ -46,6 +46,16 @@ fn paste_takes_layers_copied_in_another_design_app() {
 }
 
 #[test]
+fn paste_here_puts_copied_design_layers_at_the_point() {
+    let html = copied_html();
+    let mut app = FigApp::new(Session::new(), Box::new(Clip { html, text: Some(String::new()) }));
+    crate::menus::paste(&mut app, None, Some((300.0, 200.0)));
+    let id = app.session.selection()[0];
+    let b = app.session.doc().unwrap().world_bounds(id).unwrap();
+    assert_eq!((b.x0, b.y0), (300.0, 200.0));
+}
+
+#[test]
 fn html_from_other_apps_pastes_as_before() {
     let clip = Clip { html: "<b>Hello</b>".into(), text: Some("Hello".into()) };
     let mut app = FigApp::new(Session::new(), Box::new(clip));
