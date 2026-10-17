@@ -143,8 +143,12 @@ fn about_body(ui: &mut egui::Ui, t: &Tokens) {
 }
 
 /// Escape closes the topmost simple dialog (one without menus of its own), before the canvas's
-/// shortcuts see it (it doesn't deselect), like a system dialog: from one of its fields too.
+/// shortcuts see it (it doesn't deselect), like a system dialog: from one of its fields too. A menu
+/// open over the dialog (Preferences ▸ Interface size) takes the first Escape and closes alone.
 pub fn keys(app: &mut FigApp, ctx: &Context) {
+    if egui::Popup::is_any_open(ctx) {
+        return;
+    }
     let u = &mut app.ui;
     let open = u.color_profile.is_some()
         || u.menu_input.is_some()

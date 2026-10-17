@@ -155,3 +155,66 @@ fn every_window_size_system_scale_and_interface_size_lays_out_inside_the_window(
         }
     }
 }
+
+/// The interface size is reachable and changeable without a pointer: Tab reaches the menu, Enter
+/// opens it, the arrows and Tab move through its entries, Enter picks one and closes the menu, and
+/// Escape closes it alone, without changing anything and without closing Preferences (a second
+/// Escape does).
+#[test]
+fn the_interface_size_menu_works_from_the_keyboard() {
+    use crate::a11y::focused_name;
+    use egui::{Event, Key, Modifiers, Popup};
+
+    // A key press, then two quiet frames for the focus (and the name a screen reader reads) to settle.
+    let press = |u: &mut Ui, key: Key| {
+        u.frame(vec![
+            Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE },
+            Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE },
+        ]);
+        u.frame(vec![]);
+        u.frame(vec![]);
+    };
+    let open = |u: &mut Ui| {
+        // The Preferences dialog is not modal for the keyboard: Tab crosses the main window first.
+        let mut tabs = 0;
+        while focused_name(&u.ctx) != "Interface size" {
+            assert!(tabs < 140, "Tab never reaches the Interface size menu (focus: {:?})", focused_name(&u.ctx));
+            press(u, Key::Tab);
+            tabs += 1;
+        }
+        press(u, Key::Enter);
+        assert!(Popup::is_any_open(&u.ctx), "Enter opens the menu");
+    };
+    let chosen = |u: &Ui| u.app.inspect()["uiScale"]["choice"].clone();
+
+    let mut u = Ui::new(Session::new());
+    u.app.ui.preferences = true;
+    u.ctx.enable_accesskit();
+    settle(&mut u, 1.0);
+    assert_eq!(chosen(&u), json!("auto"));
+
+    // Escape closes the menu and nothing else: the size is unchanged and Preferences stays open.
+    open(&mut u);
+    press(&mut u, Key::Escape);
+    u.frame(vec![]);
+    assert!(!Popup::is_any_open(&u.ctx));
+    assert!(u.app.ui.preferences, "the first Escape closes the menu only");
+    assert_eq!(chosen(&u), json!("auto"));
+
+    // The arrows enter the menu on Auto (which says the size it draws at) and go down through the
+    // sizes (75, 100, 125); Enter picks the one that has the keyboard and closes the menu.
+    open(&mut u);
+    press(&mut u, Key::ArrowDown);
+    assert_eq!(focused_name(&u.ctx), "Auto (100%)");
+    for _ in 0..3 {
+        press(&mut u, Key::ArrowDown);
+    }
+    assert_eq!(focused_name(&u.ctx), "125%");
+    press(&mut u, Key::Enter);
+    assert_eq!(chosen(&u), json!(1.25));
+    assert!(!Popup::is_any_open(&u.ctx), "picking a size closes the menu");
+    assert!(u.app.ui.preferences, "picking a size leaves Preferences open");
+    // With no menu open, Escape closes Preferences as before.
+    press(&mut u, Key::Escape);
+    assert!(!u.app.ui.preferences);
+}
