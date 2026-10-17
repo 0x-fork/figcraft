@@ -41,10 +41,6 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 ## Entries
 
 ### 1. `.fig` files: the import's tail
-- **Text paths (2026-10-15):** local `.fig` import maps supported connected `TEXT_PATH` networks
-  to existing editable native text paths, preserving the start segment, direction and styled
-  runs. Other vertical placements, multiline/ambiguous networks, path decorations, public REST
-  text paths and `.fig` text-path export remain limited.
 - **Landed (2026-10-11):** `.fig` files open (best effort): the zip, its deflate/zstd chunks and the kiwi schema are decoded generically and mapped by field name onto the REST importer, so pages, the layer tree, geometry, paints (styles resolved), strokes, effects, text with styled runs, vectors, auto layout (grid included), constraints, components, sets, instances (expanded from their main with overrides, derived layout and property values), styles, variables with modes and bindings, prototyping and image fills from the archive come across; anything else is a warning (`crates/format/src/fig`). Then (2026-10-11): vectors open as editable vector networks (per-point corner radius, handle mirroring, end caps; outlines when the network blob is missing or damaged), sticky notes, shapes with text, connectors, tables, code blocks, slides and similar layers import as the closest frames, text layers and vectors with a warning, and set-variable, set-variable-mode and conditional prototype actions come across. `file.open`,
   `file.import`, drag and drop, the CLI and MCP's `open_file` read `.fig`; the file is never saved
   over.
