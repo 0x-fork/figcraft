@@ -7,7 +7,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::a11y;
-use crate::i18n::{self, tr, tr_noop, trf};
+use crate::i18n::{self, tr, tr_noop, trf, trn};
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular};
 use crate::toolbar::pretty_shortcut;
@@ -30,11 +30,29 @@ pub const UI_COMMANDS: &[&str] = &[
 ];
 
 /// Run a menu item: some open dialogs or use platform services, the rest go to the engine.
-/// Paste: the system clipboard wins when it holds something newer than our own copy (an image, SVG
-/// or text from another app); otherwise our copied layers. `event_text` is the text the platform
-/// handed over with the paste event (the browser has no other way to read it). `at`: the page
-/// point to paste at (Paste here); `None` pastes in the middle of the view.
+/// Paste: the system clipboard wins when it holds something newer than our own copy (layers copied
+/// from another design app, an image, SVG or text from another app); otherwise our copied layers.
+/// `event_text` is the text the platform handed over with the paste event (the browser has no
+/// other way to read it). `at`: the page point to paste at (Paste here); `None` pastes in the
+/// middle of the view.
 pub fn paste(app: &mut FigApp, event_text: Option<&str>, at: Option<(f64, f64)>) {
+    // Only HTML that holds readable design data takes this path; other HTML pastes as before.
+    if let Some(html) = app.services.clipboard_get_html().filter(|h| figcraft_engine::cmd::edit::design_clipboard_buffer(h).is_some()) {
+        let mut params = json!({"html": html});
+        if let Some((x, y)) = at {
+            params["x"] = json!(x);
+            params["y"] = json!(y);
+        }
+        if let Some(r) = app.run("edit.pasteDesignLayers", params) {
+            // The pasted layers are now our copy: text another app puts on the clipboard later is newer.
+            app.ui.last_copy = Some(app.services.clipboard_get_text().unwrap_or_default());
+            let left_out = r["warnings"].as_array().map_or(0, Vec::len);
+            if left_out > 0 {
+                app.toast(trn("Pasted design layers; {n} kinds of content were left out", left_out, &[]));
+            }
+        }
+        return;
+    }
     let sys_text = app.services.clipboard_get_text().or_else(|| event_text.map(str::to_string)).filter(|t| !t.is_empty());
     let ours = sys_text.is_some() && sys_text == app.ui.last_copy;
     let (cx, cy) = at.or_else(|| app.session.ds().ok().map(|d| (d.view.cx, d.view.cy))).unwrap_or((0.0, 0.0));
@@ -55,7 +73,7 @@ pub fn paste(app: &mut FigApp, event_text: Option<&str>, at: Option<(f64, f64)>)
             } else if figcraft_engine::looks_like_svg(&text) {
                 use base64::Engine as _;
                 let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
-                app.run("file.import", json!({"data": b64, "name": "Pasted SVG.svg", "x": cx, "y": cy, "center": at.is_none()}));
+                app.run_user("file.import", json!({"data": b64, "name": "Pasted SVG.svg", "x": cx, "y": cy, "center": at.is_none()}));
             } else {
                 app.run("text.create", json!({"text": text, "x": cx, "y": cy}));
             }
@@ -255,12 +273,12 @@ fn recent_menu(app: &mut FigApp, ui: &mut Ui, prefix: &str, key: &str, label: &s
     let picked = submenu(ui, prefix, &format!("{prefix}/{key}"), label, t, |ui| {
         let recents = &app.session.prefs.recent_files;
         let mut picked = None;
-        for (i, p) in recents.iter().enumerate() {
+        for p in recents.iter() {
             let path = std::path::Path::new(p);
             let name = path.file_name().map_or_else(|| p.clone(), |f| f.to_string_lossy().into_owned());
             let exists = path.exists();
             if item(ui, &name, "", exists, false, t) && exists {
-                picked = Some(json!({"index": i}));
+                picked = Some(json!({"path": p}));
             }
         }
         if !recents.is_empty() {
@@ -272,7 +290,8 @@ fn recent_menu(app: &mut FigApp, ui: &mut Ui, prefix: &str, key: &str, label: &s
         picked
     });
     let Some(params) = picked else { return false };
-    if app.run("file.openRecent", params).is_some_and(|r| r.get("index").is_some()) {
+    // Through the user path, so an import report shows; `file.openRecent` also drops a file that is gone.
+    if app.run_user("file.openRecent", params).is_some_and(|r| r.get("index").is_some()) {
         app.ui.home = false;
     }
     true

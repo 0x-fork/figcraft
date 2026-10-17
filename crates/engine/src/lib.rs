@@ -390,7 +390,8 @@ pub struct VersionPreview {
 /// Why edits are refused while a version is shown.
 pub const PREVIEW_READ_ONLY: &str = "you're viewing an earlier version: restore it or go back to the current version to edit";
 
-/// Commands that first end a version preview: they act on the document itself.
+/// Commands that first end a version preview: they act on the document itself. Saving does so
+/// only with a native destination; export copies and pending format choices keep the preview.
 const ENDS_PREVIEW: &[&str] = &["file.save", "file.saveAs", "file.close", "file.revert", "file.saveVersion", "file.duplicate", "version.restore"];
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -732,7 +733,8 @@ pub struct Session {
     /// dark page colour while it is dark (added pages take the current page's). Headless sessions (CLI, MCP, exports) have no
     /// theme, so what scripts make is the same everywhere.
     pub ui_dark: Option<bool>,
-    /// Command log (id + params) for actions/automation.
+    /// Command log (id + params) for actions/automation. File imports that carry the file bytes
+    /// (`file.import` with `data`) are not logged, so the log never holds a copy of a pasted file.
     pub journal: Vec<(String, Value)>,
     /// Recently used colours.
     pub recent_colors: Vec<figcraft_color::Color>,
@@ -754,6 +756,19 @@ pub struct Session {
 impl Default for Session {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Whether a command, or a batch wrapping one, imports a file passed as Base64 `data`.
+fn command_carries_import_bytes(id: &str, params: &Value) -> bool {
+    match id {
+        "file.import" => params::get(params, "data").is_some(),
+        "command.batch" => params.get("commands").and_then(Value::as_array).is_some_and(|commands| {
+            commands.iter().any(|c| {
+                c.get("command").and_then(Value::as_str).zip(c.get("params")).is_some_and(|(id, params)| command_carries_import_bytes(id, params))
+            })
+        }),
+        _ => false,
     }
 }
 
@@ -881,6 +896,7 @@ impl Session {
         // Every other command acts on the document itself, not on a live text preview.
         textpreview::end(self);
         if ENDS_PREVIEW.contains(&id)
+            && (!matches!(id, "file.save" | "file.saveAs") || cmd::file::save_ends_preview(self, id, params))
             && let Ok(ds) = self.ds_mut()
         {
             ds.end_preview();
@@ -896,9 +912,13 @@ impl Session {
                 if spec.history && id != "edit.repeat" {
                     self.last_command = Some((id.to_string(), params.clone()));
                 }
-                self.journal.push((id.to_string(), params.clone()));
-                if self.journal.len() > 5000 {
-                    self.journal.drain(..1000);
+                // Imported bytes already live in the document: a Base64 copy in the log would stay
+                // for the whole session.
+                if !command_carries_import_bytes(id, params) {
+                    self.journal.push((id.to_string(), params.clone()));
+                    if self.journal.len() > 5000 {
+                        self.journal.drain(..1000);
+                    }
                 }
             }
             Err(_) => {
@@ -1511,6 +1531,8 @@ mod cursor_tests;
 #[cfg(test)]
 mod dark_page_text_tests;
 #[cfg(test)]
+mod design_paste_tests;
+#[cfg(test)]
 mod dev_resources_tests;
 #[cfg(test)]
 mod devcompare_tests;
@@ -1559,7 +1581,11 @@ mod history_behaviour_tests;
 #[cfg(test)]
 mod html_codegen_tests;
 #[cfg(test)]
+mod huge_stroke_tests;
+#[cfg(test)]
 mod import_export_tests;
+#[cfg(test)]
+mod import_journal_tests;
 #[cfg(test)]
 mod inspect_behaviour_tests;
 #[cfg(test)]
@@ -1653,6 +1679,8 @@ mod rotated_select_tests;
 #[cfg(test)]
 mod rotation_origin_tests;
 #[cfg(test)]
+mod save_format_tests;
+#[cfg(test)]
 mod scale_tool_tests;
 #[cfg(test)]
 mod section_contents_tests;
@@ -1720,6 +1748,8 @@ mod variables_io_tests;
 mod vector_behaviour_tests;
 #[cfg(test)]
 mod vector_multi_behaviour_tests;
+#[cfg(test)]
+mod vector_offset_tests;
 #[cfg(test)]
 mod version_preview_tests;
 #[cfg(test)]

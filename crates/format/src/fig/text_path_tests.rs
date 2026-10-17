@@ -154,7 +154,7 @@ fn linked_underline_message() -> Kv<'static> {
 #[test]
 fn mapped_text_path_reaches_native_model_with_runs_and_no_standin_warning() {
     let message = message(true);
-    let (json, warnings) = super::map::to_rest(&message, "Text path");
+    let (json, warnings, _) = super::map::to_rest(&message, "Text path", crate::rest::MAX_NODES);
     assert!(!warnings.iter().any(|w| w.contains("text off its path")), "{warnings:?}");
     let (doc, warnings) = crate::rest::import_fig(&json, &|_| None).unwrap();
     assert!(!warnings.iter().any(|w| w.contains("text off its path")), "{warnings:?}");
@@ -171,7 +171,7 @@ fn mapped_text_path_reaches_native_model_with_runs_and_no_standin_warning() {
 #[test]
 fn public_rest_import_ignores_private_fig_text_path_field() {
     let message = message(true);
-    let (json, _) = super::map::to_rest(&message, "Text path");
+    let (json, _, _) = super::map::to_rest(&message, "Text path", crate::rest::MAX_NODES);
     // The mapper's private field is accepted only by import_fig, never by public REST import.
     let path = json["document"]["children"][0]["children"][0]["_figTextPath"].clone();
     assert!(path.is_object());
@@ -195,7 +195,7 @@ fn serialized_kiwi_canvas_import_decodes_start_and_builds_native_path() {
 #[test]
 fn malformed_text_path_falls_back_with_specific_warning() {
     let message = message(false);
-    let (json, warnings) = super::map::to_rest(&message, "Text path");
+    let (json, warnings, _) = super::map::to_rest(&message, "Text path", crate::rest::MAX_NODES);
     assert!(warnings.iter().any(|w| w.contains("text path has no start data") && w.contains("text imports off its path")), "{warnings:?}");
     let (doc, _) = crate::rest::import_fig(&json, &|_| None).unwrap();
     let node = doc.nodes().find(|n| n.name == "broken path").unwrap();
@@ -205,7 +205,7 @@ fn malformed_text_path_falls_back_with_specific_warning() {
 #[test]
 fn linked_text_style_decoration_warns_from_effective_mapped_style() {
     let message = linked_underline_message();
-    let (json, warnings) = super::map::to_rest(&message, "Text path");
+    let (json, warnings, _) = super::map::to_rest(&message, "Text path", crate::rest::MAX_NODES);
     assert_eq!(json["document"]["children"][0]["children"][0]["style"]["textDecoration"], "UNDERLINE");
     assert!(warnings.iter().any(|w| w == "text path underline or strikethrough decoration is not rendered"), "{warnings:?}");
 }

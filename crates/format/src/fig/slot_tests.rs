@@ -24,7 +24,7 @@ fn node(local: u32, kind: &'static str, parent: Option<u32>, mut fields: Vec<(&'
 }
 
 fn mapped(msg: &Kv<'_>) -> Value {
-    to_rest(msg, "Synthetic resources").0
+    to_rest(msg, "Synthetic resources", crate::rest::MAX_NODES).0
 }
 
 fn named_id<'b>(v: &'b Value, id: &str) -> Option<&'b Value> {
@@ -210,12 +210,12 @@ fn unassigned_slot_keeps_default_and_bad_content_target_warns() {
     assert_eq!(slot["children"].as_array().unwrap().len(), 1);
     assert!(slot.get("overrides").is_none());
 
-    let (rest, warnings) = to_rest(&slot_message(Some(999), false), "Synthetic");
+    let (rest, warnings, _) = to_rest(&slot_message(Some(999), false), "Synthetic", crate::rest::MAX_NODES);
     assert!(warnings.iter().any(|w| w.contains("slot content assignment target is missing or is not slot content")), "{warnings:?}");
     let slot = named_id(&rest["document"], "I9:20;9:12").unwrap();
     assert_eq!(slot["children"].as_array().unwrap().len(), 1);
 
-    let (rest, warnings) = to_rest(&slot_message(Some(33), true), "Synthetic");
+    let (rest, warnings, _) = to_rest(&slot_message(Some(33), true), "Synthetic", crate::rest::MAX_NODES);
     let main = named_id(&rest["document"], "9:10").unwrap();
     assert_eq!(main["componentPropertyDefinitions"]["Content#9:70"]["type"], "SLOT");
     assert!(warnings.iter().any(|w| w.contains("preferred slot component keys cannot be resolved")), "{warnings:?}");

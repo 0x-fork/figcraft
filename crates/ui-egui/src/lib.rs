@@ -32,6 +32,7 @@ pub mod home;
 pub mod home_recents;
 pub mod i18n;
 pub mod icons;
+pub mod import_report;
 pub mod layers;
 pub mod layout_panel;
 pub mod list_drag;
@@ -86,6 +87,8 @@ mod comments_tests;
 #[cfg(test)]
 mod cursors_tests;
 #[cfg(test)]
+mod design_paste_tests;
+#[cfg(test)]
 mod dev_mode_tests;
 #[cfg(test)]
 mod duplicate_paint_tests;
@@ -107,6 +110,8 @@ mod home_recents_tests;
 mod home_tests;
 #[cfg(test)]
 mod idle_tests;
+#[cfg(test)]
+mod import_report_tests;
 #[cfg(test)]
 mod layers_behaviour_tests;
 #[cfg(test)]
@@ -167,6 +172,8 @@ mod proto_reorder_tests;
 mod proto_responsive_tests;
 #[cfg(test)]
 mod resources_tests;
+#[cfg(test)]
+mod save_as_tests;
 #[cfg(test)]
 mod select_all_tests;
 #[cfg(test)]
@@ -230,6 +237,9 @@ pub trait Services {
     }
     fn clipboard_set_text(&mut self, _s: &str) {}
     fn clipboard_get_text(&mut self) -> Option<String> {
+        None
+    }
+    fn clipboard_get_html(&mut self) -> Option<String> {
         None
     }
     fn clipboard_set_png(&mut self, _w: u32, _h: u32, _rgba: &[u8]) {}
@@ -470,6 +480,8 @@ pub struct UiState {
     /// ([`pending_open::pending_opens`]), and the frames it has been drawn.
     pub pending_opens: Vec<pending_open::PendingOpen>,
     pub pending_open_frames: u8,
+    /// The latest successful file import's summary and compatibility notes.
+    pub import_report: Option<import_report::Report>,
     pub screenshot_requests: Vec<(u64, String)>,
     pub frame_ms: f64,
     pub render_ms: f64,
@@ -591,6 +603,7 @@ impl Default for UiState {
             last_error: None,
             pending_opens: Vec::new(),
             pending_open_frames: 0,
+            import_report: None,
             screenshot_requests: Vec::new(),
             frame_ms: 0.0,
             render_ms: 0.0,
@@ -705,6 +718,16 @@ impl FigApp {
         let r = self.session.execute(id, &params);
         self.handle_ui_requests();
         r.map_err(|e| self.failed(id, &e)).ok()
+    }
+
+    /// [`run`](Self::run) for something the user did (a dialog, a drop, a paste, a recent file):
+    /// a file it imports shows its import report. Programmatic calls use `run` and never open one.
+    pub fn run_user(&mut self, id: &str, params: Value) -> Option<Value> {
+        let result = self.run(id, params.clone());
+        if let Some(result) = &result {
+            import_report::capture(self, id, &params, result);
+        }
+        result
     }
 
     /// Show command `id`'s error.
@@ -973,11 +996,31 @@ impl FigApp {
     }
 
     pub fn save_as_dialog(&mut self) {
-        let name = self.session.doc().map(|d| d.name.clone()).unwrap_or_else(|_| "Untitled".into());
-        self.pick_save(i18n::tr("Save as"), &format!("{name}.figcraft"), &["figcraft"], |app, p| {
-            let ps = p.to_string_lossy().to_string();
-            if app.run("file.saveAs", json!({"path": ps})).is_some() {
-                app.toast(i18n::trf("Saved {name}", &[("name", &p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())]));
+        let Ok(name) = self.session.doc().map(|d| d.name.clone()) else { return };
+        self.pick_save(i18n::tr("Save as"), &format!("{name}.figcraft"), &["figcraft", "fig"], |app, mut p| {
+            if p.extension().is_none_or(|e| e.is_empty()) {
+                if !p.set_extension("figcraft") {
+                    app.toast(i18n::tr("Use the .figcraft or .fig extension."));
+                    return;
+                }
+                // This name wasn't confirmed by the system dialog: don't replace an existing file.
+                match p.try_exists() {
+                    Ok(false) => {}
+                    Ok(true) => {
+                        app.toast(i18n::tr("A .figcraft file with this name already exists. Choose its full name to confirm replacement."));
+                        return;
+                    }
+                    Err(e) => {
+                        app.toast(e.to_string());
+                        return;
+                    }
+                }
+            } else if !p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("figcraft") || e.eq_ignore_ascii_case("fig")) {
+                app.toast(i18n::tr("Use the .figcraft or .fig extension."));
+                return;
+            }
+            if let Some(r) = app.run("file.saveAs", json!({"path": p.to_string_lossy()})) {
+                dialogs::file_saved(app, &r);
             }
         });
     }
@@ -985,7 +1028,14 @@ impl FigApp {
     pub fn save(&mut self) {
         // A branch tab saves its main file.
         let tab = figcraft_engine::branches::file_tab(&self.session);
-        if self.session.docs.get(tab).is_some_and(|d| d.path.is_some()) {
+        // A path ending in .fig is never saved over silently: a .fig destination is an export copy.
+        let native_path = self
+            .session
+            .docs
+            .get(tab)
+            .and_then(|d| d.path.as_deref())
+            .is_some_and(|path| !Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("fig")));
+        if native_path {
             if self.run("file.save", json!({})).is_some() {
                 self.toast(i18n::tr("Saved"));
             }
@@ -1001,7 +1051,7 @@ impl FigApp {
             false,
             |app, p| {
                 let ps = p.to_string_lossy().to_string();
-                if app.run("file.open", json!({"path": ps})).is_some() {
+                if app.run_user("file.open", json!({"path": ps})).is_some() {
                     app.ui.home = false;
                 }
             },
@@ -1017,7 +1067,7 @@ impl FigApp {
         let title = if place { i18n::tr("Place image") } else { i18n::tr("Import") };
         self.pick_open(title, exts, move |app, p| {
             let ps = p.to_string_lossy().to_string();
-            app.run("file.import", json!({"path": ps}));
+            app.run_user("file.import", json!({"path": ps}));
         });
     }
 
@@ -1563,6 +1613,7 @@ impl FigApp {
             "panels": {"left": self.ui.left_width, "right": self.ui.right_width, "leftCollapsed": self.ui.left_collapsed},
             "status": self.session.status(),
             "lastError": self.ui.last_error,
+            "importReport": self.ui.import_report.as_ref().map(import_report::Report::inspect),
         });
         state["pendingOpens"] = json!(self.ui.pending_opens.len());
         state

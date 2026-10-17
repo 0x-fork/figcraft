@@ -1,11 +1,13 @@
 //! Dialogs: About, Preferences, keyboard shortcuts, find & replace, rename layers, variables,
 //! export.
 
+use std::path::Path;
+
 use egui::{Align2, Color32, Context, CornerRadius, RichText, Sense, Stroke, vec2};
 use figcraft_color::ColorProfile;
 use figcraft_doc::{ExportFormat, ExportSetting, ExportSize, NodeId};
 use figcraft_engine::cmd::file::{export_jobs, exportable_layers};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::FigApp;
 use crate::export_panel::{export_layers, save_one, suggested_name};
@@ -139,6 +141,7 @@ pub fn keys(app: &mut FigApp, ctx: &Context) {
     let open = u.color_profile.is_some()
         || u.find.is_some()
         || u.batch_rename.is_some()
+        || u.import_report.is_some()
         || u.confirm_close
         || u.export_preview
         || u.shortcuts_panel
@@ -147,7 +150,7 @@ pub fn keys(app: &mut FigApp, ctx: &Context) {
     if !open || !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         return;
     }
-    if u.color_profile.take().is_some() || u.find.take().is_some() || u.batch_rename.take().is_some() {
+    if u.color_profile.take().is_some() || u.find.take().is_some() || u.batch_rename.take().is_some() || u.import_report.take().is_some() {
         return;
     }
     for flag in [&mut u.confirm_close, &mut u.export_preview, &mut u.shortcuts_panel, &mut u.preferences, &mut u.about] {
@@ -160,6 +163,7 @@ pub fn keys(app: &mut FigApp, ctx: &Context) {
 pub fn show(app: &mut FigApp, ctx: &Context) {
     // Dropped files waiting to open: their card, then (once it has shown) the files.
     crate::pending_open::pending_opens(app, ctx);
+    crate::import_report::show(app, ctx);
     let t = Tokens::get(ctx);
     if app.ui.about {
         let mut open = true;
@@ -505,17 +509,35 @@ fn color_profile_dialog(app: &mut FigApp, ctx: &Context) {
     }
 }
 
+/// A `.fig` Save as result is an export; only native saves report that the document was saved.
+pub(crate) fn file_saved(app: &mut FigApp, result: &Value) {
+    if result["format"] == "fig" {
+        fig_exported(app, result);
+    } else {
+        app.toast(trf("Saved {name}", &[("name", &result_file_name(result))]));
+    }
+}
+
+fn result_file_name(result: &Value) -> String {
+    result["path"].as_str().and_then(|p| Path::new(p).file_name()).map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// The `.fig` result stays an export: native save state is unchanged, and omissions are reported.
+pub(crate) fn fig_exported(app: &mut FigApp, result: &Value) {
+    let file = result_file_name(result);
+    let left_out = result["warnings"].as_array().map_or(0, Vec::len);
+    app.toast(match left_out {
+        0 => trf("Exported {name}", &[("name", &file)]),
+        n => trn("Exported {name}; {n} kinds of content were left out", n, &[("name", &file)]),
+    });
+}
+
 /// Save the whole file as `.fig`; the toast says how much was left out.
 fn save_fig(app: &mut FigApp, name: &str) {
     let filename = format!("{name}.fig");
     app.pick_save(tr("Export"), &filename, &["fig"], |app, p| {
-        let file = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
         if let Some(r) = app.run("file.export", json!({"format": "fig", "path": p.to_string_lossy()})) {
-            let left_out = r["warnings"].as_array().map_or(0, Vec::len);
-            app.toast(match left_out {
-                0 => trf("Exported {name}", &[("name", &file)]),
-                n => trn("Exported {name}; {n} kinds of content were left out", n, &[("name", &file)]),
-            });
+            fig_exported(app, &r);
         }
     });
 }
