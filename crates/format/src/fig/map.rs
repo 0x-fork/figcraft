@@ -899,12 +899,20 @@ impl<'a> Mapper<'a> {
             size.zip(norm).filter(|(s, n)| s.is_finite() && *n > 1e-9).map_or(1.0, |(s, n)| s / n)
         };
         let (sx, sy) = (scale("x"), scale("y"));
+        // An absent layer join is the source default.
+        let layer_join = v.str("strokeJoin").unwrap_or("MITER");
+        let mut unsupported_join = false;
+        let mut unresolved_style = false;
+        let mut unknown_join = false;
         let vertices: Vec<Value> = net
             .vertices
             .iter()
             .map(|p| {
                 let mut out = json!({"x": p.x * sx, "y": p.y * sy});
                 let st = style(p.style);
+                if p.style != 0 && st.is_none() {
+                    unresolved_style = true;
+                }
                 if let Some(r) = st.and_then(|s| num(s, "cornerRadius")).filter(|r| *r > 0.0) {
                     out["radius"] = json!(r);
                 }
@@ -913,6 +921,15 @@ impl<'a> Mapper<'a> {
                     Some("ANGLE_AND_LENGTH") => out["mirror"] = json!("angleAndLength"),
                     Some("NONE") => out["mirror"] = json!("none"),
                     _ => {}
+                }
+                if let Some(raw) = st.and_then(|s| s.get("strokeJoin")) {
+                    match raw.str() {
+                        Some(join @ ("MITER" | "BEVEL" | "ROUND")) => {
+                            out["join"] = json!(join.to_ascii_lowercase());
+                            unsupported_join |= join != layer_join;
+                        }
+                        _ => unknown_join = true,
+                    }
                 }
                 out
             })
@@ -924,9 +941,14 @@ impl<'a> Mapper<'a> {
         if net.regions.iter().any(|r| style(r.style).is_some_and(|s| s.get("fillPaints").is_some())) {
             self.warn("filled areas of a vector with their own fill use the layer's fill");
         }
-        let join = v.str("strokeJoin");
-        if net.vertices.iter().any(|p| style(p.style).and_then(|s| s.get("strokeJoin")).and_then(Kv::str).is_some_and(|j| Some(j) != join)) {
-            self.warn("points with their own stroke join use the layer's");
+        if unresolved_style {
+            self.warn("some vector points refer to point settings missing from the file; they use the layer's joins and plain corners");
+        }
+        if unknown_join {
+            self.warn("vector points with unknown stroke joins use the layer join");
+        }
+        if unsupported_join && (o.contains_key("strokeDashes") || o.contains_key("strokeWidthProfile")) {
+            self.warn("point stroke joins were preserved; dashed or variable-width strokes render with the layer join");
         }
         // The stroke starts at the first end point and stops at the last (as the editor draws it).
         let mut degree = vec![0usize; net.vertices.len()];

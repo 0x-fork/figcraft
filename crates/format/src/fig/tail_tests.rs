@@ -3,7 +3,7 @@
 //! fixtures built in code with the parent module's helpers.
 
 use figcraft_doc::proto::Action;
-use figcraft_doc::{HandleMirroring, StrokeCap, WindingRule};
+use figcraft_doc::{HandleMirroring, StrokeCap, StrokeJoin, WindingRule};
 
 use super::super::network::{self, Network, Region, Segment, Vertex};
 use super::*;
@@ -19,7 +19,7 @@ fn vtx(style: u32, x: f64, y: f64) -> Vertex {
 /// A square with one curved side and a rounded, mirrored corner, filled even-odd.
 fn square_blob() -> Vec<u8> {
     network::encode(&Network {
-        vertices: vec![vtx(0, 0.0, 0.0), vtx(1, 50.0, 0.0), vtx(0, 50.0, 50.0), vtx(0, 0.0, 50.0)],
+        vertices: vec![vtx(0, 0.0, 0.0), vtx(1, 50.0, 0.0), vtx(2, 50.0, 50.0), vtx(3, 0.0, 50.0)],
         segments: vec![
             seg(0, 1, (10.0, 0.0), (-10.0, 0.0)),
             seg(1, 2, (0.0, 0.0), (0.0, 0.0)),
@@ -35,6 +35,15 @@ fn arrow_blob() -> Vec<u8> {
     network::encode(&Network {
         vertices: vec![vtx(0, 0.0, 0.0), vtx(2, 100.0, 0.0)],
         segments: vec![seg(0, 1, (0.0, 0.0), (0.0, 0.0))],
+        regions: vec![],
+    })
+}
+
+/// An open path with one missing style ID and one unsupported point join.
+fn join_fallback_blob() -> Vec<u8> {
+    network::encode(&Network {
+        vertices: vec![vtx(4, 0.0, 0.0), vtx(5, 50.0, 0.0), vtx(0, 100.0, 0.0)],
+        segments: vec![seg(0, 1, (0.0, 0.0), (0.0, 0.0)), seg(1, 2, (0.0, 0.0), (0.0, 0.0))],
         regions: vec![],
     })
 }
@@ -121,13 +130,24 @@ fn tail_message() -> Kv<'static> {
                 ("transform", at(700.0, 0.0)),
                 ("fillPaints", arr(vec![solid(1.0, 0.0, 0.0)])),
                 ("fillGeometry", outline(0)),
+                ("strokeJoin", e("MITER")),
+                ("dashPattern", arr(vec![f(4.0), f(2.0)])),
                 (
                     "vectorData",
                     vector_data(
                         1,
                         100.0,
                         50.0,
-                        vec![o(vec![("styleID", u(1)), ("cornerRadius", f(4.0)), ("handleMirroring", e("ANGLE_AND_LENGTH"))])],
+                        vec![
+                            o(vec![
+                                ("styleID", u(1)),
+                                ("cornerRadius", f(4.0)),
+                                ("handleMirroring", e("ANGLE_AND_LENGTH")),
+                                ("strokeJoin", e("BEVEL")),
+                            ]),
+                            o(vec![("styleID", u(2)), ("strokeJoin", e("MITER"))]),
+                            o(vec![("styleID", u(3)), ("strokeJoin", e("ROUND"))]),
+                        ],
                     ),
                 ),
             ],
@@ -144,6 +164,19 @@ fn tail_message() -> Kv<'static> {
                 ("strokeWeight", f(2.0)),
                 ("strokeCap", e("NONE")),
                 ("vectorData", vector_data(2, 100.0, 0.0, vec![o(vec![("styleID", u(2)), ("strokeCap", e("ARROW_LINES"))])])),
+            ],
+        ),
+        node(
+            42,
+            Some((1, "#")),
+            "VECTOR",
+            "Join Fallbacks",
+            vec![
+                ("size", xy(100.0, 10.0)),
+                ("transform", at(0.0, 330.0)),
+                stroke(),
+                ("strokeJoin", e("MITER")),
+                ("vectorData", vector_data(4, 100.0, 10.0, vec![o(vec![("styleID", u(5)), ("strokeJoin", u(999))])])),
             ],
         ),
         node(
@@ -223,7 +256,7 @@ fn tail_message() -> Kv<'static> {
     ];
     let mut broken = square_blob();
     broken.truncate(30);
-    let blobs = [triangle_blob(), square_blob(), arrow_blob(), broken];
+    let blobs = [triangle_blob(), square_blob(), arrow_blob(), broken, join_fallback_blob()];
     o(vec![("nodeChanges", arr(nodes)), ("blobs", arr(blobs.into_iter().map(|b| o(vec![("bytes", Kv::Bytes(b))])).collect()))])
 }
 
@@ -247,6 +280,11 @@ fn vectors_import_as_editable_networks() {
     assert_eq!(pts, [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)]);
     assert_eq!((wave.vertices[1].radius, wave.vertices[1].mirror), (4.0, Some(HandleMirroring::AngleAndLength)));
     assert_eq!(wave.vertices[0].mirror, None);
+    assert_eq!(
+        wave.vertices.iter().map(|v| v.join).collect::<Vec<_>>(),
+        [None, Some(StrokeJoin::Bevel), Some(StrokeJoin::Miter), Some(StrokeJoin::Round)]
+    );
+    assert_eq!(named(&doc, "Wave").stroke.join, StrokeJoin::Miter);
     assert_eq!((wave.segments[0].ta, wave.segments[0].tb), ((20.0, 0.0), (-20.0, 0.0)));
     assert_eq!(wave.regions.len(), 1);
     assert_eq!((wave.regions[0].loops.clone(), wave.regions[0].winding), (vec![vec![0, 1, 2, 3]], WindingRule::EvenOdd));
@@ -260,6 +298,17 @@ fn vectors_import_as_editable_networks() {
     // A damaged network falls back to the outline.
     assert_eq!(network_of(&doc, "Broken").regions.len(), 1);
     assert!(warnings.iter().any(|w| w.contains("damaged vector networks import as outlines")), "{warnings:?}");
+    let fallback = network_of(&doc, "Join Fallbacks");
+    assert!(fallback.vertices.iter().all(|v| v.join.is_none()));
+    assert_eq!(named(&doc, "Join Fallbacks").stroke.join, StrokeJoin::Miter);
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("vector points refer to point settings missing from the file; they use the layer's joins and plain corners")),
+        "{warnings:?}"
+    );
+    assert!(warnings.iter().any(|w| w.contains("unknown stroke joins use the layer join")), "{warnings:?}");
+    assert!(warnings.iter().any(|w| w.contains("dashed or variable-width strokes render with the layer join")), "{warnings:?}");
 }
 
 #[test]
