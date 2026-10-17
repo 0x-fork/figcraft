@@ -38,6 +38,8 @@ pub fn paste(app: &mut FigApp, event_text: Option<&str>) {
     // Only HTML that holds readable design data takes this path; other HTML pastes as before.
     if let Some(html) = app.services.clipboard_get_html().filter(|h| figcraft_engine::cmd::edit::design_clipboard_buffer(h).is_some()) {
         if let Some(r) = app.run("edit.pasteDesignLayers", json!({"html": html})) {
+            // The pasted layers are now our copy: text another app puts on the clipboard later is newer.
+            app.ui.last_copy = Some(app.services.clipboard_get_text().unwrap_or_default());
             let left_out = r["warnings"].as_array().map_or(0, Vec::len);
             if left_out > 0 {
                 app.toast(trn("Pasted design layers; {n} kinds of content were left out", left_out, &[]));

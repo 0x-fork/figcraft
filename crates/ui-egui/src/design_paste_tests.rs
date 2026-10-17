@@ -62,3 +62,26 @@ fn html_that_only_mentions_the_marker_pastes_its_text() {
     assert_eq!(pasted_text(&app), text);
     assert!(app.ui.last_error.is_none(), "{:?}", app.ui.last_error);
 }
+
+/// A clipboard whose contents the test replaces between pastes.
+struct SharedClip(std::rc::Rc<std::cell::RefCell<Clip>>);
+
+impl Services for SharedClip {
+    fn clipboard_get_html(&mut self) -> Option<String> {
+        Some(self.0.borrow().html.clone())
+    }
+    fn clipboard_get_text(&mut self) -> Option<String> {
+        self.0.borrow().text.clone()
+    }
+}
+
+#[test]
+fn text_copied_after_a_design_paste_pastes_as_text() {
+    let clip = std::rc::Rc::new(std::cell::RefCell::new(Clip { html: copied_html(), text: None }));
+    let mut app = FigApp::new(Session::new(), Box::new(SharedClip(clip.clone())));
+    crate::menus::paste(&mut app, None);
+    assert_eq!(selected_names(&app), ["Copied layer"]);
+    *clip.borrow_mut() = Clip { html: String::new(), text: Some("Fresh text".into()) };
+    crate::menus::paste(&mut app, None);
+    assert_eq!(pasted_text(&app), "Fresh text");
+}
