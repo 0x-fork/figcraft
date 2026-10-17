@@ -32,6 +32,7 @@ pub mod home;
 pub mod home_recents;
 pub mod i18n;
 pub mod icons;
+pub mod import_report;
 pub mod layers;
 pub mod layout_panel;
 pub mod list_drag;
@@ -107,6 +108,8 @@ mod home_recents_tests;
 mod home_tests;
 #[cfg(test)]
 mod idle_tests;
+#[cfg(test)]
+mod import_report_tests;
 #[cfg(test)]
 mod layers_behaviour_tests;
 #[cfg(test)]
@@ -458,6 +461,8 @@ pub struct UiState {
     /// ([`pending_open::pending_opens`]), and the frames it has been drawn.
     pub pending_opens: Vec<pending_open::PendingOpen>,
     pub pending_open_frames: u8,
+    /// The latest successful file import's summary and compatibility notes.
+    pub import_report: Option<import_report::Report>,
     pub screenshot_requests: Vec<(u64, String)>,
     pub frame_ms: f64,
     pub render_ms: f64,
@@ -566,6 +571,7 @@ impl Default for UiState {
             last_error: None,
             pending_opens: Vec::new(),
             pending_open_frames: 0,
+            import_report: None,
             screenshot_requests: Vec::new(),
             frame_ms: 0.0,
             render_ms: 0.0,
@@ -676,6 +682,16 @@ impl FigApp {
         let r = self.session.execute(id, &params);
         self.handle_ui_requests();
         r.map_err(|e| self.failed(id, &e)).ok()
+    }
+
+    /// [`run`](Self::run) for something the user did (a dialog, a drop, a paste, a recent file):
+    /// a file it imports shows its import report. Programmatic calls use `run` and never open one.
+    pub fn run_user(&mut self, id: &str, params: Value) -> Option<Value> {
+        let result = self.run(id, params.clone());
+        if let Some(result) = &result {
+            import_report::capture(self, id, &params, result);
+        }
+        result
     }
 
     /// Show command `id`'s error.
@@ -995,7 +1011,7 @@ impl FigApp {
             false,
             |app, p| {
                 let ps = p.to_string_lossy().to_string();
-                if app.run("file.open", json!({"path": ps})).is_some() {
+                if app.run_user("file.open", json!({"path": ps})).is_some() {
                     app.ui.home = false;
                 }
             },
@@ -1011,7 +1027,7 @@ impl FigApp {
         let title = if place { i18n::tr("Place image") } else { i18n::tr("Import") };
         self.pick_open(title, exts, move |app, p| {
             let ps = p.to_string_lossy().to_string();
-            app.run("file.import", json!({"path": ps}));
+            app.run_user("file.import", json!({"path": ps}));
         });
     }
 
@@ -1556,6 +1572,7 @@ impl FigApp {
             "panels": {"left": self.ui.left_width, "right": self.ui.right_width, "leftCollapsed": self.ui.left_collapsed},
             "status": self.session.status(),
             "lastError": self.ui.last_error,
+            "importReport": self.ui.import_report.as_ref().map(import_report::Report::inspect),
         });
         state["pendingOpens"] = json!(self.ui.pending_opens.len());
         state

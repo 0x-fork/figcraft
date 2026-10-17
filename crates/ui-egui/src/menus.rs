@@ -54,7 +54,7 @@ pub fn paste(app: &mut FigApp, event_text: Option<&str>) {
             } else if figcraft_engine::looks_like_svg(&text) {
                 use base64::Engine as _;
                 let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
-                app.run("file.import", json!({"data": b64, "name": "Pasted SVG.svg", "x": cx, "y": cy, "center": true}));
+                app.run_user("file.import", json!({"data": b64, "name": "Pasted SVG.svg", "x": cx, "y": cy, "center": true}));
             } else {
                 app.run("text.create", json!({"text": text, "x": cx, "y": cy}));
             }
@@ -234,12 +234,12 @@ fn recent_menu(app: &mut FigApp, ui: &mut Ui, prefix: &str, key: &str, label: &s
     let picked = submenu(ui, prefix, &format!("{prefix}/{key}"), label, t, |ui| {
         let recents = &app.session.prefs.recent_files;
         let mut picked = None;
-        for (i, p) in recents.iter().enumerate() {
+        for p in recents.iter() {
             let path = std::path::Path::new(p);
             let name = path.file_name().map_or_else(|| p.clone(), |f| f.to_string_lossy().into_owned());
             let exists = path.exists();
             if item(ui, &name, "", exists, false, t) && exists {
-                picked = Some(json!({"index": i}));
+                picked = Some(json!({"path": p}));
             }
         }
         if !recents.is_empty() {
@@ -251,7 +251,8 @@ fn recent_menu(app: &mut FigApp, ui: &mut Ui, prefix: &str, key: &str, label: &s
         picked
     });
     let Some(params) = picked else { return false };
-    if app.run("file.openRecent", params).is_some_and(|r| r.get("index").is_some()) {
+    // Through the user path, so an import report shows; `file.openRecent` also drops a file that is gone.
+    if app.run_user("file.openRecent", params).is_some_and(|r| r.get("index").is_some()) {
         app.ui.home = false;
     }
     true
