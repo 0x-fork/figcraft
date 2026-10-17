@@ -1184,7 +1184,7 @@ fn paint_list(s: &mut Session, p: &Value, fills: bool, add: bool) -> Result<Valu
 fn paint_set(s: &mut Session, p: &Value, fills: bool) -> Result<Value> {
     let cmd = if fills { "fill.set" } else { "stroke.set" };
     let ids = req_targets(cmd, s, p)?;
-    let idx = if get(p, "index").is_none() { None } else { Some(req_index(cmd, p, "index")?) };
+    let idx = opt_index(cmd, p, "index")?;
     let new_paint = match get(p, "paint") {
         Some(v) => Some(paint_of(v).ok_or_else(|| bad(cmd, "invalid paint"))?),
         None => None,
