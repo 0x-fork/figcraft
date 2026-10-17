@@ -430,9 +430,8 @@ pub struct UiState {
     /// The layer being renamed in the layers panel.
     pub rename: Option<layers::Rename>,
     pub rename_page: Option<(NodeId, String)>,
-    /// The frame or section whose name label on the canvas is being renamed (a double-click on
-    /// it), and whether the rename just started (its field takes the keyboard when next drawn).
-    pub rename_label: Option<(NodeId, bool)>,
+    /// The frame or section whose name label on the canvas is being renamed (a double-click on it).
+    pub rename_label: Option<layers::Rename>,
     pub main_menu: bool,
     pub palette: Option<String>,
     /// The Actions palette's tab.
@@ -966,9 +965,7 @@ impl FigApp {
                 "contextMenu" => self.ui.key_menu = true,
                 "selectArea" => self.start_key_box(),
                 "canvas.renameLabel" => {
-                    if let Some(id) = r.data.get("id").and_then(figcraft_engine::params::id_of) {
-                        frame_labels::start_rename(self, id);
-                    }
+                    self.ui.rename_label = r.data.get("id").and_then(figcraft_engine::params::id_of).map(|id| layers::Rename { id, start: true });
                 }
                 "layers.rename" => {
                     let ids: Vec<NodeId> =

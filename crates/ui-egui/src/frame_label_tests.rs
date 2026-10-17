@@ -108,7 +108,7 @@ fn double_clicking_a_label_renames_the_frame_there() {
     let before = u.app.session.doc().unwrap().world_bounds(a).unwrap();
     double_click_label(&mut u, a);
     assert_eq!(u.app.session.selection(), vec![a]);
-    assert_eq!(u.app.ui.rename_label.map(|r| r.0), Some(a), "a field over the label");
+    assert_eq!(u.app.ui.rename_label.map(|r| r.id), Some(a), "a field over the label");
     // The name starts selected: typing replaces it, Enter keeps it.
     u.frame(vec![Event::Text("Sign in".into())]);
     u.frame(key(egui::Key::Enter));
@@ -127,7 +127,7 @@ fn double_clicking_a_label_renames_the_frame_there() {
 fn escape_leaves_a_label_rename_with_the_old_name() {
     let (mut u, _, b) = setup();
     double_click_label(&mut u, b);
-    assert_eq!(u.app.ui.rename_label.map(|r| r.0), Some(b), "rotated labels rename too");
+    assert_eq!(u.app.ui.rename_label.map(|r| r.id), Some(b), "rotated labels rename too");
     u.frame(vec![Event::Text("Nope".into())]);
     u.frame(key(egui::Key::Escape));
     u.frame(vec![]);
