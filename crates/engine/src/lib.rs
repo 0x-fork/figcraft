@@ -357,8 +357,8 @@ pub struct DocState {
     versions_changed: bool,
     /// A version shown in place of the document (read-only).
     pub preview: Option<VersionPreview>,
-    /// The document under a live text preview (a hovered text style or font instance, a dragged
-    /// axis slider): `doc` shows the preview until [`textpreview::end`] puts this back.
+    /// The document under a live text preview (a hovered font family or style, text style or
+    /// font instance, a dragged axis slider): `doc` shows the preview until [`textpreview::end`] puts this back.
     pub text_preview: Option<Arc<Document>>,
     /// The document as of the last version saved or restored (none yet): autosaves, restores and
     /// merges only add a checkpoint for changes since.
