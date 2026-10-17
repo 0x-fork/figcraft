@@ -136,11 +136,15 @@ mod online_tests;
 #[cfg(test)]
 mod open_issues_tests;
 #[cfg(test)]
+mod palette_tests;
+#[cfg(test)]
 mod panel_remove_tests;
 #[cfg(test)]
 mod panel_reorder_tests;
 #[cfg(test)]
 mod panel_width_tests;
+#[cfg(test)]
+mod paste_image_tests;
 #[cfg(test)]
 mod pen_mode_tests;
 #[cfg(test)]
@@ -161,6 +165,8 @@ mod proto_editor_tests;
 mod proto_reorder_tests;
 #[cfg(test)]
 mod proto_responsive_tests;
+#[cfg(test)]
+mod resources_tests;
 #[cfg(test)]
 mod select_all_tests;
 #[cfg(test)]
@@ -404,6 +410,14 @@ pub struct UiState {
     pub rename_page: Option<(NodeId, String)>,
     pub main_menu: bool,
     pub palette: Option<String>,
+    /// The Actions palette's tab.
+    pub palette_tab: menus::PaletteTab,
+    /// The palette row Up and Down are on (Enter runs it).
+    pub palette_hi: usize,
+    /// The palette ignores one outside click after opening (the click that opened it).
+    pub palette_armed: bool,
+    /// This frame's Actions toolbar button rect: presses on it toggle, never dismiss.
+    pub actions_rect: Option<egui::Rect>,
     /// The Variables editor, when open.
     pub variables: Option<variables_panel::Editor>,
     pub about: bool,
@@ -494,6 +508,15 @@ pub struct UiState {
     /// What FigCraft last put on the system clipboard: when the clipboard still holds it, a paste
     /// uses our copied layers; anything else there (an image, SVG, text) came from another app.
     pub last_copy: Option<String>,
+    /// Since the last V key release: whether its press arrived, and whether a paste event did
+    /// (`shortcuts::swallowed_paste`).
+    pub v_pressed: bool,
+    pub paste_event: bool,
+    /// The window got the focus back since the last V release.
+    pub refocused: bool,
+    /// The modifiers held, as of the last modifier change in the raw events: a paste event doesn't
+    /// carry them.
+    pub held: egui::Modifiers,
     /// When (UI clock, seconds) open documents next get an autosave checkpoint.
     pub next_autosave: f64,
     /// With auto-save on: when (UI clock, seconds) files with unsaved changes are next saved, and
@@ -533,6 +556,10 @@ impl Default for UiState {
             rename_page: None,
             main_menu: false,
             palette: None,
+            palette_tab: menus::PaletteTab::All,
+            palette_hi: 0,
+            palette_armed: false,
+            actions_rect: None,
             variables: None,
             about: false,
             about_tab: dialogs::AboutTab::About,
@@ -587,6 +614,10 @@ impl Default for UiState {
             dev: dev_mode::DevUi::default(),
 
             last_copy: None,
+            v_pressed: false,
+            paste_event: false,
+            refocused: false,
+            held: egui::Modifiers::NONE,
             next_autosave: 0.0,
             auto_save_at: None,
             auto_saving: Vec::new(),
@@ -719,7 +750,7 @@ impl FigApp {
     }
 
     /// Show what `command params` would do on the canvas as a live preview (`text.preview`) while
-    /// a text style, a named instance or an axis slider is hovered or dragged. Call it every frame
+    /// a font family, font style, text style, named instance or axis slider is hovered or dragged. Call it every frame
     /// the preview should stay: it ends on the first frame nothing asks for it.
     pub fn preview_text(&mut self, ctx: &egui::Context, command: &str, params: Value) {
         self.ui.text_preview_wanted = true;
@@ -788,7 +819,7 @@ impl FigApp {
                 }
                 "dialog.preferences" => self.ui.preferences = true,
                 "panel.shortcuts" => self.ui.shortcuts_panel = !self.ui.shortcuts_panel,
-                "palette.actions" => self.ui.palette = Some(String::new()),
+                "palette.actions" => menus::toggle_palette(&mut self.ui),
                 "panel.design" => self.ui.right_tab = RightTab::Design,
                 "panel.prototype" => self.ui.right_tab = RightTab::Prototype,
                 "panel.designPrototype" => {
@@ -810,7 +841,11 @@ impl FigApp {
                 }
                 "focus.region" => self.ui.nav.step(r.data.get("step").and_then(Value::as_i64).unwrap_or(1).clamp(-4, 4) as i32),
                 "panel.layers" => self.ui.left_tab = LeftTab::File,
-                "panel.assets" => self.ui.left_tab = LeftTab::Assets,
+                "panel.assets" => {
+                    self.ui.left_tab = LeftTab::Assets;
+                    self.ui.left_collapsed = false;
+                    self.ui.versions = Default::default();
+                }
                 "panel.versionHistory" => versions::open(self),
                 "view.devCompare" => {
                     self.ui.dev.compare = r.data.get("id").and_then(figcraft_engine::params::id_of).map(dev_compare::CompareView::new);
@@ -1283,6 +1318,7 @@ impl FigApp {
         // even if it lets go during the frame (Enter commits it), or as it began (egui drops the
         // focus on Escape before the frame, which cancels the field's edit and nothing else).
         let typing = std::mem::take(&mut self.field_focus) || a11y::field_focused(&ctx);
+        let swallowed = shortcuts::swallowed_paste(self, &ctx);
         // A dialog that closed acts first, in the window it was opened from.
         self.poll_dialog(&ctx);
         // Control requests run first so their results reflect this frame.
@@ -1398,7 +1434,7 @@ impl FigApp {
         branch_ui::keys(self, &ctx);
         live::dialog_keys(self, &ctx);
         dialogs::keys(self, &ctx);
-        shortcuts::handle(self, &ctx, typing);
+        shortcuts::handle(self, &ctx, typing, swallowed);
         menus::popups(self, &ctx);
         variable_ui::picker(self, &ctx);
         style_picker::show(self, &ctx);

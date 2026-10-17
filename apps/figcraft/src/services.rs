@@ -223,6 +223,28 @@ fn picked(pick: impl Future<Output = Option<rfd::FileHandle>> + 'static) -> Dial
     Box::pin(async move { pick.await.map(|f| f.path().to_path_buf()) })
 }
 
+/// How long a clipboard read may wait on the app that copied (Linux and the BSDs).
+#[cfg(all(unix, not(target_os = "macos")))]
+const CLIPBOARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Read the clipboard. On Linux and the BSDs the read runs on a helper thread with its own handle
+/// and gives up after [`CLIPBOARD_TIMEOUT`]: a Wayland read waits on the app that copied with no
+/// timeout of its own, so an app that hangs must not hang the window too.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn read_clipboard<T: Send + 'static>(_: &mut arboard::Clipboard, read: fn(&mut arboard::Clipboard) -> Option<T>) -> Option<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(arboard::Clipboard::new().ok().and_then(|mut c| read(&mut c)));
+    });
+    rx.recv_timeout(CLIPBOARD_TIMEOUT).ok().flatten()
+}
+
+/// Read the clipboard (the system's own reads don't wait on the app that copied).
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn read_clipboard<T>(c: &mut arboard::Clipboard, read: fn(&mut arboard::Clipboard) -> Option<T>) -> Option<T> {
+    read(c)
+}
+
 impl Services for Desktop {
     fn pick_open(&mut self, title: &str, exts: &[&str]) -> DialogFuture {
         picked(dialog(title).add_filter("Supported files", exts).pick_file())
@@ -239,7 +261,7 @@ impl Services for Desktop {
         }
     }
     fn clipboard_get_text(&mut self) -> Option<String> {
-        self.clipboard.as_mut()?.get_text().ok()
+        read_clipboard(self.clipboard.as_mut()?, |c| c.get_text().ok())
     }
     fn clipboard_set_png(&mut self, w: u32, h: u32, rgba: &[u8]) {
         if let Some(c) = self.clipboard.as_mut() {
@@ -247,7 +269,7 @@ impl Services for Desktop {
         }
     }
     fn clipboard_get_image(&mut self) -> Option<(u32, u32, Vec<u8>)> {
-        let img = self.clipboard.as_mut()?.get_image().ok()?;
+        let img = read_clipboard(self.clipboard.as_mut()?, |c| c.get_image().ok())?;
         let (w, h) = (u32::try_from(img.width).ok()?, u32::try_from(img.height).ok()?);
         // Refuse absurd sizes (and mismatched buffers) rather than allocate.
         if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 100_000_000 || img.bytes.len() != (w as usize) * (h as usize) * 4 {
