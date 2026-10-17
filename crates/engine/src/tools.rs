@@ -344,6 +344,9 @@ pub(crate) enum Gesture {
         targets: Targets,
         duplicate: bool,
         moved: bool,
+        /// A Shift-press on this selected layer: it leaves the selection on release, unless the
+        /// press became a drag.
+        deselect: Option<NodeId>,
     },
     Resize {
         start: Point,
@@ -375,6 +378,13 @@ pub(crate) enum Gesture {
     },
     TextSelect {
         id: NodeId,
+    },
+    /// A new text from the Text tool, still pressed: a drag makes it a box the size of the drag
+    /// (at least `line`, the height of its first line, tall).
+    TextBox {
+        id: NodeId,
+        start: Point,
+        line: f64,
     },
     PenDrag {
         anchor: Point,
@@ -1187,15 +1197,15 @@ impl Session {
             Some(target) => {
                 // Clicking inside the current selection's box keeps it (drag them all).
                 let in_sel_box = sel.len() > 1 && doc.bounds_of(&sel).is_some_and(|b| b.contains(ev.p())) && !ev.shift;
+                // Shift on a selected layer takes it out on release if the press doesn't become a
+                // drag; a drag moves the selection with it. Where no drag can start, it goes now.
+                let deselect = (ev.shift && sel.contains(&target)).then_some(target);
+                let without_target = || sel.iter().copied().filter(|x| *x != target).collect::<Vec<_>>();
                 let new_sel = if in_sel_box && (sel.contains(&target) || sel.iter().any(|s| doc.is_ancestor(*s, target))) {
                     sel.clone()
-                } else if ev.shift {
+                } else if ev.shift && deselect.is_none() {
                     let mut s2 = sel.clone();
-                    if let Some(pos) = s2.iter().position(|x| *x == target) {
-                        s2.remove(pos);
-                    } else {
-                        s2.push(target);
-                    }
+                    s2.push(target);
                     s2
                 } else if sel.contains(&target) {
                     sel.clone()
@@ -1203,12 +1213,12 @@ impl Session {
                     vec![target]
                 };
                 self.set_selection(new_sel.clone());
-                if new_sel.is_empty() || doc.node(target).is_some_and(|n| n.locked) {
-                    return Ok(());
-                }
                 // Locked layers selected in the layers panel stay put.
                 let ids: Vec<NodeId> = roots(&doc, &new_sel).into_iter().filter(|i| !locked_in(&doc, *i)).collect();
-                if ids.is_empty() {
+                if new_sel.is_empty() || doc.node(target).is_some_and(|n| n.locked) || ids.is_empty() {
+                    if deselect.is_some() {
+                        self.set_selection(without_target());
+                    }
                     return Ok(());
                 }
                 let mut targets = Targets::gather(&doc, page, &ids);
@@ -1218,8 +1228,13 @@ impl Session {
                 {
                     targets.add_box(b);
                 }
-                self.begin_interaction(if ev.alt { "Duplicate" } else { "Move" })?;
-                self.tool.gesture = Gesture::Move { start: ev.p(), ids, targets, duplicate: ev.alt, moved: false };
+                if let Err(e) = self.begin_interaction(if ev.alt { "Duplicate" } else { "Move" }) {
+                    if deselect.is_some() {
+                        self.set_selection(without_target());
+                    }
+                    return Err(e);
+                }
+                self.tool.gesture = Gesture::Move { start: ev.p(), ids, targets, duplicate: ev.alt, moved: false, deselect };
                 self.tool.overlay.cursor = if ev.alt { Cursor::Copy } else { Cursor::Default };
             }
             None => {
@@ -1400,6 +1415,11 @@ impl Session {
                 self.tool.gesture = g;
                 return self.draw_drag(ev, start, id, parent, &targets);
             }
+            Gesture::TextBox { id, start, line } => {
+                let (id, start, line) = (*id, *start, *line);
+                self.tool.gesture = g;
+                return self.text_box_drag(ev, id, start, line);
+            }
             Gesture::Arc { id, handle, arc } => {
                 let (id, handle, arc) = (*id, *handle, *arc);
                 self.tool.gesture = g;
@@ -1444,7 +1464,8 @@ impl Session {
             }
             Gesture::Vector(_) | Gesture::ShapeBuild { .. } | Gesture::Origin => Ok(()),
             Gesture::PenDrag { anchor } => {
-                let out = ev.p() - *anchor;
+                // A click's wobble pulls out no handle.
+                let out = if within_slop(ev, *anchor) { Vec2::ZERO } else { ev.p() - *anchor };
                 if let Some(pen) = self.tool.pen.as_mut()
                     && let Some(last) = pen.points.last_mut()
                 {
@@ -1722,7 +1743,7 @@ impl Session {
         self.tool.overlay.drop_cell = None;
         let drop_target = self.tool.overlay.drop_target.take();
         match g {
-            Gesture::Move { ids, moved, duplicate, start, .. } => {
+            Gesture::Move { ids, moved, duplicate, start, deselect, .. } => {
                 if moved {
                     // A free move lands in the frame under the pointer (or the page) where it was
                     // dropped; layers in an auto layout frame already sit in their slot.
@@ -1764,7 +1785,11 @@ impl Session {
                     }
                 } else {
                     self.cancel_interaction()?;
-                    if !(ev.shift || ev.cmd || duplicate) {
+                    if let Some(d) = deselect {
+                        let sel = self.selection().into_iter().filter(|x| *x != d).collect();
+                        self.set_selection(sel);
+                    }
+                    if deselect.is_none() && !(ev.shift || ev.cmd || duplicate) {
                         self.widget_click(start, ev.tol() * 2.0)?;
                     }
                 }
@@ -1818,7 +1843,7 @@ impl Session {
                 self.tool.overlay.pen.clear();
                 self.pencil_finish(&points, &pressure)?;
             }
-            Gesture::TextSelect { .. } | Gesture::Marquee { .. } | Gesture::None => {}
+            Gesture::TextSelect { .. } | Gesture::TextBox { .. } | Gesture::Marquee { .. } | Gesture::None => {}
             Gesture::PenDrag { .. } | Gesture::ShapeBuild { .. } | Gesture::Origin => {}
             Gesture::Vector(_) => self.commit_interaction()?,
         }
@@ -1844,9 +1869,10 @@ impl Session {
             self.widget_click(ev.p(), ev.tol() * 2.0)?;
             return Ok(());
         }
-        // The second press began a move or a resize: a double-click isn't one.
-        if matches!(self.tool.gesture, Gesture::Move { .. } | Gesture::Resize { .. }) {
+        // The second press began a move, a resize, a shape or a marquee: a double-click isn't one.
+        if matches!(self.tool.gesture, Gesture::Move { .. } | Gesture::Resize { .. } | Gesture::Draw { .. } | Gesture::Marquee { .. }) {
             self.tool.gesture = Gesture::None;
+            self.tool.overlay.marquee = None;
             self.cancel_interaction()?;
         }
         let Some(leaf) = self.hit(&doc, page, ev.p(), ev.tol() * 2.0) else { return Ok(()) };
@@ -1943,12 +1969,36 @@ impl Session {
             n.width = w.max(1.0);
             n.height = h;
         }
+        let line = n.height;
         d.insert(n, parent, None)?;
         ds.selection = vec![id];
         textedit::begin(self, id, Some(0), true)?;
+        self.tool.gesture = Gesture::TextBox { id, start: ev.p(), line };
         if !self.prefs.keep_tool {
             self.tool.tool = ToolId::Move;
         }
+        Ok(())
+    }
+
+    /// Drag out a new text box: past the drag slop it has the drag's size (at least one line
+    /// tall) and its top-left, and that size is fixed.
+    fn text_box_drag(&mut self, ev: &PointerEvent, id: NodeId, start: Point, line: f64) -> Result<()> {
+        if within_slop(ev, start) {
+            return Ok(());
+        }
+        let r = Rect::from_points(start, ev.p());
+        let d = self.ds_mut()?.doc_mut();
+        let pw = d.node(id).and_then(|n| n.parent).map(|p| d.world_transform(p)).unwrap_or_default();
+        let n = d.get_mut(id)?;
+        n.transform = pw.inverse() * Affine::translate((r.x0.round(), r.y0.round()));
+        n.width = r.width().round().max(1.0);
+        n.height = r.height().round().max(line);
+        n.child_layout.sizing_h = Sizing::Fixed;
+        n.child_layout.sizing_v = Sizing::Fixed;
+        if let NodeKind::Text(t) = &mut n.kind {
+            t.auto_resize = TextAutoResize::None;
+        }
+        self.ds_mut()?.revision += 1;
         Ok(())
     }
 
