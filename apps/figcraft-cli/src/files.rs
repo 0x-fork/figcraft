@@ -350,7 +350,8 @@ pub fn run_script(script: &str, input: Option<&str>, out: Option<&str>) -> CliRe
         Ok(())
     });
     if let Err(e) = outcome {
-        let (i, (cmd, _)) = (failed_at, &steps[failed_at]);
+        let cmd = steps.get(failed_at).map_or("", |(cmd, _)| cmd.as_str());
+        let i = failed_at;
         println!("{}", json!({"step": i, "command": cmd, "ok": false, "error": e.to_string(), "rolledBack": true}));
         eprintln!("error: step {i} ({cmd}) failed: {e}");
         eprintln!("the script's document changes were rolled back");
