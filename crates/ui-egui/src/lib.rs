@@ -162,6 +162,8 @@ mod proto_reorder_tests;
 #[cfg(test)]
 mod proto_responsive_tests;
 #[cfg(test)]
+mod save_as_tests;
+#[cfg(test)]
 mod select_all_tests;
 #[cfg(test)]
 mod shortcut_keys_tests;
@@ -938,11 +940,31 @@ impl FigApp {
     }
 
     pub fn save_as_dialog(&mut self) {
-        let name = self.session.doc().map(|d| d.name.clone()).unwrap_or_else(|_| "Untitled".into());
-        self.pick_save(i18n::tr("Save as"), &format!("{name}.figcraft"), &["figcraft"], |app, p| {
-            let ps = p.to_string_lossy().to_string();
-            if app.run("file.saveAs", json!({"path": ps})).is_some() {
-                app.toast(i18n::trf("Saved {name}", &[("name", &p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())]));
+        let Ok(name) = self.session.doc().map(|d| d.name.clone()) else { return };
+        self.pick_save(i18n::tr("Save as"), &format!("{name}.figcraft"), &["figcraft", "fig"], |app, mut p| {
+            if p.extension().is_none_or(|e| e.is_empty()) {
+                if !p.set_extension("figcraft") {
+                    app.toast(i18n::tr("Use the .figcraft or .fig extension."));
+                    return;
+                }
+                // This name wasn't confirmed by the system dialog: don't replace an existing file.
+                match p.try_exists() {
+                    Ok(false) => {}
+                    Ok(true) => {
+                        app.toast(i18n::tr("A .figcraft file with this name already exists. Choose its full name to confirm replacement."));
+                        return;
+                    }
+                    Err(e) => {
+                        app.toast(e.to_string());
+                        return;
+                    }
+                }
+            } else if !p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("figcraft") || e.eq_ignore_ascii_case("fig")) {
+                app.toast(i18n::tr("Use the .figcraft or .fig extension."));
+                return;
+            }
+            if let Some(r) = app.run("file.saveAs", json!({"path": p.to_string_lossy()})) {
+                dialogs::file_saved(app, &r);
             }
         });
     }
@@ -950,7 +972,14 @@ impl FigApp {
     pub fn save(&mut self) {
         // A branch tab saves its main file.
         let tab = figcraft_engine::branches::file_tab(&self.session);
-        if self.session.docs.get(tab).is_some_and(|d| d.path.is_some()) {
+        // A path ending in .fig is never saved over silently: a .fig destination is an export copy.
+        let native_path = self
+            .session
+            .docs
+            .get(tab)
+            .and_then(|d| d.path.as_deref())
+            .is_some_and(|path| !Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("fig")));
+        if native_path {
             if self.run("file.save", json!({})).is_some() {
                 self.toast(i18n::tr("Saved"));
             }

@@ -41,8 +41,20 @@ pub fn specs() -> Vec<CommandSpec> {
             false,
             open_recent
         ),
-        spec!("file.save", "Save", "{path?} (programmatic saves need a path the first time)", false, save),
-        spec!("file.saveAs", "Save as", "{path}", false, save_as),
+        spec!(
+            "file.save",
+            "Save",
+            "{path?} (programmatic saves need a path the first time); a .fig path writes an experimental export copy of the shown document with `warnings`, keeping the native path, unsaved changes and version preview",
+            false,
+            save
+        ),
+        spec!(
+            "file.saveAs",
+            "Save as",
+            "{path} (no extension adds .figcraft); a .fig path writes an experimental export copy of the shown document with `warnings`, keeping the native path, unsaved changes and version preview",
+            false,
+            save_as
+        ),
         spec!(
             "file.export",
             "Export",
@@ -795,8 +807,20 @@ fn color_profile(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"profile": profile.id(), "changed": changed}))
 }
 
-/// Save the file of the active tab (the main file for a branch tab, with its branches).
+/// Native saves act on the current document; a `.fig` copy exports the version shown, and a
+/// pending Save As choice must leave it shown until its destination is known.
+pub(crate) fn save_ends_preview(s: &Session, cmd: &str, p: &Value) -> bool {
+    let path =
+        string(p, "path").or_else(|| if cmd == "file.save" { s.docs.get(crate::branches::file_tab(s)).and_then(|ds| ds.path.clone()) } else { None });
+    path.is_some_and(|path| ext(&path) != "fig")
+}
+
+/// Save the file of the active tab (the main file for a branch tab, with its branches), or export
+/// the active document as an experimental `.fig` copy without changing its native save state.
 fn save_to(s: &mut Session, path: String) -> Result<Value> {
+    if ext(&path) == "fig" {
+        return export_fig(s, &json!({"path": path}));
+    }
     let i = crate::branches::file_tab(s);
     let ds = s.docs.get_mut(i).ok_or(EngineError::NoDocument)?;
     let bytes = file_bytes(ds)?;
@@ -815,6 +839,11 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
         return save_to(s, path);
     }
     match s.docs.get(crate::branches::file_tab(s)).ok_or(EngineError::NoDocument)?.path.clone() {
+        // Earlier builds wrote native data under a .fig name: never overwrite that file with an export.
+        Some(path) if ext(&path) == "fig" => {
+            s.request_ui("dialog.saveAs", json!({}));
+            Err(EngineError::Disabled("file.save".into(), "the saved path ends in .fig: choose Save as or pass `path`".into()))
+        }
         Some(path) => save_to(s, path),
         None => {
             s.request_ui("dialog.saveAs", json!({}));

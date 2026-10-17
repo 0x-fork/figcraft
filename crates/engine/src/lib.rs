@@ -390,7 +390,8 @@ pub struct VersionPreview {
 /// Why edits are refused while a version is shown.
 pub const PREVIEW_READ_ONLY: &str = "you're viewing an earlier version: restore it or go back to the current version to edit";
 
-/// Commands that first end a version preview: they act on the document itself.
+/// Commands that first end a version preview: they act on the document itself. Saving does so
+/// only with a native destination; export copies and pending format choices keep the preview.
 const ENDS_PREVIEW: &[&str] = &["file.save", "file.saveAs", "file.close", "file.revert", "file.saveVersion", "file.duplicate", "version.restore"];
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -884,6 +885,7 @@ impl Session {
         // Every other command acts on the document itself, not on a live text preview.
         textpreview::end(self);
         if ENDS_PREVIEW.contains(&id)
+            && (!matches!(id, "file.save" | "file.saveAs") || cmd::file::save_ends_preview(self, id, params))
             && let Ok(ds) = self.ds_mut()
         {
             ds.end_preview();
@@ -1663,6 +1665,8 @@ mod rotated_guides_tests;
 mod rotated_select_tests;
 #[cfg(test)]
 mod rotation_origin_tests;
+#[cfg(test)]
+mod save_format_tests;
 #[cfg(test)]
 mod scale_tool_tests;
 #[cfg(test)]
