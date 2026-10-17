@@ -2392,13 +2392,14 @@ fn key_codes(key: &str) -> Option<(Vec<i64>, bool)> {
     Some((codes, false))
 }
 
-/// The text style fields of a layer or of an override table entry.
+/// Whether the decoration look has more than skip ink, which the file can't hold.
 fn unsupported_decoration_look(st: &TextStyle) -> bool {
     let mut look = st.look();
     look.skip_ink = false;
     look != Default::default()
 }
 
+/// The text style fields of a layer or of an override table entry.
 fn style_fields(st: &TextStyle, f: &mut Fields) {
     let line_height = match st.line_height {
         // Percent units count from the font's own line height (100 % is "auto"); a share of the
@@ -2430,7 +2431,9 @@ fn style_fields(st: &TextStyle, f: &mut Fields) {
         ("letterSpacing", letter_spacing),
         ("textCase", e(case)),
         ("textDecoration", e(decoration)),
-        ("textDecorationSkipInk", b(st.look().skip_ink)),
+        // Skip ink only shows on an underline; other text gets the files' default (on), the value
+        // the import leaves out again.
+        ("textDecorationSkipInk", b(st.look().skip_ink || st.decoration != TextDecoration::Underline)),
     ]);
     if let Some(url) = &st.link {
         f.push(("hyperlink", o(vec![("url", s(url))])));

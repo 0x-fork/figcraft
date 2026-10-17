@@ -27,6 +27,13 @@ pub(super) fn text_data(cx: &mut Ctx, v: &Value) -> TextData {
     let mut td = TextData { characters, style: base, ..TextData::default() };
     paragraph(style_json, &mut td);
     td.runs = runs(cx, v, &td);
+    // Skip ink only shows on an underline. A file can carry it on any text, so elsewhere it stays out
+    // of the look (runs have inherited the base value by now).
+    for st in std::iter::once(&mut td.style).chain(td.runs.iter_mut().map(|r| &mut r.style)) {
+        if st.decoration != TextDecoration::Underline && st.look().skip_ink {
+            st.set_look(|l| l.skip_ink = false);
+        }
+    }
     td.normalize();
     lists(v, &mut td);
     td

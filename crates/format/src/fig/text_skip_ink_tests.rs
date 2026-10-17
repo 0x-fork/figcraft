@@ -1,8 +1,9 @@
-//! `.fig` text skip-ink values map, inherit and round-trip as native decoration look state.
+//! `.fig` text skip-ink values map, inherit and round-trip as native decoration look state. Skip
+//! ink only shows on an underline, so the fixtures are underlined.
 
 use super::kiwi::Kv;
 use super::{export, import};
-use figcraft_doc::{Document, NodeKind, StyleKind, StyleRun, TextData, TextStyle};
+use figcraft_doc::{Document, NodeKind, StyleKind, StyleRun, TextData, TextDecoration, TextStyle};
 use serde_json::Value;
 
 fn object(fields: Vec<(&'static str, Kv<'static>)>) -> Kv<'static> {
@@ -30,6 +31,7 @@ fn raw(base: Option<Kv<'static>>, runs: Vec<Kv<'static>>, chars: &str, ids: Vec<
     let mut layer = vec![
         ("fontName", font()),
         ("fontSize", Kv::Float(20.0)),
+        ("textDecoration", Kv::Enum("UNDERLINE")),
         (
             "textData",
             object(vec![
@@ -44,7 +46,8 @@ fn raw(base: Option<Kv<'static>>, runs: Vec<Kv<'static>>, chars: &str, ids: Vec<
     }
     let mut nodes = vec![node(1, "DOCUMENT", "Document", None, vec![]), node(2, "CANVAS", "Page", Some(1), vec![])];
     if let Some(shared) = shared {
-        let mut fields = vec![("styleType", Kv::Enum("TEXT")), ("fontName", font()), ("fontSize", Kv::Float(20.0))];
+        let mut fields =
+            vec![("styleType", Kv::Enum("TEXT")), ("fontName", font()), ("fontSize", Kv::Float(20.0)), ("textDecoration", Kv::Enum("UNDERLINE"))];
         if let Some(value) = shared {
             fields.push(("textDecorationSkipInk", value));
         }
@@ -125,6 +128,7 @@ fn instance_path_override_preserves_explicit_false_over_true_main() {
         vec![
             ("fontName", font()),
             ("fontSize", Kv::Float(20.0)),
+            ("textDecoration", Kv::Enum("UNDERLINE")),
             ("textDecorationSkipInk", Kv::Bool(true)),
             ("textData", object(vec![("characters", Kv::Str("A".into()))])),
         ],
@@ -172,6 +176,7 @@ fn instance_path_override_preserves_explicit_false_over_true_main() {
 fn export_writes_one_actual_node_value_and_complete_run_values_without_skip_only_warning() {
     let mut doc = Document::new("Skip ink export");
     let mut text = TextData::new("abcd");
+    text.style.decoration = TextDecoration::Underline;
     text.style.set_look(|look| look.skip_ink = false);
     let mut skipped = text.style.clone();
     skipped.set_look(|look| look.skip_ink = true);
@@ -209,9 +214,9 @@ fn export_writes_one_actual_node_value_and_complete_run_values_without_skip_only
     let (_, warnings) = export(&variable_doc, None).unwrap();
     assert!(warnings.iter().any(|w| w.contains("variable font settings")), "variation warning missing: {warnings:?}");
 
-    let mut shared = TextStyle::default();
+    let mut shared = TextStyle { decoration: TextDecoration::Underline, ..TextStyle::default() };
     shared.set_look(|look| look.skip_ink = true);
-    let mut local = TextStyle::default();
+    let mut local = TextStyle { decoration: TextDecoration::Underline, ..TextStyle::default() };
     local.set_look(|look| look.skip_ink = false);
     let mut linked_doc = Document::new("Shared skip ink");
     linked_doc.styles.push(figcraft_doc::Style {
@@ -234,4 +239,34 @@ fn export_writes_one_actual_node_value_and_complete_run_values_without_skip_only
     let linked = back.style(node.styles.text.as_deref().unwrap()).unwrap();
     let StyleKind::Text { style } = &linked.kind else { panic!("shared style link must remain text") };
     assert!(style.look().skip_ink, "local false must not alter the shared definition");
+}
+
+#[test]
+fn skip_ink_without_an_underline_stays_out_of_the_look_and_exports_the_default() {
+    // Plain text with the files' default value imports with the default look...
+    let mut value = raw(Some(Kv::Bool(true)), vec![], "ab", vec![0, 0], None);
+    value["document"]["children"][0]["children"][0]["style"].as_object_mut().unwrap().remove("textDecoration");
+    let doc = imported(&value);
+    assert_eq!(label(&doc).style.decoration, TextDecoration::None);
+    assert!(label(&doc).style.decoration_look.is_none());
+
+    // ...an underlined run of it keeps the layer's value...
+    let mut value =
+        raw(Some(Kv::Bool(true)), vec![object(vec![("styleID", Kv::Uint(1)), ("textDecoration", Kv::Enum("UNDERLINE"))])], "ab", vec![1, 0], None);
+    value["document"]["children"][0]["children"][0]["style"].as_object_mut().unwrap().remove("textDecoration");
+    let doc = imported(&value);
+    assert_eq!((0..2).map(|i| skip_at(label(&doc), i)).collect::<Vec<_>>(), vec![true, false]);
+
+    // ...and default native text writes the default, which reads back as the default look.
+    let mut doc = Document::new("Plain");
+    doc.create(doc.first_page().unwrap(), NodeKind::Text(TextData::new("x")), "Label", 0.0, 0.0, 100.0, 30.0).unwrap();
+    let (bytes, _) = export(&doc, None).unwrap();
+    let archive = super::Archive::open(&bytes).unwrap();
+    let (schema, body) = super::decode_canvas(&archive.canvas).unwrap();
+    let message = schema.decode_message(schema.find("Message").unwrap(), &body).unwrap();
+    let value = super::debug_json(&message);
+    let layer = value["nodeChanges"].as_array().unwrap().iter().find(|n| n["name"] == "Label").unwrap();
+    assert_eq!(layer["textDecorationSkipInk"], true);
+    let (back, _) = import(&bytes, "Plain").unwrap();
+    assert!(label(&back).style.decoration_look.is_none());
 }
