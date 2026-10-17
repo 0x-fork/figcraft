@@ -86,6 +86,8 @@ mod colorpicker_selection_tests;
 #[cfg(test)]
 mod comments_tests;
 #[cfg(test)]
+mod component_props_reorder_tests;
+#[cfg(test)]
 mod cursors_tests;
 #[cfg(test)]
 mod design_paste_tests;
@@ -137,6 +139,8 @@ mod live_share_tests;
 mod live_tests;
 #[cfg(test)]
 mod live_text_tests;
+#[cfg(test)]
+mod menu_aim_tests;
 #[cfg(test)]
 mod menu_input_tests;
 #[cfg(test)]
@@ -417,6 +421,8 @@ pub struct UiState {
     pub last_right_tab: RightTab,
     pub left_tab: LeftTab,
     pub pages_open: bool,
+    /// The height asked for the pages list (`None`: a share of the panel).
+    pub pages_height: Option<f32>,
     pub expanded: BTreeSet<NodeId>,
     /// The layer being renamed in the layers panel.
     pub rename: Option<layers::Rename>,
@@ -570,6 +576,7 @@ impl Default for UiState {
             last_right_tab: RightTab::Design,
             left_tab: LeftTab::File,
             pages_open: true,
+            pages_height: None,
             expanded: BTreeSet::new(),
             rename: None,
             rename_page: None,
@@ -699,8 +706,9 @@ impl FigApp {
     pub fn new(session: Session, services: Box<dyn Services>) -> Self {
         // The main window's panels open as wide as they were left.
         let (left_width, right_width) = session.prefs.panel_widths;
+        let pages_height = session.prefs.pages_height;
         Self {
-            ui: UiState { left_width, right_width, ..UiState::default() },
+            ui: UiState { left_width, right_width, pages_height, ..UiState::default() },
             session,
             canvas: canvas::CanvasState::default(),
             services,
