@@ -85,7 +85,7 @@ pub(crate) fn main_width() -> f32 {
 fn main_toolbar(app: &mut FigApp, ui: &mut Ui, canvas: Rect, t: &Tokens) {
     let (cell, gap) = (32.0, 4.0);
     let width = main_width();
-    let rect = pill(ui, &mut app.ui.nav, canvas, width, &t);
+    let rect = pill(ui, &mut app.ui.nav, canvas, width, t);
     let current = app.session.tool.tool;
     let mut x = rect.min.x + 8.0;
     let cy = rect.center().y;
@@ -94,7 +94,7 @@ fn main_toolbar(app: &mut FigApp, ui: &mut Ui, canvas: Rect, t: &Tokens) {
         let shown = if in_group { current } else { remembered(ui, g.key, g.tools.first().map(|x| x.0).unwrap_or(ToolId::Move)) };
         let icon = g.tools.iter().find(|(tid, _)| *tid == shown).map(|(_, i)| *i).unwrap_or(Icon::Move);
         let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
-        let resp = tool_cell(ui, &t, r, ("tool", g.key), icon, in_group, &format!("{}  {}", tr(shown.label()), pretty_shortcut(shown.shortcut())));
+        let resp = tool_cell(ui, t, r, ("tool", g.key), icon, in_group, &format!("{}  {}", tr(shown.label()), pretty_shortcut(shown.shortcut())));
         if in_group {
             a11y::prefer(&mut app.ui.nav, Region::Toolbar, resp.id);
         }
@@ -152,13 +152,7 @@ fn main_toolbar(app: &mut FigApp, ui: &mut Ui, canvas: Rect, t: &Tokens) {
         icons::paint(ui.painter(), r.shrink(7.0), icon, if actions_open { Color32::WHITE } else { t.icon });
         if resp.clicked() {
             if id == "actions" {
-                if app.ui.palette.is_some() {
-                    app.ui.palette = None;
-                } else {
-                    app.ui.palette = Some(String::new());
-                    app.ui.palette_tab = crate::menus::PaletteTab::All;
-                    app.ui.palette_armed = true;
-                }
+                crate::menus::toggle_palette(&mut app.ui);
             } else {
                 app.ui.left_tab = crate::LeftTab::Assets;
                 app.ui.left_collapsed = false;
@@ -166,7 +160,7 @@ fn main_toolbar(app: &mut FigApp, ui: &mut Ui, canvas: Rect, t: &Tokens) {
         }
         x += cell + 4.0;
     }
-    divider(ui, &t, x, cy);
+    divider(ui, t, x, cy);
     x += 8.0;
     // Mode switcher: Draw · Design · Prototype · Inspect (code).
     let modes = [(Icon::Pencil, tr("Draw")), (Icon::Frame, tr("Design")), (Icon::Prototype, tr("Prototype")), (Icon::Code, tr("Inspect"))];
@@ -348,10 +342,15 @@ fn builder_toolbar(app: &mut FigApp, ui: &mut Ui) {
     }
 }
 
+/// Where a toolbar pill `width` wide sits: centred 12 px above the canvas's bottom edge.
+pub(crate) fn pill_rect(canvas: Rect, width: f32) -> Rect {
+    Rect::from_center_size(pos2(canvas.center().x, canvas.max.y - 12.0 - 24.0), vec2(width, 48.0))
+}
+
 /// The floating pill (shadow, panel, border) `width` wide at the bottom centre of the canvas: the
 /// toolbar region keyboard navigation moves through.
 fn pill(ui: &Ui, nav: &mut Nav, canvas: Rect, width: f32, t: &Tokens) -> Rect {
-    let rect = Rect::from_center_size(pos2(canvas.center().x, canvas.max.y - 12.0 - 24.0), vec2(width, 48.0));
+    let rect = pill_rect(canvas, width);
     // The pill takes the press and the drag over it: its buttons sense clicks only, and egui gives
     // a drag the canvas under them would sense to the canvas, so the pen placed an anchor there.
     // Not focusable: the keyboard walks the buttons, not the pill.
