@@ -28,11 +28,11 @@ mod slot_tests;
 mod source_identity_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod text_paragraph_tests;
 mod text_path;
 #[cfg(test)]
 mod text_path_tests;
-#[cfg(test)]
-mod text_paragraph_tests;
 #[cfg(test)]
 mod text_skip_ink_tests;
 #[cfg(test)]
