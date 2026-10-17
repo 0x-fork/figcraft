@@ -163,6 +163,7 @@ impl Win {
     }
 }
 
+// egui sets `command` for Cmd on macOS and for Ctrl elsewhere; macOS Ctrl is a separate key.
 const CMD: Modifiers = if cfg!(target_os = "macos") { Modifiers::COMMAND } else { Modifiers::COMMAND.plus(Modifiers::CTRL) };
 
 fn key(key: Key, pressed: bool, modifiers: Modifiers) -> Event {
