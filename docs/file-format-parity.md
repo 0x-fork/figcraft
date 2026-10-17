@@ -60,13 +60,6 @@ export limit, not a native document nesting limit.
 
 ### Export to `.fig` (experimental)
 
-File ▸ Save as offers `.figcraft` and `.fig` as separate file types in the system dialog. A `.fig`
-destination writes the same experimental export copy of the document that is shown (`file.save` and
-`file.saveAs` with a path ending in `.fig` do the same) and reports what was left out. The file's own
-path, its unsaved changes, versions, branches and undo history are not touched, and a shown earlier
-version stays shown. Other apps may not open every exported `.fig` file. A plain Save never writes over
-a file whose saved path ends in `.fig`; it asks for a destination instead.
-
 `file.export {format: "fig"}` (or a `path` ending in `.fig`), File ▸ Export… ▸ .fig (experimental),
 `figcraft-cli export <file> -o <out>.fig` (and `convert`) and MCP's `export {format: "fig"}` write
 the whole document. The writer (`crates/format/src/fig/export.rs`) works from the same public format
