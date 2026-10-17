@@ -137,10 +137,11 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         "pref.language" | "pref.userName" | "pref.publishServer" | "pref.nudge" => {
             app.run("app.preferences", json!({}));
         }
+        // The file name in the left panel's header turns into its editor, the name selected.
         "file.rename" => {
-            if let Ok(doc) = app.session.doc() {
-                app.ui.menu_input = Some(crate::dialogs::MenuInput::RenameFile(doc.name.clone()));
-            }
+            app.ui.left_tab = crate::LeftTab::File;
+            app.ui.left_collapsed = false;
+            app.ui.rename_file = true;
         }
         "text.link" => app.ui.menu_input = Some(crate::dialogs::MenuInput::Link(String::new())),
         "vector.offset" => app.ui.menu_input = Some(crate::dialogs::MenuInput::Offset(0.0)),

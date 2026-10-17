@@ -31,13 +31,9 @@ fn preference_actions_open_preferences_without_changing_values() {
 #[test]
 fn menu_entries_collect_required_arguments_before_running() {
     let mut ui = Ui::new(Session::new());
-    let name = ui.app.session.doc().unwrap().name.clone();
-    for (id, expected) in [
-        ("file.rename", MenuInput::RenameFile(name)),
-        ("text.link", MenuInput::Link(String::new())),
-        ("vector.offset", MenuInput::Offset(0.0)),
-        ("object.moveToPage", MenuInput::MoveToPage),
-    ] {
+    for (id, expected) in
+        [("text.link", MenuInput::Link(String::new())), ("vector.offset", MenuInput::Offset(0.0)), ("object.moveToPage", MenuInput::MoveToPage)]
+    {
         ui.app.ui.menu_input = None;
         menus::invoke(&mut ui.app, id);
         assert_eq!(ui.app.ui.menu_input, Some(expected), "{id}");
@@ -70,5 +66,22 @@ fn batch_rename_opens_its_existing_dialog() {
     let mut ui = Ui::new(session);
     menus::invoke(&mut ui.app, "object.batchRename");
     assert_eq!(ui.app.ui.batch_rename.as_ref().map(|d| d.ids.len()), Some(1));
+    assert!(ui.app.ui.last_error.is_none());
+}
+
+#[test]
+fn rename_file_edits_the_file_name_in_place() {
+    let mut ui = Ui::new(Session::new());
+    ui.app.ui.left_collapsed = true;
+    menus::invoke(&mut ui.app, "file.rename");
+    assert!(!ui.app.ui.left_collapsed, "the left panel shows the file name");
+    assert!(ui.app.ui.menu_input.is_none(), "no dialog");
+    ui.frame(vec![]);
+    ui.frame(vec![]);
+    assert!(!ui.app.ui.rename_file, "the rename started");
+    assert!(ui.ctx.memory(|m| m.has_focus(egui::Id::new("filename").with("te"))), "the file name's editor has the keyboard");
+    ui.frame(vec![egui::Event::Text("Brand kit".into())]);
+    ui.frame(vec![egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() }]);
+    assert_eq!(ui.app.session.doc().unwrap().name, "Brand kit");
     assert!(ui.app.ui.last_error.is_none());
 }
