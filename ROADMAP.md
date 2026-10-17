@@ -111,7 +111,7 @@ native speakers' reviews of the six language drafts need people.
 | Korean | ko | 100% | draft (needs native review) |
 | Vietnamese | vi | 0% | none |
 
-Also shipped: Swedish (`sv`: every UI string, command label and menu wording; native review welcome). Figma ships English, Japanese, Korean, French, German, Spanish and Portuguese
+Also shipped: Swedish (`sv`: every UI string, 120 of 588 command labels and menu wordings; native review welcome). Figma ships English, Japanese, Korean, French, German, Spanish and Portuguese
 (Brazil); FigCraft has the localization layer, English and Spanish (Spain and Latin America),
 French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese drafts (Preferences ▸
 Language; Traditional Chinese has no catalog; CJK UI
