@@ -355,9 +355,9 @@ fn unreadable_conditions_skip_the_conditional() {
 #[test]
 fn damaged_network_blobs_never_panic() {
     let good = square_blob();
-    assert!(network::decode(&good).is_some());
+    assert!(network::decode_styled(&good).is_some());
     for cut in 0..good.len() {
-        assert!(network::decode(&good[..cut]).is_none(), "{cut}");
+        assert!(network::decode_styled(&good[..cut]).is_none(), "{cut}");
     }
     let mut r = Lcg(5);
     for _ in 0..5000 {
@@ -366,7 +366,7 @@ fn damaged_network_blobs_never_panic() {
             let i = (r.next() as usize) % m.len();
             m[i] ^= 1 << (r.next() % 8);
         }
-        if let Some(net) = network::decode(&m) {
+        if let Some((net, _)) = network::decode_styled(&m) {
             assert!(net.segments.iter().all(|s| s.a < net.vertices.len() && s.b < net.vertices.len()));
             assert!(net.regions.iter().flat_map(|r| &r.loops).flatten().all(|i| *i < net.segments.len()));
             assert!(net.vertices.iter().all(|v| v.x.is_finite() && v.y.is_finite()));
@@ -375,13 +375,13 @@ fn damaged_network_blobs_never_panic() {
     // Counts larger than the blob, and indices out of range.
     let mut huge = vec![0xff; 12];
     huge.extend_from_slice(&[0; 64]);
-    assert!(network::decode(&huge).is_none());
+    assert!(network::decode_styled(&huge).is_none());
     let mut bad = arrow_blob();
     bad[12 + 24 + 4..12 + 24 + 8].copy_from_slice(&7u32.to_le_bytes());
-    assert!(network::decode(&bad).is_none());
+    assert!(network::decode_styled(&bad).is_none());
     for _ in 0..2000 {
         let junk: Vec<u8> = (0..(r.next() % 120)).map(|_| r.next() as u8).collect();
-        let _ = network::decode(&junk);
+        let _ = network::decode_styled(&junk);
     }
 }
 
