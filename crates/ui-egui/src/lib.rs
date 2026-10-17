@@ -1414,6 +1414,8 @@ impl FigApp {
             return;
         }
         if !self.has_files() || self.ui.home {
+            // The shortcuts panel belongs to the canvas; it doesn't hang over the home screen.
+            self.ui.shortcuts_panel = false;
             tabs::tab_bar(self, ui);
             home::show(self, ui);
             dialogs::keys(self, &ctx);
