@@ -1074,8 +1074,8 @@ impl<'a> Mapper<'a> {
             .get("vectorData")
             .and_then(|data| num(data, "vectorNetworkBlob"))
             .and_then(|index| self.blobs.get(index as usize))
-            .and_then(|blob| network::decode_styled(blob))
-            .is_some_and(|(network, _)| !network.segments.is_empty());
+            .and_then(|blob| network::decode(blob))
+            .is_some_and(|network| !network.segments.is_empty());
         (geometry || network) && connector_record(v, "nodeGenerationData", 0).is_some()
     }
 
