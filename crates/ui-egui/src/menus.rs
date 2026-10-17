@@ -120,6 +120,10 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         "file.placeImage" => app.import_dialog(true),
         "file.save" => app.save(),
         "file.saveAs" => app.save_as_dialog(),
+        "file.openRecent" => {
+            app.ui.home = true;
+            app.ui.home_view.section = crate::home::Section::Recents;
+        }
         "file.saveVersion" => crate::versions::start_save(app),
         "branch.create" => crate::versions::start_branch(app),
         "file.export" | "file.exportSvg" => app.ui.export_preview = true,
@@ -167,6 +171,32 @@ pub fn invoke(app: &mut FigApp, id: &str) {
             app.services.clipboard_set_text(&format!("figcraft://node/{}", ids.first().map(|i| i.0).unwrap_or(0)));
         }
         "edit.findReplace" => app.ui.find = Some((String::new(), String::new())),
+        // The Actions palette invokes commands without parameters. These values are edited in
+        // Preferences; sending an empty object would either fail or silently reset a preference.
+        "pref.language" | "pref.userName" | "pref.publishServer" | "pref.nudge" => {
+            app.run("app.preferences", json!({}));
+        }
+        // The file name in the left panel's header turns into its editor, the name selected.
+        "file.rename" => {
+            app.ui.left_tab = crate::LeftTab::File;
+            app.ui.left_collapsed = false;
+            app.ui.rename_file = true;
+        }
+        "text.link" => app.ui.menu_input = Some(crate::dialogs::MenuInput::Link(String::new())),
+        "vector.offset" => app.ui.menu_input = Some(crate::dialogs::MenuInput::Offset(0.0)),
+        "object.moveToPage" => app.ui.menu_input = Some(crate::dialogs::MenuInput::MoveToPage),
+        "object.batchRename" => {
+            let ids = app.session.selection();
+            if !ids.is_empty() {
+                crate::dialogs::open_batch_rename(app, &ids);
+            }
+        }
+        "tool.set" => app.ui.tool_flyout = Some("move"),
+        "page.select" => {
+            app.ui.left_tab = crate::LeftTab::File;
+            app.ui.left_collapsed = false;
+            app.ui.pages_open = true;
+        }
         // From a menu the link is pasted into the Join dialog (`collab.join {link}` joins directly).
         "collab.join" => crate::live::open_join(app, ""),
         // So is the server address for publishing (it carries the server key).
