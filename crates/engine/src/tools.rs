@@ -1859,6 +1859,20 @@ impl Session {
         if self.tool.tool == ToolId::Pen {
             return self.pen_finish();
         }
+        // A frame's or section's name label: rename it there (the canvas puts a field over it).
+        // Labels come before widgets, as on a press; the second press began a move: undo it.
+        if matches!(self.tool.tool, ToolId::Move | ToolId::Scale)
+            && !(ev.shift || ev.cmd || ev.alt)
+            && let Some(id) = label_at(&doc, page, &self.tool.labels, ev.p())
+        {
+            self.tool.gesture = Gesture::None;
+            self.cancel_interaction()?;
+            if sel != [id] {
+                self.set_selection(vec![id]);
+            }
+            self.request_ui("canvas.renameLabel", serde_json::json!({"id": id}));
+            return Ok(());
+        }
         // Quick clicks on a widget's clickable part are clicks, one by one.
         if matches!(self.tool.tool, ToolId::Move | ToolId::Scale)
             && !(ev.shift || ev.cmd || ev.alt)
@@ -1874,17 +1888,6 @@ impl Session {
             self.tool.gesture = Gesture::None;
             self.tool.overlay.marquee = None;
             self.cancel_interaction()?;
-        }
-        // A frame's or section's name label: rename it there (the canvas puts a field over it).
-        if matches!(self.tool.tool, ToolId::Move | ToolId::Scale)
-            && !(ev.shift || ev.cmd || ev.alt)
-            && let Some(id) = label_at(&doc, page, &self.tool.labels, ev.p())
-        {
-            if sel != [id] {
-                self.set_selection(vec![id]);
-            }
-            self.request_ui("canvas.renameLabel", serde_json::json!({"id": id}));
-            return Ok(());
         }
         let Some(leaf) = self.hit(&doc, page, ev.p(), ev.tol() * 2.0) else { return Ok(()) };
         let target = select_target(&doc, leaf, &sel, true);
