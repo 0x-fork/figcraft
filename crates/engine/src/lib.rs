@@ -29,6 +29,7 @@ pub mod distance;
 pub mod doc_urls;
 pub mod drop;
 pub mod file_access;
+pub mod fonts;
 pub mod guard;
 pub mod guides;
 pub mod inspect;

@@ -159,7 +159,7 @@ each.
 | Local fonts | yes (font helper / desktop app) | yes (system scan) |
 | Bundled/shared fonts | Google Fonts in the cloud | optional `CRAFT_FONTS_DIR` build input (storytold/craft-fonts) |
 | Variable fonts | yes | yes (axes, named instances, per-range axis values) |
-| Missing-font replacement on open | yes | warnings only (REST import) | 
+| Missing fonts on open | listed, with replacement | listed (Missing fonts window after an open, Text ▸ Missing fonts…, `text.missingFonts`, `figcraft-cli info`); no replacement; text draws in a fallback font |
 
 ## Revision history
 
@@ -167,6 +167,7 @@ each.
 |---|---|---|
 | 2026-10-17 | minor | REST file JSON import reads grid track sizes from the CSS track strings `gridColumnsSizing` / `gridRowsSizing` (fixed px, fill fr, hug `auto`, `minmax(0, 1fr)`, `repeat()`; other tracks stay equal) (#465). Numbers unchanged |
 | 2026-10-17 | minor | The community batches #727 and #728 in the `.fig` row: instance identity and cached library components, overrides by key, text style precedence, grid track sizes, slot content, labels of connectors saved with their path, skip ink, paragraph options, list start numbers, vertical trim, per-point stroke joins, text on a path, image adjustments (also REST), images in the message; budgets from the file's size; the journal keeps no file bytes; the import report. Not read cut to what's left. A `.fig` copy from Save as. Pasted content: layers copied from another design app, best effort (tested only with clipboard HTML made from our own export), and images under Wayland (not run there). All on synthetic files: summary and hours unchanged |
+| 2026-10-17 | minor | Missing fonts (#752): the fonts a file names that aren't installed (text layers, styled ranges, text styles, font family variables in any mode) are listed when the user opens it (once installed fonts are indexed and any import report is closed), from Text ▸ Missing fonts…, by `text.missingFonts` and by `figcraft-cli info`. The row claimed REST import warnings no code produced. |
 | 2026-10-17 | minor | Hug on import (#732): auto layout frames a `.fig` records no primary-axis sizing for hug on that axis (auto layout sized that axis by its content before it could be fixed) instead of turning fixed, instances that record no auto layout take their main's (they came in without auto layout and fixed, so longer text overflowed them), REST frames whose sizing modes are left out hug (the documented default), and text hugs by its resize mode (auto width both axes, auto height its height; it came in fixed). Numbers unchanged |
 | 2026-10-17 | minor | Instance layers' own size and resizing (#731): a `.fig` import keeps the sizes an instance gives its layers and their hug/fill/fixed and min/max as overrides, a REST import reads the resizing fields of `overrides`, and a `.fig` export writes a layer's own size as an override (it went with the derived layout, which a relayout replaces). Numbers unchanged |
 | 2026-10-14 | minor | SVG/PDF depth overflow (#208) is checked before bounds and drawing; public checked APIs return the offending root/layer, commands and CLI report it, and no incomplete export replaces an existing file. Tested at depths 255/256/257, with inner roots, hidden branches, masks, raster fallbacks and multiple roots/pages. Numbers unchanged. |
