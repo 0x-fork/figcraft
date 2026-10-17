@@ -637,7 +637,7 @@ pub fn dev_resources_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, id: 
         crate::a11y::link(&resp, name);
         // Opened only on a click, never fetched, and a dev resource's URL comes from the
         // document, so only a web link opens.
-        if resp.on_hover_text(url.as_str()).clicked() && figcraft_engine::doc_urls::openable(&url) {
+        if resp.on_hover_text(url.as_str()).clicked() && figcraft_engine::doc_urls::openable(url) {
             ui.ctx().open_url(egui::OpenUrl::new_tab(url));
         }
         if let Some(i) = item.index {
