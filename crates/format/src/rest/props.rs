@@ -207,8 +207,9 @@ fn image(cx: &mut Ctx, p: &Value) -> ImagePaint {
             contrast: filter("contrast"),
             saturation: filter("saturation"),
             temperature: filter("temperature"),
-            // A positive tint in .fig sources moves toward magenta; native positive tint adds green.
-            tint: if fig { -filter("tint") } else { filter("tint") },
+            // The files' tint runs from green (negative) to magenta (positive), in REST file JSON and
+            // .fig alike; a positive native tint adds green.
+            tint: -filter("tint"),
             highlights: filter("highlights"),
             shadows: filter("shadows"),
         },

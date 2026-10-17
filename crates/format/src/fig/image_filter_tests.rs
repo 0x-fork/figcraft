@@ -66,7 +66,7 @@ fn image_filters_import_from_current_container_and_skip_ambiguous_data() {
     assert!((current.filters.contrast - 0.3).abs() < 1e-6, "observed raw contrast remains 0.3");
     assert!((current.filters.saturation + 0.4).abs() < 1e-6, "vibrance maps to saturation");
     assert!((current.filters.temperature - 0.5).abs() < 1e-6);
-    assert!((current.filters.tint + 1.0).abs() < 1e-6, "positive Figma tint converts once at the REST boundary");
+    assert!((current.filters.tint + 1.0).abs() < 1e-6, "a positive (magenta) tint in the file is a negative native tint");
     assert!((current.filters.highlights + 0.6).abs() < 1e-6);
     assert!((current.filters.shadows - 0.7).abs() < 1e-6);
     assert!((get("Negative tint").filters.tint - 1.0).abs() < 1e-6);

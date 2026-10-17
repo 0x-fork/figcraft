@@ -187,7 +187,7 @@ fn paints_gradients_and_image_placeholders() {
 }
 
 #[test]
-fn public_rest_image_filter_tint_keeps_its_sign() {
+fn image_filter_tint_turns_magenta_positive_into_native_green_positive() {
     let rect = |name: &str, tint: f64| {
         json!({
             "id": name, "name": name, "type": "RECTANGLE", "relativeTransform": at(0.0, 0.0), "size": {"x": 10, "y": 10},
@@ -199,8 +199,9 @@ fn public_rest_image_filter_tint_keeps_its_sign() {
         let PaintKind::Image(image) = &named(&doc, name).fills[0].kind else { panic!("{name} is not an image fill") };
         image
     };
-    assert!(close(f64::from(image("Magenta").filters.tint), 0.75));
-    assert!(close(f64::from(image("Green").filters.tint), -0.5));
+    // The same sign as a `.fig` import (`fig::tests::image_filters`).
+    assert!(close(f64::from(image("Magenta").filters.tint), -0.75));
+    assert!(close(f64::from(image("Green").filters.tint), 0.5));
     assert!(!warnings.iter().any(|w| w.contains("approximate renderer")), "{warnings:?}");
 }
 
