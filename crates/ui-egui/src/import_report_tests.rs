@@ -185,3 +185,19 @@ fn a_dropped_file_shows_its_report_once_it_opens() {
     let report = u.app.ui.import_report.as_ref().expect("the dropped file's report");
     assert_eq!(report.uid, u.app.session.ds().unwrap().uid);
 }
+
+#[test]
+fn a_file_opened_from_base64_data_has_a_summary_too() {
+    use base64::Engine as _;
+    let file = json!({"document": {"id": "0:0", "name": "From data", "type": "DOCUMENT", "children": [
+        {"id": "0:1", "name": "Page 1", "type": "CANVAS", "children": [{"id": "1:1", "name": "No type"}]}]}});
+    let data = base64::engine::general_purpose::STANDARD.encode(file.to_string());
+    let mut app = FigApp::new(Session::new(), Box::new(NoServices));
+    let opened = app.run_user("file.open", json!({"data": data, "name": "Dropped.json"})).unwrap();
+    assert_eq!(opened["summary"]["pages"], 1);
+    let report = app.ui.import_report.as_ref().expect("a report for the REST import");
+    assert_eq!(report.pages, Some(1));
+    assert!(report.notes.iter().any(|n| n == "layers without a type were skipped"), "{:?}", report.notes);
+    // Shown as a sentence, worked out once when the report opens.
+    assert!(report.shown.iter().any(|n| n == "Layers without a type were skipped"), "{:?}", report.shown);
+}
