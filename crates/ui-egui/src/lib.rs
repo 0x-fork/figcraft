@@ -162,6 +162,8 @@ mod proto_reorder_tests;
 #[cfg(test)]
 mod proto_responsive_tests;
 #[cfg(test)]
+mod resources_tests;
+#[cfg(test)]
 mod select_all_tests;
 #[cfg(test)]
 mod shortcut_keys_tests;
@@ -810,7 +812,11 @@ impl FigApp {
                 }
                 "focus.region" => self.ui.nav.step(r.data.get("step").and_then(Value::as_i64).unwrap_or(1).clamp(-4, 4) as i32),
                 "panel.layers" => self.ui.left_tab = LeftTab::File,
-                "panel.assets" => self.ui.left_tab = LeftTab::Assets,
+                "panel.assets" => {
+                    self.ui.left_tab = LeftTab::Assets;
+                    self.ui.left_collapsed = false;
+                    self.ui.versions = Default::default();
+                }
                 "panel.versionHistory" => versions::open(self),
                 "view.devCompare" => {
                     self.ui.dev.compare = r.data.get("id").and_then(figcraft_engine::params::id_of).map(dev_compare::CompareView::new);

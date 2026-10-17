@@ -137,8 +137,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             if id == "actions" {
                 app.ui.palette = Some(String::new());
             } else {
-                app.ui.left_tab = crate::LeftTab::Assets;
-                app.ui.left_collapsed = false;
+                app.run("view.assets", json!({}));
             }
         }
         x += cell + 4.0;
