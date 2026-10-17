@@ -1186,7 +1186,7 @@ impl<'a> Mapper<'a> {
             fail(self, "has no vector network");
             return;
         };
-        let Some((net, _)) = network::decode_styled(blob) else {
+        let Some(net) = network::decode(blob) else {
             fail(self, "has damaged vector data");
             return;
         };
