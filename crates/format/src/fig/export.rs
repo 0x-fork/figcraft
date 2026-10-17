@@ -1565,6 +1565,20 @@ impl<'d> Exporter<'d> {
             data.extend([("characterStyleIDs", arr(ids)), ("styleOverrideTable", arr(entries))]);
         }
         let lists: Vec<ListStyle> = (0..td.paragraph_count()).map(|p| td.para_list(p).list).collect();
+        let first = |i: usize, l: &ListStyle| *l != ListStyle::None && (i == 0 || lists.get(i - 1) != Some(l));
+        // Where each line's numbered list starts counting, less one: its first item's start, on
+        // every line of the list.
+        let mut run = 0;
+        let starts: Vec<u32> = lists
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                if first(i, l) {
+                    run = td.para_list(i).start_offset;
+                }
+                if *l == ListStyle::Numbered { run } else { 0 }
+            })
+            .collect();
         // One entry per paragraph, each with every field a reader expects.
         let line = |(i, l): (usize, &ListStyle)| {
             let ty = match l {
@@ -1573,14 +1587,15 @@ impl<'d> Exporter<'d> {
                 ListStyle::Bulleted => "UNORDERED_LIST",
             };
             let listed = *l != ListStyle::None;
-            let first = listed && (i == 0 || lists.get(i - 1) != Some(l));
+            let begins = first(i, l);
+            let start = starts.get(i).copied().unwrap_or(0);
             o(vec![
                 ("lineType", e(ty)),
                 ("styleId", int(0)),
                 ("indentationLevel", int(i64::from(listed))),
                 ("sourceDirectionality", e("AUTO")),
-                ("listStartOffset", int(0)),
-                ("isFirstLineOfList", b(first)),
+                ("listStartOffset", int(i64::from(start))),
+                ("isFirstLineOfList", b(begins)),
             ])
         };
         data.push(("lines", arr(lists.iter().enumerate().map(line).collect())));

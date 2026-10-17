@@ -827,8 +827,8 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
 }
 
 /// The markers of a text's paragraphs ("" for plain ones). Numbers count the items of one list at
-/// one level, restarting after a plain paragraph, a shallower item or the other kind of list;
-/// levels go 1. a. i. and • ◦ ▪, then round again.
+/// one level, restarting after a plain paragraph, a shallower item or the other kind of list,
+/// from the first item's start number; levels go 1. a. i. and • ◦ ▪, then round again.
 pub(crate) fn list_markers(lists: &[ParaList]) -> Vec<String> {
     const BULLETS: [&str; 3] = ["\u{2022}", "\u{25E6}", "\u{25AA}"];
     let mut count = [(ListStyle::None, 0usize); figcraft_doc::MAX_LIST_INDENT as usize + 1];
@@ -844,7 +844,8 @@ pub(crate) fn list_markers(lists: &[ParaList]) -> Vec<String> {
                 *c = (ListStyle::None, 0);
             }
             let Some(c) = count.get_mut(d) else { return String::new() };
-            *c = if c.0 == pl.list { (pl.list, c.1 + 1) } else { (pl.list, 1) };
+            let first = usize::try_from(pl.start_offset).unwrap_or(usize::MAX).saturating_add(1);
+            *c = if c.0 == pl.list { (pl.list, c.1.saturating_add(1)) } else { (pl.list, first) };
             match (pl.list, d % 3) {
                 (ListStyle::Numbered, 1) => format!("{}.", alpha(c.1)),
                 (ListStyle::Numbered, 2) => format!("{}.", roman(c.1)),
