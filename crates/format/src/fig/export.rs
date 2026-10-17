@@ -1668,7 +1668,13 @@ impl<'d> Exporter<'d> {
             let segments = net
                 .segments
                 .iter()
-                .map(|sg| network::Segment { a: sg.a, ta: (finite(sg.ta.0), finite(sg.ta.1)), b: sg.b, tb: (finite(sg.tb.0), finite(sg.tb.1)) })
+                .map(|sg| network::Segment {
+                    style: 0,
+                    a: sg.a,
+                    ta: (finite(sg.ta.0), finite(sg.ta.1)),
+                    b: sg.b,
+                    tb: (finite(sg.tb.0), finite(sg.tb.1)),
+                })
                 .collect();
             let regions = net
                 .regions

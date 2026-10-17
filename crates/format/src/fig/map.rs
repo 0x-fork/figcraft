@@ -811,7 +811,7 @@ impl<'a> Mapper<'a> {
             "CONNECTOR" if connector_snapshot => "FRAME",
             t => stand.map_or(t, |s| s.0),
         };
-        if let Some((_, what)) = stand {
+        if let Some((_, what)) = stand.filter(|_| own != "TEXT_PATH") {
             self.warn(format!("{} layers import as {what}", own.to_ascii_lowercase().replace('_', " ")));
         }
         if connector_snapshot {
@@ -835,7 +835,12 @@ impl<'a> Mapper<'a> {
         copy_str(&mut o, &view, "name", "name");
         self.common(&mut o, &view, ty, space, parent);
         match ty {
-            "TEXT" => self.text(&mut o, &view),
+            "TEXT" => {
+                self.text(&mut o, &view);
+                if own == "TEXT_PATH" {
+                    self.text_path(&mut o, &view);
+                }
+            }
             "VECTOR" | "STAR" | "REGULAR_POLYGON" => self.geometry(&mut o, &view),
             "ELLIPSE" => {
                 if let Some(a) = view.get("arcData") {
@@ -1506,6 +1511,92 @@ impl<'a> Mapper<'a> {
         }
     }
 
+    /// Carry supported text-path data through the private .fig REST ingress only.
+    fn text_path(&mut self, o: &mut Obj, v: &View<'a>) {
+        let fail = |this: &mut Self, reason: &str| {
+            this.warn(format!("text path {reason}; text imports off its path"));
+        };
+        let Some(start) = v.get("textPathStart") else {
+            fail(self, "has no start data");
+            return;
+        };
+        let (Some(t), Some(forward)) = (num(start, "tValue"), start.get("forward").and_then(Kv::bool)) else {
+            fail(self, "has invalid start data");
+            return;
+        };
+        let Some(vd) = v.get("vectorData") else {
+            fail(self, "has no vector data");
+            return;
+        };
+        let Some(blob) = num(vd, "vectorNetworkBlob")
+            .filter(|i| i.is_finite() && *i >= 0.0 && i.fract() == 0.0)
+            .and_then(|i| usize::try_from(i as u64).ok())
+            .and_then(|i| self.blobs.get(i))
+            .copied()
+        else {
+            fail(self, "has no vector network");
+            return;
+        };
+        let Some(net) = network::decode(blob) else {
+            fail(self, "has damaged vector data");
+            return;
+        };
+        let Some(norm) = vd.get("normalizedSize") else {
+            fail(self, "has invalid normalized size");
+            return;
+        };
+        let Some(size) = v.get("size") else {
+            fail(self, "has invalid dimensions");
+            return;
+        };
+        let (Some(nx), Some(ny), Some(w), Some(h)) = (num(norm, "x"), num(norm, "y"), num(size, "x"), num(size, "y")) else {
+            fail(self, "has invalid dimensions");
+            return;
+        };
+        let axis_scale = |size: f64, normalized: f64, values: &[f64]| -> Option<f64> {
+            if !size.is_finite() || size < 0.0 || !normalized.is_finite() || normalized < 0.0 {
+                return None;
+            }
+            if normalized > 1e-9 {
+                if size <= 0.0 {
+                    return None;
+                }
+                return Some(size / normalized);
+            }
+            (size == 0.0 && values.iter().all(|v| *v == 0.0)).then_some(1.0)
+        };
+        let xs: Vec<f64> = net.vertices.iter().map(|p| p.x).chain(net.segments.iter().flat_map(|s| [s.ta.0, s.tb.0])).collect();
+        let ys: Vec<f64> = net.vertices.iter().map(|p| p.y).chain(net.segments.iter().flat_map(|s| [s.ta.1, s.tb.1])).collect();
+        let sx = axis_scale(w, nx, &xs);
+        let sy = axis_scale(h, ny, &ys);
+        let (Some(sx), Some(sy)) = (sx, sy) else {
+            fail(self, "has invalid path scale");
+            return;
+        };
+        if v.str("textAlignVertical").is_some_and(|x| x != "TOP") {
+            fail(self, "uses unsupported vertical placement");
+            return;
+        }
+        if v.get("textData").and_then(|td| td.get("characters")).and_then(Kv::str).is_some_and(|s| s.chars().any(|c| matches!(c, '\n' | '\r'))) {
+            fail(self, "contains multiple lines");
+            return;
+        }
+        let path = match super::text_path::from_network(&net, sx, sy, t, forward) {
+            Ok(path) => path,
+            Err(reason) => {
+                fail(self, reason);
+                return;
+            }
+        };
+        let has_decoration = |style: &Value| style.get("textDecoration").and_then(Value::as_str).is_some_and(|x| x != "NONE");
+        let decorated = o.get("style").is_some_and(has_decoration)
+            || o.get("styleOverrideTable").and_then(Value::as_object).into_iter().flat_map(|styles| styles.values()).any(has_decoration);
+        if decorated {
+            self.warn("text path underline or strikethrough decoration is not rendered");
+        }
+        o.insert("_figTextPath".into(), json!({"d": path.d, "start": path.start, "flip": path.flip}));
+    }
+
     /// `fillGeometry` / `strokeGeometry` as SVG path data, and star/polygon parameters.
     fn geometry(&mut self, o: &mut Obj, v: &View<'a>) {
         for key in ["fillGeometry", "strokeGeometry"] {
@@ -1543,12 +1634,29 @@ impl<'a> Mapper<'a> {
     fn network(&mut self, o: &mut Obj, v: &View<'a>) -> bool {
         let Some(vd) = v.get("vectorData") else { return false };
         let Some(blob) = num(vd, "vectorNetworkBlob").and_then(|i| self.blobs.get(i as usize)).copied() else { return false };
-        let Some((net, styled_segments)) = network::decode_styled(blob) else {
+        let Some(net) = network::decode(blob) else {
             self.warn("damaged vector networks import as outlines");
             return false;
         };
-        if styled_segments > 0 {
-            self.warn("stroke styles of single vector network segments were left out");
+        let styles: BTreeMap<u64, &Kv> =
+            vd.get("styleOverrideTable").map(Kv::list).unwrap_or_default().iter().filter_map(|s| Some((num(s, "styleID")? as u64, s))).collect();
+        let mut has_uninterpreted = false;
+        let mut has_missing = false;
+        for segment in &net.segments {
+            if segment.style == 0 {
+                continue;
+            }
+            if styles.contains_key(&u64::from(segment.style)) {
+                has_uninterpreted = true;
+            } else {
+                has_missing = true;
+            }
+        }
+        if has_uninterpreted {
+            self.warn("style settings of some vector segments aren't supported; those segments use the layer's stroke");
+        }
+        if has_missing {
+            self.warn("some vector segments refer to style settings missing from the file; they use the layer's stroke");
         }
         // An open path shows its fill, which regions can't hold: the outline keeps the look.
         let fills_shown =
@@ -1556,8 +1664,6 @@ impl<'a> Mapper<'a> {
         if net.segments.is_empty() || (net.regions.is_empty() && fills_shown && o.contains_key("fillGeometry")) {
             return false;
         }
-        let styles: BTreeMap<u64, &Kv> =
-            vd.get("styleOverrideTable").map(Kv::list).unwrap_or_default().iter().filter_map(|s| Some((num(s, "styleID")? as u64, s))).collect();
         let style = |id: u32| styles.get(&u64::from(id)).copied().filter(|_| id != 0);
         let scale = |k: &str| {
             let size = v.size().map(|s| if k == "x" { s.0 } else { s.1 });
