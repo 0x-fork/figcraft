@@ -1,6 +1,6 @@
 //! Frame name labels on the canvas, driven through egui headless: an upright frame's label sits
 //! just above its top-left corner, a rotated frame's runs along its turned top edge, and pressing
-//! either label selects and drags its frame.
+//! either label selects and drags its frame; double-clicking one renames the frame or section there.
 
 use egui::{Event, Pos2, pos2, vec2};
 use figcraft_doc::NodeId;
@@ -133,4 +133,26 @@ fn escape_leaves_a_label_rename_with_the_old_name() {
     u.frame(vec![]);
     assert_eq!(name(&u, b), "Turned");
     assert!(u.app.ui.rename_label.is_none());
+}
+
+#[test]
+fn a_sections_label_renames_it_and_a_click_elsewhere_commits() {
+    let mut s = Session::new();
+    let a = id(s.execute("node.create", &json!({"type": "section", "x": 0, "y": 0, "width": 300, "height": 200, "name": "Area"})).unwrap());
+    s.execute("select.none", &json!({})).unwrap();
+    let mut u = Ui::new(s);
+    u.frame(vec![]);
+    let undo = u.app.session.ds().unwrap().history.undo.len();
+    double_click_label(&mut u, a);
+    assert_eq!(u.app.ui.rename_label.map(|r| r.id), Some(a), "a field over the section's label");
+    assert_eq!(u.app.session.selection(), vec![a]);
+    u.frame(vec![Event::Text("Zone".into())]);
+    let at = mid(&label(&u, a));
+    let away = pos2(at.x + 200.0, at.y + 500.0);
+    u.button(away, true);
+    u.button(away, false);
+    u.frame(vec![]);
+    assert_eq!(name(&u, a), "Zone", "a click on the canvas commits");
+    assert!(u.app.ui.rename_label.is_none());
+    assert_eq!(u.app.session.ds().unwrap().history.undo.len(), undo + 1, "one undo step");
 }
