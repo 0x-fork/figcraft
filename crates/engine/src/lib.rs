@@ -1566,6 +1566,8 @@ mod history_behaviour_tests;
 #[cfg(test)]
 mod html_codegen_tests;
 #[cfg(test)]
+mod huge_stroke_tests;
+#[cfg(test)]
 mod import_export_tests;
 #[cfg(test)]
 mod import_journal_tests;

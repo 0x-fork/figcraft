@@ -258,11 +258,16 @@ pub(crate) fn kjoin(j: StrokeJoin) -> Join {
     }
 }
 
-/// Plain centred stroke of `path` at `width`.
+/// The widest stroke outlined: past this the rasteriser's fixed-point maths overflows and panics,
+/// and nothing visible changes (a stroke this wide covers any canvas already).
+pub const MAX_STROKE_WIDTH: f64 = 1e6;
+
+/// Plain centred stroke of `path` at `width` (capped at [`MAX_STROKE_WIDTH`]).
 pub fn stroke_center(path: &BezPath, width: f64, props: &StrokeProps) -> BezPath {
     if !(width.is_finite() && width > 0.0 && finite(path)) {
         return BezPath::new();
     }
+    let width = width.min(MAX_STROKE_WIDTH);
     let mut style = kurbo::Stroke::new(width)
         .with_join(kjoin(props.join))
         .with_miter_limit(props.miter_limit.clamp(1.0, 100.0))
@@ -284,10 +289,17 @@ pub fn stroke_outline(path: &BezPath, props: &StrokeProps, closed_shape: bool) -
 /// [`stroke_outline`] of a shape whose stroke follows vector network `net` (`path` is its stroke
 /// path): points with a cap or join of their own draw them there.
 pub fn stroke_outline_of(path: &BezPath, props: &StrokeProps, closed_shape: bool, net: Option<&VectorNetwork>) -> BezPath {
-    let w = props.weight;
-    if !(w.is_finite() && w > 0.0) {
+    if !(props.weight.is_finite() && props.weight > 0.0) {
         return BezPath::new();
     }
+    let capped;
+    let props = if props.weight > MAX_STROKE_WIDTH {
+        capped = StrokeProps { weight: MAX_STROKE_WIDTH, ..props.clone() };
+        &capped
+    } else {
+        props
+    };
+    let w = props.weight;
     let styled = net.and_then(|n| points::Styled::new(n, props));
     // Centred at `width` (twice the weight for Inside/Outside, which clip half of it away).
     let centred = |width: f64| match (&styled, &props.brush, props.profile()) {
