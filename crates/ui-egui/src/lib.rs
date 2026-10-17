@@ -142,6 +142,8 @@ mod panel_reorder_tests;
 #[cfg(test)]
 mod panel_width_tests;
 #[cfg(test)]
+mod paste_image_tests;
+#[cfg(test)]
 mod pen_mode_tests;
 #[cfg(test)]
 mod perf_tests;
@@ -496,6 +498,15 @@ pub struct UiState {
     /// What FigCraft last put on the system clipboard: when the clipboard still holds it, a paste
     /// uses our copied layers; anything else there (an image, SVG, text) came from another app.
     pub last_copy: Option<String>,
+    /// Since the last V key release: whether its press arrived, and whether a paste event did
+    /// (`shortcuts::swallowed_paste`).
+    pub v_pressed: bool,
+    pub paste_event: bool,
+    /// The window got the focus back since the last V release.
+    pub refocused: bool,
+    /// The modifiers held, as of the last modifier change in the raw events: a paste event doesn't
+    /// carry them.
+    pub held: egui::Modifiers,
     /// When (UI clock, seconds) open documents next get an autosave checkpoint.
     pub next_autosave: f64,
     /// With auto-save on: when (UI clock, seconds) files with unsaved changes are next saved, and
@@ -589,6 +600,10 @@ impl Default for UiState {
             dev: dev_mode::DevUi::default(),
 
             last_copy: None,
+            v_pressed: false,
+            paste_event: false,
+            refocused: false,
+            held: egui::Modifiers::NONE,
             next_autosave: 0.0,
             auto_save_at: None,
             auto_saving: Vec::new(),
@@ -1289,6 +1304,7 @@ impl FigApp {
         // even if it lets go during the frame (Enter commits it), or as it began (egui drops the
         // focus on Escape before the frame, which cancels the field's edit and nothing else).
         let typing = std::mem::take(&mut self.field_focus) || a11y::field_focused(&ctx);
+        let swallowed = shortcuts::swallowed_paste(self, &ctx);
         // A dialog that closed acts first, in the window it was opened from.
         self.poll_dialog(&ctx);
         // Control requests run first so their results reflect this frame.
@@ -1404,7 +1420,7 @@ impl FigApp {
         branch_ui::keys(self, &ctx);
         live::dialog_keys(self, &ctx);
         dialogs::keys(self, &ctx);
-        shortcuts::handle(self, &ctx, typing);
+        shortcuts::handle(self, &ctx, typing, swallowed);
         menus::popups(self, &ctx);
         variable_ui::picker(self, &ctx);
         style_picker::show(self, &ctx);

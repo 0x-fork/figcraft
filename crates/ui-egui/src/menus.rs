@@ -32,17 +32,18 @@ pub const UI_COMMANDS: &[&str] = &[
 /// Run a menu item: some open dialogs or use platform services, the rest go to the engine.
 /// Paste: the system clipboard wins when it holds something newer than our own copy (an image, SVG
 /// or text from another app); otherwise our copied layers. `event_text` is the text the platform
-/// handed over with the paste event (the browser has no other way to read it).
-pub fn paste(app: &mut FigApp, event_text: Option<&str>) {
+/// handed over with the paste event (the browser has no other way to read it). `at`: the page
+/// point to paste at (Paste here); `None` pastes in the middle of the view.
+pub fn paste(app: &mut FigApp, event_text: Option<&str>, at: Option<(f64, f64)>) {
     let sys_text = app.services.clipboard_get_text().or_else(|| event_text.map(str::to_string)).filter(|t| !t.is_empty());
     let ours = sys_text.is_some() && sys_text == app.ui.last_copy;
-    let (cx, cy) = app.session.ds().map(|d| (d.view.cx, d.view.cy)).unwrap_or((0.0, 0.0));
+    let (cx, cy) = at.or_else(|| app.session.ds().ok().map(|d| (d.view.cx, d.view.cy))).unwrap_or((0.0, 0.0));
     if !ours {
         if let Some((png, w, h)) = clipboard_png(app) {
             use base64::Engine as _;
             let b64 = base64::engine::general_purpose::STANDARD.encode(png);
-            // Centred in the view.
-            let (x, y) = ((cx - f64::from(w) / 2.0).round(), (cy - f64::from(h) / 2.0).round());
+            // Centred in the view; Paste here puts its top-left at the point, as it does layers.
+            let (x, y) = if at.is_some() { (cx, cy) } else { ((cx - f64::from(w) / 2.0).round(), (cy - f64::from(h) / 2.0).round()) };
             app.run("file.import", json!({"data": b64, "name": "Pasted image.png", "x": x, "y": y}));
             return;
         }
@@ -54,14 +55,14 @@ pub fn paste(app: &mut FigApp, event_text: Option<&str>) {
             } else if figcraft_engine::looks_like_svg(&text) {
                 use base64::Engine as _;
                 let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
-                app.run("file.import", json!({"data": b64, "name": "Pasted SVG.svg", "x": cx, "y": cy, "center": true}));
+                app.run("file.import", json!({"data": b64, "name": "Pasted SVG.svg", "x": cx, "y": cy, "center": at.is_none()}));
             } else {
                 app.run("text.create", json!({"text": text, "x": cx, "y": cy}));
             }
             return;
         }
     }
-    app.run("edit.paste", json!({}));
+    app.run("edit.paste", at.map_or(json!({}), |(x, y)| json!({"x": x, "y": y})));
 }
 
 /// The system clipboard's image as PNG bytes, with its size.
@@ -143,7 +144,7 @@ pub fn invoke(app: &mut FigApp, id: &str) {
             app.services.clipboard_set_text(&text);
             app.ui.last_copy = Some(text);
         }
-        "edit.paste" => paste(app, None),
+        "edit.paste" => paste(app, None, None),
         "file.close" if app.session.ds().is_ok_and(|d| d.is_dirty() && d.branch_of.is_none()) => {
             let save = pretty_shortcut(crate::shortcuts::shortcut("file.save").unwrap_or(""));
             app.toast(trf(
@@ -553,11 +554,7 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                     if item(ui, label, sc, available(id), false, &t) {
                         if *id == "edit.paste" {
                             let p = app.to_page(pos);
-                            if app.session.clipboard.nodes.is_empty() {
-                                invoke(app, id);
-                            } else {
-                                app.run("edit.paste", json!({"x": p.x, "y": p.y}));
-                            }
+                            paste(app, None, Some((p.x, p.y)));
                         } else {
                             invoke(app, id);
                         }
