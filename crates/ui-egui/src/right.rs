@@ -1101,13 +1101,11 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
         empty,
     ) {
         if i == 1 {
-            if app.run(if fills { "fill.add" } else { "stroke.add" }, json!({"ids": ids})).is_some() {
-                if let Ok(doc) = app.session.doc() {
-                    let count = ids.first().and_then(|id| doc.node(*id)).map_or(0, |n| if fills { n.fills.len() } else { n.strokes.len() });
-                    if count > 0 {
-                        app.ui.picker = Some(crate::colorpicker::PickerTarget::Paint { fills, index: count - 1, ids: ids.clone() });
-                    }
-                }
+            // The new paint goes on top; open its picker. A mixed selection has no one index to edit.
+            if app.run(if fills { "fill.add" } else { "stroke.add" }, json!({"ids": ids})).is_some()
+                && let Some(l) = &list
+            {
+                app.ui.picker = Some(crate::colorpicker::PickerTarget::Paint { fills, index: l.len(), ids: ids.clone() });
             }
         } else {
             style_picker::open(app, ui, &ids, slot);
