@@ -86,6 +86,8 @@ mod comments_tests;
 #[cfg(test)]
 mod cursors_tests;
 #[cfg(test)]
+mod design_paste_tests;
+#[cfg(test)]
 mod dev_mode_tests;
 #[cfg(test)]
 mod duplicate_paint_tests;
@@ -93,8 +95,6 @@ mod duplicate_paint_tests;
 mod export_preview_tests;
 #[cfg(test)]
 mod field_tests;
-#[cfg(test)]
-mod figma_paste_tests;
 #[cfg(test)]
 mod frame_label_tests;
 #[cfg(test)]

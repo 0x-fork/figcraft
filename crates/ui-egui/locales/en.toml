@@ -945,7 +945,7 @@ name = "English"
 "Paste a team library link (a view link)" = "Paste a team library link (a view link)"
 "Paste here" = "Paste here"
 "Paste to replace" = "Paste to replace"
-"Pasted from Figma; {n} kinds of content were left out" = { one = "Pasted from Figma; {n} kind of content was left out", other = "Pasted from Figma; {n} kinds of content were left out" }
+"Pasted design layers; {n} kinds of content were left out" = { one = "Pasted design layers; {n} kind of content was left out", other = "Pasted design layers; {n} kinds of content were left out" }
 "Pattern" = "Pattern"
 "Pattern alignment" = "Pattern alignment"
 "Pattern scale" = "Pattern scale"

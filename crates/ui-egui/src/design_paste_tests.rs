@@ -1,4 +1,5 @@
 use figcraft_engine::Session;
+use figcraft_engine::cmd::edit::{CLIP_CLOSE, CLIP_OPEN};
 use serde_json::json;
 
 use crate::{FigApp, Services};
@@ -17,11 +18,12 @@ impl Services for Clip {
     }
 }
 
-fn figma_html() -> String {
+/// The HTML another design app puts on the clipboard for copied layers (a `.fig` canvas inside).
+fn copied_html() -> String {
     let mut s = Session::new();
-    s.execute("node.create", &json!({"type": "rectangle", "x": 0, "y": 0, "width": 40, "height": 20, "name": "From Figma"})).unwrap();
+    s.execute("node.create", &json!({"type": "rectangle", "x": 0, "y": 0, "width": 40, "height": 20, "name": "Copied layer"})).unwrap();
     let r = s.execute("file.export", &json!({"format": "fig"})).unwrap();
-    format!(r#"<span data-buffer="<!--(figma){}(/figma)-->"></span>"#, r["data"].as_str().unwrap())
+    format!(r#"<span data-buffer="<!--{CLIP_OPEN}{}{CLIP_CLOSE}-->"></span>"#, r["data"].as_str().unwrap())
 }
 
 fn selected_names(app: &FigApp) -> Vec<String> {
@@ -29,12 +31,18 @@ fn selected_names(app: &FigApp) -> Vec<String> {
     app.session.selection().iter().map(|i| doc.node(*i).unwrap().name.clone()).collect()
 }
 
+fn pasted_text(app: &FigApp) -> String {
+    let doc = app.session.doc().unwrap();
+    let id = app.session.selection()[0];
+    doc.node(id).unwrap().kind.text().unwrap().characters.clone()
+}
+
 #[test]
-fn paste_takes_layers_copied_in_figma() {
-    let html = figma_html();
+fn paste_takes_layers_copied_in_another_design_app() {
+    let html = copied_html();
     let mut app = FigApp::new(Session::new(), Box::new(Clip { html, text: Some(String::new()) }));
     crate::menus::paste(&mut app, None);
-    assert_eq!(selected_names(&app), ["From Figma"]);
+    assert_eq!(selected_names(&app), ["Copied layer"]);
 }
 
 #[test]
@@ -42,7 +50,15 @@ fn html_from_other_apps_pastes_as_before() {
     let clip = Clip { html: "<b>Hello</b>".into(), text: Some("Hello".into()) };
     let mut app = FigApp::new(Session::new(), Box::new(clip));
     crate::menus::paste(&mut app, None);
-    let doc = app.session.doc().unwrap();
-    let id = app.session.selection()[0];
-    assert_eq!(doc.node(id).unwrap().kind.text().unwrap().characters, "Hello");
+    assert_eq!(pasted_text(&app), "Hello");
+}
+
+#[test]
+fn html_that_only_mentions_the_marker_pastes_its_text() {
+    let text = format!("Markers {CLIP_OPEN} and {CLIP_CLOSE} explained");
+    let clip = Clip { html: format!("<p>{text}</p>"), text: Some(text.clone()) };
+    let mut app = FigApp::new(Session::new(), Box::new(clip));
+    crate::menus::paste(&mut app, None);
+    assert_eq!(pasted_text(&app), text);
+    assert!(app.ui.last_error.is_none(), "{:?}", app.ui.last_error);
 }

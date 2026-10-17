@@ -31,14 +31,16 @@ pub const UI_COMMANDS: &[&str] = &[
 
 /// Run a menu item: some open dialogs or use platform services, the rest go to the engine.
 /// Paste: the system clipboard wins when it holds something newer than our own copy (layers copied
-/// in Figma, an image, SVG or text from another app); otherwise our copied layers. `event_text` is
-/// the text the platform handed over with the paste event (the browser has no other way to read it).
+/// from another design app, an image, SVG or text from another app); otherwise our copied layers.
+/// `event_text` is the text the platform handed over with the paste event (the browser has no
+/// other way to read it).
 pub fn paste(app: &mut FigApp, event_text: Option<&str>) {
-    if let Some(html) = app.services.clipboard_get_html().filter(|h| h.contains("(figma)")) {
-        if let Some(r) = app.run("edit.pasteFromFigma", json!({"html": html})) {
+    // Only HTML that holds readable design data takes this path; other HTML pastes as before.
+    if let Some(html) = app.services.clipboard_get_html().filter(|h| figcraft_engine::cmd::edit::design_clipboard_buffer(h).is_some()) {
+        if let Some(r) = app.run("edit.pasteDesignLayers", json!({"html": html})) {
             let left_out = r["warnings"].as_array().map_or(0, Vec::len);
             if left_out > 0 {
-                app.toast(trn("Pasted from Figma; {n} kinds of content were left out", left_out, &[]));
+                app.toast(trn("Pasted design layers; {n} kinds of content were left out", left_out, &[]));
             }
         }
         return;
