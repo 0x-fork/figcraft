@@ -239,20 +239,20 @@ fn recent_menu(app: &mut FigApp, ui: &mut Ui, prefix: &str, key: &str, label: &s
             let name = path.file_name().map_or_else(|| p.clone(), |f| f.to_string_lossy().into_owned());
             let exists = path.exists();
             if item(ui, &name, "", exists, false, t) && exists {
-                picked = Some(("file.openRecent", json!({"path": p})));
+                picked = Some(json!({"path": p}));
             }
         }
         if !recents.is_empty() {
             separator(ui);
         }
         if item(ui, tr("Clear recent"), "", !recents.is_empty(), false, t) && !recents.is_empty() {
-            picked = Some(("file.openRecent", json!({"clear": true})));
+            picked = Some(json!({"clear": true}));
         }
         picked
     });
-    let Some((command, params)) = picked else { return false };
+    let Some(params) = picked else { return false };
     // Through the user path, so an import report shows; `file.openRecent` also drops a file that is gone.
-    if app.run_user(command, params).is_some_and(|r| r.get("index").is_some()) {
+    if app.run_user("file.openRecent", params).is_some_and(|r| r.get("index").is_some()) {
         app.ui.home = false;
     }
     true

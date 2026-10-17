@@ -5,84 +5,12 @@ use egui::RichText;
 use serde_json::{Value, json};
 
 use crate::FigApp;
-use crate::i18n::{tr, tr_noop, trn};
+use crate::i18n::{tr, trn, try_tr};
 use crate::theme::{Tokens, regular};
 
 /// A report stays small even when a damaged input produces many or very long notes.
 pub const MAX_NOTES: usize = 500;
 pub const MAX_NOTE_CHARS: usize = 2_000;
-
-/// The fixed notes of the `.fig` and REST importers, translated in the report. `.fig` imports name
-/// "the file" where REST imports name the JSON they read. Other notes (SVG's, say) are shown as they are.
-const IMPORT_NOTES: &[&str] = &[
-    tr_noop("conditional prototype actions nested too deeply were skipped"),
-    tr_noop("conditional prototype actions with conditions that can't be evaluated were skipped"),
-    tr_noop("connector labels were skipped"),
-    tr_noop("connectors whose ends can't be placed are empty"),
-    tr_noop("damaged vector geometry was skipped"),
-    tr_noop("damaged vector networks import as outlines"),
-    tr_noop("document children other than pages were skipped"),
-    tr_noop("elbowed and curved connectors without a saved path import as straight lines"),
-    tr_noop("entries without a node type were skipped"),
-    tr_noop("filled areas of a vector with their own fill use the layer's fill"),
-    tr_noop("gamepad triggers without exactly one known controller button were skipped"),
-    tr_noop("grid tracks of fixed or content size import as equal tracks"),
-    tr_noop("instance swap properties whose default component isn't in the file were skipped"),
-    tr_noop("instances inside their own main component were imported as frames"),
-    tr_noop("instances of components that aren't in the file show no layers"),
-    tr_noop("instances of components that aren't in the file were imported as frames"),
-    tr_noop("instances that would nest a component inside itself were imported as frames"),
-    tr_noop("instances without a main component were imported as empty frames"),
-    tr_noop("invalid or oversized vector networks import as outlines"),
-    tr_noop("invalid or oversized vector path data was skipped"),
-    tr_noop("key triggers without a supported key were skipped"),
-    tr_noop("key up triggers import as key presses"),
-    tr_noop("layers without a position were placed at their parent's origin"),
-    tr_noop("layers without a type were skipped"),
-    tr_noop("points with their own stroke join use the layer's"),
-    tr_noop("prototype actions of unknown types were skipped"),
-    tr_noop("prototype actions without a destination in the file were skipped"),
-    tr_noop("prototype expressions on variables that aren't in the variables JSON were skipped"),
-    tr_noop("prototype expressions with unsupported functions were skipped"),
-    tr_noop("prototype interactions without supported actions were skipped"),
-    tr_noop("prototype navigations of unknown types were skipped"),
-    tr_noop("prototype transitions of unknown types play instantly"),
-    tr_noop("prototype triggers of unknown types were skipped"),
-    tr_noop("set-variable actions on variables that aren't in the variables JSON were skipped"),
-    tr_noop("set-variable actions with values that can't be evaluated were skipped"),
-    tr_noop("set-variable actions with values that don't fit the variable were skipped"),
-    tr_noop("set-variable actions without a value were skipped"),
-    tr_noop("set-variable-mode actions on collections or modes that aren't in the variables JSON were skipped"),
-    tr_noop("some vector points refer to point settings missing from the file; they use the layer's joins and plain corners"),
-    tr_noop("some vector segments refer to style settings missing from the file; they use the layer's stroke"),
-    tr_noop("stars and polygons without point counts or geometry use the default point count"),
-    tr_noop("style settings of some vector segments aren't supported; those segments use the layer's stroke"),
-    tr_noop("text style overrides refer to missing table entries"),
-    tr_noop("the file has no pages"),
-    tr_noop("the variables JSON has no `variableCollections` (expected the local variables response) and was ignored"),
-    tr_noop("unknown component property types were skipped"),
-    tr_noop("variable aliases to variables that aren't in the variables JSON (or of another type) were skipped"),
-    tr_noop("variable bindings to properties the layer doesn't have were skipped"),
-    tr_noop("variable bindings to variables that aren't in the variables JSON (library variables) were skipped"),
-    tr_noop(
-        "variable bindings were skipped: the file JSON has no variable definitions (pass the local variables JSON as `variables`, or embed its `meta` next to the file JSON)",
-    ),
-    tr_noop("variable bindings whose variable type doesn't fit the property were skipped"),
-    tr_noop("variable collections without modes were skipped"),
-    tr_noop("variable mode lookups in prototype expressions that aren't a variable and one of its modes were skipped"),
-    tr_noop("variable modes of collections that aren't in the file were skipped"),
-    tr_noop("variable modes of collections that aren't in the variables JSON were skipped"),
-    tr_noop("variable values that don't match their type (or composed colours) were skipped"),
-    tr_noop("variables of unknown types were skipped"),
-    tr_noop("variables whose collection isn't in the variables JSON were skipped"),
-    tr_noop("variables without readable values were skipped"),
-    tr_noop("vectors without geometry are empty"),
-    tr_noop("vectors without geometry are empty (export the file JSON with geometry=paths)"),
-    tr_noop("very long text was cut to 1,048,576 characters"),
-    tr_noop("very long vector paths were skipped"),
-    tr_noop("video actions are not supported and were skipped"),
-    tr_noop("video triggers are not supported and were skipped"),
-];
 
 #[derive(Clone, Debug)]
 pub struct Report {
@@ -97,6 +25,8 @@ pub struct Report {
     /// The document the report belongs to: it goes when that document closes.
     pub uid: u64,
     pub notes: Vec<String>,
+    /// `notes` as the window shows them, in the UI language (worked out once, not every frame).
+    pub shown: Vec<String>,
     pub note_count: usize,
 }
 
@@ -136,6 +66,7 @@ impl Report {
             placed: command == "file.import" && !appended,
             uid: 0,
             notes: Vec::new(),
+            shown: Vec::new(),
             note_count: 0,
         };
         for note in warnings.iter().filter_map(Value::as_str) {
@@ -151,6 +82,7 @@ impl Report {
             if note.chars().nth(MAX_NOTE_CHARS).is_some() {
                 text.push('…');
             }
+            self.shown.push(note_text(&text));
             self.notes.push(text);
         }
     }
@@ -161,15 +93,13 @@ impl Report {
     }
 }
 
-/// `note` in the UI language when it is a known import note; a repeat count (` (×N)`) is kept. The
-/// stored notes are lower-case fragments; a known note is shown as a sentence, so its first letter
-/// is capitalised here (unknown notes are left as they are).
+/// `note` in the UI language when the catalog has it (the importers' fixed notes: `.fig` imports
+/// name "the file" where REST imports name the JSON they read); a repeat count (` (×N)`) is kept.
+/// The stored notes are lower-case fragments; a known note is shown as a sentence, so its first
+/// letter is capitalised here. Other notes (SVG's, say) are shown as they are.
 pub(crate) fn note_text(note: &str) -> String {
     let translated = |base: &str| {
-        if !IMPORT_NOTES.contains(&base) {
-            return base.to_owned();
-        }
-        let text = tr(base);
+        let Some(text) = try_tr(base) else { return base.to_owned() };
         let mut chars = text.chars();
         chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
     };
@@ -230,8 +160,8 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
             );
             ui.add_space(4.0);
             egui::ScrollArea::vertical().id_salt("import_report_notes").max_height(260.0).show(ui, |ui| {
-                for note in &report.notes {
-                    ui.label(note_text(note));
+                for note in &report.shown {
+                    ui.label(note);
                     ui.add_space(4.0);
                 }
             });

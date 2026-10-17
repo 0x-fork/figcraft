@@ -63,8 +63,8 @@ fn note_text_keeps_the_repeat_suffix_and_unknown_notes() {
 fn vector_style_notes_are_known_import_notes() {
     for note in [
         "some vector points refer to point settings missing from the file; they use the layer's joins and plain corners",
-        "some vector segments refer to style settings missing from the file; they use the layer's stroke",
-        "style settings of some vector segments aren't supported; those segments use the layer's stroke",
+        "vector points with unknown stroke joins use the layer join",
+        "point stroke joins were preserved; dashed or variable-width strokes render with the layer join",
     ] {
         let shown = note_text(note);
         assert!(shown.chars().next().is_some_and(char::is_uppercase), "{shown}");
