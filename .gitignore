@@ -8,5 +8,3 @@ plans/
 /log/
 .DS_Store
 *.profraw
-
-plugins/target/
