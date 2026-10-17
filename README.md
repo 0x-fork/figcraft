@@ -358,16 +358,3 @@ Forks and modified versions must remove them.
 ## Star history
 
 [![Star History Chart](https://api.star-history.com/svg?repos=storytold/figcraft&type=Date&legend=top-left)](https://www.star-history.com/?repos=storytold%2Ffigcraft&type=date&legend=top-left)
-
-## Linux window controls
-
-On Wayland without the `zxdg_decoration_manager_v1` protocol (including GNOME),
-FigCraft enables winit's Adwaita client-side frame with vector minimize,
-maximize/restore and close buttons. The tab strip keeps the document names;
-the frame's title-font renderer is disabled, so this does not embed Cantarell.
-X11 and Wayland compositors advertising server decorations, including KDE and
-wlroots, retain FigCraft's existing frameless tab strip and its own controls.
-
-The actual window backend is checked before requesting the frame. A failed or
-slow capability query, or a launch using only an inherited Wayland socket,
-keeps the existing custom controls. Desktop names are not used to guess capabilities.
