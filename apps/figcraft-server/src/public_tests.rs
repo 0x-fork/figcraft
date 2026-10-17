@@ -506,8 +506,21 @@ fn files_above_64_mib_fit_every_limit() {
         assert!(net.max_reading_total >= net.max_reading_block && net.max_queued_total >= net.max_queued_block);
         assert!(core.max_message_bytes > file, "open={open_publish}: {}", core.max_message_bytes);
     }
-    // A client takes the largest file any server can keep, or as much as a 32-bit target can address
-    // (computed in u64: `4097 << 20` in a 32-bit usize wraps to 1 MiB).
-    let client = NetLimits::default().max_server_message as u64;
-    assert!(client > 4096 << 20 || client == u64::from(u32::MAX), "{client}");
+    // A client takes such a file too, but caps what any server may make it buffer at 1 GiB.
+    assert_eq!(NetLimits::default().max_server_message, 1 << 30);
+}
+
+#[test]
+fn large_files_warn_the_operator() {
+    let public_url = Some("wss://figcraft.example.com/".into());
+    let warns = |open_publish, mb| {
+        Config { open_publish, max_file_mb: Some(mb), public_url: public_url.clone(), ..Config::default() }.warnings().join(
+            "
+",
+        )
+    };
+    assert!(!warns(true, 64).contains("max_file_mb"), "{}", warns(true, 64));
+    assert!(warns(true, 65).contains("open_publish is on with max_file_mb = 65"), "{}", warns(true, 65));
+    assert!(!warns(false, 1023).contains("max_file_mb"), "{}", warns(false, 1023));
+    assert!(warns(false, 1024).contains("can't be opened"), "{}", warns(false, 1024));
 }

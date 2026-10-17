@@ -135,8 +135,22 @@ impl Config {
     /// abuse contact, or one whose clients would all count as its proxy).
     pub fn warnings(&self) -> Vec<String> {
         let mut out = Vec::new();
+        let client_max = NetLimits::default().max_server_message >> 20;
+        if usize::try_from(self.file_mb()).is_ok_and(|mb| mb >= client_max) {
+            out.push(format!(
+                "max_file_mb is {}: the app opens files of up to {} MiB, so a file that large can't be opened",
+                self.file_mb(),
+                client_max - 1
+            ));
+        }
         if !self.open_publish {
             return out;
+        }
+        if self.file_mb() > 64 {
+            out.push(format!(
+                "open_publish is on with max_file_mb = {}: anyone may send messages that large, and the memory set aside for reading and queueing them grows to eight times it; keep it at 64 or less on a public server",
+                self.file_mb()
+            ));
         }
         if self.operator_contact.trim().is_empty() {
             out.push("open_publish is on but operator_contact is empty: people can't reach you about abuse; set it (and terms_url)".into());

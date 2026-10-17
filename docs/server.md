@@ -282,7 +282,7 @@ are errors):
 | `data` | `figcraft-data` | The data directory |
 | `public_url` | (the listen address) | How links name the server, when people reach it another way (a reverse proxy: `wss://figcraft.example.com/`) |
 | `max_files` | 1000 | Most files kept |
-| `max_file_mb` | 64 (16 when open) | Largest file (its snapshot), in MiB; a welcome carries the whole file, so messages may be as large as a file and 1 MiB (at least 64 MiB on a private server) |
+| `max_file_mb` | 64 (16 when open) | Largest file (its snapshot), in MiB; a welcome carries the whole file, so messages may be as large as a file and 1 MiB (at least 64 MiB on a private server). The app opens files of up to 1023 MiB; above 64 with `open_publish` the server warns |
 | `max_links` | 100 | Most share links per file |
 | `max_connections` | 512 | Most open connections |
 | `max_people` | 256 | Most people in one file at once |
