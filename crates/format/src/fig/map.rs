@@ -1729,6 +1729,7 @@ fn text_style(v: &View, size: Option<f64>) -> Obj {
     copy_num(&mut s, v, "paragraphIndent", "paragraphIndent");
     copy_str(&mut s, v, "textCase", "textCase");
     copy_str(&mut s, v, "textDecoration", "textDecoration");
+    copy_str(&mut s, v, "leadingTrim", "leadingTrim");
     let font_size = v.num("fontSize").or(size).unwrap_or(12.0);
     if let Some(ls) = v.get("letterSpacing") {
         let val = num(ls, "value").unwrap_or(0.0);
