@@ -306,7 +306,8 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     {
         app.run("page.select", json!({"id": p}));
     }
-    pages_edge(app, ui, moved.inner_rect.height());
+    // `inner_rect` is the room the list was given; a short list shrinks to its rows.
+    pages_edge(app, ui, moved.inner_rect.height().min(moved.content_size.y));
 }
 
 /// The pages list's height in a panel with `avail` below the Pages header: the height asked for

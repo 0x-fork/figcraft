@@ -391,6 +391,36 @@ fn the_line_between_pages_and_layers_drags_to_size_the_pages_list() {
 }
 
 #[test]
+fn dragging_up_the_line_under_a_short_pages_list_shrinks_it_at_once() {
+    // Five pages fit in the room the list is given: the drag starts from the rows shown, not
+    // from that room, so the line follows the pointer.
+    let mut s = Session::new();
+    let rect = id(s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap());
+    for _ in 0..4 {
+        s.execute("page.add", &json!({})).unwrap();
+    }
+    let first = s.doc().unwrap().pages[0];
+    s.execute("page.select", &json!({"id": first})).unwrap();
+    s.execute("select.none", &json!({})).unwrap();
+    let mut u = Ui::new(s);
+    let before = u.row_at(rect).y;
+    let edge = pages_edge_at(&mut u, before);
+    let at = |dy: f32| Pos2::new(150.0, edge + dy);
+    let button = |p, pressed| Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+    u.frame(vec![Event::PointerMoved(at(0.0))]);
+    u.frame(vec![button(at(0.0), true)]);
+    for k in 1..=4 {
+        u.frame(vec![Event::PointerMoved(at(-10.0 * k as f32))]);
+    }
+    u.frame(vec![button(at(-40.0), false)]);
+    for _ in 0..30 {
+        u.frame(vec![]);
+    }
+    let after = u.row_at(rect).y;
+    assert!((before - after - 40.0).abs() < 3.0, "the layers moved from {before} to {after}");
+}
+
+#[test]
 fn the_pages_list_keeps_three_rows_and_leaves_the_layers_room() {
     use crate::layers::{ROW, pages_list_height};
     // The default: 40% of the panel.
