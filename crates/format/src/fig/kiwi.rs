@@ -11,11 +11,11 @@ use std::fmt;
 /// Deepest struct/message nesting decoded.
 const MAX_DEPTH: usize = 64;
 /// Most values decoded from one message (every scalar, array element and field counts): at least
-/// [`MIN_VALUES`], and one per [`PACKED_BYTES_PER_VALUE`] bytes of the file's compressed canvas,
-/// so a large real file decodes while a small one can't expand into a huge tree, however far its
-/// chunks inflate.
+/// [`MIN_VALUES`], and one per byte of the file's compressed canvas up to [`MAX_VALUES`], so a large
+/// real file decodes while a small one can't expand into a huge tree, however far its chunks
+/// inflate. Real files hold 0.37 to 0.75 values per compressed byte.
 const MIN_VALUES: usize = 20_000_000;
-const PACKED_BYTES_PER_VALUE: usize = 2;
+const MAX_VALUES: usize = 128 << 20;
 /// Most definitions in a schema, and fields in one definition.
 const MAX_DEFS: usize = 10_000;
 const MAX_FIELDS: usize = 10_000;
@@ -302,7 +302,7 @@ impl Schema {
 
 /// Most values decoded from a file whose compressed canvas is `packed` bytes.
 pub(crate) fn value_budget(packed: usize) -> usize {
-    MIN_VALUES.max(packed / PACKED_BYTES_PER_VALUE)
+    packed.clamp(MIN_VALUES, MAX_VALUES)
 }
 
 struct Decoder<'s, 'b> {
