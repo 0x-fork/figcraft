@@ -187,8 +187,7 @@ fn text_carries_its_layout_settings_and_a_line_per_paragraph() {
     with_changes(&sample(), |of, _| {
         let t = of("TEXT");
         assert!(!flag(&t, "autoRename"));
-        assert!(flag(&t, "fontVariantCommonLigatures") && flag(&t, "fontVariantContextualLigatures"));
-        assert!(!flag(&t, "textDecorationSkipInk"), "default native text exports its actual false value");
+        assert!(flag(&t, "fontVariantCommonLigatures") && flag(&t, "fontVariantContextualLigatures") && flag(&t, "textDecorationSkipInk"));
         assert_eq!(name(&t, "fontVersion"), "");
         assert_eq!((num(&t, "textUserLayoutVersion"), num(&t, "textExplicitLayoutVersion"), num(&t, "textBidiVersion")), (5.0, 1.0, 1.0));
         assert_eq!(num(&t, "textTracking"), 0.0);
