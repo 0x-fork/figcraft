@@ -835,6 +835,11 @@ pub fn family_names() -> Vec<String> {
     db().read().unwrap_or_else(std::sync::PoisonError::into_inner).families()
 }
 
+/// The global db has `family` (embedded, loaded or indexed; any case).
+pub fn has_family(family: &str) -> bool {
+    db().read().unwrap_or_else(std::sync::PoisonError::into_inner).has_family(family)
+}
+
 /// Style names of a family in the global db.
 pub fn family_styles(family: &str) -> Vec<String> {
     db().write().unwrap_or_else(std::sync::PoisonError::into_inner).styles(family)
