@@ -1082,10 +1082,16 @@ impl Session {
         else {
             return Ok(());
         };
+        let mut merged = net.clone();
+        ops::merge_vertices(&mut merged, keep, v);
+        // A merge that would leave no segment (a 2-point line's ends dropped together) only moves.
+        if merged.segments.is_empty() {
+            return Ok(());
+        }
         // The preview starts again from the document before the drag: bring the moved layer.
         self.preview(|doc, _| {
             *doc.get_mut(id)? = moved;
-            edit(doc, id, |net| ops::merge_vertices(net, keep, v))
+            edit(doc, id, |net| *net = merged)
         })?;
         set_state(self, |e| {
             e.vertices = vec![if keep > v { keep - 1 } else { keep }];

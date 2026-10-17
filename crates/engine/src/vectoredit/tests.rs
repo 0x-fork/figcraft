@@ -300,6 +300,14 @@ fn a_point_dropped_on_another_merges_into_it() {
     ex(&mut s, "vector.edit.select", json!({"vertices": []}));
     drag(&mut s, (0.0, 100.0), (0.0, 50.0));
     assert_eq!(net(&s, id).vertices.len(), 4);
+    // A 2-point line's end dropped on its other end only moves: no segment would be left.
+    let mut s = Session::new();
+    let r = ex(&mut s, "vector.create", json!({"points": [[0, 0], [100, 0]]}));
+    let id = crate::params::id_of(&r["id"]).unwrap();
+    ex(&mut s, "vector.edit.begin", json!({"id": id}));
+    drag(&mut s, (100.0, 0.0), (2.0, 0.0));
+    let n = net(&s, id);
+    assert_eq!((n.vertices.len(), n.segments.len()), (2, 1), "still a line: {n:?}");
 }
 
 #[test]
