@@ -29,6 +29,10 @@ mod source_identity_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod text_paragraph_tests;
+#[cfg(test)]
+mod text_skip_ink_tests;
+#[cfg(test)]
 mod text_style_tests;
 
 use std::io::Read;
