@@ -155,7 +155,7 @@ pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
     props.dashes.len().hash(&mut h);
     // Points' own caps and joins (vector networks).
     let net = match &n.kind {
-        NodeKind::Vector { network } if network.has_point_styles() => Some(network),
+        NodeKind::Vector { network } if network.has_point_styles(props.join) => Some(network),
         _ => None,
     };
     for v in net.map(|n| n.vertices.as_slice()).unwrap_or_default() {

@@ -568,7 +568,7 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
     action = action.or(chosen);
     match action {
         Some(Action::Open(path)) => {
-            if app.run("file.open", json!({"path": path})).is_some() {
+            if app.run_user("file.open", json!({"path": path})).is_some() {
                 app.ui.home = false;
             }
         }
