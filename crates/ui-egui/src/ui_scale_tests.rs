@@ -73,3 +73,85 @@ fn the_interface_size_menu_has_a_name_a_value_and_a_state_for_a_screen_reader() 
     u.app.run("pref.uiScale", json!({"scale": 1.25}));
     assert_eq!(combo(&mut u), (Some("125%".to_owned()), Some(false)));
 }
+
+/// Every window size, system scale and interface size, drawn the way a real window is: the window is
+/// a fixed number of physical pixels, and its size in points is that divided by the scale drawn now
+/// (egui-winit does the same each frame), so a bigger size shrinks the window in points.
+///
+/// What a fixed size promises: whatever it draws at above 100 %, the window still holds the smallest
+/// layout the interface is made for (`ui_scale::FIT_POINTS`), and the panels leave room for a canvas.
+#[test]
+fn every_window_size_system_scale_and_interface_size_lays_out_inside_the_window() {
+    use crate::ui_scale::{FIT_POINTS, SIZES};
+    use crate::{FigApp, NoServices};
+    use egui::{Pos2, Rect, vec2};
+
+    // Window sizes in points: the main window's minimum, common laptop and desktop screens up to 5K,
+    // and a short wide strip.
+    let windows: [(f32, f32); 10] = [
+        (800.0, 500.0),
+        (1024.0, 640.0),
+        (1280.0, 720.0),
+        (1366.0, 768.0),
+        (1440.0, 900.0),
+        (1920.0, 1080.0),
+        (2560.0, 1440.0),
+        (3840.0, 2160.0),
+        (5120.0, 2880.0),
+        (2560.0, 520.0),
+    ];
+    let mut choices: Vec<Option<f64>> = vec![None];
+    choices.extend(SIZES.iter().map(|s| Some(*s)));
+
+    for native in [1.0_f32, 1.25, 1.5, 1.75, 2.0, 3.0] {
+        for (w, h) in windows {
+            let px = vec2(w * native, h * native);
+            for choice in &choices {
+                let case = format!("{w}x{h} pt at {native}x, {choice:?}");
+                let mut app = FigApp::new(Session::new(), Box::new(NoServices));
+                let scale = choice.map_or(json!("auto"), |c| json!(c));
+                assert!(app.run("pref.uiScale", json!({"scale": scale})).is_some(), "{case}");
+                let ctx = egui::Context::default();
+                let mut time = 0.0;
+                let mut seen = Vec::new();
+                for _ in 0..8 {
+                    time += 1.0 / 60.0;
+                    let ppp = ctx.pixels_per_point();
+                    let mut raw = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, px / ppp)), time: Some(time), ..Default::default() };
+                    raw.viewports.insert(ViewportId::ROOT, ViewportInfo { native_pixels_per_point: Some(native), ..Default::default() });
+                    let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+                    out.textures_delta.clear();
+                    seen.push((ctx.pixels_per_point(), ctx.content_rect().size()));
+                }
+                // It settles within a few frames and then stays put: no flicker between two sizes.
+                let (ppp, content) = seen[seen.len() - 1];
+                assert_eq!(seen[seen.len() - 2].0, ppp, "{case}: still changing");
+                assert!(ppp.is_finite() && ppp > 0.0 && content.x.is_finite() && content.y.is_finite(), "{case}: {ppp} {content:?}");
+                let plan = app.ui.ui_scale;
+                assert!((ppp - plan.drawn).abs() < 1e-3, "{case}: egui draws at {ppp}, the plan said {}", plan.drawn);
+                match choice {
+                    None => assert!((ppp - native).abs() < 1e-3 && !plan.limited, "{case}: Auto must keep the system's scale"),
+                    Some(want) => {
+                        let want = *want as f32;
+                        assert_eq!(plan.limited, ppp < want - 0.005, "{case}: limited flag");
+                        // Above 100 % the window holds the smallest layout; at or below it there is nothing more to give up.
+                        if ppp > 1.001 {
+                            assert!(
+                                content.x >= FIT_POINTS.0 - 0.5 && content.y >= FIT_POINTS.1 - 0.5,
+                                "{case}: window is {content:?} points at {ppp}"
+                            );
+                        }
+                        // It never draws bigger than asked, and only a window too small for it draws smaller.
+                        assert!(ppp <= want + 1e-3, "{case}");
+                        if !plan.limited {
+                            assert!((ppp - want).abs() < 1e-3, "{case}");
+                        }
+                    }
+                }
+                let panels = &app.inspect()["panels"];
+                let side = panels["left"].as_f64().unwrap_or(0.0) + panels["right"].as_f64().unwrap_or(0.0);
+                assert!(side < f64::from(content.x) - 100.0, "{case}: the panels ({side} pt) leave no canvas in {content:?}");
+            }
+        }
+    }
+}
