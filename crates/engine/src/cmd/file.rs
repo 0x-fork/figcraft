@@ -30,7 +30,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.open",
             "Open",
-            "{path, variables? (REST: the local variables JSON as an object, JSON text or a path; default `<name>.variables.json` or `variables.json` next to the file)} (.figcraft, .json: FigCraft or REST API file JSON, .fig (best effort), .svg, .png, .jpg …); REST and .fig imports return `warnings`",
+            "{path | data (base64) + name (tells the format; opens as a new unsaved document), variables? (REST: the local variables JSON as an object, JSON text or a path; default `<name>.variables.json` or `variables.json` next to the file)} (.figcraft, .json: FigCraft or REST API file JSON, .fig (best effort), .svg, .png, .jpg …); REST and .fig imports return `warnings`",
             false,
             open
         ),
@@ -529,6 +529,7 @@ fn load_with(
 /// innermost first so outer instances settle last.
 fn link_instances(doc: &mut Document) {
     crate::style_vars::after_load(doc);
+    super::styles::apply_paint_bindings_on_load(doc);
     let mut insts: Vec<(usize, NodeId)> =
         doc.nodes().filter(|n| matches!(n.kind, NodeKind::Instance { .. })).map(|n| (doc.ancestors(n.id).len(), n.id)).collect();
     insts.sort_by_key(|a| std::cmp::Reverse(a.0));
@@ -653,8 +654,13 @@ fn open_recent(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
-    let path = req_string("file.open", p, "path")?;
     let variables = variables_param("file.open", p)?;
+    if string(p, "path").is_none()
+        && let Some(d) = string(p, "data")
+    {
+        return open_data(s, &d, p, variables.as_ref());
+    }
+    let path = req_string("file.open", p, "path")?;
     // Already open: switch to it.
     if let Some(i) = s.docs.iter().position(|d| d.path.as_deref() == Some(path.as_str())) {
         s.active = i;
@@ -673,6 +679,21 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         });
     }
     s.docs.push(DocState::new(loaded.doc, native.then_some(path)).with_versions(loaded.versions).with_branches(loaded.branches));
+    s.active = s.docs.len() - 1;
+    let mut out = json!({"index": s.active});
+    out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
+    Ok(out)
+}
+
+/// [`open`] for a file given as base64 `data` (a file dropped without a path on disk): `name` tells
+/// the format. It opens as a new document with no path, so the first save asks where to put it.
+fn open_data(s: &mut Session, data: &str, p: &Value, variables: Option<&Value>) -> Result<Value> {
+    let name = req_string("file.open", p, "name")?;
+    let data = data.split_once(',').map_or(data, |(_, b)| b);
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data.trim()).map_err(|e| bad("file.open", e.to_string()))?;
+    let (loaded, rest) = load_with(&bytes, &name, variables, &figcraft_format::rest::no_images)?;
+    let warnings = rest || ext(&name) == "svg";
+    s.docs.push(DocState::new(loaded.doc, None).with_versions(loaded.versions).with_branches(loaded.branches));
     s.active = s.docs.len() - 1;
     let mut out = json!({"index": s.active});
     out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
@@ -1252,6 +1273,19 @@ fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
             map.insert(id, doc.alloc_id());
         }
     }
+    // Library copies a .fig import keeps (cached definitions) have no library record to follow:
+    // the layers of its store come along into the store of `doc`. Recorded copies are left to
+    // `merge_store`, which shares them with copies `doc` already has.
+    let cached: Vec<NodeId> = other
+        .library_store()
+        .and_then(|s| other.node(s))
+        .map(|s| s.children.iter().copied().filter(|root| other.libraries.import_of(*root).is_none()).collect())
+        .unwrap_or_default();
+    for root in &cached {
+        for id in other.subtree(*root) {
+            map.insert(id, doc.alloc_id());
+        }
+    }
     let mut new_pages = Vec::new();
     for pg in &other.pages {
         let Some(pn) = other.node(*pg) else { continue };
@@ -1269,6 +1303,13 @@ fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
         }
         new_pages.push(np);
     }
+    if !cached.is_empty() {
+        let store = doc.ensure_library_store();
+        for root in &cached {
+            let nodes: Vec<Node> = other.subtree(*root).into_iter().filter_map(|i| other.node(i).cloned()).collect();
+            doc.paste_nodes(&nodes, &map, *root, store, None)?;
+        }
+    }
     for new in map.values() {
         let src = doc.node(*new).and_then(|n| n.source).and_then(|s| map.get(&s).copied());
         if let (Some(src), Some(n)) = (src, doc.node_mut(*new)) {
@@ -1280,7 +1321,7 @@ fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
 }
 
 fn close(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = num(p, "index").map(|x| x as usize).unwrap_or(s.active);
+    let i = if get(p, "index").is_none() { s.active } else { req_index("file.close", p, "index")? };
     let Some(ds) = s.docs.get(i) else { return Err(bad("file.close", "no such document")) };
     // A branch tab's edits are in its main file already (which then has unsaved changes).
     if ds.branch_of.is_none() && ds.is_dirty() && !boolean(p, "force").unwrap_or(false) {
@@ -1334,6 +1375,70 @@ mod rest_import_tests {
         doc.nodes().find(|n| matches!(n.kind, NodeKind::Instance { .. })).unwrap()
     }
 
+    /// What a .fig import with a cached library component leaves: the main in the hidden store, a
+    /// visible instance of it and a layer linked to the main's layer.
+    fn cached_import() -> Document {
+        let mut doc = Document::new("Cached");
+        let page = doc.first_page().unwrap();
+        let store = doc.ensure_library_store();
+        let main = doc
+            .create(store, NodeKind::Component { description: String::new(), props: Default::default() }, "Cached main", 0.0, 0.0, 20.0, 20.0)
+            .unwrap();
+        let body = doc.create(main, NodeKind::Rectangle, "Body", 0.0, 0.0, 20.0, 20.0).unwrap();
+        let inst =
+            doc.create(page, NodeKind::Instance { component: main, props: Default::default() }, "Cached instance", 0.0, 0.0, 20.0, 20.0).unwrap();
+        let mut copy = doc.node(body).unwrap().clone();
+        copy.id = doc.alloc_id();
+        copy.parent = None;
+        copy.source = Some(body);
+        let copy_id = copy.id;
+        doc.insert(copy, inst, None).unwrap();
+        assert!(doc.is_remote(main) && doc.node(copy_id).unwrap().source == Some(body));
+        doc
+    }
+
+    /// Pasting layers that use a cached main into another document leaves the main behind, as it
+    /// does for other mains that are not published: no link points at a layer of the target.
+    #[test]
+    fn pasting_instances_of_cached_components_leaves_no_dangling_links() {
+        let src = cached_import();
+        let mut doc = Document::new("Target");
+        let page = doc.first_page().unwrap();
+        for i in 0..8 {
+            doc.create(page, NodeKind::Rectangle, &format!("Filler {i}"), 0.0, 0.0, 5.0, 5.0).unwrap();
+        }
+        let inst = src.nodes().find(|n| n.name == "Cached instance").unwrap().id;
+        let ids = src.subtree(inst);
+        let map: std::collections::BTreeMap<NodeId, NodeId> = ids.iter().map(|i| (*i, doc.alloc_id())).collect();
+        let nodes: Vec<Node> = ids.iter().filter_map(|i| src.node(*i).cloned()).collect();
+        doc.paste_nodes(&nodes, &map, inst, page, None).unwrap();
+        crate::library::adopt_pasted(&mut doc, &src, None, &map).unwrap();
+        let pasted = doc.node(map[&inst]).unwrap();
+        let NodeKind::Instance { component, .. } = pasted.kind else { panic!() };
+        assert!(!doc.contains(component), "the main stays behind: {component:?}");
+        assert!(doc.node(pasted.children[0]).unwrap().source.is_none_or(|s| !doc.contains(s)));
+    }
+
+    #[test]
+    fn appending_pages_with_cached_library_components_brings_the_components() {
+        let other = cached_import();
+        let mut doc = Document::new("Target");
+        let page = doc.first_page().unwrap();
+        // Ids of the target that would collide with the other document's store.
+        for i in 0..8 {
+            doc.create(page, NodeKind::Rectangle, &format!("Filler {i}"), 0.0, 0.0, 5.0, 5.0).unwrap();
+        }
+        append_pages(&mut doc, &other).unwrap();
+        assert!(doc.validate().is_empty(), "{:?}", doc.validate());
+        assert!(crate::components::mirror_issues(&doc).is_empty(), "{:?}", crate::components::mirror_issues(&doc));
+        let inst = doc.nodes().find(|n| n.name == "Cached instance").unwrap();
+        let NodeKind::Instance { component, .. } = inst.kind else { panic!() };
+        assert_eq!(doc.node(component).unwrap().name, "Cached main");
+        assert!(doc.is_remote(component), "the main comes along into the store");
+        let layer = doc.node(inst.children[0]).unwrap();
+        assert_eq!(layer.source, doc.node(component).unwrap().children.first().copied());
+    }
+
     #[test]
     fn rest_json_loads_with_linked_instances() {
         let bytes = serde_json::to_vec(&kit()).unwrap();
@@ -1349,6 +1454,25 @@ mod rest_import_tests {
         assert!(label.overrides.contains("characters"), "{:?}", label.overrides);
         assert!(crate::components::mirror_issues(&doc).is_empty());
         assert!(thumbnail(&doc).is_some());
+    }
+
+    #[test]
+    fn open_takes_data_and_a_name_as_a_new_unsaved_document() {
+        let mut saved = Session::new();
+        saved.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
+        let bytes = file_bytes(saved.ds().unwrap()).unwrap();
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let mut s = Session::new();
+        let recent = s.prefs.recent_files.clone();
+        let r = s.execute("file.open", &json!({"data": data, "name": "Dropped.figcraft"})).unwrap();
+        let open = s.docs.len();
+        assert_eq!(r["index"], open - 1, "a document of its own, made active");
+        assert_eq!(s.ds().unwrap().path, None, "no path to save over");
+        assert!(s.doc().unwrap().nodes().any(|n| matches!(n.kind, NodeKind::Rectangle)));
+        assert_eq!(s.prefs.recent_files, recent, "nothing on disk to remember");
+        assert!(s.execute("file.open", &json!({"data": data})).is_err(), "the name tells the format");
+        assert!(s.execute("file.open", &json!({"data": "not base64!", "name": "x.svg"})).is_err());
+        assert_eq!(s.docs.len(), open, "a refused open adds nothing");
     }
 
     #[test]
