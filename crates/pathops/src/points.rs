@@ -20,8 +20,7 @@ impl Styled {
     /// shortcut: dashed, variable-width and brush strokes keep the layer's caps and joins at every point; stroke them run by run too if asked for.
     /// Joins equal to the layer do not require styled runs; stored overrides remain unchanged.
     pub(crate) fn new(net: &VectorNetwork, props: &StrokeProps) -> Option<Styled> {
-        let styled = net.vertices.iter().any(|v| v.cap.is_some() || v.join.is_some_and(|join| join != props.join));
-        if !styled || !props.dashes.is_empty() || props.profile().is_some() || props.brush.is_some() {
+        if !net.has_point_styles(props.join) || !props.dashes.is_empty() || props.profile().is_some() || props.brush.is_some() {
             return None;
         }
         let mut net = net.rounded().unwrap_or_else(|| net.clone());
