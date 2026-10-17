@@ -60,6 +60,19 @@ fn note_text_keeps_the_repeat_suffix_and_unknown_notes() {
 }
 
 #[test]
+fn vector_style_notes_are_known_import_notes() {
+    for note in [
+        "some vector points refer to point settings missing from the file; they use the layer's joins and plain corners",
+        "some vector segments refer to style settings missing from the file; they use the layer's stroke",
+        "style settings of some vector segments aren't supported; those segments use the layer's stroke",
+    ] {
+        let shown = note_text(note);
+        assert!(shown.chars().next().is_some_and(char::is_uppercase), "{shown}");
+        assert_eq!(shown[shown.chars().next().unwrap().len_utf8()..], note[note.chars().next().unwrap().len_utf8()..]);
+    }
+}
+
+#[test]
 fn opening_a_rest_json_file_reports_what_was_skipped() {
     let path = std::env::temp_dir().join(format!("figcraft-import-report-{}.json", std::process::id()));
     let file = json!({"document": {"id": "0:0", "name": "Synthetic", "type": "DOCUMENT", "children": [
