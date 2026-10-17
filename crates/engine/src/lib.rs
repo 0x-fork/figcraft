@@ -1500,6 +1500,8 @@ mod cursor_tests;
 #[cfg(test)]
 mod dark_page_text_tests;
 #[cfg(test)]
+mod design_paste_tests;
+#[cfg(test)]
 mod dev_resources_tests;
 #[cfg(test)]
 mod devcompare_tests;
@@ -1527,8 +1529,6 @@ mod fig_export_assets_tests;
 mod fig_export_tests;
 #[cfg(test)]
 mod fig_import_tests;
-#[cfg(test)]
-mod figma_paste_tests;
 #[cfg(test)]
 mod frame_guides_tests;
 #[cfg(test)]

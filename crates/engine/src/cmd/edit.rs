@@ -26,11 +26,11 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("edit.cut", "Cut", "{ids?}", true, cut),
         spec!("edit.paste", "Paste", "{parent?, x?, y? (page coordinates of the pasted top-left)}", true, paste),
         spec!(
-            "edit.pasteFromFigma",
-            "Paste from Figma",
-            "{html (the clipboard's HTML) | data (base64 of the copied buffer), parent?, x?, y?}  layers copied in Figma, read like a .fig file (best effort, with `warnings`), pasted as edit.paste pastes",
+            "edit.pasteDesignLayers",
+            "Paste design layers",
+            "{html (the clipboard's HTML) | data (base64 of the clipboard's design data, at most 256 MB), parent?, x?, y?}  layers copied from another design app (a .fig canvas in the clipboard's HTML), read like a .fig file (best effort, with `warnings`), pasted as edit.paste pastes",
             true,
-            paste_from_figma
+            paste_design_layers
         ),
         spec!("edit.pasteOver", "Paste over selection", "{}", true, paste_over),
         spec!("edit.pasteReplace", "Paste to replace", "{ids?}", true, paste_replace),
@@ -544,35 +544,42 @@ fn copied(doc: &Document, ids: &[NodeId]) -> Copied {
     (nodes, images, bounds)
 }
 
-const MAX_FIGMA_CLIP: usize = 512 * 1024 * 1024;
+/// The markers around the copied layers in the clipboard's HTML, spelt as that format spells them.
+pub const CLIP_OPEN: &str = "(figma)";
+pub const CLIP_CLOSE: &str = "(/figma)";
+/// Largest design data read from the clipboard: the `.fig` import's own canvas cap (256 MB). Its
+/// base64 is checked first, so neither the text nor the decoded bytes can pass it.
+const MAX_CLIP_DATA: usize = 256 * 1024 * 1024;
+const MAX_CLIP_BASE64: usize = MAX_CLIP_DATA.div_ceil(3) * 4;
 
-/// Figma puts the copied layers in the HTML as `(figma)<base64>(/figma)`. This gives those bytes.
-pub fn figma_clipboard_buffer(html: &str) -> Option<Vec<u8>> {
+/// Base64 `text` (whitespace ignored, padding optional) when it fits [`MAX_CLIP_DATA`].
+fn clip_base64(text: &str) -> Option<Vec<u8>> {
     use base64::Engine as _;
-    const OPEN: &str = "(figma)";
-    let start = html.find(OPEN)? + OPEN.len();
-    let len = html.get(start..)?.find("(/figma)")?;
-    let text = html.get(start..start + len)?;
-    if text.len() > MAX_FIGMA_CLIP {
+    if text.bytes().filter(|b| !b.is_ascii_whitespace()).count() > MAX_CLIP_BASE64 {
         return None;
     }
     let b64: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
-    let bytes =
-        base64::engine::general_purpose::STANDARD.decode(&b64).or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(&b64)).ok()?;
+    base64::engine::general_purpose::STANDARD.decode(&b64).or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(&b64)).ok()
+}
+
+/// Layers copied from another design app travel in the clipboard's HTML as a `.fig` canvas in
+/// base64 between [`CLIP_OPEN`] and [`CLIP_CLOSE`]. This gives those bytes, or `None` when the HTML
+/// holds no readable design data (it may just mention the marker).
+pub fn design_clipboard_buffer(html: &str) -> Option<Vec<u8>> {
+    let start = html.find(CLIP_OPEN)? + CLIP_OPEN.len();
+    let len = html.get(start..)?.find(CLIP_CLOSE)?;
+    let bytes = clip_base64(html.get(start..start + len)?)?;
     figcraft_format::fig::is_fig(&bytes).then_some(bytes)
 }
 
-fn paste_from_figma(s: &mut Session, p: &Value) -> Result<Value> {
-    const CMD: &str = "edit.pasteFromFigma";
+fn paste_design_layers(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "edit.pasteDesignLayers";
     let bytes = match (string(p, "html"), string(p, "data")) {
-        (Some(html), _) => figma_clipboard_buffer(&html).ok_or_else(|| bad(CMD, "the HTML holds no layers copied in Figma"))?,
-        (None, Some(d)) => {
-            use base64::Engine as _;
-            base64::engine::general_purpose::STANDARD.decode(d.trim()).map_err(|e| bad(CMD, e.to_string()))?
-        }
+        (Some(html), _) => design_clipboard_buffer(&html).ok_or_else(|| bad(CMD, "the HTML holds no copied design layers"))?,
+        (None, Some(d)) => clip_base64(&d).ok_or_else(|| bad(CMD, "`data` is not base64 of at most 256 MB"))?,
         (None, None) => return Err(bad(CMD, "pass `html` or `data`")),
     };
-    let other = super::file::load_fig(&bytes, "Pasted from Figma").ok_or_else(|| bad(CMD, "the data is not layers copied in Figma"))??;
+    let other = super::file::load_fig(&bytes, "Pasted layers").ok_or_else(|| bad(CMD, "the data is not copied design layers"))??;
     let doc = std::sync::Arc::new(other.doc);
     let tops: Vec<NodeId> = doc.pages.iter().filter_map(|pg| doc.node(*pg)).flat_map(|pg| pg.children.iter().copied()).collect();
     if tops.is_empty() {
