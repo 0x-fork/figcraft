@@ -370,6 +370,24 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("pref.showDimensions", "Show dimensions on objects", "{on?}", false, |s, p| pref(s, p, |x| &mut x.show_dimensions)),
         spec!("pref.numberKeysOpacity", "Use number keys for opacity", "{on?}", false, |s, p| pref(s, p, |x| &mut x.number_keys_opacity)),
         spec!("pref.reduceMotion", "Reduce motion", "{on?}", false, |s, p| pref(s, p, |x| &mut x.reduce_motion)),
+        spec!(
+            "pref.uiScale",
+            "Interface size",
+            "{scale?: \"auto\" or a fixed size from 0.75 to 3, 1 being one screen pixel per point whatever scale the system reports, so 1.25 is 125 %, not 125 (outside the range it stops at the nearest end; omit: just read it)} → {scale: \"auto\" or the size}: how large the whole interface is drawn; auto keeps the system's scale; the canvas zoom is separate",
+            false,
+            |s, p| {
+                match get(p, "scale") {
+                    None => {}
+                    Some(Value::String(v)) if v.trim().eq_ignore_ascii_case("auto") => s.prefs.ui_scale = None,
+                    Some(_) => {
+                        let scale = req_num("pref.uiScale", p, "scale")?;
+                        s.prefs.ui_scale =
+                            Some(crate::clamp_ui_scale(scale).ok_or_else(|| bad("pref.uiScale", "`scale` must be a finite number or \"auto\""))?);
+                    }
+                }
+                Ok(json!({"scale": s.prefs.ui_scale.map_or(json!("auto"), |v| json!(v))}))
+            }
+        ),
         spec!("pref.autoSave", "Save files automatically", "{on?}", false, |s, p| pref(s, p, |x| &mut x.auto_save)),
         spec!("pref.nudge", "Nudge amount", "{small?, big?}", false, |s, p| {
             s.prefs.nudge_small = num(p, "small").unwrap_or(s.prefs.nudge_small).clamp(0.01, 1000.0);

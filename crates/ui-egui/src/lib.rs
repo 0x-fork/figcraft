@@ -61,6 +61,7 @@ pub mod tabs;
 pub mod theme;
 pub mod toolbar;
 pub mod typography;
+pub mod ui_scale;
 pub mod variable_ui;
 pub mod variables_panel;
 pub mod vector_panel;
@@ -203,6 +204,8 @@ mod style_folder_rename_tests;
 mod text_enter_tests;
 #[cfg(test)]
 mod titlebar_tests;
+#[cfg(test)]
+mod ui_scale_tests;
 #[cfg(test)]
 mod variables_export_ui_tests;
 #[cfg(test)]
@@ -459,6 +462,11 @@ pub struct UiState {
     pub menu_input: Option<dialogs::MenuInput>,
     /// File ▸ Rename: the file name in the left panel starts its inline rename on the next frame.
     pub rename_file: bool,
+    /// What the interface size drew last frame: the system's scale (what Auto shows) and whether
+    /// the window held a fixed size back. Set by [`FigApp::logic`] for the main window.
+    pub ui_scale: ui_scale::Plan,
+    /// The system's scale of the main window, as of the last frame.
+    pub ui_native: f32,
     pub shortcuts_panel: bool,
     /// The Keyboard shortcuts panel's tab and search text.
     pub shortcuts_tab: figcraft_engine::keymap::Group,
@@ -612,6 +620,8 @@ impl Default for UiState {
             preferences: false,
             menu_input: None,
             rename_file: false,
+            ui_scale: ui_scale::plan(None, None, None),
+            ui_native: 1.0,
             shortcuts_panel: false,
             shortcuts_tab: figcraft_engine::keymap::Group::Essential,
             shortcuts_query: String::new(),
@@ -1261,6 +1271,17 @@ impl FigApp {
                 theme::install_fonts(ctx, true, cjk);
             }
         }
+        // egui's zoom is for the whole app, so only the main window sets it (a window on another
+        // screen has its own system scale). The browser keeps its own zoom: Auto there.
+        if ctx.viewport_id() == egui::ViewportId::ROOT {
+            let native = ctx.native_pixels_per_point();
+            let window_px = ctx.content_rect().size() * ctx.pixels_per_point();
+            let fixed = if cfg!(target_arch = "wasm32") { None } else { self.session.prefs.ui_scale };
+            let plan = ui_scale::plan(fixed, native, Some((window_px.x, window_px.y)));
+            ctx.set_zoom_factor(plan.zoom);
+            self.ui.ui_scale = plan;
+            self.ui.ui_native = native.filter(|n| n.is_finite() && *n > 0.0).unwrap_or(1.0);
+        }
         let dark = match self.session.prefs.theme.as_str() {
             "dark" => true,
             // The active visuals were set by us last frame (possibly for a manual theme).
@@ -1679,6 +1700,8 @@ impl FigApp {
             "importReport": self.ui.import_report.as_ref().map(import_report::Report::inspect),
         });
         state["homeSearch"] = json!(self.ui.home_view.file_query);
+        // Set apart from the literal above, which is at the macro recursion limit.
+        state["uiScale"] = json!({"choice": self.session.prefs.ui_scale.map_or(json!("auto"), |v| json!(v)), "drawn": self.ui.ui_scale.drawn, "limited": self.ui.ui_scale.limited});
         state["pendingOpens"] = json!(self.ui.pending_opens.len());
         state["missingFonts"] = json!(self.ui.missing_fonts.as_ref().map(missing_fonts::Shown::inspect));
         state
