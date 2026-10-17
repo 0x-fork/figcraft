@@ -629,8 +629,11 @@ fn large_files_get_a_larger_value_budget() {
     // A real 400 000-layer file: an 83.5 MB canvas whose message unpacks to 334 MB and holds
     // 30.5 million values was refused as "too many values".
     assert!(kiwi::value_budget(83_491_232) > 30_514_899);
-    // Still bounded by the largest canvas read.
-    assert!(kiwi::value_budget(MAX_CANVAS as usize) <= 128 << 20);
+    // A public design system packs more densely: a 39.5 MB canvas holding 29.7 million values,
+    // which one value per two compressed bytes refused.
+    assert!(kiwi::value_budget(39_500_000) > 29_703_730);
+    // Never more than the ceiling, however large the canvas.
+    assert_eq!(kiwi::value_budget(MAX_CANVAS as usize), 128 << 20);
 }
 
 #[test]
