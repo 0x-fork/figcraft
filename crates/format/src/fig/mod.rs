@@ -41,6 +41,18 @@ const MAX_CHUNK: u64 = 512 * 1024 * 1024;
 const MAX_IMAGE: u64 = 256 * 1024 * 1024;
 /// Most chunks read from `canvas.fig`.
 const MAX_CHUNKS: usize = 16;
+/// Most layers imported from a `.fig` file: one per [`PACKED_BYTES_PER_LAYER`] bytes of its
+/// compressed canvas, at least the REST import's cap and at most [`MAX_FIG_NODES`]. Instances
+/// expand into a layer per layer of their component, and chunks inflate up to [`MAX_CHUNK`], so the
+/// budget follows what the file takes, not what it unpacks to: a small file can't claim a large
+/// count, however it's built; a large one gets room.
+const PACKED_BYTES_PER_LAYER: usize = 32;
+const MAX_FIG_NODES: usize = 2_000_000;
+
+/// Most layers imported from a `.fig` file whose compressed canvas is `packed` bytes.
+pub(crate) fn layer_budget(packed: usize) -> usize {
+    (packed / PACKED_BYTES_PER_LAYER).clamp(crate::rest::MAX_NODES, MAX_FIG_NODES)
+}
 
 /// Whether `bytes` look like a `.fig` file: a zip holding `canvas.fig`, or a bare canvas.
 pub fn is_fig(bytes: &[u8]) -> bool {
@@ -59,15 +71,24 @@ pub fn try_import(bytes: &[u8], name: &str) -> Option<Result<(Document, Vec<Stri
 /// Build a document from a `.fig` file. Returns it with the warnings about what was skipped or
 /// approximated. `name`: the document name when the file doesn't carry one.
 pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), FormatError> {
-    let archive = Archive::open(bytes)?;
-    let (schema, message) = decode_canvas(&archive.canvas)?;
+    let mut archive = Archive::open(bytes)?;
+    // The budgets follow the compressed canvas, which the file itself bounds (its zip member may
+    // inflate too).
+    let packed = archive.canvas.len().min(bytes.len());
+    // Each stage's input is dropped as soon as the next one is built: in a large file every one
+    // of them takes gigabytes, and holding them all at once runs out of memory.
+    let (schema, message) = decode_canvas(&std::mem::take(&mut archive.canvas))?;
     let root = schema.find("Message").ok_or_else(|| corrupt("the schema has no Message definition"))?;
-    let msg = schema.decode_message(root, &message).map_err(|e| corrupt(e.to_string()))?;
+    let msg = schema.decode_message_within(root, &message, kiwi::value_budget(packed)).map_err(|e| corrupt(e.to_string()))?;
+    let max_nodes = layer_budget(packed);
+    drop(message);
     let file_name = archive.file_name.as_deref().filter(|n| !n.trim().is_empty()).unwrap_or(name);
-    let (json, mut warnings) = map::to_rest(&msg, file_name);
-    let embedded = embedded_images(&msg);
-    let images = |r: &str| archive.image(r).or_else(|| embedded.get(r).map(|b| b.to_vec()));
-    let (doc, more) = crate::rest::import(&json, &images)?;
+    let (json, mut warnings, networks) = map::to_rest(&msg, file_name, max_nodes);
+    // The message goes before the layers are built, so the images it carries are copied out first.
+    let embedded: BTreeMap<String, Vec<u8>> = embedded_images(&msg).into_iter().map(|(hash, bytes)| (hash, bytes.to_vec())).collect();
+    drop(msg);
+    let images = |r: &str| archive.image(r).or_else(|| embedded.get(r).cloned());
+    let (doc, more) = crate::rest::import_with_networks(&json, &images, networks, max_nodes)?;
     warnings.extend(more.into_iter().filter_map(map::adapt_warning));
     Ok((doc, warnings))
 }
@@ -101,7 +122,7 @@ fn corrupt(msg: impl Into<String>) -> FormatError {
 /// `image.dataBlob` indexes the message's `blobs`. Copies written by plugins and other tools embed
 /// their images this way, and a bare canvas (what the clipboard carries) has no `images/`. The
 /// walk is iterative (no recursion on nested data) and skips blobs larger than [`MAX_IMAGE`]. The
-/// bytes stay borrowed from the message; only images a paint asks for are copied.
+/// bytes stay borrowed from the message.
 fn embedded_images<'m>(msg: &'m Kv) -> BTreeMap<String, &'m [u8]> {
     let blobs = msg.get("blobs").map(Kv::list).unwrap_or_default();
     let mut found = BTreeMap::new();
