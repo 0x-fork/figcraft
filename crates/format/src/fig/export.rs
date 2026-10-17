@@ -1502,7 +1502,6 @@ impl<'d> Exporter<'d> {
             ("textExplicitLayoutVersion", u(1)),
             ("textBidiVersion", u(1)),
             ("textTracking", fl(0.0)),
-            ("textDecorationSkipInk", b(true)),
             ("emojiImageSet", e("APPLE")),
         ]);
         if td.auto_resize == TextAutoResize::Truncate {
@@ -1565,6 +1564,20 @@ impl<'d> Exporter<'d> {
             data.extend([("characterStyleIDs", arr(ids)), ("styleOverrideTable", arr(entries))]);
         }
         let lists: Vec<ListStyle> = (0..td.paragraph_count()).map(|p| td.para_list(p).list).collect();
+        let first = |i: usize, l: &ListStyle| *l != ListStyle::None && (i == 0 || lists.get(i - 1) != Some(l));
+        // Where each line's numbered list starts counting, less one: its first item's start, on
+        // every line of the list.
+        let mut run = 0;
+        let starts: Vec<u32> = lists
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                if first(i, l) {
+                    run = td.para_list(i).start_offset;
+                }
+                if *l == ListStyle::Numbered { run } else { 0 }
+            })
+            .collect();
         // One entry per paragraph, each with every field a reader expects.
         let line = |(i, l): (usize, &ListStyle)| {
             let ty = match l {
@@ -1573,14 +1586,15 @@ impl<'d> Exporter<'d> {
                 ListStyle::Bulleted => "UNORDERED_LIST",
             };
             let listed = *l != ListStyle::None;
-            let first = listed && (i == 0 || lists.get(i - 1) != Some(l));
+            let begins = first(i, l);
+            let start = starts.get(i).copied().unwrap_or(0);
             o(vec![
                 ("lineType", e(ty)),
                 ("styleId", int(0)),
                 ("indentationLevel", int(i64::from(listed))),
                 ("sourceDirectionality", e("AUTO")),
-                ("listStartOffset", int(0)),
-                ("isFirstLineOfList", b(first)),
+                ("listStartOffset", int(i64::from(start))),
+                ("isFirstLineOfList", b(begins)),
             ])
         };
         data.push(("lines", arr(lists.iter().enumerate().map(line).collect())));
@@ -1589,7 +1603,7 @@ impl<'d> Exporter<'d> {
             self.warn("nested list levels were written as the first level");
         }
         let styles = std::iter::once(&td.style).chain(td.runs.iter().map(|r| &r.style));
-        if styles.clone().any(|st| st.decoration_look.is_some() || !st.variations.is_empty()) {
+        if styles.clone().any(|st| unsupported_decoration_look(st) || !st.variations.is_empty()) {
             self.warn("text decoration looks and variable font settings were left out");
         }
         if td.path.is_some() {
@@ -1669,7 +1683,13 @@ impl<'d> Exporter<'d> {
             let segments = net
                 .segments
                 .iter()
-                .map(|sg| network::Segment { a: sg.a, ta: (finite(sg.ta.0), finite(sg.ta.1)), b: sg.b, tb: (finite(sg.tb.0), finite(sg.tb.1)) })
+                .map(|sg| network::Segment {
+                    style: 0,
+                    a: sg.a,
+                    ta: (finite(sg.ta.0), finite(sg.ta.1)),
+                    b: sg.b,
+                    tb: (finite(sg.tb.0), finite(sg.tb.1)),
+                })
                 .collect();
             let regions = net
                 .regions
@@ -2393,6 +2413,13 @@ fn key_codes(key: &str) -> Option<(Vec<i64>, bool)> {
     Some((codes, false))
 }
 
+/// Whether the decoration look has more than skip ink, which the file can't hold.
+fn unsupported_decoration_look(st: &TextStyle) -> bool {
+    let mut look = st.look();
+    look.skip_ink = false;
+    look != Default::default()
+}
+
 /// The text style fields of a layer or of an override table entry.
 fn style_fields(st: &TextStyle, f: &mut Fields) {
     let line_height = match st.line_height {
@@ -2425,6 +2452,9 @@ fn style_fields(st: &TextStyle, f: &mut Fields) {
         ("letterSpacing", letter_spacing),
         ("textCase", e(case)),
         ("textDecoration", e(decoration)),
+        // Skip ink only shows on an underline; other text gets the files' default (on), the value
+        // the import leaves out again.
+        ("textDecorationSkipInk", b(st.look().skip_ink || st.decoration != TextDecoration::Underline)),
     ]);
     if let Some(url) = &st.link {
         f.push(("hyperlink", o(vec![("url", s(url))])));
