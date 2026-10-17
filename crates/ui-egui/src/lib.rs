@@ -139,6 +139,8 @@ mod live_tests;
 #[cfg(test)]
 mod live_text_tests;
 #[cfg(test)]
+mod menu_aim_tests;
+#[cfg(test)]
 mod menu_input_tests;
 #[cfg(test)]
 mod online_tests;
