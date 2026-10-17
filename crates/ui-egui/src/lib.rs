@@ -137,6 +137,8 @@ mod live_tests;
 #[cfg(test)]
 mod live_text_tests;
 #[cfg(test)]
+mod menu_input_tests;
+#[cfg(test)]
 mod online_tests;
 #[cfg(test)]
 mod open_issues_tests;
@@ -434,6 +436,10 @@ pub struct UiState {
     /// The tab the About window shows.
     pub about_tab: dialogs::AboutTab,
     pub preferences: bool,
+    /// A menu command that needs a value before the engine can run it.
+    pub menu_input: Option<dialogs::MenuInput>,
+    /// File ▸ Rename: the file name in the left panel starts its inline rename on the next frame.
+    pub rename_file: bool,
     pub shortcuts_panel: bool,
     /// The Keyboard shortcuts panel's tab and search text.
     pub shortcuts_tab: figcraft_engine::keymap::Group,
@@ -576,6 +582,8 @@ impl Default for UiState {
             about: false,
             about_tab: dialogs::AboutTab::About,
             preferences: false,
+            menu_input: None,
+            rename_file: false,
             shortcuts_panel: false,
             shortcuts_tab: figcraft_engine::keymap::Group::Essential,
             shortcuts_query: String::new(),
