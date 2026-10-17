@@ -66,7 +66,7 @@ const MAX_PATH_BYTES: usize = 4 << 20;
 /// Most path elements in one vector.
 const MAX_PATH_ELEMENTS: usize = 200_000;
 /// Most distinct warnings reported.
-const MAX_WARNINGS: usize = 200;
+pub(crate) const MAX_WARNINGS: usize = 200;
 /// Most shared style definitions read.
 const MAX_STYLES: usize = 10_000;
 /// Image key used for image fills without an `imageRef`.

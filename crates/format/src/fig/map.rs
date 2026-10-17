@@ -431,7 +431,8 @@ impl<'a> Mapper<'a> {
 
     fn warn(&mut self, w: impl Into<String>) {
         let w = w.into();
-        if !self.warnings.contains(&w) {
+        // Capped like the REST importer's list: some warnings name fields of the file (image filters).
+        if self.warnings.len() < crate::rest::MAX_WARNINGS && !self.warnings.contains(&w) {
             self.warnings.push(w);
         }
     }

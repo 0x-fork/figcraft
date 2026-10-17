@@ -81,3 +81,24 @@ fn image_filters_import_from_current_container_and_skip_ambiguous_data() {
     }
     assert_eq!(warnings.iter().filter(|w| w.contains("approximate renderer")).count(), 1, "deduplicated approximation warning: {warnings:?}");
 }
+
+#[test]
+fn warnings_naming_unknown_filter_fields_are_capped() {
+    // A schema can name any number of fields; each nonzero unknown one is a warning of its own.
+    let names: Vec<&'static str> = (0..300).map(|i| &*Box::leak(format!("unknown{i}").into_boxed_str())).collect();
+    let fields: Vec<String> = names.iter().map(|n| format!("float {n}")).collect();
+    let text = SCHEMA
+        .replace("message Paint ", &format!("message ManyFilters {}\nmessage Paint ", fields.join(", ")))
+        .replace("message Paint PaintType type,", "message Paint ManyFilters paintFilter, PaintType type,");
+    let filters = o(names.iter().map(|n| (*n, f(0.5))).collect());
+    let paint = o(vec![("type", e("IMAGE")), ("image", o(vec![("hash", Kv::Bytes(HASH.to_vec()))])), ("paintFilter", filters)]);
+    let nodes = vec![
+        node(0, None, "DOCUMENT", "Document", vec![]),
+        node(1, Some((0, "!")), "CANVAS", "Page", vec![]),
+        node(2, Some((1, "!")), "RECTANGLE", "Photo", vec![("size", xy(2.0, 1.0)), ("fillPaints", arr(vec![paint]))]),
+    ];
+    let bytes = zip_file(&canvas(&Schema::parse(&text).unwrap(), &o(vec![("nodeChanges", arr(nodes))])));
+    let (_, warnings) = import(&bytes, "ManyFilters.fig").unwrap();
+    let named = warnings.iter().filter(|w| w.contains("unsupported image filter")).count();
+    assert!((100..=crate::rest::MAX_WARNINGS).contains(&named), "{named} of {} warnings", warnings.len());
+}
