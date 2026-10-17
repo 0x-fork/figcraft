@@ -610,6 +610,9 @@ pub struct Prefs {
     /// The widths of the main window's left and right panels (the interface keeps them within its
     /// limits; other windows have their own while they are open).
     pub panel_widths: (f32, f32),
+    /// The height asked for the main window's pages list, dragged at its lower edge (`None`: a
+    /// share of the panel; the interface keeps it within its limits).
+    pub pages_height: Option<f32>,
     /// The interface language: a language code ("en", "es", "pt-BR") or "system" (the OS or browser
     /// language). Languages without a catalog show English.
     pub language: String,
@@ -678,6 +681,7 @@ impl Default for Prefs {
             show_dimensions: true,
             theme: "system".into(),
             panel_widths: (240.0, 240.0),
+            pages_height: None,
             language: "system".into(),
             user_name: cmd::comment::DEFAULT_AUTHOR.into(),
             reduce_motion: false,
@@ -1619,6 +1623,8 @@ mod import_export_tests;
 mod import_journal_tests;
 #[cfg(test)]
 mod inspect_behaviour_tests;
+#[cfg(test)]
+mod instance_resizing_tests;
 #[cfg(test)]
 mod interaction_rollback_tests;
 #[cfg(test)]
