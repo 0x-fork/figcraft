@@ -337,8 +337,9 @@ the address it came from and when it was last opened (for expiry).
   before the server tells anyone about the change.
 - **Compaction** writes the file's state as the next snapshot and starts an empty log, after
   `compact_after` entries or `compact_mb` of log, when the last person leaves, and when the server
-  stops. A log left over from a compaction cut short is recognised and ignored (the snapshot holds
-  it all).
+  stops. A log left over from a compaction cut short is replayed over the snapshot, which already
+  holds it all, so nothing changes. If a damaged generation field made a current log look like such
+  a leftover, its edits the snapshot lacks are recovered the same way and the damage is reported.
 - **Damage is skipped and reported, never deleted.** At startup a folder whose description, links
   or snapshot can't be read is left out and logged; a log that ends in a cut-short or damaged
   record loses only that end (logged when the file opens). Leftover temporary files are removed.
