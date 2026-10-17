@@ -33,12 +33,13 @@ enum NavigationType NAVIGATE OVERLAY
 enum TransitionType INSTANT_TRANSITION DISSOLVE SMART_ANIMATE
 enum EasingType IN_CUBIC OUT_CUBIC
 enum ConstraintType MIN CENTER MAX STRETCH SCALE
+enum LeadingTrim NONE CAP_HEIGHT
 struct GUID uint sessionID, uint localID
 struct Color float r, float g, float b, float a
 struct Vector float x, float y
 struct Matrix float m00, float m01, float m02, float m10, float m11, float m12
 struct ColorStop Color color, float position
-message Image byte[] hash, string name
+message Image byte[] hash, string name, uint dataBlob
 message AssetRef string key, string version
 message VariableID GUID guid, AssetRef assetRef
 message PropRefValue GUID defId
@@ -72,7 +73,7 @@ message Event InteractionType interactionType
 message Action GUID transitionNodeID, TransitionType transitionType, float transitionDuration, EasingType easingType, ConnectionType connectionType, NavigationType navigationType, VariableTarget targetVariable, VariableData targetVariableData, VariableSetID targetVariableSetID, GUID targetVariableModeID, ConditionalActions[] conditionalActions
 message Interaction Event event, Action[] actions
 message StartingPoint string name, string position
-message NodeChange GUID guid, ParentIndex parentIndex, NodeType type, string name, bool visible, float opacity, Vector size, Matrix transform, Paint[] fillPaints, Paint[] strokePaints, float strokeWeight, float cornerRadius, bool resizeToFit, bool internalOnly, float fontSize, FontName fontName, TextData textData, uint styleID, Path[] fillGeometry, Path[] strokeGeometry, StyleType styleType, StyleId styleIdForFill, SymbolData symbolData, PropDef[] componentPropDefs, PropAssignment[] componentPropAssignments, VariableDataMap parameterConsumptionMap, SetMode[] variableSetModes, VariableID variableSetID, ResolvedType variableResolvedType, Values variableDataValues, ModeMap variableModeBySetMap, Interaction[] prototypeInteractions, StartingPoint prototypeStartingPoint, GUIDPath guidPath, StackMode stackMode, float stackSpacing, float stackHorizontalPadding, float stackVerticalPadding, uint count, float starInnerScale, VectorData vectorData, StrokeCap strokeCap, StrokeJoin strokeJoin, VectorMirror handleMirroring, ShapeWithTextType shapeWithTextType, ConnectorEndpoint connectorStart, ConnectorEndpoint connectorEnd, StrokeCap connectorStartCap, StrokeCap connectorEndCap, ConnectorLineStyle connectorLineStyle, ConstraintType horizontalConstraint, ConstraintType verticalConstraint, NodeChange[] derivedSymbolData, string key, string version
+message NodeChange GUID guid, ParentIndex parentIndex, NodeType type, string name, bool visible, float opacity, Vector size, Matrix transform, Paint[] fillPaints, Paint[] strokePaints, float strokeWeight, float cornerRadius, bool resizeToFit, bool internalOnly, float fontSize, FontName fontName, TextData textData, uint styleID, Path[] fillGeometry, Path[] strokeGeometry, StyleType styleType, StyleId styleIdForFill, SymbolData symbolData, PropDef[] componentPropDefs, PropAssignment[] componentPropAssignments, VariableDataMap parameterConsumptionMap, SetMode[] variableSetModes, VariableID variableSetID, ResolvedType variableResolvedType, Values variableDataValues, ModeMap variableModeBySetMap, Interaction[] prototypeInteractions, StartingPoint prototypeStartingPoint, GUIDPath guidPath, StackMode stackMode, float stackSpacing, float stackHorizontalPadding, float stackVerticalPadding, uint count, float starInnerScale, VectorData vectorData, StrokeCap strokeCap, StrokeJoin strokeJoin, VectorMirror handleMirroring, ShapeWithTextType shapeWithTextType, ConnectorEndpoint connectorStart, ConnectorEndpoint connectorEnd, StrokeCap connectorStartCap, StrokeCap connectorEndCap, ConnectorLineStyle connectorLineStyle, ConstraintType horizontalConstraint, ConstraintType verticalConstraint, NodeChange[] derivedSymbolData, string key, string version, LeadingTrim leadingTrim, float[] dashPattern
 message Blob byte[] bytes
 message Message NodeChange[] nodeChanges, Blob[] blobs
 ";
@@ -283,6 +284,7 @@ fn message() -> Kv<'static> {
                 ("fillPaints", arr(vec![solid(0.0, 0.0, 0.0)])),
                 ("fontSize", f(16.0)),
                 ("fontName", font("Regular")),
+                ("leadingTrim", e("CAP_HEIGHT")),
                 ("textData", text),
             ],
         ),
@@ -646,6 +648,7 @@ fn imports_the_fixture() {
     let NodeKind::Text(t) = &named(&doc, "Title").kind else { panic!("not text") };
     assert_eq!(t.characters, "Hi there");
     assert_eq!(t.style.font_size, 16.0);
+    assert_eq!(t.leading_trim, figcraft_doc::LeadingTrim::CapHeight, "vertical trim (#466)");
     assert_eq!(t.runs.len(), 1);
     assert_eq!((t.runs[0].start, t.runs[0].end, t.runs[0].style.font_style.as_str()), (3, 6, "Bold"));
     // The group's children keep their place on the page (group at 100, 100).
@@ -708,6 +711,53 @@ fn bare_canvas_and_zlib_chunks_open() {
     assert!(import(&out, "Z").is_ok());
 }
 
+/// The fixture message with the photo's image bytes in its own blobs, as copies written by plugins
+/// and tools carry them: the PNG goes at the end of `blobs` and `image.dataBlob` points `shift`
+/// places past it (0 is the PNG itself).
+fn message_with_image_in_blobs(shift: u64) -> Kv<'static> {
+    fn point_images_at(value: &mut Kv<'static>, blob: u64) {
+        match value {
+            Kv::Object(fields) => {
+                for (name, field) in fields.iter_mut() {
+                    match field {
+                        Kv::Object(image) if *name == "image" => image.push(("dataBlob", u(blob))),
+                        _ => point_images_at(field, blob),
+                    }
+                }
+            }
+            Kv::Array(items) => items.iter_mut().for_each(|item| point_images_at(item, blob)),
+            _ => {}
+        }
+    }
+    let mut msg = message();
+    let index = {
+        let Kv::Object(fields) = &mut msg else { panic!("the message is an object") };
+        let Some((_, Kv::Array(blobs))) = fields.iter_mut().find(|(name, _)| *name == "blobs") else { panic!("no blobs") };
+        blobs.push(o(vec![("bytes", Kv::Bytes(png()))]));
+        blobs.len() as u64 - 1
+    };
+    point_images_at(&mut msg, index + shift);
+    msg
+}
+
+#[test]
+fn a_bare_canvas_reads_images_carried_in_its_blobs() {
+    // The clipboard holds a bare canvas (no `images/`); the image comes from `image.dataBlob`.
+    let c = canvas(&schema(), &message_with_image_in_blobs(0));
+    let (doc, warnings) = import(&c, "Pasted").unwrap();
+    let photo = named(&doc, "Photo");
+    let figcraft_doc::color::PaintKind::Image(img) = &photo.fills[0].kind else { panic!("not an image fill") };
+    assert_eq!(doc.images.get(&img.image).map(|i| (i.width, i.height)), Some((2, 1)));
+    assert!(!warnings.iter().any(|w| w.contains("isn't in the file")), "{warnings:?}");
+}
+
+#[test]
+fn a_data_blob_past_the_blobs_stays_a_placeholder() {
+    let c = canvas(&schema(), &message_with_image_in_blobs(5));
+    let (_, warnings) = import(&c, "Pasted").unwrap();
+    assert!(warnings.iter().any(|w| w.contains("isn't in the file")), "{warnings:?}");
+}
+
 #[test]
 fn other_files_are_not_fig() {
     assert!(try_import(b"{\"document\": {}}", "x").is_none());
@@ -757,7 +807,7 @@ fn mangled_kiwi_never_panics() {
     }
     for cut in (0..msg.len()).step_by(3) {
         if let Ok(kv) = sc.decode_message(root, &msg[..cut]) {
-            let _ = map::to_rest(&kv, "x");
+            let _ = map::to_rest(&kv, "x", crate::rest::MAX_NODES);
         }
     }
     for _ in 0..2000 {
@@ -767,8 +817,8 @@ fn mangled_kiwi_never_panics() {
             m[i] = r.next() as u8;
         }
         if let Ok(kv) = sc.decode_message(root, &m) {
-            let (json, _) = map::to_rest(&kv, "x");
-            let _ = crate::rest::import(&json, &crate::rest::no_images);
+            let (json, _, networks) = map::to_rest(&kv, "x", crate::rest::MAX_NODES);
+            let _ = crate::rest::import_with_networks(&json, &crate::rest::no_images, networks, crate::rest::MAX_NODES);
         }
         let mut sbytes = schema_bytes.clone();
         let i = (r.next() as usize) % sbytes.len();
@@ -788,6 +838,61 @@ fn mangled_kiwi_never_panics() {
         framed.extend_from_slice(&junk);
         let _ = import(&framed, "x");
     }
+}
+
+#[test]
+fn large_files_get_a_larger_value_budget() {
+    // Small files keep the fixed floor: a few bytes can't expand into a huge tree.
+    assert_eq!(kiwi::value_budget(0), 20_000_000);
+    assert_eq!(kiwi::value_budget(1 << 20), 20_000_000);
+    // A real 400 000-layer file: an 83.5 MB canvas whose message unpacks to 334 MB and holds
+    // 30.5 million values was refused as "too many values".
+    assert!(kiwi::value_budget(83_491_232) > 30_514_899);
+    // A real 194 MB design-system file (UX4G): a 39.5 MB canvas holding 29.7 million values.
+    assert!(kiwi::value_budget(39_528_420) > 29_703_730);
+    // Still bounded by the largest canvas read.
+    assert!(kiwi::value_budget(MAX_CANVAS as usize) <= 128 << 20);
+}
+
+#[test]
+fn the_layer_cap_follows_the_file_size() {
+    // A small (or broken) file keeps the REST import's cap: instances expand into a layer per
+    // layer of their component, and a few bytes mustn't claim millions of layers.
+    assert_eq!(layer_budget(0), crate::rest::MAX_NODES);
+    assert_eq!(layer_budget(1 << 20), crate::rest::MAX_NODES);
+    // A real 894 004-layer file (an 83.5 MB canvas) stopped at 200 000 and came in with 27 of
+    // its 30 pages empty.
+    assert!(layer_budget(83_491_232) > 894_004);
+    // No file gets more than the ceiling.
+    assert_eq!(layer_budget(MAX_CANVAS as usize), MAX_FIG_NODES);
+}
+
+#[test]
+fn a_small_file_that_unpacks_large_gets_no_larger_budgets() {
+    // 40 MB of zeros in a blob pack into a few KB. Keyed to the unpacked message, they lifted the
+    // layer cap above the 231 231 layers its instances expand into; keyed to the file, the cap
+    // stays at the REST import's.
+    let mut nodes = vec![node(0, None, "DOCUMENT", "D", vec![]), node(1, Some((0, "!")), "CANVAS", "P", vec![])];
+    nodes.push(node(5, Some((1, "!")), "SYMBOL", "Main", vec![("size", xy(10.0, 10.0))]));
+    nodes.extend((10..1010).map(|i| node(i, Some((5, "!")), "RECTANGLE", "R", vec![("size", xy(1.0, 1.0))])));
+    nodes.extend((2000..2230).map(|i| node(i, Some((1, "!")), "INSTANCE", "I", vec![("symbolData", o(vec![("symbolID", g(5))]))])));
+    let blob = o(vec![("bytes", Kv::Bytes(vec![0; 40 << 20]))]);
+    let file = canvas(&schema(), &o(vec![("nodeChanges", arr(nodes)), ("blobs", arr(vec![blob]))]));
+    assert!(file.len() < 1 << 20, "{} bytes", file.len());
+    let (doc, warnings) = import(&file, "x").unwrap();
+    assert!(warnings.iter().any(|w| w.contains("more than 200000 layers")), "{warnings:?}");
+    assert!(doc.node_count() <= crate::rest::MAX_NODES + 10);
+}
+
+#[test]
+fn the_mapper_stops_at_the_layer_cap_it_is_given() {
+    let mut nodes = vec![node(0, None, "DOCUMENT", "D", vec![]), node(1, Some((0, "!")), "CANVAS", "P", vec![])];
+    nodes.extend((2..12).map(|i| node(i, Some((1, "!")), "RECTANGLE", "R", vec![("size", xy(1.0, 1.0))])));
+    let msg = o(vec![("nodeChanges", arr(nodes))]);
+    let (_, warnings, _) = map::to_rest(&msg, "x", 5);
+    assert!(warnings.iter().any(|w| w.contains("more than 5 layers")), "{warnings:?}");
+    let (_, warnings, _) = map::to_rest(&msg, "x", crate::rest::MAX_NODES);
+    assert!(!warnings.iter().any(|w| w.contains("more than")), "{warnings:?}");
 }
 
 #[test]
@@ -1045,6 +1150,9 @@ mod tail;
 #[path = "image_filter_tests.rs"]
 mod image_filters;
 
+#[path = "text_list_tests.rs"]
+mod text_list;
+
 /// `.fig` files in the folder `FIGCRAFT_FIG_SAMPLES` names (none when it's unset).
 pub(super) fn samples() -> Vec<std::path::PathBuf> {
     let Some(dir) = std::env::var_os("FIGCRAFT_FIG_SAMPLES") else { return Vec::new() };
@@ -1088,7 +1196,7 @@ fn dump_samples() {
         std::fs::write(format!("{out}/{stem}.schema.txt"), txt).unwrap();
         let msg = schema.decode_message(schema.find("Message").unwrap(), &message).unwrap();
         std::fs::write(format!("{out}/{stem}.json"), serde_json::to_string_pretty(&debug_json(&msg)).unwrap()).unwrap();
-        let (rest, _) = map::to_rest(&msg, &stem);
+        let (rest, ..) = map::to_rest(&msg, &stem, super::layer_budget(message.len()));
         std::fs::write(format!("{out}/{stem}.rest.json"), serde_json::to_string_pretty(&rest).unwrap()).unwrap();
     }
 }

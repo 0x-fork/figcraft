@@ -680,7 +680,7 @@ fn normalize(n: &mut Node, ix: &dyn Fn(NodeId) -> NodeId) {
             for r in &mut td.runs {
                 px(&mut r.style);
             }
-            td.paragraphs = (0..td.paragraph_count()).map(|p| ParaList { list: td.para_list(p).list, indent: 0 }).collect();
+            td.paragraphs = (0..td.paragraph_count()).map(|p| ParaList { indent: 0, ..td.para_list(p) }).collect();
             td.list = ListStyle::None;
         }
         NodeKind::Vector { network } => {
