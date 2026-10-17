@@ -529,6 +529,7 @@ fn load_with(
 /// innermost first so outer instances settle last.
 fn link_instances(doc: &mut Document) {
     crate::style_vars::after_load(doc);
+    super::styles::apply_paint_bindings_on_load(doc);
     let mut insts: Vec<(usize, NodeId)> =
         doc.nodes().filter(|n| matches!(n.kind, NodeKind::Instance { .. })).map(|n| (doc.ancestors(n.id).len(), n.id)).collect();
     insts.sort_by_key(|a| std::cmp::Reverse(a.0));
@@ -1272,6 +1273,19 @@ fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
             map.insert(id, doc.alloc_id());
         }
     }
+    // Library copies a .fig import keeps (cached definitions) have no library record to follow:
+    // the layers of its store come along into the store of `doc`. Recorded copies are left to
+    // `merge_store`, which shares them with copies `doc` already has.
+    let cached: Vec<NodeId> = other
+        .library_store()
+        .and_then(|s| other.node(s))
+        .map(|s| s.children.iter().copied().filter(|root| other.libraries.import_of(*root).is_none()).collect())
+        .unwrap_or_default();
+    for root in &cached {
+        for id in other.subtree(*root) {
+            map.insert(id, doc.alloc_id());
+        }
+    }
     let mut new_pages = Vec::new();
     for pg in &other.pages {
         let Some(pn) = other.node(*pg) else { continue };
@@ -1288,6 +1302,13 @@ fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
             doc.paste_nodes(&nodes, &map, *c, np, None)?;
         }
         new_pages.push(np);
+    }
+    if !cached.is_empty() {
+        let store = doc.ensure_library_store();
+        for root in &cached {
+            let nodes: Vec<Node> = other.subtree(*root).into_iter().filter_map(|i| other.node(i).cloned()).collect();
+            doc.paste_nodes(&nodes, &map, *root, store, None)?;
+        }
     }
     for new in map.values() {
         let src = doc.node(*new).and_then(|n| n.source).and_then(|s| map.get(&s).copied());
@@ -1352,6 +1373,70 @@ mod rest_import_tests {
 
     fn instance(doc: &Document) -> &Node {
         doc.nodes().find(|n| matches!(n.kind, NodeKind::Instance { .. })).unwrap()
+    }
+
+    /// What a .fig import with a cached library component leaves: the main in the hidden store, a
+    /// visible instance of it and a layer linked to the main's layer.
+    fn cached_import() -> Document {
+        let mut doc = Document::new("Cached");
+        let page = doc.first_page().unwrap();
+        let store = doc.ensure_library_store();
+        let main = doc
+            .create(store, NodeKind::Component { description: String::new(), props: Default::default() }, "Cached main", 0.0, 0.0, 20.0, 20.0)
+            .unwrap();
+        let body = doc.create(main, NodeKind::Rectangle, "Body", 0.0, 0.0, 20.0, 20.0).unwrap();
+        let inst =
+            doc.create(page, NodeKind::Instance { component: main, props: Default::default() }, "Cached instance", 0.0, 0.0, 20.0, 20.0).unwrap();
+        let mut copy = doc.node(body).unwrap().clone();
+        copy.id = doc.alloc_id();
+        copy.parent = None;
+        copy.source = Some(body);
+        let copy_id = copy.id;
+        doc.insert(copy, inst, None).unwrap();
+        assert!(doc.is_remote(main) && doc.node(copy_id).unwrap().source == Some(body));
+        doc
+    }
+
+    /// Pasting layers that use a cached main into another document leaves the main behind, as it
+    /// does for other mains that are not published: no link points at a layer of the target.
+    #[test]
+    fn pasting_instances_of_cached_components_leaves_no_dangling_links() {
+        let src = cached_import();
+        let mut doc = Document::new("Target");
+        let page = doc.first_page().unwrap();
+        for i in 0..8 {
+            doc.create(page, NodeKind::Rectangle, &format!("Filler {i}"), 0.0, 0.0, 5.0, 5.0).unwrap();
+        }
+        let inst = src.nodes().find(|n| n.name == "Cached instance").unwrap().id;
+        let ids = src.subtree(inst);
+        let map: std::collections::BTreeMap<NodeId, NodeId> = ids.iter().map(|i| (*i, doc.alloc_id())).collect();
+        let nodes: Vec<Node> = ids.iter().filter_map(|i| src.node(*i).cloned()).collect();
+        doc.paste_nodes(&nodes, &map, inst, page, None).unwrap();
+        crate::library::adopt_pasted(&mut doc, &src, None, &map).unwrap();
+        let pasted = doc.node(map[&inst]).unwrap();
+        let NodeKind::Instance { component, .. } = pasted.kind else { panic!() };
+        assert!(!doc.contains(component), "the main stays behind: {component:?}");
+        assert!(doc.node(pasted.children[0]).unwrap().source.is_none_or(|s| !doc.contains(s)));
+    }
+
+    #[test]
+    fn appending_pages_with_cached_library_components_brings_the_components() {
+        let other = cached_import();
+        let mut doc = Document::new("Target");
+        let page = doc.first_page().unwrap();
+        // Ids of the target that would collide with the other document's store.
+        for i in 0..8 {
+            doc.create(page, NodeKind::Rectangle, &format!("Filler {i}"), 0.0, 0.0, 5.0, 5.0).unwrap();
+        }
+        append_pages(&mut doc, &other).unwrap();
+        assert!(doc.validate().is_empty(), "{:?}", doc.validate());
+        assert!(crate::components::mirror_issues(&doc).is_empty(), "{:?}", crate::components::mirror_issues(&doc));
+        let inst = doc.nodes().find(|n| n.name == "Cached instance").unwrap();
+        let NodeKind::Instance { component, .. } = inst.kind else { panic!() };
+        assert_eq!(doc.node(component).unwrap().name, "Cached main");
+        assert!(doc.is_remote(component), "the main comes along into the store");
+        let layer = doc.node(inst.children[0]).unwrap();
+        assert_eq!(layer.source, doc.node(component).unwrap().children.first().copied());
     }
 
     #[test]
