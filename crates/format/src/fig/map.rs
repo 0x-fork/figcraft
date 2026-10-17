@@ -1405,8 +1405,9 @@ impl<'a> Mapper<'a> {
             Some("CENTER") => "CENTER",
             Some("MAX") => "MAX",
             Some("SPACE_AROUND") => "SPACE_AROUND",
-            Some("SPACE_EVENLY") => "SPACE_EVENLY",
-            Some("SPACE_BETWEEN" | "SPACE_EVENLY_CSS") => "SPACE_BETWEEN",
+            // `SPACE_EVENLY` is the format's older name for equal gaps without edge space.
+            Some("SPACE_EVENLY_CSS") => "SPACE_EVENLY",
+            Some("SPACE_BETWEEN" | "SPACE_EVENLY") => "SPACE_BETWEEN",
             _ => "MIN",
         };
         o.insert("primaryAxisAlignItems".into(), json!(main));
