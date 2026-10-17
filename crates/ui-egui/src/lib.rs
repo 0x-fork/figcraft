@@ -706,6 +706,9 @@ pub struct FigApp {
     pending_dialog: Option<PendingDialog>,
     /// The latest UI context schedules the first poll and wakes the app when a dialog completes.
     ui_context: Option<egui::Context>,
+    /// The automation roots the app was started with: every frame and control request runs
+    /// confined to them ([`windows::guard`]).
+    pub automation_roots: Option<Arc<figcraft_engine::file_access::Roots>>,
 }
 
 /// What to do with the result of a command run in the background.
@@ -736,6 +739,7 @@ impl FigApp {
             waiting: Vec::new(),
             pending_dialog: None,
             ui_context: None,
+            automation_roots: None,
         }
     }
 
@@ -1431,6 +1435,9 @@ impl FigApp {
         }
         if !self.has_files() || self.ui.home {
             home::show(self, ui);
+            // The shortcuts panel belongs to the canvas; it doesn't hang over the home screen
+            // (cleared after the home widgets, which may have just asked for it).
+            self.ui.shortcuts_panel = false;
             dialogs::keys(self, &ctx);
             dialogs::show(self, &ctx);
             self.toast_ui(&ctx);
