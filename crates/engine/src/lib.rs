@@ -357,8 +357,8 @@ pub struct DocState {
     versions_changed: bool,
     /// A version shown in place of the document (read-only).
     pub preview: Option<VersionPreview>,
-    /// The document under a live text preview (a hovered text style or font instance, a dragged
-    /// axis slider): `doc` shows the preview until [`textpreview::end`] puts this back.
+    /// The document under a live text preview (a hovered font family or style, text style or
+    /// font instance, a dragged axis slider): `doc` shows the preview until [`textpreview::end`] puts this back.
     pub text_preview: Option<Arc<Document>>,
     /// The document as of the last version saved or restored (none yet): autosaves, restores and
     /// merges only add a checkpoint for changes since.
@@ -655,7 +655,15 @@ pub struct Prefs {
     pub home_sort: String,
     /// Which way: `"desc"` (newest first, Z to A) or `"asc"`.
     pub home_order: String,
+    /// Recently run actions (the Actions palette's Recents), newest first, at most
+    /// [`MAX_RECENT_ACTIONS`]. Entries are `command:<id>`, `plugin:<plugin>/<command>` or
+    /// `widget:<plugin>`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recent_actions: Vec<String>,
 }
+
+/// Recently run actions kept for the Actions palette (newest first).
+pub const MAX_RECENT_ACTIONS: usize = 5;
 
 impl Default for Prefs {
     fn default() -> Self {
@@ -684,6 +692,7 @@ impl Default for Prefs {
             home_views: BTreeMap::new(),
             home_sort: "modified".into(),
             home_order: "desc".into(),
+            recent_actions: Vec::new(),
         }
     }
 }

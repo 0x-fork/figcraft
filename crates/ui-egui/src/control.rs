@@ -414,7 +414,7 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                 crate::home_recents::Sort { descending: order == "desc", ..sort }.store(&mut app.session.prefs);
             }
             if let Some(h) = p.get("palette").and_then(Value::as_bool) {
-                app.ui.palette = if h { Some(String::new()) } else { None };
+                crate::menus::set_palette(&mut app.ui, h);
             }
             // true / false, or a top-level menu to open it at ("Plugins").
             match p.get("mainMenu") {
