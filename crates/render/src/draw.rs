@@ -621,11 +621,11 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize,
                 f(pix);
             }
             if n.has_visible_stroke() {
-                let props = figcraft_doc::StrokeProps { align: StrokeAlign::Center, ..n.stroke.clone() };
+                // Glyph outlines are closed: inside and outside strokes clip to them (#615).
                 for path in keys.iter().filter_map(|k| by_style.get(k)) {
-                    let s = figcraft_pathops::stroke_center(path, props.weight, &props);
+                    let s = stroke_area(n, path, true);
                     if let Some(ts) = ts_path(&s) {
-                        fill_with(pix, &ts, &n.strokes, w, h, gxf, FillRule::Winding, ctx, None);
+                        fill_with(pix, &ts, &n.strokes, w, h, gxf, stroke_rule(n, true), ctx, None);
                     }
                 }
             }
