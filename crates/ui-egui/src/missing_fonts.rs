@@ -60,14 +60,17 @@ pub fn request(app: &mut FigApp) {
 }
 
 pub fn show(app: &mut FigApp, ctx: &egui::Context) {
-    let known = figcraft_text::installed_fonts_known();
-    if let Some(uid) = app.ui.missing_fonts.as_ref().filter(|m| m.indexing && known).map(|m| m.uid) {
-        list(app, uid);
-    }
-    if !app.ui.font_checks.is_empty() && app.ui.import_report.is_none() && app.ui.missing_fonts.is_none() && known {
-        let uid = app.ui.font_checks.remove(0);
-        if list(app, uid).is_some_and(|f| f.is_empty()) {
-            app.ui.missing_fonts = None;
+    // Whether the installed fonts are indexed is asked only while a list waits for it.
+    let waiting = app.ui.missing_fonts.as_ref().filter(|m| m.indexing).map(|m| m.uid);
+    if (waiting.is_some() || !app.ui.font_checks.is_empty()) && figcraft_text::installed_fonts_known() {
+        if let Some(uid) = waiting {
+            list(app, uid);
+        }
+        if !app.ui.font_checks.is_empty() && app.ui.import_report.is_none() && app.ui.missing_fonts.is_none() {
+            let uid = app.ui.font_checks.remove(0);
+            if list(app, uid).is_some_and(|f| f.is_empty()) {
+                app.ui.missing_fonts = None;
+            }
         }
     }
     if app.ui.missing_fonts.as_ref().is_some_and(|m| !app.session.docs.iter().any(|d| d.uid == m.uid)) {
