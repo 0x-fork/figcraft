@@ -401,6 +401,8 @@ impl DocState {
             doc.repair();
         }
         doc.link_layer_text_styles();
+        cmd::styles::apply_paint_bindings_on_load(&mut doc);
+        // Initial import settlement belongs to the saved baseline, not the user's first edit.
         let page = doc.current_page.filter(|p| doc.pages.contains(p)).or_else(|| doc.first_page()).unwrap_or(NodeId(0));
         let doc = Arc::new(doc);
         let mut st = Self {
