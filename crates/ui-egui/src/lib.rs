@@ -52,6 +52,7 @@ pub mod right;
 pub mod scale_panel;
 pub mod section_panel;
 pub mod selection_colors;
+mod selection_spacing;
 pub mod shortcuts;
 pub mod shortcuts_panel;
 pub mod style_picker;
@@ -1393,6 +1394,7 @@ impl FigApp {
         // Control requests run first so their results reflect this frame.
         control::drain(self, &ctx);
         windows::requests(self, &ctx);
+        selection_spacing::sync(self, &ctx);
         // Before any widget: the navigation keys (F6, Tab, arrows, Escape) move the keyboard.
         a11y::begin(self, &ctx);
         if self.ui.title_bar == TitleBar::Custom {
@@ -1679,6 +1681,9 @@ pub(crate) fn drop_overlay(ctx: &egui::Context, rect: egui::Rect, label: &str) {
     // Hovering sends no pointer events on every platform: keep the overlay current.
     ctx.request_repaint();
 }
+
+#[cfg(test)]
+mod selection_spacing_tests;
 
 #[cfg(test)]
 mod typography_scrub_tests;
