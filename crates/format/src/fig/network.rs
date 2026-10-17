@@ -65,13 +65,9 @@ impl Reader<'_> {
     }
 }
 
-/// The network in blob `b`; `None` when it's truncated, out of range or not finite.
-#[allow(dead_code, reason = "for readers that don't need the count of styled segments")]
-pub(super) fn decode(b: &[u8]) -> Option<Network> {
-    decode_styled(b).map(|(net, _)| net)
-}
-
-/// The network in blob `b` and how many of its segments have a nonzero style id; `None` as for `decode`.
+/// The network in blob `b` and how many of its segments have a style id of their own (per-segment
+/// stroke overrides, which the document model can't hold); `None` when it's truncated, out of
+/// range or not finite.
 pub(super) fn decode_styled(b: &[u8]) -> Option<(Network, usize)> {
     let mut r = Reader { b, pos: 0 };
     let (nv, ns, nr) = (r.u32()? as usize, r.u32()? as usize, r.u32()? as usize);
