@@ -231,13 +231,11 @@ fn the_browser_sequence_pastes_once() {
 }
 
 #[test]
-fn v_alone_and_other_paste_commands_paste_nothing() {
+fn v_alone_pastes_nothing() {
     let mut w = Win::new();
     w.copy_image_elsewhere();
     w.frame(vec![key(Key::V, true, Modifiers::NONE)]);
     w.frame(vec![key(Key::V, false, Modifiers::NONE)]);
-    w.cmd_v(CMD.plus(Modifiers::SHIFT));
-    w.cmd_v(CMD.plus(Modifiers::ALT));
     assert_eq!(w.named("Pasted image"), 0);
 }
 

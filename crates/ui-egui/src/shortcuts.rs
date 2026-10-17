@@ -163,9 +163,6 @@ pub fn swallowed_paste(app: &mut FigApp, ctx: &Context) -> Swallowed {
     let mut out = Swallowed::default();
     ctx.input(|i| {
         for ev in &i.raw.events {
-            if let Event::Key { modifiers, .. } = ev {
-                ui.held = *modifiers;
-            }
             match ev {
                 Event::ModifiersChanged(m) => ui.held = *m,
                 // Without Cmd/Ctrl held it's another paste key (Shift+Insert, a Paste key).

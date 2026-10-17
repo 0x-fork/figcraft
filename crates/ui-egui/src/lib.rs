@@ -502,7 +502,8 @@ pub struct UiState {
     pub paste_event: bool,
     /// The window got the focus back since the last V release.
     pub refocused: bool,
-    /// The modifiers held, as of the last raw event that told: a paste event doesn't carry them.
+    /// The modifiers held, as of the last modifier change in the raw events: a paste event doesn't
+    /// carry them.
     pub held: egui::Modifiers,
     /// When (UI clock, seconds) open documents next get an autosave checkpoint.
     pub next_autosave: f64,
