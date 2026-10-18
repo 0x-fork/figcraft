@@ -162,19 +162,11 @@ async fn pick_file(accept: &str) -> Result<Option<(String, Vec<u8>)>, wasm_bindg
     input.set_hidden(true);
     // Some browsers (older Safari) open the picker only for an input in the page.
     body.append_child(&input)?;
-    // Settles on `change` (a file was picked) or `cancel` (the picker was closed without one).
-    let mut settle = |resolve: js_sys::Function, _reject: js_sys::Function| {
-        let done = wasm_bindgen::closure::Closure::once_into_js(move || {
-            let _ = resolve.call0(&wasm_bindgen::JsValue::NULL);
-        });
-        let _ = input.add_event_listener_with_callback("change", done.unchecked_ref());
-        let _ = input.add_event_listener_with_callback("cancel", done.unchecked_ref());
-    };
-    let closed = js_sys::Promise::new(&mut settle);
+    let (closed, picker) = PickerClosed::new(&window, input.clone());
     input.click();
     let result = wasm_bindgen_futures::JsFuture::from(closed).await;
     let file = input.files().and_then(|files| files.get(0));
-    input.remove();
+    drop(picker);
     result?;
     let Some(file) = file else { return Ok(None) };
     if file.size() > MAX_PICKED_BYTES {
@@ -182,6 +174,56 @@ async fn pick_file(accept: &str) -> Result<Option<(String, Vec<u8>)>, wasm_bindg
     }
     let buffer = wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await?;
     Ok(Some((file.name(), js_sys::Uint8Array::new(&buffer).to_vec())))
+}
+
+/// How long after the page gets focus back the file picker counts as closed (milliseconds): a
+/// picked file's `change` can come just after the focus, and must win.
+const PICKER_FOCUS_SETTLE_MS: i32 = 1_000;
+
+/// Settles a file picker's promise once: on `change` (a file was picked), on `cancel` (closed
+/// without one) or shortly after the page gets focus back, for browsers that never send `cancel`
+/// (Safari before 16.4), where the pick would otherwise stay pending and block every later one.
+/// Dropping it (also when the pick is abandoned) removes the input, the focus listener and its timer.
+struct PickerClosed {
+    window: web_sys::Window,
+    input: web_sys::HtmlInputElement,
+    _settle: wasm_bindgen::closure::Closure<dyn FnMut()>,
+    on_focus: wasm_bindgen::closure::Closure<dyn FnMut()>,
+    timer: std::rc::Rc<std::cell::Cell<Option<i32>>>,
+}
+
+impl PickerClosed {
+    fn new(window: &web_sys::Window, input: web_sys::HtmlInputElement) -> (js_sys::Promise, Self) {
+        let resolve = std::rc::Rc::new(std::cell::RefCell::new(None::<js_sys::Function>));
+        let slot = resolve.clone();
+        let closed = js_sys::Promise::new(&mut |res, _rej| *slot.borrow_mut() = Some(res));
+        let settle = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+            if let Some(res) = resolve.borrow_mut().take() {
+                let _ = res.call0(&wasm_bindgen::JsValue::NULL);
+            }
+        });
+        let _ = input.add_event_listener_with_callback("change", settle.as_ref().unchecked_ref());
+        let _ = input.add_event_listener_with_callback("cancel", settle.as_ref().unchecked_ref());
+        let timer = std::rc::Rc::new(std::cell::Cell::new(None));
+        let (w, t, f) = (window.clone(), timer.clone(), settle.as_ref().unchecked_ref::<js_sys::Function>().clone());
+        let on_focus = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+            if t.get().is_none() {
+                t.set(w.set_timeout_with_callback_and_timeout_and_arguments_0(&f, PICKER_FOCUS_SETTLE_MS).ok());
+            }
+        });
+        let _ = window.add_event_listener_with_callback("focus", on_focus.as_ref().unchecked_ref());
+        (closed, Self { window: window.clone(), input, _settle: settle, on_focus, timer })
+    }
+}
+
+impl Drop for PickerClosed {
+    fn drop(&mut self) {
+        if let Some(t) = self.timer.take() {
+            self.window.clear_timeout_with_handle(t);
+        }
+        let _ = self.window.remove_event_listener_with_callback("focus", self.on_focus.as_ref().unchecked_ref());
+        self.input.remove();
+    }
 }
 
 fn download(name: &str, bytes: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
