@@ -646,7 +646,7 @@ impl<'a> Mapper<'a> {
             targets.extend(data.and_then(|d| d.get("symbolID")).and_then(guid));
             for assignment in row.get("componentPropAssignments").map(Kv::list).unwrap_or_default() {
                 if assignment.get("defID").is_some_and(|def| self.is_instance_swap(def).is_some()) {
-                    targets.extend(assignment.get("value").and_then(|v| v.get("guidValue")).and_then(guid));
+                    targets.extend(assigned(assignment).and_then(prop_guid));
                 }
             }
             let overrides = data.and_then(|d| d.get("symbolOverrides")).map(Kv::list).unwrap_or_default();
@@ -1929,7 +1929,7 @@ impl<'a> Mapper<'a> {
                         if own_text(v) != Some(t) {
                             o.remove("characterStyleOverrides");
                             o.remove("styleOverrideTable");
-                            if let Some(tv) = val.get("textValue") {
+                            if let Some(tv) = prop_text_data(val) {
                                 let size = o.get("style").and_then(|s| s.get("fontSize")).and_then(Value::as_f64);
                                 char_styles(o, tv, size, &mut |w| self.warn(w));
                             }
@@ -1951,7 +1951,7 @@ impl<'a> Mapper<'a> {
         // An instance swap property value picks the main.
         if let Some(i) = outer
             && let Some(def) = prop_ref(v, "OVERRIDDEN_SYMBOL_ID")
-            && let Some(g) = i.props.get(&def).and_then(|p| p.get("guidValue")).and_then(guid)
+            && let Some(g) = i.props.get(&def).and_then(|p| prop_guid(p))
         {
             sym = Some(g);
         }
@@ -1964,11 +1964,11 @@ impl<'a> Mapper<'a> {
         let mut props = Obj::new();
         for a in assignments {
             let Some((name, ty)) = a.get("defID").and_then(guid).and_then(|d| self.prop_def(&d).cloned()) else { continue };
-            let val = a.get("value");
+            let val = assigned(a);
             let p = match ty {
                 "BOOL" => val.and_then(|x| x.get("boolValue")).and_then(Kv::bool).map(|b| json!({"type": "BOOLEAN", "value": b})),
                 "TEXT" => val.and_then(prop_text).map(|t| json!({"type": "TEXT", "value": t})),
-                "INSTANCE_SWAP" => val.and_then(|x| x.get("guidValue")).and_then(guid).map(|g| json!({"type": "INSTANCE_SWAP", "value": g})),
+                "INSTANCE_SWAP" => val.and_then(prop_guid).map(|g| json!({"type": "INSTANCE_SWAP", "value": g})),
                 _ => None,
             };
             if let Some(p) = p {
@@ -2045,7 +2045,7 @@ impl<'a> Mapper<'a> {
         let mut all_props: BTreeMap<String, &'a Kv<'a>> = outer.map(|i| (*i.props).clone()).unwrap_or_default();
         let mut slot_contents: BTreeMap<String, String> = outer.map(|i| (*i.slot_contents).clone()).unwrap_or_default();
         for a in assignments {
-            if let (Some(d), Some(val)) = (a.get("defID").and_then(guid), a.get("value")) {
+            if let (Some(d), Some(val)) = (a.get("defID").and_then(guid), assigned(a)) {
                 all_props.entry(d).or_insert(val);
             }
             let Some(def) = a.get("defID").and_then(guid) else { continue };
@@ -2795,7 +2795,23 @@ fn char_styles(o: &mut Obj, td: &Kv, size: Option<f64>, warn: &mut dyn FnMut(Str
 
 /// The text of a component property value.
 fn prop_text<'k>(v: &'k Kv) -> Option<&'k str> {
-    v.get("textValue").and_then(|t| t.get("characters")).and_then(Kv::str)
+    prop_text_data(v).and_then(|t| t.get("characters")).and_then(Kv::str)
+}
+
+/// The text data of a component property value: `textValue`, or `textDataValue` in the variable form.
+fn prop_text_data<'k, 's>(v: &'k Kv<'s>) -> Option<&'k Kv<'s>> {
+    v.get("textValue").or_else(|| v.get("textDataValue"))
+}
+
+/// The main an instance swap value names: `guidValue`, or `symbolIdValue` in the variable form.
+fn prop_guid(v: &Kv) -> Option<String> {
+    v.get("guidValue").and_then(guid).or_else(|| v.get("symbolIdValue")?.get("guid").and_then(guid))
+}
+
+/// The value a component property assignment sets: `value`, or the variable form `varValue` holds
+/// when `value` is empty, as current files write many booleans and instance swaps.
+fn assigned<'k, 's>(assignment: &'k Kv<'s>) -> Option<&'k Kv<'s>> {
+    assignment.get("value").filter(|v| !matches!(v, Kv::Object(fields) if fields.is_empty())).or_else(|| assignment.get("varValue")?.get("value"))
 }
 
 /// The property a layer's `field` is bound to (`parameterConsumptionMap`).
