@@ -198,7 +198,8 @@ A mouse gesture with the current tool. `kind`: `down`, `move`, `up`, `click`, `d
 (`x`, `y`) or screen pixels (`sx`, `sy`). `pressure` (0–1) is pen pressure (the Pencil records
 it); a drag's pressure goes from `pressure` to `pressureTo`. Returns `{selection, tool}`. With the Move and Scale
 tools, a press on a frame's or section's name label (as the canvas last drew it, along a rotated
-frame's top edge) selects and drags that frame.
+frame's top edge) selects and drags that frame; a double-click there renames the frame in place in
+the desktop app (the name field opens over the label).
 
 ```json
 {"id":4,"method":"engine.execute","params":{"command":"tool.set","params":{"tool":"ellipse"}}}

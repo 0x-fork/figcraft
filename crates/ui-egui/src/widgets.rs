@@ -501,7 +501,7 @@ fn text_field_in(ui: &mut Ui, id: Id, value: &str, rect: Rect, placeholder: &str
     if started {
         editing = Some(value.to_string());
         ui.memory_mut(|m| m.request_focus(id.with("te")));
-        select_all_next(ui, id.with("te"));
+        select_all_next(ui, id.with("te"), value);
     }
     let mut out = None;
     match editing {
@@ -593,21 +593,33 @@ pub fn select_all_on_focus(ui: &Ui, r: &Response, text: &str) {
         ui.data_mut(|d| d.remove::<bool>(pending));
         return;
     }
-    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), r.id) {
-        let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
-        state.cursor.set_char_range(Some(all));
-        state.store(ui.ctx(), r.id);
-        ui.ctx().request_repaint();
+    // A key typed in the frame the edit started already replaced the selection laid beforehand.
+    if r.changed() {
+        ui.data_mut(|d| d.remove::<bool>(pending));
+        return;
     }
+    select_all(ui, r.id, text);
+    ui.ctx().request_repaint();
     if !down {
         ui.data_mut(|d| d.remove::<bool>(pending));
     }
 }
 
 /// Has [`select_all_on_focus`] select all of editor `te_id` from now on (an edit that starts
-/// with the editor already focused, which then gains no focus).
-fn select_all_next(ui: &Ui, te_id: Id) {
+/// with the editor already focused, which then gains no focus). Call it before adding the editor:
+/// the text is selected at once, so a key typed in the frame the edit starts (the frame after a
+/// double-click or F2 is often the one with the first key) replaces it.
+fn select_all_next(ui: &Ui, te_id: Id, text: &str) {
     ui.data_mut(|d| d.insert_temp(select_all_id(te_id), true));
+    select_all(ui, te_id, text);
+}
+
+/// Selects all of `text` in editor `te_id`.
+fn select_all(ui: &Ui, te_id: Id, text: &str) {
+    let mut state = egui::TextEdit::load_state(ui.ctx(), te_id).unwrap_or_default();
+    let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
+    state.cursor.set_char_range(Some(all));
+    state.store(ui.ctx(), te_id);
 }
 
 fn select_all_id(te_id: Id) -> Id {
@@ -1015,7 +1027,7 @@ pub fn text_field_inline(ui: &mut Ui, id: Id, value: &str, rect: Rect, font: egu
     if started {
         buf = Some(value.to_string());
         ui.memory_mut(|m| m.request_focus(te_id));
-        select_all_next(ui, te_id);
+        select_all_next(ui, te_id, value);
     }
     match buf {
         Some(mut text) => {
