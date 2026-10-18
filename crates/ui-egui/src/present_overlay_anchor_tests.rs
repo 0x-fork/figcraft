@@ -64,12 +64,24 @@ fn a_dropdown_opens_right_under_its_button() {
     let mut u = Harness::new(s);
     u.run("proto.present", json!({"start": a}));
     u.frames(2, Vec::new);
+    let scale = |u: &mut Harness, scale: &str| {
+        u.run("proto.presentOptions", json!({"scale": scale}));
+        u.frames(2, Vec::new);
+    };
+    scale(&mut u, "fill");
+    let filled = hotspot(&u, hot);
+    scale(&mut u, "fit");
     let h = hotspot(&u, hot);
+    assert_ne!(filled, h, "fill shows the frame at another size");
     u.frame(vec![Event::PointerMoved(h.center())]);
     u.frame(vec![button(h.center(), true)]);
     u.frame(vec![button(h.center(), false)]);
     u.frames(2, Vec::new);
-    let got = hotspot(&u, item).min;
-    let want = pos2(h.min.x, h.max.y);
-    assert!((got - want).length() < 0.01, "{got:?} vs {want:?}");
+    let under = |u: &Harness, b: Rect| {
+        let (got, want) = (hotspot(u, item).min, pos2(b.min.x, b.max.y));
+        assert!((got - want).length() < 0.01, "{got:?} vs {want:?}");
+    };
+    under(&u, h);
+    scale(&mut u, "fill");
+    under(&u, filled);
 }

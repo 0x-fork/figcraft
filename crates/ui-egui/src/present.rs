@@ -67,8 +67,9 @@ pub struct OverlayState {
     pub position: OverlayPosition,
     pub close_on_outside: bool,
     pub background: Option<Color>,
-    /// Screen rect of the layer that opened it (manual position).
-    pub anchor: Option<Rect>,
+    /// The layer that opened it, in page units of the presented frame (so it follows the frame
+    /// when the window resizes or the view pans).
+    pub anchor: Option<figcraft_geom::Rect>,
     /// Manual position: the overlay's top-left from the anchor's (page units).
     pub offset: Option<[f64; 2]>,
     pub anchor_to: OverlayAnchor,
@@ -790,6 +791,13 @@ impl Presenter {
         error
     }
 
+    /// Screen rect `r` in page units of the frame shown last.
+    fn page_rect(&self, r: Option<Rect>) -> Option<figcraft_geom::Rect> {
+        let (r, (_, place, _)) = (r?, self.shown?);
+        let (a, b) = (place.page(r.min), place.page(r.max));
+        Some(figcraft_geom::Rect::new(a.x, a.y, b.x, b.y))
+    }
+
     fn perform(&mut self, a: &Action, node: NodeId, tr: Transition, dur: f64, easing: Easing, rect: Option<Rect>, now: f64) -> bool {
         self.perform_at(a, node, tr, dur, easing, rect, now, 0)
     }
@@ -833,6 +841,7 @@ impl Presenter {
                 true
             }
             Action::OpenOverlay { dest, position, close_on_outside, background, offset, anchor } => {
+                let at = self.page_rect(rect);
                 if !doc.contains(*dest) {
                     return false;
                 }
@@ -842,7 +851,7 @@ impl Presenter {
                     position: *position,
                     close_on_outside: *close_on_outside,
                     background: *background,
-                    anchor: rect,
+                    anchor: at,
                     offset: *offset,
                     anchor_to: *anchor,
                     opened: now,
@@ -854,6 +863,7 @@ impl Presenter {
                 true
             }
             Action::SwapOverlay { dest } => {
+                let at = self.page_rect(rect);
                 if !doc.contains(*dest) {
                     return false;
                 }
@@ -871,7 +881,7 @@ impl Presenter {
                         position: OverlayPosition::Center,
                         close_on_outside: true,
                         background: None,
-                        anchor: rect,
+                        anchor: at,
                         offset: None,
                         anchor_to: OverlayAnchor::Screen,
                         opened: now,
@@ -1647,7 +1657,7 @@ fn layout(p: &mut Presenter, area: Rect, chrome: Chrome) -> Option<Layout> {
         let ob = disp.world_bounds(o.id)?;
         let size = vec2((ob.width() * scale) as f32, (ob.height() * scale) as f32);
         let offset = o.offset.map(|[x, y]| vec2((x * scale) as f32, (y * scale) as f32));
-        let r = anchored_overlay_rect(o.position, o.anchor_to, screen, size, o.anchor, offset);
+        let r = anchored_overlay_rect(o.position, o.anchor_to, screen, size, o.anchor.map(|a| place.rect(a)), offset);
         Some((o.id, Place { page_min: (ob.x0, ob.y0), origin: r.min, scale }, r))
     };
     let overlays = p.overlays.iter().filter_map(place_overlay).collect();

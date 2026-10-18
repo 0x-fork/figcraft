@@ -517,6 +517,7 @@ pub enum OverlayAnchor {
 }
 
 impl OverlayAnchor {
+    /// The default (the screen places the overlay), which files and JSON leave out.
     pub fn is_screen(&self) -> bool {
         *self == OverlayAnchor::Screen
     }
