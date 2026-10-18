@@ -15,12 +15,12 @@ Simplified.
 `pref.language {language}` does the same from the CLI, MCP and the control channel.
 
 The catalogs: English (`en`, the source), and Spanish (`es`, with the Latin American overlay
-`es-419`), French (`fr`), German (`de`), Dutch (`nl`), Brazilian Portuguese (`pt-BR`), Japanese (`ja`),
-Korean (`ko`), Simplified Chinese (`zh-Hans`), Czech (`cs`) and Indonesian (`id`), machine-drafted
-and waiting for native speakers' review. Russian (`ru`, Русский) was reviewed and approved by
-VanTan; its catalog keeps Frame, Dev Mode and Smart animate as familiar tool names and uses « »
-quotes. Turkish (`tr`) was machine-drafted and reviewed by a native speaker, and Swedish (`sv`)
-translates every UI string, command label and menu wording.
+`es-419`), French (`fr`), German (`de`), Dutch (`nl`), Brazilian Portuguese (`pt-BR`), Japanese
+(`ja`), Korean (`ko`), Simplified Chinese (`zh-Hans`), Czech (`cs`), Indonesian (`id`) and Finnish
+(`fi`), machine-drafted and waiting for native speakers' review. Russian (`ru`, Русский) was
+reviewed and approved by VanTan; its catalog keeps Frame, Dev Mode and Smart animate as familiar
+tool names and uses « » quotes. Turkish (`tr`) was machine-drafted and reviewed by a native speaker,
+and Swedish (`sv`) translates every UI string, command label and menu wording.
 
 ## The catalogs
 
@@ -67,18 +67,6 @@ Chinese UI puts its Chinese face first so Han takes Simplified Chinese shapes. A
 language also needs its script in `cjk::language`.
 
 ## Adding a language
-
-Finnish (`fi`, Suomi) is an AI-assisted draft awaiting native-speaker review. Its initial catalog
-covers the current 1,729 English UI keys, 567 command labels and 31 menu-specific wordings, including
-42 plural entries. Counts use singular only for 1 (`1 taso`, `0/2/21 tasoa`); this already follows
-the default integer rule. Context keys distinguish paint `Fill` (Täyttö), sizing `Fill|sizing`
-(Täytä), stroke `Join|stroke` (Liitos) and comment status `Open|comments` (Avoin).
-The build discovers `fi.toml` automatically; `fi-FI` and `fi_FI.UTF-8` resolve to it. Product names,
-code identifiers and shortcut notation retain their identity. Like the other unreviewed catalogs,
-Finnish remains a draft outside `COMPLETE`; future English additions may fall back until translated.
-Noise modes Mono/Duo/Multi describe one, two or many grain colours and read Yksivärinen,
-Kaksivärinen and Monivärinen, independently of their stable enum names.
-The narrow glass-effect light-intensity field uses Vahvuus so its complete label fits beside the value.
 
 1. Copy `crates/ui-egui/locales/es.toml` to `<code>.toml` (a BCP 47 code: `fr`, `pt-BR`, `ja`) and
    set `[meta] name` and `status = "draft — needs native review"`.
