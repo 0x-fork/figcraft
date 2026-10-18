@@ -202,7 +202,7 @@ fn home_search_finds_known_files_and_opens_an_existing_tab() {
     let mut u = Ui::new(session);
     u.app.ui.home = true;
     u.app.ui.home_view.file_query = "  TRAIL  ".into();
-    let s = shapes(&mut u);
+    let s = settle(&mut u);
     assert!(has_text(&s, "Search results"));
     assert!(has_text(&s, "North Trail") && has_text(&s, "South Trail") && has_text(&s, "Trail Live"));
     assert!(!has_text(&s, "Other") && !has_text(&s, "test-only-secret"));
@@ -258,12 +258,62 @@ fn home_search_field_filters_as_typed_and_a_section_click_clears_it() {
     let s = shapes(&mut u);
     click(&mut u, text_center(&s, "Search files and templates"));
     u.frame(vec![Event::Text("glacier".into())]);
-    let s = shapes(&mut u);
+    let s = settle(&mut u);
     assert_eq!(u.app.ui.home_view.file_query, "glacier");
     assert!(has_text(&s, "Glacier") && !has_text(&s, "Forest"));
     click(&mut u, text_center(&s, "Recents"));
     assert!(u.app.ui.home_view.file_query.is_empty());
-    assert!(has_text(&shapes(&mut u), "Forest"));
+    let s = shapes(&mut u);
+    assert!(has_text(&s, "Forest"));
+    // Escape in the field clears the search too.
+    click(&mut u, text_center(&s, "Search files and templates"));
+    u.frame(vec![Event::Text("forest".into())]);
+    assert_eq!(u.app.ui.home_view.file_query, "forest");
+    u.frame(vec![Event::Key { key: Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
+    assert!(u.app.ui.home_view.file_query.is_empty(), "Escape clears the search");
+}
+
+/// A search keeps what the recent files it doesn't match know: back from it, their pictures and
+/// the selection are still there (nothing is read again).
+#[test]
+fn a_search_keeps_the_other_recent_files_pictures_and_the_selection() {
+    let dir = std::env::temp_dir().join(format!("figcraft-home-search-cache-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(8, 8, image::Rgba([30, 140, 210, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let paths: Vec<String> = ["Alpine", "Basin"]
+        .into_iter()
+        .map(|name| {
+            let path = dir.join(format!("{name}.figcraft"));
+            std::fs::write(&path, figcraft_format::save_bytes(&figcraft_doc::Document::new(name), Some(&png)).unwrap()).unwrap();
+            path.to_string_lossy().into_owned()
+        })
+        .collect();
+    let mut session = Session::empty();
+    session.prefs.recent_files = paths.clone();
+    let mut u = Ui::new(session);
+    let pictures = |u: &mut Ui| -> Vec<serde_json::Value> {
+        u.app.inspect()["homeRecents"]["files"].as_array().unwrap().iter().map(|f| f["picture"].clone()).collect()
+    };
+    for _ in 0..400 {
+        u.frame(vec![]);
+        if pictures(&mut u).iter().all(|p| p == "picture") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(pictures(&mut u).iter().all(|p| p == "picture"), "both pictures are in");
+    u.app.ui.home_view.recents.selected = Some(paths[1].clone());
+    u.app.ui.home_view.file_query = "alpine".into();
+    let s = shapes(&mut u);
+    assert!(has_text(&s, "Alpine") && !has_text(&s, "Basin"));
+    u.app.ui.home_view.file_query.clear();
+    u.frame(vec![]);
+    assert!(pictures(&mut u).iter().all(|p| p == "picture"), "no picture is read again");
+    assert_eq!(u.app.ui.home_view.recents.selected.as_deref(), Some(paths[1].as_str()), "the selection stays");
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

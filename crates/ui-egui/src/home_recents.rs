@@ -504,12 +504,6 @@ impl Recents {
         paths.iter().map(|p| Shown::new(p, self.files.get(p).and_then(|k| k.stat))).collect()
     }
 
-    /// Share the Recent files thumbnail cache with Home search. The existing loader keeps file
-    /// reads off the UI thread and only requests pictures for cards that are on screen.
-    pub(crate) fn prepare_search(&mut self, ctx: &egui::Context, paths: &[String], time: f64) {
-        self.refresh(ctx, paths, time);
-    }
-
     /// For `ui.inspect`: each file listed, whether it is there and whether its picture is in.
     pub fn inspect(&self, prefs: &Prefs) -> Value {
         let paths: Vec<String> = listed(&prefs.recent_files).take(SHOWN).cloned().collect();
@@ -560,16 +554,27 @@ enum Action {
     View(View),
 }
 
-/// The Recent files heading, its toolbar and the files as cards or a table.
-pub fn section(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
-    let paths: Vec<String> = listed(&app.session.prefs.recent_files).take(SHOWN).cloned().collect();
+/// The Recent files heading, its toolbar and the files as cards or a table. With a `query` (lower
+/// case, from the Home search) only the files not open whose path has it, from every recent file;
+/// nothing at all when none has it. How many files are shown.
+pub fn section(app: &mut FigApp, ui: &mut Ui, t: &Tokens, query: &str) -> usize {
+    let searching = !query.is_empty();
+    // A search reaches every recent file; the files shown without one stay known through it.
+    let paths: Vec<String> = listed(&app.session.prefs.recent_files).take(if searching { usize::MAX } else { SHOWN }).cloned().collect();
     let time = ui.input(|i| i.time);
     let now = figcraft_engine::cmd::comment::now_secs();
     let reduce_motion = app.reduce_motion();
     let (view, sort) = (View::of(&app.session.prefs), Sort::of(&app.session.prefs));
     let state = &mut app.ui.home_view.recents;
     state.refresh(ui.ctx(), &paths, time);
-    let files = sorted(state.shown(&paths), sort);
+    let mut files = sorted(state.shown(&paths), sort);
+    if searching {
+        let docs = &app.session.docs;
+        files.retain(|f| f.path.to_lowercase().contains(query) && !docs.iter().any(|d| d.path.as_deref() == Some(f.path.as_str())));
+        if files.is_empty() {
+            return 0;
+        }
+    }
     let with_created = files.iter().any(|f| f.stat.is_some_and(|s| s.created.is_some()));
     let mut action = toolbar(ui, t, view, sort, with_created);
     ui.add_space(16.0);
@@ -599,6 +604,7 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
         }
         None => {}
     }
+    files.len()
 }
 
 /// "Recent files", and at the right the sort menu and the grid and list buttons.
@@ -730,8 +736,7 @@ fn arrows(ui: &Ui, recents: &mut Recents, files: &[Shown], across: usize, down: 
 /// The square file-type mark before a name.
 fn file_icon(ui: &Ui, t: &Tokens, center: egui::Pos2, path: &str) {
     let r = Rect::from_center_size(center, vec2(16.0, 16.0));
-    let kind = if path.is_empty() { FileKind::FigCraft } else { FileKind::of(Path::new(path)) };
-    match kind {
+    match FileKind::of(Path::new(path)) {
         FileKind::FigCraft | FileKind::Fig => {
             ui.painter().rect_filled(r, CornerRadius::same(4), ACCENT);
             icons::paint(ui.painter(), r.shrink(3.0), Icon::Logo, Color32::WHITE);
@@ -746,49 +751,6 @@ fn file_icon(ui: &Ui, t: &Tokens, center: egui::Pos2, path: &str) {
             icons::paint(ui.painter(), r.shrink(2.0), glyph, t.icon_secondary);
         }
     }
-}
-
-/// A file found by the Home sidebar search. A tab without a disk path has no stored preview yet.
-pub(crate) struct SearchHit {
-    pub key: String,
-    pub path: Option<String>,
-    pub name: String,
-}
-
-/// Search results use the same preview, file-type icon and footer as Recent files. A single click
-/// still opens the result, as it did before the visual change.
-pub(crate) fn search_grid(ui: &mut Ui, t: &Tokens, recents: &mut Recents, files: &[SearchHit], reduce_motion: bool) -> Option<usize> {
-    let (columns, card_w) = grid_columns(ui.available_width());
-    let (picture_h, card_h) = card_heights(card_w);
-    let (time, now) = (ui.input(|i| i.time), figcraft_engine::cmd::comment::now_secs());
-    let mut chosen = None;
-    let mut fading = false;
-    for (row_index, row) in files.chunks(columns).enumerate() {
-        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), card_h), Sense::hover());
-        for (column, file) in row.iter().enumerate() {
-            let rect = Rect::from_min_size(pos2(r.min.x + column as f32 * (card_w + GAP), r.min.y), vec2(card_w, card_h));
-            let resp = ui.interact(rect, ui.id().with(("search_file_card", &file.key)), Sense::click());
-            let stat = file.path.as_deref().and_then(|path| recents.files.get(path).and_then(|k| k.stat));
-            let shown = Shown { path: file.path.clone().unwrap_or_default(), name: file.name.clone(), stat };
-            a11y::named_button(&resp, &spoken(&shown, now));
-            let resp = if let Some(path) = file.path.as_deref() { resp.on_hover_text(path) } else { resp };
-            let visible = ui.is_rect_visible(rect);
-            let picture = file.path.as_deref().and_then(|path| recents.picture(path, visible, time));
-            if visible {
-                let alpha = picture.as_ref().map_or(1.0, |(_, _, a)| if reduce_motion { 1.0 } else { *a });
-                fading |= alpha < 1.0;
-                card(ui, t, rect, picture_h, &resp, false, &shown, stat.unwrap_or_default(), picture, alpha, now);
-            }
-            if resp.clicked() {
-                chosen = Some(row_index * columns + column);
-            }
-        }
-        ui.add_space(GAP);
-    }
-    if fading {
-        ui.ctx().request_repaint();
-    }
-    chosen
 }
 
 /// The name a card or row has for screen readers: "name, Edited 3 hours ago".
