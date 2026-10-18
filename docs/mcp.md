@@ -972,10 +972,11 @@ branches). Driven with `run_command`:
   name, property, branch, main, deletedBy?}]}`. `layers` are the changed layers with their property
   changes formatted like Inspect (`fill #2563EB → #DC2626`); `document` lists styles, variables,
   comments and file settings. A conflict is the same property changed on both sides to different
-  values (key `<layer id>/<property>`, e.g. `4/fills`; fills, strokes and effects compare item by
-  item, so changing different items of one list on each side, or adding items at its end on one
-  side, merges without a conflict; a layer's parent and position are one
-  property, `parent`), a layer deleted on one side while the other edited it or what's inside it
+  values (key `<layer id>/<property>`, e.g. `4/fills`; fills, strokes, effects, layout grids,
+  export settings, guides, prototype interactions, annotations and Dev Mode resources compare item
+  by item, so changing different items of one list on each side, or adding items at its end on one
+  side, merges without a conflict; other lists, such as code links, compare whole; a layer's parent
+  and position are one property, `parent`), a layer deleted on one side while the other edited it or what's inside it
   (`<layer id>/layer`, with `deletedBy`), or a document-level entry or setting changed on both sides
   (`style/<id>`, `variable/<id>`, `comment/<id>`, `doc/<property>`…).
 - `branch.merge {id?, resolutions?}` merges the branch into the main file as one undo step,
