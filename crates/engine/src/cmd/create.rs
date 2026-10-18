@@ -170,8 +170,13 @@ pub fn parse_path_data(d: &str) -> Option<figcraft_geom::BezPath> {
 /// independently (as resizing a vector does); with one, the other keeps its proportion. A size
 /// asked for on an axis the geometry has none of is an error, not silently ignored.
 fn vector_scale(width: Option<f64>, height: Option<f64>, bw: f64, bh: f64, what: &str) -> std::result::Result<(f64, f64), String> {
+    for (axis, asked) in [("width", width), ("height", height)] {
+        if asked.is_some_and(|a| a < 0.0) {
+            return Err(format!("`{axis}` can't be negative"));
+        }
+    }
     let fit = |asked: Option<f64>, have: f64, axis: &str| match asked {
-        Some(a) if have > 1e-9 => Ok(a.max(0.0) / have),
+        Some(a) if have > 1e-9 => Ok(a / have),
         Some(_) => Err(format!("`{axis}` can't size {what} with no {} extent", if axis == "width" { "horizontal" } else { "vertical" })),
         None => Ok(1.0),
     };

@@ -468,7 +468,9 @@ fn vector_paths_take_the_requested_size_and_refuse_empty_geometry() {
     assert!(e.contains("horizontal extent"), "{e}");
     let e = s.execute("vector.create", &json!({"path": "M0 0 L24 0", "height": 16})).unwrap_err().to_string();
     assert!(e.contains("vertical extent"), "{e}");
-    // A size that would collapse both axes is refused too.
+    // A size that would collapse both axes is refused too, and so is a negative one.
     let e = s.execute("vector.create", &json!({"path": path, "width": 0})).unwrap_err().to_string();
     assert!(e.contains("0×0"), "{e}");
+    let e = s.execute("vector.create", &json!({"path": path, "width": -10, "height": 8})).unwrap_err().to_string();
+    assert!(e.contains("can't be negative"), "{e}");
 }
