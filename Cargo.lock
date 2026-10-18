@@ -1723,6 +1723,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "figcraft-vectordrawable"
+version = "0.7.0"
+dependencies = [
+ "figcraft-color",
+ "figcraft-doc",
+ "figcraft-geom",
+ "figcraft-pathops",
+ "figcraft-render",
+ "figcraft-text",
+ "roxmltree 0.21.1",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "figcraft-web"
 version = "0.7.0"
 dependencies = [
