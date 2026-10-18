@@ -117,7 +117,8 @@ pub fn install() -> Result<(), JsValue> {
     set_fn(
         &obj,
         "request",
-        Closure::<dyn Fn(String, JsValue) -> js_sys::Promise>::new(|method: String, params: JsValue| request(&method, from_js(&params))).into_js_value(),
+        Closure::<dyn Fn(String, JsValue) -> js_sys::Promise>::new(|method: String, params: JsValue| request(&method, from_js(&params)))
+            .into_js_value(),
     )?;
     set_fn(
         &obj,

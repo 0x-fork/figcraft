@@ -20,12 +20,12 @@
 //! The link carries the session's secret; a fragment is never sent to the web host, but the address
 //! bar and the browser history keep it, so the URL is as private as the link itself.
 
+#[cfg(target_arch = "wasm32")]
+mod api;
 #[cfg(any(target_arch = "wasm32", test))]
 mod query;
 #[cfg(test)]
 mod query_tests;
-#[cfg(target_arch = "wasm32")]
-mod api;
 #[cfg(any(target_arch = "wasm32", test))]
 mod saved_files;
 #[cfg(target_arch = "wasm32")]
