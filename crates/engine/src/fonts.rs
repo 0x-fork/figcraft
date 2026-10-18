@@ -118,10 +118,12 @@ pub(crate) fn refit_open(s: &mut Session, under: Option<&[NodeId]>, families: Op
     }
 }
 
+/// `text.refit`: the layers `ids` names (an `ids` that isn't a list of layers is refused), else the
+/// whole document.
 fn refit_text(s: &mut Session, p: &Value) -> Result<Value> {
     let under = match get(p, "ids") {
-        Some(Value::Array(_)) => Some(req_targets("text.refit", s, p)?),
-        _ => None,
+        None | Some(Value::Null) => None,
+        Some(_) => Some(req_targets("text.refit", s, p)?),
     };
     s.doc()?;
     Ok(json!({"refitted": refit_open(s, under.as_deref(), None)}))
@@ -133,6 +135,7 @@ fn missing_fonts(s: &mut Session, _: &Value) -> Result<Value> {
     Ok(json!({"families": families}))
 }
 
+/// The font commands: `text.missingFonts` and `text.refit`.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!(

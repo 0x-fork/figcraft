@@ -782,6 +782,7 @@ mod tests {
         assert!(r.is_null() || r["axes"].is_array());
     }
 
+    /// No text command panics on junk parameters while a text is being edited.
     #[test]
     fn text_commands_survive_junk_while_editing() {
         let junk = [

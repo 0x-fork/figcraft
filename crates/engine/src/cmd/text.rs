@@ -477,12 +477,12 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "text.rescanFonts",
             "Rescan installed fonts",
-            "{}  walks the system font folders again, for fonts installed while the app runs; the open document's auto-sizing text in those families fits them (text.refit) → {added: [families that were unknown], refitted: [ids]}",
+            "{}  walks the system font folders again, for fonts installed while the app runs; the open document's auto-sizing text in the families that gained faces (new ones, or styles installed since) fits them (text.refit) → {added: [families that were unknown], refitted: [ids]}",
             true,
             |s, _| {
-                let added = figcraft_text::rescan_system_fonts();
-                let refitted = crate::fonts::refit_open(s, None, Some(&added));
-                Ok(json!({"added": added, "refitted": refitted}))
+                let rescan = figcraft_text::rescan_system_fonts();
+                let refitted = crate::fonts::refit_open(s, None, Some(&rescan.changed));
+                Ok(json!({"added": rescan.added, "refitted": refitted}))
             }
         ),
         spec!(

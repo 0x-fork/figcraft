@@ -135,14 +135,17 @@ fn stale(s: &mut Session, id: figcraft_doc::NodeId, dw: f64) -> f64 {
     want
 }
 
+/// The width of layer `id`.
 fn width(s: &Session, id: figcraft_doc::NodeId) -> f64 {
     s.doc().unwrap().node(id).unwrap().width
 }
 
+/// The ids a refit reports.
 fn refitted(r: &Value) -> Vec<u64> {
     r["refitted"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect()
 }
 
+/// Stale boxes fit their text again, by family, by layer or everywhere; fixed boxes keep theirs.
 #[test]
 fn refit_measures_stale_text_boxes_again() {
     let mut s = Session::new();
@@ -172,9 +175,14 @@ fn refit_measures_stale_text_boxes_again() {
     // Nothing stale: nothing changes.
     assert!(refitted(&s.execute("text.refit", &json!({})).unwrap()).is_empty());
     assert!(s.execute("text.refit", &json!({"ids": ["nope"]})).is_err());
+    // An `ids` that isn't a list is refused, not taken as the whole document.
+    stale(&mut s, a, 9.0);
+    assert!(s.execute("text.refit", &json!({"ids": a.0.to_string()})).is_err());
+    assert_eq!(width(&s, a), want_a + 9.0);
     assert!(Session::empty().execute("text.refit", &json!({})).is_err());
 }
 
+/// Text inside an instance is refitted too.
 #[test]
 fn refit_reaches_text_in_instances() {
     let mut s = Session::new();

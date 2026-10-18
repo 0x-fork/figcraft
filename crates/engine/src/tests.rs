@@ -376,6 +376,7 @@ fn pointer_draw_move_resize() {
     assert_eq!(s.selection(), vec![r]);
 }
 
+/// No command panics on junk parameters.
 #[test]
 fn every_command_survives_junk_params() {
     // A junk-parameter sweep: no command may panic (guard turns panics into Internal errors,
@@ -627,6 +628,7 @@ fn find_replace_changing_only_the_case_replaces_every_occurrence() {
     assert_eq!(s.doc().unwrap().node(f).unwrap().name, "FigCraft / FigCraft");
 }
 
+/// `text.loadFont` refuses what isn't a font file; `text.rescanFonts` reports what it added.
 #[test]
 fn fonts_load_from_files_and_rescans_report_new_families() {
     let mut s = sess();
