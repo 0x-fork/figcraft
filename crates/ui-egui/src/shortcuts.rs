@@ -225,14 +225,6 @@ pub fn run_binding(app: &mut FigApp, id: &str) {
         "edit.delete" if app.session.tool.pen.is_some() => {
             let _ = app.session.pen_finish();
         }
-        "edit.delete"
-            if app.ui.right_tab == crate::RightTab::Prototype
-                && app.ui_context.as_ref().is_some_and(|ctx| crate::proto_panel::has_selected_interaction(app, ctx)) =>
-        {
-            if let Some(ctx) = app.ui_context.clone() {
-                let _ = crate::proto_panel::delete_selected_interaction(app, &ctx);
-            }
-        }
         // Enter with a shape or frame tool chosen places one in the middle of the view.
         "select.children" if app.session.tool.tool.draws_shape() => {
             app.run("tool.place", json!({}));

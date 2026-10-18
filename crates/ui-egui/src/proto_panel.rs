@@ -40,13 +40,6 @@ pub fn editor(ctx: &egui::Context) -> Option<(NodeId, usize)> {
     ctx.data(|d| d.get_temp(editor_id()))
 }
 
-/// Whether an interaction is selected (its editor is open).
-pub fn has_selected_interaction(app: &FigApp, ctx: &egui::Context) -> bool {
-    let Some((node, index)) = editor(ctx) else { return false };
-    let Ok(ds) = app.session.ds() else { return false };
-    ds.doc.node(node).and_then(|n| n.interactions.get(index)).is_some()
-}
-
 /// Delete the selected interaction (when one is active in the Prototype tab).
 /// Returns true if an interaction was deleted.
 pub fn delete_selected_interaction(app: &mut FigApp, ctx: &egui::Context) -> bool {

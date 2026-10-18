@@ -262,6 +262,23 @@ fn deleting_a_prototype_interaction_removes_the_interaction_not_the_component() 
     assert!(u.app.session.doc().unwrap().node(btn).is_none(), "when no interaction is selected, Delete removes the layer");
 }
 
+/// Edit ▸ Delete from the menu bar does the same as the Delete key (#767).
+#[test]
+fn edit_delete_from_the_menu_removes_the_open_interaction_not_the_layer() {
+    let (s, _a, _b, btn) = setup();
+    let mut u = Ui::new(s);
+    u.app.ui.right_tab = crate::RightTab::Prototype;
+    u.run("select.set", json!({"ids": [btn]}));
+    crate::proto_panel::open_editor(&u.ctx, Some((btn, 0)));
+    u.frames(1, Vec::new);
+    crate::menus::invoke(&mut u.app, "edit.delete");
+    let doc = u.app.session.doc().unwrap();
+    assert!(doc.node(btn).is_some_and(|n| n.interactions.is_empty()), "the interaction goes, the layer stays");
+    assert_eq!(crate::proto_panel::editor(&u.ctx), None);
+    crate::menus::invoke(&mut u.app, "edit.delete");
+    assert!(u.app.session.doc().unwrap().node(btn).is_none(), "with no interaction open, Edit ▸ Delete deletes the layer");
+}
+
 #[test]
 fn escape_closes_prototype_editor_without_deselecting_layer() {
     let (s, a, _b, btn) = setup();
