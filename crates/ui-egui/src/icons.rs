@@ -1233,4 +1233,59 @@ mod tests {
         assert!(!rotation.is_empty() && !radius.is_empty(), "both draw an icon");
         assert_ne!(rotation, radius);
     }
+
+    /// The shapes `icon` paints in a 32-point box at the origin: two points per grid unit.
+    fn shapes_at_32(icon: Icon) -> Vec<Shape> {
+        let ctx = egui::Context::default();
+        let mut out =
+            ctx.run_ui(egui::RawInput::default(), |ui| paint(ui.painter(), Rect::from_min_size(Pos2::ZERO, Vec2::splat(32.0)), icon, Color32::WHITE));
+        out.textures_delta.clear();
+        out.shapes.into_iter().map(|c| c.shape).collect()
+    }
+
+    /// Frame and Text stay a grid unit inside the box, so their long hinted strokes don't
+    /// outweigh the outlines beside them in the toolbar (#737).
+    #[test]
+    fn frame_and_text_marks_are_inset() {
+        for icon in [Icon::Frame, Icon::Text] {
+            let pts: Vec<Pos2> = shapes_at_32(icon)
+                .iter()
+                .flat_map(|s| match s {
+                    Shape::LineSegment { points, .. } => points.to_vec(),
+                    other => panic!("{icon:?} draws straight strokes only: {other:?}"),
+                })
+                .collect();
+            assert!(!pts.is_empty());
+            for p in pts {
+                // Grid units 3..13, two points each.
+                assert!((6.0..=26.0).contains(&p.x) && (6.0..=26.0).contains(&p.y), "{icon:?} reaches {p:?}");
+            }
+        }
+    }
+
+    /// Slice is one knife (#739): an outlined blade and a solid handle that covers the middle of
+    /// the blade's base, so the two read as one mark rather than separate pieces.
+    #[test]
+    fn slice_is_one_connected_knife() {
+        let shapes = shapes_at_32(Icon::Slice);
+        let paths: Vec<_> = shapes
+            .iter()
+            .map(|s| match s {
+                Shape::Path(p) => p,
+                other => panic!("Slice draws paths only: {other:?}"),
+            })
+            .collect();
+        let blade = paths.iter().find(|p| p.closed && p.fill == Color32::TRANSPARENT).expect("an outlined blade");
+        let handle = paths.iter().find(|p| p.fill != Color32::TRANSPARENT).expect("a solid handle");
+        assert_eq!((paths.len(), blade.points.len()), (2, 3), "a blade and a handle, nothing else");
+        // The blade's base runs between its second and third points; the handle is convex.
+        let base = blade.points[1] + (blade.points[2] - blade.points[1]) / 2.0;
+        let h = &handle.points;
+        let side = |i: usize| {
+            let (a, b) = (h[i], h[(i + 1) % h.len()]);
+            (b - a).x * (base - a).y - (b - a).y * (base - a).x
+        };
+        let inside = (0..h.len()).all(|i| side(i) >= 0.0) || (0..h.len()).all(|i| side(i) <= 0.0);
+        assert!(inside, "the handle covers the blade's base at {base:?}");
+    }
 }
