@@ -660,6 +660,18 @@ impl<'a> Mapper<'a> {
         matches!(self.prop_def(&guid(def)?), Some((_, "INSTANCE_SWAP"))).then_some(())
     }
 
+    /// The definition a copy of it was made from, followed to the original: the values an instance
+    /// sets are kept under it, since an assignment and the layers that read it may name different
+    /// copies of one definition.
+    fn prop_root(&self, def: &str) -> String {
+        let mut def = def;
+        for _ in 0..=MAX_DEPTH {
+            let Some(parent) = self.prop_parents.get(def) else { break };
+            def = parent;
+        }
+        def.to_string()
+    }
+
     /// The definition `def` names: its own, or the set's for a variant's copy of it.
     fn prop_def(&self, def: &str) -> Option<&(String, &'a str)> {
         let mut def = def;
@@ -926,7 +938,7 @@ impl<'a> Mapper<'a> {
         }
         self.prop_refs(&mut o, &view, inst);
         let slot_content = if own == "FRAME" {
-            prop_ref(&view, "SLOT_CONTENT_ID").and_then(|def| inst.and_then(|i| i.slot_contents.get(&def).cloned()))
+            prop_ref(&view, "SLOT_CONTENT_ID").and_then(|def| inst.and_then(|i| i.slot_contents.get(&self.prop_root(&def)).cloned()))
         } else {
             None
         };
@@ -1914,7 +1926,7 @@ impl<'a> Mapper<'a> {
             {
                 refs.insert(field.into(), json!(name));
             }
-            let Some(val) = inst.and_then(|i| i.props.get(&def)) else { continue };
+            let Some(val) = inst.and_then(|i| i.props.get(&self.prop_root(&def))) else { continue };
             match field {
                 "visible" => {
                     if let Some(b) = val.get("boolValue").and_then(Kv::bool) {
@@ -1951,7 +1963,7 @@ impl<'a> Mapper<'a> {
         // An instance swap property value picks the main.
         if let Some(i) = outer
             && let Some(def) = prop_ref(v, "OVERRIDDEN_SYMBOL_ID")
-            && let Some(g) = i.props.get(&def).and_then(|p| prop_guid(p))
+            && let Some(g) = i.props.get(&self.prop_root(&def)).and_then(|p| prop_guid(p))
         {
             sym = Some(g);
         }
@@ -2046,7 +2058,7 @@ impl<'a> Mapper<'a> {
         let mut slot_contents: BTreeMap<String, String> = outer.map(|i| (*i.slot_contents).clone()).unwrap_or_default();
         for a in assignments {
             if let (Some(d), Some(val)) = (a.get("defID").and_then(guid), assigned(a)) {
-                all_props.entry(d).or_insert(val);
+                all_props.entry(self.prop_root(&d)).or_insert(val);
             }
             let Some(def) = a.get("defID").and_then(guid) else { continue };
             if self.prop_def(&def).is_none_or(|(_, ty)| *ty != "SLOT") {
@@ -2070,7 +2082,7 @@ impl<'a> Mapper<'a> {
                 self.warn("slot content assignment target is missing or is not slot content");
                 continue;
             }
-            slot_contents.entry(def).or_insert(target);
+            slot_contents.entry(self.prop_root(&def)).or_insert(target);
         }
         let mut symbols = outer.map(|i| i.symbols.clone()).unwrap_or_default();
         symbols.push(sym.clone());

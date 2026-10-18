@@ -73,9 +73,10 @@ fn instance_props(doc: &figcraft_doc::Document) -> &std::collections::BTreeMap<S
     props
 }
 
-#[test]
-fn variant_layers_bind_to_the_set_properties_their_copies_name() {
-    let msg = message(vec![
+/// A "Field" set with a BOOL definition (9:70), a variant whose "Hint text" reads its copy (9:71),
+/// and an instance of the variant that sets the property false through definition `assigned`.
+fn field_set(assigned: u32) -> Kv<'static> {
+    message(vec![
         node(
             9,
             "FRAME",
@@ -101,10 +102,15 @@ fn variant_layers_bind_to_the_set_properties_their_copies_name() {
             Some(2),
             vec![
                 ("symbolData", o(vec![("symbolID", g(10))])),
-                ("componentPropAssignments", Kv::Array(vec![o(vec![("defID", g(71)), ("value", o(vec![("boolValue", Kv::Bool(false))]))])])),
+                ("componentPropAssignments", Kv::Array(vec![o(vec![("defID", g(assigned)), ("value", o(vec![("boolValue", Kv::Bool(false))]))])])),
             ],
         ),
-    ]);
+    ])
+}
+
+#[test]
+fn variant_layers_bind_to_the_set_properties_their_copies_name() {
+    let msg = field_set(71);
     let (rest, _, _) = to_rest(&msg, "Synthetic", crate::rest::MAX_NODES);
     assert_eq!(by_id(&rest["document"], "9:9")["componentPropertyDefinitions"]["Hint#9:70"]["type"], "BOOLEAN");
     assert_eq!(by_id(&rest["document"], "9:11")["componentPropertyReferences"]["visible"], "Hint#9:70");
@@ -114,6 +120,16 @@ fn variant_layers_bind_to_the_set_properties_their_copies_name() {
     let hint = doc.ids().filter_map(|id| doc.node(id)).find(|n| n.name == "Hint text" && n.source.is_none()).unwrap();
     assert_eq!(hint.prop_refs.get("visible").map(String::as_str), Some("Hint"));
     assert_eq!(instance_props(&doc).get("Hint"), Some(&Value::Bool(false)));
+}
+
+/// An assignment reaches layers that read another copy of its definition: here the instance sets
+/// the set's own definition while the variant's layer reads the variant's copy.
+#[test]
+fn assignments_reach_layers_that_read_another_copy_of_their_definition() {
+    let (rest, _, _) = to_rest(&field_set(70), "Synthetic", crate::rest::MAX_NODES);
+    let instance = by_id(&rest["document"], "9:20");
+    assert_eq!(instance["componentProperties"]["Hint#9:70"]["value"], false);
+    assert_eq!(by_id(instance, "I9:20;9:11")["visible"], false);
 }
 
 #[test]
