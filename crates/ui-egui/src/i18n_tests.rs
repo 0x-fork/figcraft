@@ -400,7 +400,7 @@ fn french_and_portuguese_count_zero_as_singular() {
     for code in ["fr", "pt-BR"] {
         assert!(one(code, 0) && one(code, 1) && !one(code, 2), "{code}");
     }
-    for code in ["en", "es", "de", "cs"] {
+    for code in ["en", "es", "de", "cs", "pl"] {
         for n in [0, 1, 2, 3, 4, 5, 21] {
             assert_eq!(one(code, n), n == 1, "{code}: {n}");
         }
@@ -489,6 +489,27 @@ fn russian_language_tags_and_integer_plurals() {
     for (key, text) in LANGS[ru].ui {
         if let Text::Plural { one, few, many, .. } = text {
             assert!(one.is_some() && few.is_some() && many.is_some(), "{key}: missing Russian plural forms");
+        }
+    }
+}
+
+#[test]
+fn polish_integer_plurals() {
+    let pl = LANGS.iter().position(|l| l.code == "pl").unwrap();
+    assert_eq!(LANGS[pl].name, "Polski");
+    assert_eq!(plural("pl", 1), Plural::One);
+    assert_eq!(fill(counted(pl, "{n} layers", 1), &[("n", &1)]), "1 warstwa");
+    for n in [2, 3, 4, 22, 23, 24, 102, 104, 1_002] {
+        assert_eq!(plural("pl", n), Plural::Few, "{n}");
+        assert_eq!(fill(counted(pl, "{n} layers", n), &[("n", &n)]), format!("{n} warstwy"));
+    }
+    for n in [0, 5, 10, 11, 12, 13, 14, 19, 20, 21, 25, 31, 100, 101, 111, 112, 114, 1_000_000] {
+        assert_eq!(plural("pl", n), Plural::Many, "{n}");
+        assert_eq!(fill(counted(pl, "{n} layers", n), &[("n", &n)]), format!("{n} warstw"));
+    }
+    for (key, text) in LANGS[pl].ui {
+        if let Text::Plural { one, few, many, .. } = text {
+            assert!(one.is_some() && few.is_some() && many.is_some(), "{key}: missing Polish plural forms");
         }
     }
 }
