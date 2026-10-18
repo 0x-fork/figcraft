@@ -280,6 +280,34 @@ fn bindings_by_field_and_type() {
 }
 
 #[test]
+fn auto_layout_bindings_go_with_the_auto_layout() {
+    // Docs silent; pinned (#810): removing a frame's auto layout drops its gap and padding bindings,
+    // and a binding never brings an auto layout back. One made without auto layout waits for it.
+    let mut s = Session::new();
+    run(&mut s, "variable.createCollection", json!({"name": "C"}));
+    run(&mut s, "variable.create", json!({"collection": "C", "name": "g", "type": "number", "value": 12}));
+    let removals =
+        [("layout.remove", json!({})), ("node.set", json!({"props": {"layout": null}})), ("node.set", json!({"props": {"layout": "none"}}))];
+    for (cmd, mut p) in removals {
+        let f = frame(&mut s, None);
+        run(&mut s, "layout.add", json!({"ids": [f]}));
+        for field in ["gap", "crossGap", "paddingTop"] {
+            run(&mut s, "variable.bind", json!({"ids": [f], "field": field, "variable": "g"}));
+        }
+        p["ids"] = json!([f]);
+        run(&mut s, cmd, p.clone());
+        let n = node(&s, f);
+        assert!(n.layout.is_none(), "{cmd} {p}: auto layout stays removed");
+        assert!(n.bound.is_empty(), "{cmd} {p}: layout bindings dropped");
+    }
+    let f = frame(&mut s, None);
+    run(&mut s, "variable.bind", json!({"ids": [f], "field": "gap", "variable": "g"}));
+    assert!(node(&s, f).layout.is_none(), "binding gap adds no auto layout");
+    run(&mut s, "layout.add", json!({"ids": [f]}));
+    assert_eq!(node(&s, f).layout.map(|l| l.gap), Some(12.0), "the waiting binding applies to the new auto layout");
+}
+
+#[test]
 fn deleting_a_bound_variable_keeps_the_last_value() {
     // Documented: deleting a variable unbinds what used it, which keeps showing its last value.
     // Docs silent on variables aliasing it; pinned: they take its values too.

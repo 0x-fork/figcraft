@@ -1021,6 +1021,7 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
         let modes = doc.modes_for(id);
         let Some(n) = doc.node(id) else { continue };
         let binds = n.bound.clone();
+        let has_layout = n.layout.is_some();
         let mut sets = serde_json::Map::new();
         let mut effect_sets: Vec<(usize, String, VariableValue)> = Vec::new();
         let mut paint_sets: Vec<(bool, usize, Option<usize>, Color)> = Vec::new();
@@ -1028,6 +1029,10 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
         let mut prop_sets: Vec<(String, VariableValue)> = Vec::new();
         for (field, var) in binds {
             if !include(&field) {
+                continue;
+            }
+            // A binding never creates an auto layout: without one it waits for the next.
+            if !has_layout && super::props::LAYOUT_KEYS.contains(&field.as_str()) {
                 continue;
             }
             let Some(val) = doc.variables.resolve(&var, &modes) else { continue };
