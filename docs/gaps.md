@@ -397,14 +397,8 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   different items changed on each side, or items added at the end on one side, merge without a
   conflict; only the same item changed both ways, an item removed on one side, or different items
   added on both sides conflict (as the whole list).
-- **Landed (2026-10-18):** the other layer lists whose items stand on their own merge item by item
-  too: export settings, guides, prototype interactions, accessibility annotations and the Dev Mode
-  code links and resources, each with the same rule as fills (the same item changed both ways still
-  conflicts). Properties that are keyed maps rather than item lists (`bound`, `varModes`,
-  `overrides`, `propRefs`, `pluginData`) deliberately do not: their items line up by key.
-- **Missing:** branches of a file in a live session are refused; text runs still conflict as a
-  whole (they live in the node's text data, so merging them means splitting a property the change
-  format keeps whole); the branch history has no entries of its own for
+- **Missing:** branches of a file in a live session are refused; other lists (text runs, export
+  settings, guides…) still conflict as a whole; the branch history has no entries of its own for
   its creation or updates from main (only saved versions, autosaves and the merge on main).
 - **Estimate:** 1–2 h.
 
@@ -450,7 +444,6 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-18 | minor | Gap 17: export settings, guides, prototype interactions, accessibility annotations and the Dev Mode code links and resources merge item by item like fills, strokes and effects (the same item changed both ways still conflicts). Text runs are left whole: they live in the node's text data, so merging them means splitting a property the change format keeps whole. Ranking and hours unchanged |
 | 2026-10-17 | minor | The 2026-10-17 landings. Gap 1: a new Landed entry (community batches #727 and #728, then #745: instance identity and cached library components, overrides by key, text style precedence, grid track sizes, slot content, labels of connectors saved with their path, skip ink, paragraph options, list start numbers, vertical trim, per-point stroke joins, text on a path, image adjustments, images in the message, instance layers' size and resizing overrides, Hug where nothing is recorded; budgets from the file's size; the import report; a `.fig` copy from Save as; paste from another design app), its Missing list cut to what is still left, and the wrong "whether other apps open its files is unknown" replaced by what was checked; all on synthetic files, so the beta blocker and hours stand. Gap 2: server limits, log recovery and web join links in the evidence. Gap 4: menus, the Actions palette and the editor fixes (#733, #735, #736, #729), then Selection colors and smart-selection spacing (#753) landed, none compared side by side. Gap 5: catalog counts re-measured (2,272 entries; drafts at 95–99%; Indonesian, Czech, Turkish and Swedish listed). Gap 8: the Linux and BSD clipboard changes and Wayland window controls, not run there by the maintainers. Ranking and hours unchanged |
 | 2026-10-15 | minor | Gap 7: bounded canvas overscan for smoother panning. Estimates and ranking unchanged. |
 | 2026-10-14 | minor | Russian catalog (M9), reviewed and approved by VanTan: all 2,165 current entries, Русский in Preferences and regional ru tags. Russian integer plurals use one/few/many; contributor display name VanTan added. Existing estimates unchanged. |
