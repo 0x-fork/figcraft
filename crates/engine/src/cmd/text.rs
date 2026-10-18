@@ -477,16 +477,20 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "text.rescanFonts",
             "Rescan installed fonts",
-            "{}  walks the system font folders again, for fonts installed while the app runs → {added: [families that were unknown]}",
-            false,
-            |_, _| Ok(json!({"added": figcraft_text::rescan_system_fonts()}))
+            "{}  walks the system font folders again, for fonts installed while the app runs; the open document's auto-sizing text in those families fits them (text.refit) → {added: [families that were unknown], refitted: [ids]}",
+            true,
+            |s, _| {
+                let added = figcraft_text::rescan_system_fonts();
+                let refitted = crate::fonts::refit_open(s, None, Some(&added));
+                Ok(json!({"added": added, "refitted": refitted}))
+            }
         ),
         spec!(
             "text.loadFont",
             "Load font file",
-            "{path | data (base64)}  adds a font file (.ttf, .otf, .ttc, .otc; every face of a collection) to this session's fonts without installing it → {families}",
-            false,
-            |_, p| {
+            "{path | data (base64)}  adds a font file (.ttf, .otf, .ttc, .otc; every face of a collection) to this session's fonts without installing it; the open document's auto-sizing text in its families fits it (text.refit) → {families, refitted: [ids]}",
+            true,
+            |s, p| {
                 let cmd = "text.loadFont";
                 let bytes = if let Some(b64) = string(p, "data") {
                     use base64::Engine as _;
@@ -501,7 +505,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 if families.is_empty() {
                     return Err(bad(cmd, "not a font file"));
                 }
-                Ok(json!({"families": families}))
+                let refitted = crate::fonts::refit_open(s, None, Some(&families));
+                Ok(json!({"families": families, "refitted": refitted}))
             }
         ),
     ]

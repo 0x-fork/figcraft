@@ -237,6 +237,9 @@ Or in a project's `.mcp.json`:
   (`{families: [{family, layers}]}`); their text draws in a fallback font. Fonts are indexed once
   per process: after installing one, `text.rescanFonts` picks it up (`{added: [families]}`), and
   `text.loadFont {path | data (base64)}` adds a font file without installing it (`{families}`).
+  Text boxes keep the size they were measured at: both refit the open document's auto-sizing text
+  in the new families (`refitted: [ids]`), and `text.refit {ids?}` does it for any text, e.g. a
+  file saved while its fonts were missing.
   OpenType features: `features {"liga": false, "tnum": true}`.
   Decorations: `textDecorationStyle` (`solid`, `dotted`, `wavy`), `textDecorationThickness` and
   `textDecorationOffset` (`auto`, px, or `"10%"` of the font size; the offset runs from the baseline
