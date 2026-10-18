@@ -670,6 +670,23 @@ impl FontDb {
         self.faces.len()
     }
 
+    /// Offer the families of a later walk of the font folders: new families become pending, and a
+    /// family not loaded yet takes the walk's files (styles installed since). Loaded families keep
+    /// their faces. Returns the display names of the families that were unknown.
+    fn merge_rescan(&mut self, found: BTreeMap<String, (String, Vec<Pending>)>) -> Vec<String> {
+        let mut added = Vec::new();
+        for (k, v) in found {
+            if self.families.contains_key(&k) {
+                continue;
+            }
+            if !self.pending.contains_key(&k) {
+                added.push(v.0.clone());
+            }
+            self.pending.insert(k, v);
+        }
+        added
+    }
+
     /// Index the system font directories (desktop only): family names are read now, faces loaded
     /// when first used. Safe to call more than once.
     pub fn scan_system(&mut self) {
@@ -885,6 +902,43 @@ pub fn scan_system_fonts() {
             crate::clear_layout_cache();
         }
     });
+}
+
+/// Walk the system font folders again, for fonts installed while the app runs (the first scan is
+/// once per process). Returns the families that were unknown before. Before the first scan this
+/// is that scan; a no-op on the web or with `FIGCRAFT_NO_SYSTEM_FONTS` set.
+pub fn rescan_system_fonts() -> Vec<String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if !system_fonts_opted_out() {
+        if SCANNED.get().is_none() {
+            let before: std::collections::BTreeSet<String> =
+                raw_db().read().unwrap_or_else(std::sync::PoisonError::into_inner).families().into_iter().collect();
+            scan_system_fonts();
+            return family_names().into_iter().filter(|f| !before.contains(f)).collect();
+        }
+        let mut found: BTreeMap<String, (String, Vec<Pending>)> = BTreeMap::new();
+        for dir in system_font_dirs() {
+            scan_dir(&dir, 0, &mut found);
+        }
+        let added = raw_db().write().unwrap_or_else(std::sync::PoisonError::into_inner).merge_rescan(found);
+        if !added.is_empty() {
+            crate::clear_layout_cache();
+        }
+        return added;
+    }
+    Vec::new()
+}
+
+/// Load font file bytes (every face of a collection) into the global db, for a font that isn't
+/// installed. Returns the families of the faces added (none: not a font file).
+pub fn load_font_bytes(bytes: Vec<u8>) -> Vec<String> {
+    let faces = db().write().unwrap_or_else(std::sync::PoisonError::into_inner).add_bytes(bytes);
+    if !faces.is_empty() {
+        crate::clear_layout_cache();
+    }
+    let mut families: Vec<String> = faces.iter().map(|f| f.family.clone()).collect();
+    families.dedup();
+    families
 }
 
 /// `FIGCRAFT_NO_SYSTEM_FONTS` is set (and not `0`): renders use only the embedded fonts.

@@ -474,5 +474,35 @@ pub fn specs() -> Vec<CommandSpec> {
                 })
             }
         ),
+        spec!(
+            "text.rescanFonts",
+            "Rescan installed fonts",
+            "{}  walks the system font folders again, for fonts installed while the app runs → {added: [families that were unknown]}",
+            false,
+            |_, _| Ok(json!({"added": figcraft_text::rescan_system_fonts()}))
+        ),
+        spec!(
+            "text.loadFont",
+            "Load font file",
+            "{path | data (base64)}  adds a font file (.ttf, .otf, .ttc, .otc; every face of a collection) to this session's fonts without installing it → {families}",
+            false,
+            |_, p| {
+                let cmd = "text.loadFont";
+                let bytes = if let Some(b64) = string(p, "data") {
+                    use base64::Engine as _;
+                    let b64 = b64.split_once(',').map(|(_, d)| d.to_string()).unwrap_or(b64);
+                    base64::engine::general_purpose::STANDARD.decode(b64.trim()).map_err(|e| bad(cmd, format!("`data`: {e}")))?
+                } else if let Some(path) = string(p, "path") {
+                    super::create::read_path(&path)?
+                } else {
+                    return Err(bad(cmd, "pass `path` or `data` (base64)"));
+                };
+                let families = figcraft_text::load_font_bytes(bytes);
+                if families.is_empty() {
+                    return Err(bad(cmd, "not a font file"));
+                }
+                Ok(json!({"families": families}))
+            }
+        ),
     ]
 }

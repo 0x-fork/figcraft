@@ -217,3 +217,34 @@ fn user_font_dirs_preserve_non_utf8_paths() {
     assert_eq!(dirs[0].as_os_str().as_bytes(), b"/home/\xff/.fonts");
     assert_eq!(dirs[1].as_os_str().as_bytes(), b"/data/\xfe/fonts");
 }
+
+#[test]
+fn a_rescan_offers_fonts_installed_since() {
+    let entry = |s: &str| Pending { path: format!("no-such-dir/{s}.ttf").into(), index: 0, style: s.into() };
+    let mut db = pending(&["Regular"]);
+    let found = |fams: &[(&str, &[&str])]| -> BTreeMap<String, (String, Vec<Pending>)> {
+        fams.iter().map(|(f, styles)| (f.to_lowercase(), ((*f).to_string(), styles.iter().map(|s| entry(s)).collect()))).collect()
+    };
+    // A new family is reported and offered; a pending one takes the walk's files (a new style).
+    let added = db.merge_rescan(found(&[("CJK UI", &["Regular", "Bold"]), ("Brand Sans", &["Regular"])]));
+    assert_eq!(added, ["Brand Sans"]);
+    assert!(db.has_family("brand sans"));
+    assert_eq!(left(&db), ["Regular", "Bold"]);
+    // A loaded family keeps its faces and isn't reported again.
+    db.families.insert("brand sans".into(), ("Brand Sans".into(), Vec::new()));
+    db.pending.remove("brand sans");
+    assert!(db.merge_rescan(found(&[("Brand Sans", &["Regular"])])).is_empty());
+    assert!(!db.pending.contains_key("brand sans"));
+}
+
+#[test]
+fn font_bytes_load_into_the_db() {
+    assert!(load_font_bytes(b"not a font".to_vec()).is_empty());
+    assert!(load_font_bytes(Vec::new()).is_empty());
+    // With the embedded fonts (absent on CI builds without craft-fonts): a file's family is added.
+    if let Some(f) = CRAFT_FONTS.first() {
+        let families = load_font_bytes(f.bytes.to_vec());
+        assert_eq!(families.len(), 1);
+        assert!(families.iter().all(|f| has_family(f)));
+    }
+}
