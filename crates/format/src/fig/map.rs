@@ -368,6 +368,9 @@ struct Mapper<'a> {
     blobs: Vec<&'a [u8]>,
     /// Component property definitions: id → (REST name "Name#id", type).
     prop_defs: BTreeMap<String, (String, &'a str)>,
+    /// The copies of a set's definitions each variant keeps (no name or type of their own; the
+    /// variant's layers and its instances' assignments use them): copy id → the definition's id.
+    prop_parents: BTreeMap<String, String>,
     /// File nodes by asset `key` and `version`: references can name a collection, variable or
     /// style as the asset instead of the guid, and the file carries the resources to resolve
     /// them (the collection node itself says the same `key`).
@@ -402,6 +405,7 @@ impl<'a> Mapper<'a> {
         let mut nodes = BTreeMap::new();
         let mut kids: BTreeMap<String, Vec<(&'a str, String)>> = BTreeMap::new();
         let mut prop_defs = BTreeMap::new();
+        let mut prop_parents = BTreeMap::new();
         let changes = msg.get("nodeChanges").map(Kv::list).unwrap_or_default();
         // The last change of a GUID wins; a REMOVED change deletes what came before it.
         for n in changes {
@@ -423,10 +427,11 @@ impl<'a> Mapper<'a> {
                 kids.entry(parent).or_default().push((p.get("position").and_then(Kv::str).unwrap_or(""), id.clone()));
             }
             for d in n.get("componentPropDefs").map(Kv::list).unwrap_or_default() {
-                if let (Some(did), Some(name), Some(ty)) =
-                    (d.get("id").and_then(guid), d.get("name").and_then(Kv::str), d.get("type").and_then(Kv::str))
-                {
+                let Some(did) = d.get("id").and_then(guid) else { continue };
+                if let (Some(name), Some(ty)) = (d.get("name").and_then(Kv::str), d.get("type").and_then(Kv::str)) {
                     prop_defs.insert(did.clone(), (format!("{name}#{did}"), ty));
+                } else if let Some(parent) = d.get("parentPropDefId").and_then(guid) {
+                    prop_parents.insert(did, parent);
                 }
             }
         }
@@ -450,6 +455,7 @@ impl<'a> Mapper<'a> {
             kids,
             blobs,
             prop_defs,
+            prop_parents,
             assets,
             styles: Obj::new(),
             components: Obj::new(),
@@ -651,7 +657,19 @@ impl<'a> Mapper<'a> {
     }
 
     fn is_instance_swap(&self, def: &Kv) -> Option<()> {
-        matches!(self.prop_defs.get(&guid(def)?), Some((_, "INSTANCE_SWAP"))).then_some(())
+        matches!(self.prop_def(&guid(def)?), Some((_, "INSTANCE_SWAP"))).then_some(())
+    }
+
+    /// The definition `def` names: its own, or the set's for a variant's copy of it.
+    fn prop_def(&self, def: &str) -> Option<&(String, &'a str)> {
+        let mut def = def;
+        for _ in 0..=MAX_DEPTH {
+            if let Some(found) = self.prop_defs.get(def) {
+                return Some(found);
+            }
+            def = self.prop_parents.get(def)?;
+        }
+        None
     }
 
     /// The branches of the internal canvas `id` that hold the `required_mains` (with the frames
@@ -1892,7 +1910,7 @@ impl<'a> Mapper<'a> {
             // Expanded frames must follow their main frame's source link. A direct slot reference
             // makes the engine resolve ownership against the instance, where the property is not defined.
             if !(field == "slot" && inst.is_some())
-                && let Some((name, _)) = self.prop_defs.get(&def)
+                && let Some((name, _)) = self.prop_def(&def)
             {
                 refs.insert(field.into(), json!(name));
             }
@@ -1945,7 +1963,7 @@ impl<'a> Mapper<'a> {
         let assignments = v.list("componentPropAssignments");
         let mut props = Obj::new();
         for a in assignments {
-            let Some((name, ty)) = a.get("defID").and_then(guid).and_then(|d| self.prop_defs.get(&d).cloned()) else { continue };
+            let Some((name, ty)) = a.get("defID").and_then(guid).and_then(|d| self.prop_def(&d).cloned()) else { continue };
             let val = a.get("value");
             let p = match ty {
                 "BOOL" => val.and_then(|x| x.get("boolValue")).and_then(Kv::bool).map(|b| json!({"type": "BOOLEAN", "value": b})),
@@ -2031,7 +2049,7 @@ impl<'a> Mapper<'a> {
                 all_props.entry(d).or_insert(val);
             }
             let Some(def) = a.get("defID").and_then(guid) else { continue };
-            if self.prop_defs.get(&def).is_none_or(|(_, ty)| *ty != "SLOT") {
+            if self.prop_def(&def).is_none_or(|(_, ty)| *ty != "SLOT") {
                 continue;
             }
             let var_value = a.get("varValue");
