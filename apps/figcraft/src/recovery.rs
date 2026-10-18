@@ -120,7 +120,7 @@ impl Recovery {
         (0..10).find_map(|n| {
             let dir = root.join(if n == 0 { pid.to_string() } else { format!("{pid}-{n}") });
             std::fs::create_dir_all(&dir).ok()?;
-            let lock = lock_briefly(&dir.join(LOCK))?;
+            let lock = lock_folder(&dir).ok()?;
             Some(Self { dir, _lock: lock, written: HashMap::new(), next: 0.0, waiting: Vec::new() })
         })
     }
@@ -292,25 +292,15 @@ fn remove_kept(w: Waiting) {
 /// The extension of the note beside the copy of a document that is one of your online files.
 const ONLINE: &str = "online";
 
-/// How long a folder's lock that frees itself is waited for, and between the tries.
-const LOCK_WAIT: (usize, std::time::Duration) = (20, std::time::Duration::from_millis(5));
+/// How long the startup waits, once, for folder locks that may free themselves (#334).
+#[cfg(unix)]
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
 
-/// Lock the folder's `file`, waiting briefly for a lock that frees itself. A child between its
-/// `fork` and its `exec` inherits the run's open descriptors, and a `flock` lasts while any
-/// descriptor for the file is open, so a run that has ended can look like one that is still going
-/// for the length of that window. A run that really is running holds the lock for as long as it
-/// runs, and we give up on it after [`LOCK_WAIT`] (#334).
-fn lock_briefly(file: &Path) -> Option<File> {
-    let lock = File::options().write(true).create(true).truncate(false).open(file).ok()?;
-    let (tries, pause) = LOCK_WAIT;
-    for _ in 0..tries {
-        match lock.try_lock() {
-            Ok(()) => return Some(lock),
-            Err(std::fs::TryLockError::WouldBlock) => std::thread::sleep(pause),
-            Err(_) => return None,
-        }
-    }
-    None
+/// Lock the folder `dir` (`WouldBlock` while another process holds it).
+fn lock_folder(dir: &Path) -> Result<File, std::fs::TryLockError> {
+    let lock = File::options().write(true).create(true).truncate(false).open(dir.join(LOCK)).map_err(std::fs::TryLockError::Error)?;
+    lock.try_lock()?;
+    Ok(lock)
 }
 
 /// The copy at `file` is of one of your online files: join that file again as its owner, keeping
@@ -382,6 +372,7 @@ pub fn recover_all(root: &Path, s: &mut Session) -> Recovered {
             }
         }
     };
+    let (mut free, mut held) = (Vec::new(), Vec::new());
     for e in entries.flatten() {
         let path = e.path();
         if !path.is_dir() {
@@ -389,7 +380,22 @@ pub fn recover_all(root: &Path, s: &mut Session) -> Recovered {
             continue;
         }
         // Still running (another window of the app), or not ours to take.
-        let Some(lock) = lock_briefly(&path.join(LOCK)) else { continue };
+        match lock_folder(&path) {
+            Ok(lock) => free.push((path, lock)),
+            Err(std::fs::TryLockError::WouldBlock) => held.push(path),
+            Err(_) => {}
+        }
+    }
+    // A child between its `fork` and its `exec` shares the run's open descriptors, and a `flock`
+    // lasts while any of them is open, so an ended run's folder can look held for a moment. Wait
+    // once, however many folders are held, and try those again (#334). Windows doesn't pass the
+    // lock to child processes.
+    #[cfg(unix)]
+    if !held.is_empty() {
+        std::thread::sleep(LOCK_WAIT);
+        free.extend(held.into_iter().filter_map(|path| lock_folder(&path).ok().map(|lock| (path, lock))));
+    }
+    for (path, lock) in free {
         let lock = Arc::new(lock);
         let files: Vec<PathBuf> = std::fs::read_dir(&path).into_iter().flatten().flatten().map(|f| f.path()).collect();
         for f in &files {

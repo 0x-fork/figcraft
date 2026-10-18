@@ -206,6 +206,7 @@ fn a_run_whose_folder_name_is_still_held_takes_another() {
 /// #334: a lock that frees itself is not a run that is still going. A child between its `fork` and
 /// its `exec` inherits the run's open descriptors and a `flock` lasts while any descriptor for the
 /// file is open, so a crashed run's copies must still come back once that child has exec'd.
+#[cfg(unix)]
 #[test]
 fn a_lock_freed_a_moment_later_is_not_a_run_that_is_still_going() {
     let root = root("fork-window");
@@ -215,7 +216,7 @@ fn a_lock_freed_a_moment_later_is_not_a_run_that_is_still_going() {
     let lock = std::fs::File::options().write(true).create(true).truncate(false).open(root.join("crashed").join("lock")).unwrap();
     lock.try_lock().unwrap();
     let freed = std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(40));
+        std::thread::sleep(std::time::Duration::from_millis(10));
         drop(lock);
     });
     // The next start waits for that lock rather than reading the run as still going.
