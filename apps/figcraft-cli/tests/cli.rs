@@ -239,3 +239,31 @@ fn file_subcommands_are_confined_to_automation_roots() {
     assert!(escaped.is_file());
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// An output path that is a symbolic link is written through, to its target, as `std::fs::write`
+/// always did. Routing the CLI's writes through `file_access` for #833 would otherwise have
+/// replaced the link with a regular file, because that write stages the bytes and renames them
+/// into place.
+#[cfg(unix)]
+#[test]
+fn an_unconfined_write_follows_a_symbolic_link() {
+    let d = tmp("symlink-out");
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(d.join("real")).unwrap();
+    let p = |rel: &str| d.join(rel).to_string_lossy().into_owned();
+    std::fs::write(d.join("in.json"), br#"[{"command":"shape.rectangle","params":{"x":0,"y":0,"width":40,"height":20}}]"#).unwrap();
+    let made = bin().args(["run", &p("in.json"), "--out", &p("doc.figcraft")]).output().unwrap();
+    assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
+
+    let target = d.join("real/target.png");
+    std::fs::write(&target, b"placeholder").unwrap();
+    let link = d.join("link.png");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    let out = bin().args(["render", &p("doc.figcraft"), "-o", &link.to_string_lossy()]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "the link is still a link");
+    let written = std::fs::read(&target).unwrap();
+    assert!(written.starts_with(b"\x89PNG"), "the target holds the render, not the placeholder");
+    let _ = std::fs::remove_dir_all(&d);
+}

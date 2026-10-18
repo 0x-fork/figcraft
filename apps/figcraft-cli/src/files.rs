@@ -29,13 +29,22 @@ fn image_format(e: &str) -> Option<ExportFormat> {
     }
 }
 
-/// Writes through [`figcraft_engine::file_access`], so a run given automation roots can only
-/// write inside a write root (#833). Unconfined it writes as before.
+/// Writes through [`figcraft_engine::file_access`] when automation roots are in force, so a
+/// confined run can only write inside a write root (#833).
+///
+/// Unconfined it writes with `std::fs::write`, as it always did. `file_access::write` stages the
+/// bytes and renames them into place, which **replaces** a symbolic link at `path` instead of
+/// writing through it to its target -- a change of behaviour for anyone whose output path is a
+/// link, and nothing to do with confinement. Inside a root the staged write is the right one:
+/// `Roots::check` has already refused a link that leads out of the root.
 fn write(path: &str, bytes: &[u8]) -> CliResult<()> {
     if let Some(dir) = Path::new(path).parent().filter(|d| !d.as_os_str().is_empty()) {
         figcraft_engine::file_access::create_dir_all(dir).map_err(|e| CliError::Failed(e.to_string()))?;
     }
-    figcraft_engine::file_access::write(path, bytes).map_err(|e| CliError::Failed(e.to_string()))
+    if figcraft_engine::file_access::current().is_some() {
+        return figcraft_engine::file_access::write(path, bytes).map_err(|e| CliError::Failed(e.to_string()));
+    }
+    std::fs::write(path, bytes).map_err(|e| CliError::Failed(format!("{path}: {e}")))
 }
 
 fn page_named(doc: &Document, name: Option<&str>) -> CliResult<NodeId> {
