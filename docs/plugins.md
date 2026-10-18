@@ -241,7 +241,11 @@ it can handle):
   only hand FigCraft a file (one per run, 16 MB at most, a plain file name) for the user to save
   through FigCraft's own dialog; the user can cancel it;
 - files and the app: `file.*`, `app.*`, `pref.*`, `help.*`, `library.add`, `libraries.*`,
-  `image.place` with a `path` (pass the image as base64 `data` instead), `view.theme*`;
+  `image.place` with a `path` (pass the image as base64 `data` instead), `variable.export`,
+  `codeConnect.export` and `component.playground` with a `path` (leave it out to get the result
+  back), `codeConnect.import` with a `path` and `variable.import` with a file path instead of JSON,
+  `window.*` (new windows open files), `view.theme*`;
+- live sessions and online files: `collab.*`;
 - other documents and the version history: `doc.*` and `version.*` (except `doc.list` and
   `version.list`);
 - the undo history and nesting: `edit.undo`, `edit.redo`, `edit.repeat`, `command.batch` (a run is
