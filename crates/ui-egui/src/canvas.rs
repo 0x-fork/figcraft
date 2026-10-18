@@ -183,6 +183,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         }
     }
     let own_cursor = input(app, ui, &resp);
+    crate::drop_overlay(&ctx, ctx.content_rect(), tr("Drop to import"));
     crate::guides::end_released(&ctx);
     crate::live::track_pointer(app, &ctx);
     app.sync_preedit();
@@ -236,11 +237,12 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         // Re-project the last render onto the current view.
         let tl = app.to_screen(v.origin.0, v.origin.1);
         let zoom = app.session.ds().map(|d| d.view.zoom).unwrap_or(1.0);
-        let w = (f64::from(v.width) / v.scale * zoom) as f32;
-        let h = (f64::from(v.height) / v.scale * zoom) as f32;
-        painter.image(tex.id(), Rect::from_min_size(tl, vec2(w, h)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        let pixel_preview = app.session.ds().ok().and_then(|ds| ds.view.pixel_preview_scale()) == Some(v.scale);
+        let image_rect = presented_image_rect(tl, v, zoom, ppp, pixel_preview);
+        painter.image(tex.id(), image_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
     app.session.tool.labels = overlays(app, &painter, &t);
+    crate::frame_labels::rename_field(app, ui);
     // The zoom tool's area.
     if let (Some(start), Some(p)) = (app.canvas.zoom_drag, ctx.input(|i| i.pointer.hover_pos())) {
         let area = Rect::from_two_pos(start, p);
@@ -251,6 +253,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     }
     crate::dev_mode::draw(app, &painter);
     crate::handles::draw(app, &painter);
+    crate::selection_spacing::draw(app, &painter);
     crate::comments::draw(app, &painter);
     crate::live_text::draw(app, &painter);
     crate::live::draw(app, &painter, &ctx);
@@ -268,6 +271,22 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         shown.show(&ctx, at);
         app.canvas.cursor = Some(shown);
     }
+}
+
+/// The image's screen rect; align native-density renders to device pixels to avoid linear filtering
+/// blending neighbouring texels. Stale and pixel-preview renders retain their original projection.
+pub(super) fn presented_image_rect(tl: Pos2, view: &figcraft_render::View, zoom: f64, ppp: f32, pixel_preview: bool) -> Rect {
+    let w = (f64::from(view.width) / view.scale * zoom) as f32;
+    let h = (f64::from(view.height) / view.scale * zoom) as f32;
+    let native_density = !pixel_preview
+        && ppp.is_finite()
+        && ppp > 0.0
+        && zoom.is_finite()
+        && view.scale.is_finite()
+        && view.scale > 0.0
+        && (view.scale - zoom * f64::from(ppp)).abs() <= view.scale.abs().max(1.0) * 1e-9;
+    let min = if native_density { pos2((tl.x * ppp).round() / ppp, (tl.y * ppp).round() / ppp) } else { tl };
+    Rect::from_min_size(min, vec2(w, h))
 }
 
 /// What the canvas says to screen readers: the selected layer ("Rectangle 1, Rectangle, 120 by 80,
@@ -479,19 +498,30 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
     let editing_text = app.session.ds().map(|d| d.text_edit.is_some()).unwrap_or(false);
     let typing_elsewhere = crate::a11y::field_focused(&ctx);
     app.canvas.space_pan = space && !editing_text && !typing_elsewhere;
-    // Dropped files import onto the canvas.
+    if !app.canvas.dragging && crate::selection_spacing::input(app, &ctx, hover_pos, resp.hovered(), app.canvas.space_pan) {
+        return false;
+    }
+    // Dropped files import onto the canvas, behind a card while they do ([`crate::pending_open`]).
     let dropped = ctx.input(|i| i.raw.dropped_files.clone());
     for f in dropped {
         let path = f.path().to_path_buf();
         let pt = hover_pos.map(|h| app.to_page(h)).unwrap_or_default();
-        if path.exists() {
-            app.run("file.import", json!({"path": path.to_string_lossy(), "x": pt.x, "y": pt.y}));
-        } else if let Some(bytes) = dropped_bytes(&f) {
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped.png".into());
+        let params = if path.exists() {
+            json!({"path": path.to_string_lossy(), "x": pt.x, "y": pt.y})
+        } else if let Some(bytes) = crate::dropped_bytes(&f) {
             use base64::Engine as _;
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped.png".into());
-            app.run("file.import", json!({"data": b64, "name": name, "x": pt.x, "y": pt.y}));
-        }
+            json!({"data": b64, "name": name, "x": pt.x, "y": pt.y})
+        } else {
+            continue;
+        };
+        let Some(target) =
+            app.session.ds().ok().map(|doc| crate::pending_open::ImportTarget { uid: doc.uid, page: doc.page, name: doc.doc.name.clone() })
+        else {
+            continue;
+        };
+        app.ui.pending_opens.push(crate::pending_open::PendingOpen { label: name, params, command: "file.import", target: Some(target) });
     }
     let Some(pos) = hover_pos.filter(|p| app.canvas.rect.contains(*p)) else {
         // A drag released off the canvas, or off the window, ends where the pointer was last seen.
@@ -648,17 +678,6 @@ pub fn open_context_menu(app: &mut FigApp, pos: Pos2, deep: bool) {
         }
     }
     app.ui.context_menu = Some((pos, app.session.selection()));
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn dropped_bytes(f: &std::sync::Arc<dyn egui::DroppedFile + Send + Sync>) -> Option<Vec<u8>> {
-    f.bytes().ok()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn dropped_bytes(_f: &std::sync::Arc<dyn egui::DroppedFile + Send + Sync>) -> Option<Vec<u8>> {
-    // Browser drops arrive asynchronously; not supported yet.
-    None
 }
 
 fn stroke(c: Color32, w: f32) -> Stroke {
@@ -1110,7 +1129,9 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
     if !ov.pen.is_empty() {
         let pts: Vec<Pos2> = ov.pen.iter().map(|[x, y]| app.to_screen(*x, *y)).collect();
         if app.session.tool.tool == ToolId::Pencil {
-            painter.add(Shape::line(pts, stroke(t.text, 2.0)));
+            // The stroke it will make, in its colour and weight (at least a point when zoomed out).
+            let (color, weight) = figcraft_engine::tools::PENCIL_STROKE;
+            painter.add(Shape::line(pts, stroke(doc_c32(painter.ctx(), color), ((weight * zoom) as f32).max(1.0))));
         } else {
             for [x0, y0, x1, y1] in &ov.pen_handles {
                 bezier_handle(painter, app.to_screen(*x0, *y0), app.to_screen(*x1, *y1), 3.5, Color32::WHITE);
