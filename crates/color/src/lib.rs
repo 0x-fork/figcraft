@@ -11,10 +11,12 @@ use serde::{Deserialize, Serialize};
 mod blend;
 mod hsx;
 mod icc;
+mod lch;
 mod named;
 mod profile;
 pub use blend::BlendMode;
 pub use hsx::*;
+pub use lch::{Lch, Oklch};
 pub use profile::{ColorProfile, ProfileConversion};
 
 /// A non-premultiplied sRGB colour with alpha, components in `0..=1`. Deserializes from
@@ -146,7 +148,8 @@ impl Color {
         Self::from_hex(s).or_else(|| named::lookup(s).map(|[r, g, b]| Self::from_rgba8(r, g, b, 255)))
     }
 
-    /// Parse a CSS colour: hex, `rgb()/rgba()`, `hsl()/hsla()`, a CSS colour name or `transparent`.
+    /// Parse a CSS colour: hex, `rgb()/rgba()`, `hsl()/hsla()`, `lch()`, `oklch()`, a CSS colour
+    /// name or `transparent`. LCH and OKLCH outside sRGB come back as the nearest sRGB colour.
     pub fn parse_css(s: &str) -> Option<Self> {
         let t = s.trim().to_ascii_lowercase();
         if t.starts_with('#') {
@@ -172,6 +175,24 @@ impl Color {
             let l = parts.get(2)?.trim_end_matches('%').parse::<f32>().ok()? / 100.0;
             let alpha = parts.get(3).and_then(|a| parse_alpha(a)).unwrap_or(1.0);
             return Some(Hsl { h, s, l }.to_color().with_alpha(alpha));
+        }
+        if let Some(inner) = t.strip_prefix("oklch(").and_then(|r| r.strip_suffix(')')) {
+            let parts = css_args(inner);
+            // Percentages: 100% lightness is 1, 100% chroma is 0.4 (CSS Color 4).
+            let l = css_number(parts.first()?, 1.0)?;
+            let c = css_number(parts.get(1)?, 0.4)?;
+            let h = parts.get(2)?.trim_end_matches("deg").parse::<f32>().ok()?;
+            let alpha = parts.get(3).and_then(|a| parse_alpha(a)).unwrap_or(1.0);
+            return Some(Oklch { l, c, h }.to_color().with_alpha(alpha));
+        }
+        if let Some(inner) = t.strip_prefix("lch(").and_then(|r| r.strip_suffix(')')) {
+            let parts = css_args(inner);
+            // Percentages: 100% lightness is 100, 100% chroma is 150 (CSS Color 4).
+            let l = css_number(parts.first()?, 100.0)?;
+            let c = css_number(parts.get(1)?, 150.0)?;
+            let h = parts.get(2)?.trim_end_matches("deg").parse::<f32>().ok()?;
+            let alpha = parts.get(3).and_then(|a| parse_alpha(a)).unwrap_or(1.0);
+            return Some(Lch { l, c, h }.to_color().with_alpha(alpha));
         }
         if t == "transparent" {
             return Some(Color::TRANSPARENT);
@@ -211,6 +232,15 @@ impl Color {
 
 fn css_args(inner: &str) -> Vec<String> {
     inner.replace('/', ",").split([',', ' ']).map(str::trim).filter(|p| !p.is_empty()).map(str::to_string).collect()
+}
+
+/// A CSS number, or a percentage of `full`; finite only.
+fn css_number(p: &str, full: f32) -> Option<f32> {
+    let v = match p.strip_suffix('%') {
+        Some(pc) => pc.trim().parse::<f32>().ok()? / 100.0 * full,
+        None => p.parse::<f32>().ok()?,
+    };
+    v.is_finite().then_some(v)
 }
 
 fn parse_alpha(a: &str) -> Option<f32> {
@@ -627,6 +657,8 @@ impl Paint {
 
 #[cfg(test)]
 mod gradient_tests;
+#[cfg(test)]
+mod lch_tests;
 #[cfg(test)]
 mod pattern_tests;
 #[cfg(test)]

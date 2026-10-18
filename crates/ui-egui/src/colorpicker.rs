@@ -236,7 +236,7 @@ fn page_colors(app: &FigApp, ui: &Ui) -> Vec<Color> {
 }
 
 /// Colour models the value row can show.
-const MODELS: [&str; 5] = ["Hex", "RGB", "HSL", "HSB", "CSS"];
+const MODELS: [&str; 7] = ["Hex", "RGB", "HSL", "HSB", "LCH", "OKLCH", "CSS"];
 
 /// The model dropdown with its fields and the alpha field. Returns a new colour and whether the
 /// edit is done (false while a field is being scrubbed).
@@ -248,7 +248,9 @@ fn model_fields(ui: &mut Ui, c: Color) -> Option<(Color, bool)> {
     ui.horizontal(|ui| {
         ui.add_space(16.0);
         ui.spacing_mut().item_spacing.x = 4.0;
-        let resp = widgets::dropdown(ui, MODELS.get(model).copied().unwrap_or("Hex"), 52.0, None);
+        // "LCH" and "OKLCH" need a wider dropdown; their fields and alpha give up the room.
+        let wide = matches!(MODELS.get(model).copied(), Some("LCH" | "OKLCH"));
+        let resp = widgets::dropdown(ui, MODELS.get(model).copied().unwrap_or("Hex"), if wide { 66.0 } else { 52.0 }, None);
         crate::right::menu_popup(&resp).show(|ui| {
             for (i, m) in MODELS.iter().enumerate() {
                 if crate::right::menu_item(ui, m, "") {
@@ -257,25 +259,22 @@ fn model_fields(ui: &mut Ui, c: Color) -> Option<(Color, bool)> {
                 }
             }
         });
-        let num = |ui: &mut Ui, id: &str, v: f64, w: f32| match widgets::number_field(
-            ui,
-            Id::new(("cp_f", id)),
-            widgets::Lead::None,
-            Some(v.round()),
-            "",
-            w,
-            1.0,
-        ) {
-            Some(widgets::FieldEdit::Set(x)) => Some((x, true)),
-            Some(widgets::FieldEdit::Scrub(x, end)) => Some((x, end)),
-            None => None,
+        // `decimals` places shown; `step` is what a scrub or arrow moves by.
+        let num = |ui: &mut Ui, id: &str, v: f64, w: f32, decimals: i32, step: f64| {
+            let p = 10f64.powi(decimals);
+            match widgets::number_field(ui, Id::new(("cp_f", id)), widgets::Lead::None, Some((v * p).round() / p), "", w, step) {
+                Some(widgets::FieldEdit::Set(x)) => Some((x, true)),
+                Some(widgets::FieldEdit::Scrub(x, end)) => Some((x, end)),
+                None => None,
+            }
         };
-        match MODELS.get(model).copied().unwrap_or("Hex") {
+        let name = MODELS.get(model).copied().unwrap_or("Hex");
+        match name {
             "RGB" => {
                 let [r, g, b, _] = c.to_rgba8();
                 let vals = [f64::from(r), f64::from(g), f64::from(b)];
                 for (k, v) in vals.iter().enumerate() {
-                    if let Some((x, end)) = num(ui, ["r", "g", "b"][k.min(2)], *v, 31.0) {
+                    if let Some((x, end)) = num(ui, ["r", "g", "b"][k.min(2)], *v, 31.0, 0, 1.0) {
                         done = end;
                         let mut rgb = vals;
                         if let Some(slot) = rgb.get_mut(k) {
@@ -285,25 +284,55 @@ fn model_fields(ui: &mut Ui, c: Color) -> Option<(Color, bool)> {
                     }
                 }
             }
-            "HSL" | "HSB" => {
-                let hsl = model == 2;
-                let (h, s2, l2) = if hsl {
-                    let x = figcraft_color::Hsl::from_color(c);
-                    (x.h, x.s, x.l)
-                } else {
-                    let x = Hsb::from_color(c);
-                    (x.h, x.s, x.b)
+            "HSL" | "HSB" | "LCH" | "OKLCH" => {
+                // Shown as: hue/lightness/chroma in their CSS units; OKLCH lightness as a percent.
+                let vals: [f64; 3] = match name {
+                    "HSL" => {
+                        let x = figcraft_color::Hsl::from_color(c);
+                        [f64::from(x.h), f64::from(x.s) * 100.0, f64::from(x.l) * 100.0]
+                    }
+                    "LCH" => {
+                        let x = figcraft_color::Lch::from_color(c);
+                        [f64::from(x.l), f64::from(x.c), f64::from(x.h)]
+                    }
+                    "OKLCH" => {
+                        let x = figcraft_color::Oklch::from_color(c);
+                        [f64::from(x.l) * 100.0, f64::from(x.c), f64::from(x.h)]
+                    }
+                    _ => {
+                        let x = Hsb::from_color(c);
+                        [f64::from(x.h), f64::from(x.s) * 100.0, f64::from(x.b) * 100.0]
+                    }
                 };
-                let vals = [f64::from(h), f64::from(s2) * 100.0, f64::from(l2) * 100.0];
-                for (k, v) in vals.iter().enumerate() {
-                    if let Some((x, end)) = num(ui, ["h", "s", "l"][k.min(2)], *v, 31.0) {
+                let lch = matches!(name, "LCH" | "OKLCH");
+                // (field id, decimals, step, max) per field; the hue wraps.
+                let fields: [(&str, i32, f64, f64); 3] = match name {
+                    "LCH" => [("l", 0, 1.0, 100.0), ("c", 0, 1.0, 230.0), ("h", 0, 1.0, 360.0)],
+                    "OKLCH" => [("l", 0, 1.0, 100.0), ("ok_c", 2, 0.01, 0.5), ("h", 0, 1.0, 360.0)],
+                    _ => [("h", 0, 1.0, 360.0), ("s", 0, 1.0, 100.0), ("l", 0, 1.0, 100.0)],
+                };
+                let hue = if lch { 2 } else { 0 };
+                for (k, (v, (id, decimals, step, max))) in vals.iter().zip(fields).enumerate() {
+                    let w = if !wide {
+                        31.0
+                    } else if decimals > 0 {
+                        30.0
+                    } else {
+                        27.0
+                    };
+                    if let Some((x, end)) = num(ui, id, *v, w, decimals, step) {
                         done = end;
                         let mut v3 = vals;
                         if let Some(slot) = v3.get_mut(k) {
-                            *slot = if k == 0 { x.rem_euclid(360.0) } else { x.clamp(0.0, 100.0) };
+                            *slot = if k == hue { x.rem_euclid(360.0) } else { x.clamp(0.0, max) };
                         }
-                        let (h, a, b) = (v3[0] as f32, v3[1] as f32 / 100.0, v3[2] as f32 / 100.0);
-                        let col = if hsl { figcraft_color::Hsl { h, s: a, l: b }.to_color() } else { Hsb { h, s: a, b }.to_color() };
+                        let [a, b, d] = v3.map(|v| v as f32);
+                        let col = match name {
+                            "HSL" => figcraft_color::Hsl { h: a, s: b / 100.0, l: d / 100.0 }.to_color(),
+                            "LCH" => figcraft_color::Lch { l: a, c: b, h: d }.to_color(),
+                            "OKLCH" => figcraft_color::Oklch { l: a / 100.0, c: b, h: d }.to_color(),
+                            _ => Hsb { h: a, s: b / 100.0, b: d / 100.0 }.to_color(),
+                        };
                         out = Some(col.with_alpha(c.a));
                     }
                 }
@@ -321,7 +350,7 @@ fn model_fields(ui: &mut Ui, c: Color) -> Option<(Color, bool)> {
         }
         if MODELS.get(model) != Some(&"CSS") {
             let alpha = Some((f64::from(out.unwrap_or(c).a) * 100.0).round());
-            let edit = match widgets::number_field(ui, Id::new("cp_a"), widgets::Lead::None, alpha, "%", 44.0, 1.0) {
+            let edit = match widgets::number_field(ui, Id::new("cp_a"), widgets::Lead::None, alpha, "%", if wide { 40.0 } else { 44.0 }, 1.0) {
                 Some(widgets::FieldEdit::Set(v)) => Some((v, true)),
                 Some(widgets::FieldEdit::Scrub(v, end)) => Some((v, end)),
                 None => None,
@@ -791,7 +820,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     changed = true;
                     done |= d;
                 }
-                // Colour model fields (Hex, RGB, HSL, HSB or CSS) + alpha.
+                // Colour model fields (Hex, RGB, HSL, HSB, LCH, OKLCH or CSS) + alpha.
                 if let Some((c, d)) = model_fields(ui, nc) {
                     nc = c;
                     hsb = Hsb::from_color(nc);

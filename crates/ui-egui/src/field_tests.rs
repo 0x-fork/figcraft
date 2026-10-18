@@ -439,6 +439,30 @@ fn scrubbing_colour_picker_fields_is_live_and_one_undo_step() {
 }
 
 #[test]
+fn lch_and_oklch_picker_fields_edit_lightness_keeping_hue() {
+    for (model, name) in [(4usize, "LCH"), (5, "OKLCH")] {
+        let (mut u, a, _) = setup();
+        let color = |u: &Ui| u.app.session.doc().unwrap().node(a).unwrap().fills[0].solid_color().unwrap();
+        u.app.set_props(&[a], json!({"fills": [{"type": "solid", "color": "#0D99FF"}]}));
+        let before = color(&u);
+        assert_eq!(before.to_hex(), "0D99FF");
+        u.ctx.data_mut(|d| d.insert_temp(Id::new("cp_model"), model));
+        u.app.ui.picker = Some(crate::colorpicker::PickerTarget::Paint { fills: true, index: 0, ids: vec![a] });
+        for _ in 0..3 {
+            u.frame(vec![]);
+        }
+        let steps = undo_steps(&u);
+        let from = lead(&u, Id::new(("cp_f", "l")));
+        drag(&mut u, from, -20.0, Modifiers::NONE);
+        let after = color(&u);
+        let hue = |c| figcraft_color::Oklch::from_color(c).h;
+        assert!(after.luminance() < before.luminance(), "{name}: darker");
+        assert!((hue(after) - hue(before)).abs() < 3.0, "{name}: hue kept {} → {}", hue(before), hue(after));
+        assert_eq!(undo_steps(&u), steps + 1, "{name}: one undo step");
+    }
+}
+
+#[test]
 fn scrubbing_a_prototype_delay_sets_it_once_when_let_go() {
     let mut s = Session::new();
     let f1 = id(s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 200, "height": 300})).unwrap());
