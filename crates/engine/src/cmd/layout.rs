@@ -150,6 +150,34 @@ mod tests {
     }
 
     #[test]
+    fn each_side_padding_sets_its_side_alone() {
+        let mut s = Session::new();
+        let (f, _, _) = al_frame(&mut s);
+        // One side at a time: the other three stay 0 ([top, right, bottom, left]).
+        for (key, v, want) in [
+            ("paddingTop", 8.0, [8.0, 0.0, 0.0, 0.0]),
+            ("paddingRight", 12.0, [0.0, 12.0, 0.0, 0.0]),
+            ("paddingBottom", 16.0, [0.0, 0.0, 16.0, 0.0]),
+            ("paddingLeft", 20.0, [0.0, 0.0, 0.0, 20.0]),
+        ] {
+            ex(&mut s, "node.set", json!({"id": f, "props": {"padding": 0}}));
+            ex(&mut s, "node.set", json!({"id": f, "props": {key: v}}));
+            assert_eq!(node(&s, f).layout.as_ref().unwrap().padding, want, "{key}");
+        }
+        // The [t, r, b, l] array and the axis pairs agree with the four sides.
+        ex(&mut s, "node.set", json!({"id": f, "props": {"padding": [8, 12, 16, 20]}}));
+        assert_eq!(node(&s, f).layout.as_ref().unwrap().padding, [8.0, 12.0, 16.0, 20.0]);
+        ex(&mut s, "node.set", json!({"id": f, "props": {"paddingHorizontal": 4}}));
+        assert_eq!(node(&s, f).layout.as_ref().unwrap().padding, [8.0, 4.0, 16.0, 4.0]);
+        ex(&mut s, "node.set", json!({"id": f, "props": {"paddingVertical": 2}}));
+        assert_eq!(node(&s, f).layout.as_ref().unwrap().padding, [2.0, 4.0, 2.0, 4.0]);
+        // Negatives clamp to 0; junk is refused.
+        ex(&mut s, "node.set", json!({"id": f, "props": {"paddingTop": -5}}));
+        assert_eq!(node(&s, f).layout.as_ref().unwrap().padding[0], 0.0);
+        assert!(s.execute("node.set", &json!({"id": f, "props": {"paddingLeft": "wide"}})).is_err());
+    }
+
+    #[test]
     fn baseline_alignment_lines_up_text() {
         let mut s = Session::new();
         let f = id(&ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 400, "height": 100, "props": {"layout": "horizontal"}})));

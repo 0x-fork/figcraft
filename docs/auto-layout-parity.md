@@ -64,7 +64,7 @@ Status: **pass** (a case in the suite holds), **fixed** (the suite found a diver
 | Nested hug/fill settling in one pass (three levels, wrapping fill text, grid rows) | done | |
 | Absolute position (ignore auto layout) with constraints | done | |
 | Strokes included in layout (inside strokes), canvas stacking | done | |
-| On-canvas padding and gap handles, incl. wrap row/column gap and grid gaps | done | an automatic gap's handle shows the distance it has; dragging it fixes the gap from there (silent in the documentation) |
+| On-canvas padding and gap handles, incl. wrap row/column gap and grid gaps | done | an automatic gap's handle shows the distance it has; dragging it fixes the gap from there (silent in the documentation); the Layout panel's Spacing row opens per-side padding fields (Top/Right/Bottom/Left) behind a toggle |
 | Drag to reorder (wrap-aware, by row or column), into grid cells, across nested frames | done | `al_drag_tests.rs` |
 | Arrow keys move children one place (flows, rows, columns, grid cells, into neighbours) | done | `al_keys_tests.rs` |
 | Constraints: left, right, left and right, centre, scale; top/bottom likewise | done | |
@@ -77,6 +77,7 @@ Status: **pass** (a case in the suite holds), **fixed** (the suite found a diver
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-18 | minor | Individual padding in the Layout panel (M2): the Spacing row's toggle opens per-side Top/Right/Bottom/Left fields in a 2×2 grid in place of the H/V fields, each bound to its own padding key with one undo step; shut H/V fields show both values ("16,54") when the sides disagree instead of "Mixed". Original code-drawn side icons, English and Spanish strings (`padding_individual_tests`). Numbers unchanged |
 | 2026-10-17 | minor | Community batch #753: adding auto layout to an empty frame keeps its size, Fixed, while a frame with content hugs it (#369); `node.set` applies auto layout keys to the frames among its targets and warns about the others, and a font style the family lacks warns with the nearest face (#603). Checked over MCP. Numbers unchanged |
 | 2026-10-13 | minor | Auto layout, on-canvas handles of automatic gaps (M2): the handle between spread rows or columns (and between items with an auto gap) shows the distance the layout gives the gap instead of the stored value, and dragging it makes the gap a fixed one from there, as typing a gap in the panel does; one undo step (`gap_handle_tests`). Before, the drag changed a value that had no effect. The documentation is silent on dragging an automatic gap. Numbers unchanged. |
 | 2026-10-13 | minor | Auto layout, wrapped-line alignment (M2): a wrapping layout's lines (rows of a horizontal one, columns of a vertical one) are packed where the cross alignment says (start, centre, end; before, they always sat at the start), stretch when every child fills across the flow, or take the free space between them (`contentAlign: spaceBetween`, the Design panel's Row/Column gap mode, the alignment pad lighting the whole cross axis). Read from REST JSON and `.fig`, written to `.fig`, `align-content` in CSS, an instance override with the other alignment settings. 13 hand-computed layout cases and command tests. Numbers unchanged. |

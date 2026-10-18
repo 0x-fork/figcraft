@@ -156,6 +156,8 @@ mod online_tests;
 #[cfg(test)]
 mod open_issues_tests;
 #[cfg(test)]
+mod padding_individual_tests;
+#[cfg(test)]
 mod palette_tests;
 #[cfg(test)]
 mod panel_remove_tests;
