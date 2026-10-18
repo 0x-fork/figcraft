@@ -112,6 +112,8 @@ pub fn record_recent(app: &mut FigApp, key: &str) {
     r.truncate(figcraft_engine::MAX_RECENT_ACTIONS);
 }
 
+/// Run a menu, shortcut or palette action by id: actions that need the UI (dialogs, panels, the
+/// clipboard) are handled here, the rest go to the engine.
 pub fn invoke(app: &mut FigApp, id: &str) {
     match id {
         // Edit ▸ Delete (and the Delete binding) with an interaction open in the Prototype tab
@@ -247,6 +249,7 @@ fn text_layers_text(doc: &figcraft_doc::Document, ids: &[figcraft_doc::NodeId]) 
     texts.map(|t| t.join("\n")).filter(|t| !t.is_empty())
 }
 
+/// The layers as SVG text for other apps (None when the export fails).
 fn figcraft_svg_export(doc: &figcraft_doc::Document, ids: &[figcraft_doc::NodeId]) -> Option<String> {
     let bytes = figcraft_engine::cmd::file::export_bytes(doc, ids, figcraft_doc::ExportFormat::Svg, 1.0).ok()?;
     String::from_utf8(bytes).ok()
