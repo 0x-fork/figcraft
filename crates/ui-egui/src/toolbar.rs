@@ -94,6 +94,8 @@ pub(crate) fn main_width() -> f32 {
     GROUPS.len() as f32 * (cell + gap) + gap * 10.0 + 2.0 * (cell + gap) + 16.0 + 4.0 * 34.0 + 24.0
 }
 
+/// The main toolbar pill: the tool groups with their flyouts, Resources and Actions, then the
+/// Draw · Design · Prototype · Inspect mode switcher.
 fn main_toolbar(app: &mut FigApp, ui: &mut Ui, canvas: Rect, t: &Tokens) {
     let (cell, gap) = (32.0, 4.0);
     let width = main_width();

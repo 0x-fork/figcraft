@@ -421,6 +421,7 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
     draw(&p, icon);
 }
 
+/// Draw `icon` on the 16-unit grid through `p`, which maps grid units to the target box.
 fn draw(p: &P, icon: Icon) {
     use Icon::*;
     match icon {
