@@ -195,6 +195,12 @@ struct State {
 }
 
 impl State {
+    /// Make `message` the reply and return status 1 (refused).
+    fn refuse(&mut self, message: String) -> i32 {
+        self.set_reply(message.into_bytes());
+        1
+    }
+
     /// Make `bytes` the reply; returns its length.
     fn set_reply(&mut self, bytes: Vec<u8>) -> i32 {
         let max = self.limits.max_message;
@@ -595,6 +601,11 @@ fn linker(engine: &Engine) -> Result<Linker<State>, PluginError> {
         charge(&mut c)?;
         let name = read_str(&mut c, np, nl)?;
         let mime = read_str(&mut c, mp, ml)?;
+        // Too much data is a refusal the plugin can handle, not a limit that fails the run.
+        let (len, max) = (dl as u32 as usize, c.data().limits.max_message);
+        if len > max {
+            return Ok(c.data_mut().refuse(format!("a file to save is limited to {max} bytes, this one has {len}")));
+        }
         let data = read_bytes(&mut c, dp, dl)?;
         Err(ask(&mut c, Request::SaveFile(name, mime, data)))
     })

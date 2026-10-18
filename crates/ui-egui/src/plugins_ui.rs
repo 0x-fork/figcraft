@@ -477,9 +477,6 @@ fn confirm_window(app: &mut FigApp, ctx: &Context, t: &Tokens) {
         if e.widget {
             asks.push(tr("put a widget on the canvas").to_string());
         }
-        if e.save_file {
-            asks.push(tr("save files you choose").to_string());
-        }
         for a in asks {
             ui.add(egui::Label::new(RichText::new(format!("•  {a}")).font(regular(11.0)).color(t.text)).wrap());
         }

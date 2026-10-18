@@ -98,12 +98,14 @@ fn a_host_without_saving_refuses_by_default() {
 }
 
 #[test]
-fn too_much_data_is_a_limit_error_and_bad_utf8_a_trap() {
-    let limits = Limits { max_message: 4, ..Limits::default() };
-    let wasm = module("a.txt", "text/plain", b"12345", &call("a.txt", "text/plain", b"12345"));
+fn too_much_data_is_refused_and_bad_utf8_a_trap() {
+    let limits = Limits { max_message: 64, ..Limits::default() };
+    let data = [b'x'; 65];
+    let wasm = module("a.txt", "text/plain", &data, &call("a.txt", "text/plain", &data));
     let mut host = Saves::default();
+    // Status 1 with the reason, which the module passes on as its own failure.
     let err = Instance::new(&wasm, &limits).unwrap().call("{}", &mut host).unwrap_err();
-    assert!(matches!(err, PluginError::Limit(_)), "{err:?}");
+    assert_eq!(err, PluginError::Failed("a file to save is limited to 64 bytes, this one has 65".into()));
     assert!(host.0.is_empty());
 
     // The name points at a lone 0xff byte: not UTF-8.
