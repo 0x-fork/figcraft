@@ -463,4 +463,12 @@ fn vector_paths_take_the_requested_size_and_refuse_empty_geometry() {
     assert!(e.contains("draws nothing"), "{e}");
     let e = s.execute("vector.create", &json!({"points": [[5, 5], [5, 5]]})).unwrap_err().to_string();
     assert!(e.contains("draws nothing"), "{e}");
+    // A size on an axis the geometry has none of is refused, not silently ignored.
+    let e = s.execute("vector.create", &json!({"path": "M0 0 L0 24", "width": 16})).unwrap_err().to_string();
+    assert!(e.contains("horizontal extent"), "{e}");
+    let e = s.execute("vector.create", &json!({"path": "M0 0 L24 0", "height": 16})).unwrap_err().to_string();
+    assert!(e.contains("vertical extent"), "{e}");
+    // A size that would collapse both axes is refused too.
+    let e = s.execute("vector.create", &json!({"path": path, "width": 0})).unwrap_err().to_string();
+    assert!(e.contains("0×0"), "{e}");
 }

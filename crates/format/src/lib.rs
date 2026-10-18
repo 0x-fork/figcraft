@@ -232,13 +232,18 @@ struct DocumentJson<'a> {
     version: u32,
     #[serde(rename = "imageIndex", serialize_with = "image_index")]
     images: &'a BTreeMap<String, ImageData>,
+    /// The editor draws component-set outlines itself instead of storing them as strokes. Files
+    /// without this marker were written by a version that stored the purple dashed outline as a
+    /// real stroke (see [`drop_component_set_decoration`]).
+    #[serde(rename = "editorOutlines")]
+    editor_outlines: bool,
     #[serde(flatten)]
     doc: &'a Document,
 }
 
 impl<'a> DocumentJson<'a> {
     fn new(doc: &'a Document) -> Self {
-        Self { format: FORMAT, version: VERSION, images: &doc.images, doc }
+        Self { format: FORMAT, version: VERSION, images: &doc.images, editor_outlines: true, doc }
     }
 }
 
@@ -277,6 +282,8 @@ type ImageIndex = Option<BTreeSet<String>>;
 struct Header {
     version: Option<u64>,
     images: ImageIndex,
+    /// Whether the writer drew component-set outlines outside the document.
+    editor_outlines: bool,
 }
 
 impl<'de> Deserialize<'de> for Header {
@@ -292,6 +299,7 @@ impl<'de> Deserialize<'de> for Header {
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "version" => h.version = map.next_value::<Value>()?.as_u64(),
+                        "editorOutlines" => h.editor_outlines = map.next_value::<Value>()?.as_bool().unwrap_or(false),
                         "imageIndex" => {
                             h.images = map
                                 .next_value::<Value>()?
@@ -337,7 +345,11 @@ fn parse_json(text: &str) -> Result<(Document, Vec<String>, ImageIndex), FormatE
         return Err(FormatError::Newer(u32::try_from(ver).unwrap_or(u32::MAX)));
     }
     let mut doc: Document = serde_json::from_str(text).map_err(corrupt)?;
-    drop_component_set_decoration(&mut doc);
+    // Only files from before the marker can carry the old stored decoration; a file this version
+    // wrote keeps a stroke someone chose, even one that looks exactly like it.
+    if !header.editor_outlines {
+        drop_component_set_decoration(&mut doc);
+    }
     let issues = doc.validate();
     if !issues.is_empty() {
         doc.repair();

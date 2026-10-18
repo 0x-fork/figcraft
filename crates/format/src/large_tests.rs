@@ -187,7 +187,7 @@ fn files_with_every_field_spelled_out_still_open() {
 }
 
 #[test]
-fn a_component_sets_old_editor_outline_is_dropped_on_open() {
+fn a_component_sets_old_editor_outline_is_dropped_only_without_the_marker() {
     let mut d = Document::new("Sets");
     let page = d.first_page().unwrap();
     let old = d.create(page, NodeKind::ComponentSet { description: String::new() }, "Button", 0.0, 0.0, 100.0, 40.0).unwrap();
@@ -200,8 +200,15 @@ fn a_component_sets_old_editor_outline_is_dropped_on_open() {
     let n = d.get_mut(custom).unwrap();
     n.strokes = vec![Paint::solid(Color::from_rgb8_const(0x11, 0x22, 0x33))];
     n.stroke.dashes = vec![1.0, 2.0];
+    // A file this version writes carries the marker: the same stroke is a choice, not decoration.
     let text = serde_json::to_string(&to_json(&d).unwrap()).unwrap();
-    let (back, _) = from_json(&text).unwrap();
+    let (current, _) = from_json(&text).unwrap();
+    assert_eq!(current.node(old).unwrap().strokes.len(), 1, "a marked file keeps a stroke someone chose");
+    assert_eq!(current.node(custom).unwrap().strokes.len(), 1);
+    // A file without the marker is from a version that stored the decoration; drop exactly that.
+    let mut legacy = to_json(&d).unwrap();
+    legacy.as_object_mut().unwrap().remove("editorOutlines");
+    let (back, _) = from_json(&serde_json::to_string(&legacy).unwrap()).unwrap();
     let old = back.node(old).unwrap();
     assert!(old.strokes.is_empty() && old.stroke.dashes.is_empty(), "the decoration is canvas chrome, not a document stroke");
     let custom = back.node(custom).unwrap();

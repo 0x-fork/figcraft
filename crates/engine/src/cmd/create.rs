@@ -167,24 +167,30 @@ pub fn parse_path_data(d: &str) -> Option<figcraft_geom::BezPath> {
 }
 
 /// How much a vector's path is scaled to take the size asked for: with both sides, each scales
-/// independently (as resizing a vector does); with one, the other keeps its proportion.
-fn vector_scale(width: Option<f64>, height: Option<f64>, bw: f64, bh: f64) -> (f64, f64) {
-    let fit = |asked: Option<f64>, have: f64| match asked {
-        Some(a) if have > 1e-9 => a.max(0.0) / have,
-        _ => 1.0,
+/// independently (as resizing a vector does); with one, the other keeps its proportion. A size
+/// asked for on an axis the geometry has none of is an error, not silently ignored.
+fn vector_scale(width: Option<f64>, height: Option<f64>, bw: f64, bh: f64, what: &str) -> std::result::Result<(f64, f64), String> {
+    let fit = |asked: Option<f64>, have: f64, axis: &str| match asked {
+        Some(a) if have > 1e-9 => Ok(a.max(0.0) / have),
+        Some(_) => Err(format!("`{axis}` can't size {what} with no {} extent", if axis == "width" { "horizontal" } else { "vertical" })),
+        None => Ok(1.0),
     };
-    match (width, height) {
-        (Some(_), Some(_)) => (fit(width, bw), fit(height, bh)),
+    let (sx, sy) = match (width, height) {
+        (Some(_), Some(_)) => (fit(width, bw, "width")?, fit(height, bh, "height")?),
         (Some(_), None) => {
-            let s = fit(width, bw);
+            let s = fit(width, bw, "width")?;
             (s, s)
         }
         (None, Some(_)) => {
-            let s = fit(height, bh);
+            let s = fit(height, bh, "height")?;
             (s, s)
         }
         (None, None) => (1.0, 1.0),
+    };
+    if sx <= 0.0 && sy <= 0.0 {
+        return Err(format!("`width` and `height` would make {what} 0×0"));
     }
+    Ok((sx, sy))
 }
 
 pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
@@ -225,7 +231,7 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
                 return Err(bad(cmd, "`path` draws nothing: a vector needs a visible line or area"));
             }
             path.apply_affine(figcraft_geom::Affine::translate((-bb.x0, -bb.y0)));
-            let (sx, sy) = vector_scale(asked.0, asked.1, bb.width(), bb.height());
+            let (sx, sy) = vector_scale(asked.0, asked.1, bb.width(), bb.height(), "a path").map_err(|e| bad(cmd, e))?;
             if sx != 1.0 || sy != 1.0 {
                 path.apply_affine(figcraft_geom::Affine::scale_non_uniform(sx, sy));
             }
@@ -248,7 +254,7 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
             if bb.width() <= 1e-9 && bb.height() <= 1e-9 {
                 return Err(bad(cmd, "`points` draws nothing: a vector needs a visible line or area"));
             }
-            let (sx, sy) = vector_scale(asked.0, asked.1, bb.width(), bb.height());
+            let (sx, sy) = vector_scale(asked.0, asked.1, bb.width(), bb.height(), "a point set").map_err(|e| bad(cmd, e))?;
             let local: Vec<Point> = pts.iter().map(|q| Point::new((q.x - bb.x0) * sx, (q.y - bb.y0) * sy)).collect();
             *network = VectorNetwork::from_points(&local, boolean(p, "closed").unwrap_or(false));
             w = bb.width() * sx;
