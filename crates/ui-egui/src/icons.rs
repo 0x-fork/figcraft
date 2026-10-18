@@ -459,9 +459,11 @@ fn draw(p: &P, icon: Icon) {
             p.fill_rect(2.0, 2.0, 9.0, 6.0, 1.0);
         }
         Slice => {
-            // A knife, one silhouette (#739): a slim blade to the top right, a solid handle.
+            // A knife, one silhouette (#739): a slim blade to the top right, outlined like the
+            // rest of the row, and a solid handle whose end overlaps the blade's base so the two
+            // join at every size.
             p.poly(&[(13.5, 2.5), (5.0, 8.0), (8.0, 11.0)], true);
-            p.fill(&capsule((2.8, 13.2), (5.4, 10.6), 1.3));
+            p.fill(&capsule((2.8, 13.2), (5.9, 10.1), 1.3));
         }
         Bend => {
             // A curve with a smooth point and its handle line.
