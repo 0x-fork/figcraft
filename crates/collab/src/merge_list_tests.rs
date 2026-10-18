@@ -1,5 +1,7 @@
-//! Fills, strokes and effects merge item by item: different items changed on each side merge,
-//! the same item changed both ways conflicts.
+//! The layer lists whose items stand on their own (fills, strokes, effects, export settings,
+//! guides, prototype interactions, accessibility annotations, Dev Mode links and resources) merge
+//! item by item: different items changed on each side merge, the same item changed both ways
+//! conflicts.
 
 use figcraft_color::{Color, Paint};
 use figcraft_doc::{Document, Effect, NodeId, NodeKind};
@@ -100,19 +102,60 @@ fn the_same_item_changed_both_ways_conflicts() {
 }
 
 #[test]
-fn other_lists_still_conflict_as_a_whole() {
-    // Docs silent: lists other than fills, strokes and effects (export settings here) still
-    // conflict whole when both sides change them.
+fn the_other_item_lists_merge_one_by_one_too() {
+    // Export settings, guides, prototype interactions, accessibility annotations and the Dev Mode
+    // links and resources are item lists like fills: both sides changing different items merges.
     let (mut base, _, _, r) = files();
     let export = |suffix: &str| figcraft_doc::ExportSetting { suffix: suffix.into(), ..Default::default() };
-    base.get_mut(r).unwrap().exports = vec![export("@1"), export("@2")];
+    let guide = |vertical: bool, offset: f64| figcraft_doc::Guide { vertical, offset };
+    let annot = |label: &str| figcraft_doc::Annotation { label: label.into(), properties: Vec::new(), category: None };
+    let link =
+        |name: &str| figcraft_doc::CodeLink { language: "react".into(), import_path: String::new(), name: name.into(), template: String::new() };
+    let res = |url: &str| figcraft_doc::DevResource { url: url.into(), name: String::new() };
+    let n = base.get_mut(r).unwrap();
+    n.exports = vec![export("@1"), export("@2")];
+    n.guides = vec![guide(true, 10.0), guide(false, 20.0)];
+    n.annotations = vec![annot("a1"), annot("a2")];
+    n.code_links = vec![link("L1"), link("L2")];
+    n.dev_resources = vec![res("https://a.test"), res("https://b.test")];
     let (mut branch, mut main) = (base.clone(), base.clone());
     branch.set_client_id(base.highest_id_space() + 1);
-    branch.get_mut(r).unwrap().exports[0] = export("@b");
-    main.get_mut(r).unwrap().exports[1] = export("@m");
+    // The branch changes the first item of each list; main the second.
+    let b = branch.get_mut(r).unwrap();
+    (b.exports[0].suffix, b.guides[0].offset, b.annotations[0].label, b.code_links[0].name, b.dev_resources[0].url) =
+        ("@b".into(), 11.0, "b1".into(), "LB".into(), "https://branch.test".into());
+    let m = main.get_mut(r).unwrap();
+    (m.exports[1].suffix, m.guides[1].offset, m.annotations[1].label, m.code_links[1].name, m.dev_resources[1].url) =
+        ("@m".into(), 22.0, "m2".into(), "LM".into(), "https://main.test".into());
+    both_ways(&base, &branch, &main, |doc| {
+        let n = doc.node(r).unwrap();
+        let suffixes: Vec<&str> = n.exports.iter().map(|e| e.suffix.as_str()).collect();
+        assert_eq!(suffixes, ["@b", "@m"], "export settings");
+        let offsets: Vec<f64> = n.guides.iter().map(|g| g.offset).collect();
+        assert_eq!(offsets, [11.0, 22.0], "guides");
+        let labels: Vec<&str> = n.annotations.iter().map(|a| a.label.as_str()).collect();
+        assert_eq!(labels, ["b1", "m2"], "annotations");
+        let names: Vec<&str> = n.code_links.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, ["LB", "LM"], "code links");
+        let urls: Vec<&str> = n.dev_resources.iter().map(|d| d.url.as_str()).collect();
+        assert_eq!(urls, ["https://branch.test", "https://main.test"], "dev resources");
+    });
+}
+
+#[test]
+fn the_same_item_of_another_list_changed_both_ways_conflicts() {
+    let (mut base, _, _, r) = files();
+    base.get_mut(r).unwrap().exports = vec![
+        figcraft_doc::ExportSetting { suffix: "@1".into(), ..Default::default() },
+        figcraft_doc::ExportSetting { suffix: "@2".into(), ..Default::default() },
+    ];
+    let (mut branch, mut main) = (base.clone(), base.clone());
+    branch.set_client_id(base.highest_id_space() + 1);
+    branch.get_mut(r).unwrap().exports[0].suffix = "@b".into();
+    main.get_mut(r).unwrap().exports[0].suffix = "@m".into();
     let p = plan(&base, &branch, &main).unwrap();
     let keys: Vec<String> = p.conflicts.iter().map(|c| c.key.to_string()).collect();
-    assert_eq!(keys, [format!("{r}/exports")]);
+    assert_eq!(keys, [format!("{r}/exports")], "the same item changed both ways still conflicts");
 }
 
 #[test]

@@ -4,10 +4,12 @@
 //!
 //! A conflict is the same property (or document-level entry) changed on both sides to different
 //! values, or a layer deleted on one side while the other side edited it or something inside it
-//! (including adding layers to it or moving layers into or out of it). Fills, strokes and effects
-//! merge item by item: both sides changing different items of the list (or one adding items at its
-//! end) is no conflict, only the same item changed both ways or the list shortened on a side
-//! while the other changed it. Nothing that conflicts is
+//! (including adding layers to it or moving layers into or out of it). The layer lists whose items
+//! stand on their own (fills, strokes, effects, export settings, guides, prototype interactions,
+//! accessibility annotations and the Dev Mode links and resources) merge item by item: both sides
+//! changing different items of the list (or one adding items at its end) is no conflict, only the
+//! same item changed both ways or the list shortened on a side while the other changed it. Nothing
+//! that conflicts is
 //! merged until it is resolved: each conflict is resolved for one side, and the other side's
 //! changes to it are left out. Everything else from both sides is kept.
 
@@ -159,8 +161,21 @@ fn by_key(changes: &[Change]) -> BTreeMap<Key, Vec<usize>> {
     out
 }
 
-/// List properties whose items merge one by one.
-const PER_ITEM: &[Prop] = &[Prop::Fills, Prop::Strokes, Prop::Effects];
+/// List properties whose items merge one by item: the items stand on their own, so both sides
+/// changing different ones (or one side adding at its end) is no conflict. Properties that are
+/// keyed maps rather than item lists (`bound`, `varModes`, `overrides`, `propRefs`, `pluginData`)
+/// are not here: their items line up by key, not by position.
+const PER_ITEM: &[Prop] = &[
+    Prop::Fills,
+    Prop::Strokes,
+    Prop::Effects,
+    Prop::Exports,
+    Prop::Guides,
+    Prop::Interactions,
+    Prop::Annotations,
+    Prop::CodeLinks,
+    Prop::DevResources,
+];
 
 /// Both sides' writes `b` and `m` of list property `key` merged item by item against the base
 /// (see [`merge_items`]); `None` when `key` isn't such a list or the writes conflict.
