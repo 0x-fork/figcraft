@@ -446,18 +446,21 @@ fn draw(p: &P, icon: Icon) {
             p.path(&h, false);
         }
         Frame => {
-            p.line(5.5, 2.0, 5.5, 14.0);
-            p.line(10.5, 2.0, 10.5, 14.0);
-            p.line(2.0, 5.5, 14.0, 5.5);
-            p.line(2.0, 10.5, 14.0, 10.5);
+            // Inset a unit from the box: four long hinted strokes read heavier than the
+            // anti-aliased outlines beside them at full size (#737).
+            p.line(5.5, 3.0, 5.5, 13.0);
+            p.line(10.5, 3.0, 10.5, 13.0);
+            p.line(3.0, 5.5, 13.0, 5.5);
+            p.line(3.0, 10.5, 13.0, 10.5);
         }
         Section | Section2 => {
             p.rect(2.5, 5.5, 13.5, 13.5, 1.0);
             p.fill_rect(2.0, 2.0, 9.0, 6.0, 1.0);
         }
         Slice => {
-            p.rect(2.5, 2.5, 13.5, 13.5, 0.0);
-            p.line(2.5, 13.5, 13.5, 2.5);
+            // A knife, one silhouette (#739): a slim blade to the top right, a solid handle.
+            p.poly(&[(13.5, 2.5), (5.0, 8.0), (8.0, 11.0)], true);
+            p.fill(&capsule((2.8, 13.2), (5.4, 10.6), 1.3));
         }
         Bend => {
             // A curve with a smooth point and its handle line.
@@ -523,11 +526,12 @@ fn draw(p: &P, icon: Icon) {
             p.line(9.0, 4.5, 11.5, 7.0);
         }
         Text => {
-            p.line(2.0, 3.5, 13.0, 3.5);
-            p.line(7.5, 3.0, 7.5, 13.0);
-            p.line(2.5, 3.0, 2.5, 6.0);
-            p.line(12.5, 3.0, 12.5, 6.0);
-            p.line(5.0, 12.5, 10.0, 12.5);
+            // Inset like the Frame mark, so its long strokes don't outweigh the outlines (#737).
+            p.line(3.0, 3.5, 12.0, 3.5);
+            p.line(7.5, 3.0, 7.5, 12.5);
+            p.line(3.5, 3.0, 3.5, 5.5);
+            p.line(11.5, 3.0, 11.5, 5.5);
+            p.line(5.5, 12.5, 9.5, 12.5);
         }
         Comment => {
             let mut b: Vec<(f32, f32)> = arc_pts(8.5, 7.5, 5.0, 2.75, TAU + 1.95).collect();
