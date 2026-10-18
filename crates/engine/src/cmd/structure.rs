@@ -10,6 +10,8 @@ use super::{CommandSpec, ok};
 use crate::params::*;
 use crate::{EngineError, Result, Session, bad, spec};
 
+/// The layer structure commands: group, frame, mask, boolean operations, flatten, auto layout
+/// add/remove, move to page and vector path edits.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!("object.group", "Group selection", "{ids?, name?}", true, |s, p| wrap(s, p, Wrap::Group)),

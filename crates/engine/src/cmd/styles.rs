@@ -1007,6 +1007,8 @@ pub(crate) fn apply_paint_bindings_on_load(doc: &mut Document) {
     doc.mark_dirty(pending);
 }
 
+/// Re-apply the variable bindings whose field passes `include`, on the `only` nodes (every bound
+/// node when `None`). Auto layout fields wait while their node has no auto layout.
 fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::BTreeSet<NodeId>>, include: impl Fn(&str) -> bool) {
     use super::lists::{BoundList, list_binding};
     if doc.variables.variables.is_empty() {
