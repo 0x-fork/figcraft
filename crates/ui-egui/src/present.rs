@@ -2088,8 +2088,7 @@ fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) 
     p.clock = now;
     let bar = Rect::from_min_size(rect.min, vec2(rect.width(), chrome.bar_h));
     let area = Rect::from_min_max(pos2(rect.min.x, bar.max.y), rect.max);
-    let settings = p.doc.as_ref().map(|d| page_settings(d, p.current)).unwrap_or_default();
-    let bg = if settings.uses_theme_background() { Tokens::get(ui.ctx()).canvas } else { crate::theme::doc_c32(ui.ctx(), settings.background) };
+    let bg = crate::theme::doc_c32(ui.ctx(), p.doc.as_ref().map(|d| page_settings(d, p.current)).unwrap_or_default().background);
     let r = chrome.round;
     ui.painter().rect_filled(area, CornerRadius { nw: 0, ne: 0, sw: r, se: r }, bg);
     let action = top_bar(p, ui, bar, now, chrome);
