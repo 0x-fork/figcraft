@@ -434,6 +434,8 @@ pub struct UiState {
     /// The layer being renamed in the layers panel.
     pub rename: Option<layers::Rename>,
     pub rename_page: Option<(NodeId, String)>,
+    /// The frame or section whose name label on the canvas is being renamed (a double-click on it).
+    pub rename_label: Option<layers::Rename>,
     pub main_menu: bool,
     pub palette: Option<String>,
     /// The Actions palette's tab.
@@ -591,6 +593,7 @@ impl Default for UiState {
             expanded: BTreeSet::new(),
             rename: None,
             rename_page: None,
+            rename_label: None,
             main_menu: false,
             palette: None,
             palette_tab: menus::PaletteTab::All,
@@ -965,6 +968,9 @@ impl FigApp {
                 "layers.collapseAll" => layers::collapse_all(self),
                 "contextMenu" => self.ui.key_menu = true,
                 "selectArea" => self.start_key_box(),
+                "canvas.renameLabel" => {
+                    self.ui.rename_label = r.data.get("id").and_then(figcraft_engine::params::id_of).map(|id| layers::Rename { id, start: true });
+                }
                 "layers.rename" => {
                     let ids: Vec<NodeId> =
                         r.data.get("ids").and_then(Value::as_array).into_iter().flatten().filter_map(figcraft_engine::params::id_of).collect();
