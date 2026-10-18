@@ -1,4 +1,6 @@
+use egui::accesskit::{Node, Role};
 use egui::{Key, Pos2, pos2};
+use figcraft_doc::proto::PrototypeSettings;
 use serde_json::{Value, json};
 
 use crate::present_tests::{Ui, id, setup};
@@ -17,6 +19,41 @@ fn tabs(u: &Ui) -> Value {
 
 fn presenting(u: &Ui) -> bool {
     u.app.inspect()["presenting"] == json!(true)
+}
+
+fn nodes(u: &mut Ui) -> Vec<Node> {
+    u.ctx.enable_accesskit();
+    u.frame(vec![]);
+    u.frame_output(vec![]).platform_output.accesskit_update.expect("an AccessKit update").nodes.into_iter().map(|(_, n)| n).collect()
+}
+
+fn centre(n: &Node) -> Pos2 {
+    let b = n.bounds().unwrap();
+    pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32)
+}
+
+fn click_label(u: &mut Ui, label: &str) {
+    let all = nodes(u);
+    let n = all.iter().find(|n| n.label().is_some_and(|l| l.trim() == label)).unwrap_or_else(|| panic!("no {label:?} on screen"));
+    click(u, centre(n));
+}
+
+/// The presenter bar's Options button: it has no label, and sits right of Show comments.
+fn open_options(u: &mut Ui) {
+    let all = nodes(u);
+    let comments = all.iter().find(|n| n.label() == Some("Show comments (Shift+C)")).unwrap().bounds().unwrap();
+    let options = all
+        .iter()
+        .filter(|n| n.role() == Role::Unknown && n.label().is_none())
+        .filter(|n| n.bounds().is_some_and(|b| b.y0 == comments.y0 && b.x0 > comments.x1))
+        .min_by(|a, b| a.bounds().unwrap().x0.total_cmp(&b.bounds().unwrap().x0))
+        .expect("the Options button");
+    click(u, centre(options));
+}
+
+fn front_settings(u: &Ui) -> PrototypeSettings {
+    let page = u.app.session.page().unwrap();
+    crate::present::page_settings(u.app.session.doc().unwrap(), page)
 }
 
 /// The middle of presentation tab `k` and of its close button, after `files` file tabs named
@@ -109,6 +146,15 @@ fn a_tab_whose_file_closed_leaves_the_file_in_front_alone() {
     assert!(presenting(&u));
     assert!(!crate::tabs::present_owner_active(&u.app));
     assert_eq!(u.app.inspect()["presenter"]["current"], json!(a), "it keeps playing its own copy");
+    let before = front_settings(&u);
+    click_label(&mut u, "iPhone 16");
+    click_label(&mut u, "iPhone 17  402×874");
+    assert!(presenting(&u));
+    for size in ["Fixed size", "Responsive"] {
+        open_options(&mut u);
+        click_label(&mut u, size);
+    }
+    assert_eq!(front_settings(&u), before, "picking a device or Responsive leaves the file in front alone");
     assert!(!u.app.session.ds().unwrap().is_dirty());
 }
 

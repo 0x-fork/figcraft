@@ -377,6 +377,8 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
     });
 }
 
+/// One presentation tab at `x`: its width, whether it was clicked and whether it was closed (its
+/// X or a middle click).
 fn present_tab(ui: &mut Ui, t: &Tokens, tab: &PresentTab, x: f32, bar: Rect, active: bool) -> (f32, bool, bool) {
     let label = present_tab_name(tab);
     let w = present_tab_width(tab);
@@ -407,15 +409,18 @@ fn present_tab_width(tab: &PresentTab) -> f32 {
     (regular(12.0).size * 0.6 * present_tab_name(tab).chars().count() as f32 + 64.0).clamp(140.0, 260.0)
 }
 
+/// "file - page", or the file alone when the page has no name.
 fn present_tab_name(tab: &PresentTab) -> String {
     if tab.page_name.is_empty() { tab.file.clone() } else { format!("{} - {}", tab.file, tab.page_name) }
 }
 
+/// The presentation tabs for `ui.inspect`: each one's name and whether it is on screen.
 pub fn present_tabs_inspect(app: &FigApp) -> serde_json::Value {
     let on_screen = |id| app.ui.present.is_some() && app.ui.present_active == Some(id);
     app.ui.presents.iter().map(|t| json!({"name": present_tab_name(t), "active": on_screen(t.id)})).collect()
 }
 
+/// The presenter on screen, else the paused one of the active presentation tab.
 pub fn shown_or_paused(app: &FigApp) -> Option<&Presenter> {
     app.ui.present.as_ref().or_else(|| {
         let id = app.ui.present_active?;
@@ -423,15 +428,19 @@ pub fn shown_or_paused(app: &FigApp) -> Option<&Presenter> {
     })
 }
 
+/// The index of the open file with `uid`, when a file tab shows it.
 fn owner(app: &FigApp, uid: u64) -> Option<usize> {
     app.session.docs.iter().position(|d| d.uid == uid && app.shows(uid))
 }
 
+/// The presentation on screen plays the file in front (or no tab holds it). Only then may it read
+/// and change that file.
 pub fn present_owner_active(app: &FigApp) -> bool {
     let Some(tab) = app.ui.present_active.and_then(|id| app.ui.presents.iter().find(|t| t.id == id)) else { return true };
     owner(app, tab.doc_uid).is_some_and(|i| i == app.session.active)
 }
 
+/// Puts the presenter on screen back into its tab, where it keeps its state.
 fn pause_present(app: &mut FigApp) {
     let Some(p) = app.ui.present.take() else { return };
     let id = app.ui.present_active;
@@ -440,6 +449,8 @@ fn pause_present(app: &mut FigApp) {
     }
 }
 
+/// Presents from `start`: the tab of its page in this file shows again (from `start` when that
+/// changed), else a new tab opens.
 pub fn open_present(app: &mut FigApp, start: NodeId) {
     let Ok(ds) = app.session.ds() else { return };
     let (uid, path) = (ds.uid, ds.path.clone());
@@ -465,6 +476,7 @@ pub fn open_present(app: &mut FigApp, start: NodeId) {
     app.ui.home = false;
 }
 
+/// Brings tab `id` to the front and its file too, when that file is open.
 fn show_present(app: &mut FigApp, id: u64) {
     app.ui.home = false;
     if app.ui.present.is_some() && app.ui.present_active == Some(id) {
@@ -481,6 +493,7 @@ fn show_present(app: &mut FigApp, id: u64) {
     app.ui.present_active = Some(id);
 }
 
+/// Closes tab `id`. If it was on screen, its file comes to the front, or Home when it is closed.
 pub fn close_present(app: &mut FigApp, id: u64) {
     let Some(k) = app.ui.presents.iter().position(|t| t.id == id) else { return };
     let tab = app.ui.presents.remove(k);

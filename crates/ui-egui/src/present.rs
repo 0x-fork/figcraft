@@ -330,6 +330,7 @@ impl Presenter {
         true
     }
 
+    /// The frame the presentation started from (Restart goes back there).
     pub fn start(&self) -> NodeId {
         self.start
     }
