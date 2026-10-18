@@ -73,3 +73,35 @@ fn side_fields_show_only_once_the_toggle_opens_and_set_one_side() {
     u.app.run("edit.undo", json!({}));
     assert_eq!(padding(&u, f), [10.0; 4]);
 }
+
+/// The middle of the shut pair field with accessible name `label`.
+fn named_field(u: &mut Ui, label: &str) -> Pos2 {
+    u.ctx.enable_accesskit();
+    u.frame(vec![]);
+    let out = u.frame_output(vec![]);
+    let nodes = out.platform_output.accesskit_update.expect("an AccessKit update").nodes;
+    let n = nodes.iter().map(|(_, n)| n).find(|n| n.role() != Role::Button && n.label() == Some(label)).expect(label);
+    let b = n.bounds().expect("bounds");
+    pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32)
+}
+
+/// The shut pair fields edit their own axis: horizontal touches left and right
+/// only, vertical touches top and bottom only.
+#[test]
+fn shut_pair_fields_edit_their_own_axis() {
+    let (mut u, f) = scene();
+    u.app.run("node.set", json!({"ids": [f], "props": {"paddingLeft": 16.0, "paddingRight": 54.0}}));
+    assert_eq!(padding(&u, f), [10.0, 54.0, 10.0, 16.0]);
+    let h = named_field(&mut u, "Horizontal padding");
+    click(&mut u, h);
+    u.frame(vec![Event::Text("20".into())]);
+    enter(&mut u);
+    u.frame(vec![]);
+    assert_eq!(padding(&u, f), [10.0, 20.0, 10.0, 20.0]);
+    let v = named_field(&mut u, "Vertical padding");
+    click(&mut u, v);
+    u.frame(vec![Event::Text("7".into())]);
+    enter(&mut u);
+    u.frame(vec![]);
+    assert_eq!(padding(&u, f), [7.0, 20.0, 7.0, 20.0]);
+}

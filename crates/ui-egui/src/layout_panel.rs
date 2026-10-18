@@ -456,21 +456,6 @@ fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
     }
     row(ui, 32.0, |ui| {
         // Sides that disagree show both values ("16,54") instead of "Mixed".
-        let v_pair = format!("{},{}", widgets::fmt_num(pt), widgets::fmt_num(pb));
-        let v_empty = if pt == pb { tr("Mixed") } else { v_pair.as_str() };
-        let e = crate::variable_ui::number_field_or(
-            app,
-            ui,
-            ids,
-            "paddingVertical",
-            Id::new("al_padv"),
-            (pt == pb).then_some(pt),
-            col,
-            v_empty,
-            Lead::Icon(Icon::PaddingV, tr("Vertical padding")),
-            "",
-        );
-        app.field(ids, "paddingVertical", e, |v| json!(v.max(0.0)));
         let h_pair = format!("{},{}", widgets::fmt_num(pl), widgets::fmt_num(pr));
         let h_empty = if pl == pr { tr("Mixed") } else { h_pair.as_str() };
         let e = crate::variable_ui::number_field_or(
@@ -486,6 +471,21 @@ fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
             "",
         );
         app.field(ids, "paddingHorizontal", e, |v| json!(v.max(0.0)));
+        let v_pair = format!("{},{}", widgets::fmt_num(pt), widgets::fmt_num(pb));
+        let v_empty = if pt == pb { tr("Mixed") } else { v_pair.as_str() };
+        let e = crate::variable_ui::number_field_or(
+            app,
+            ui,
+            ids,
+            "paddingVertical",
+            Id::new("al_padv"),
+            (pt == pb).then_some(pt),
+            col,
+            v_empty,
+            Lead::Icon(Icon::PaddingV, tr("Vertical padding")),
+            "",
+        );
+        app.field(ids, "paddingVertical", e, |v| json!(v.max(0.0)));
         if icons::button(ui, Icon::IndependentPadding, 24.0, false, tr("Individual padding")).clicked() {
             ui.data_mut(|d| d.insert_temp(Id::new("indep_padding"), true));
         }

@@ -938,16 +938,16 @@ fn draw(p: &P, icon: Icon) {
             p.line(3.0, 7.5, 13.0, 7.5);
         }
         PaddingH => {
-            // The horizontal axis: bars across the top and bottom in their frame.
-            p.rect(2.5, 2.5, 13.5, 13.5, 1.0);
-            p.fill_rect(2.5, 2.5, 13.5, 5.5, 1.0);
-            p.fill_rect(2.5, 10.5, 13.5, 13.5, 1.0);
-        }
-        PaddingV => {
-            // The vertical axis: bars down the left and right in their frame.
+            // Horizontal padding: bars down the padded left and right sides in their frame.
             p.rect(2.5, 2.5, 13.5, 13.5, 1.0);
             p.fill_rect(2.5, 2.5, 5.5, 13.5, 1.0);
             p.fill_rect(10.5, 2.5, 13.5, 13.5, 1.0);
+        }
+        PaddingV => {
+            // Vertical padding: bars across the padded top and bottom in their frame.
+            p.rect(2.5, 2.5, 13.5, 13.5, 1.0);
+            p.fill_rect(2.5, 2.5, 13.5, 5.5, 1.0);
+            p.fill_rect(2.5, 10.5, 13.5, 13.5, 1.0);
         }
         PaddingTop => {
             p.rect(2.5, 2.5, 13.5, 13.5, 1.0);
