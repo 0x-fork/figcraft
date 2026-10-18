@@ -285,57 +285,37 @@ fn model_fields(ui: &mut Ui, c: Color) -> Option<(Color, bool)> {
                 }
             }
             "HSL" | "HSB" | "LCH" | "OKLCH" => {
-                // Shown as: hue/lightness/chroma in their CSS units; OKLCH lightness as a percent.
-                let vals: [f64; 3] = match name {
-                    "HSL" => {
-                        let x = figcraft_color::Hsl::from_color(c);
-                        [f64::from(x.h), f64::from(x.s) * 100.0, f64::from(x.l) * 100.0]
-                    }
-                    "LCH" => {
-                        let x = figcraft_color::Lch::from_color(c);
-                        [f64::from(x.l), f64::from(x.c), f64::from(x.h)]
-                    }
-                    "OKLCH" => {
-                        let x = figcraft_color::Oklch::from_color(c);
-                        [f64::from(x.l) * 100.0, f64::from(x.c), f64::from(x.h)]
-                    }
-                    _ => {
-                        let x = Hsb::from_color(c);
-                        [f64::from(x.h), f64::from(x.s) * 100.0, f64::from(x.b) * 100.0]
-                    }
-                };
-                let lch = matches!(name, "LCH" | "OKLCH");
-                // (field id, decimals, step, max) per field; the hue wraps.
-                let fields: [(&str, i32, f64, f64); 3] = match name {
-                    "LCH" => [("l", 0, 1.0, 100.0), ("c", 0, 1.0, 230.0), ("h", 0, 1.0, 360.0)],
-                    "OKLCH" => [("l", 0, 1.0, 100.0), ("ok_c", 2, 0.01, 0.5), ("h", 0, 1.0, 360.0)],
-                    _ => [("h", 0, 1.0, 360.0), ("s", 0, 1.0, 100.0), ("l", 0, 1.0, 100.0)],
-                };
-                let hue = if lch { 2 } else { 0 };
-                for (k, (v, (id, decimals, step, max))) in vals.iter().zip(fields).enumerate() {
+                let Some(spec) = Polar::of(name) else { return };
+                // The values last shown or typed stay while the colour is theirs: a chroma lowered to
+                // fit sRGB, or a hue on a grey, isn't read back from the colour on the next frame.
+                let kept_id = Id::new("cp_polar");
+                let rgba = c.to_rgba8();
+                let vals = ui
+                    .data(|d| d.get_temp::<(&'static str, [f64; 3], [u8; 4])>(kept_id))
+                    .filter(|(m, _, k)| *m == name && *k == rgba)
+                    .map_or_else(|| spec.values(c), |(_, v, _)| v);
+                let mut kept = vals;
+                for (k, (v, f)) in vals.iter().zip(spec.fields()).enumerate() {
                     let w = if !wide {
                         31.0
-                    } else if decimals > 0 {
+                    } else if f.decimals > 0 {
                         30.0
                     } else {
                         27.0
                     };
-                    if let Some((x, end)) = num(ui, id, *v, w, decimals, step) {
+                    if let Some((x, end)) = num(ui, f.id, *v, w, f.decimals, f.step) {
                         done = end;
                         let mut v3 = vals;
                         if let Some(slot) = v3.get_mut(k) {
-                            *slot = if k == hue { x.rem_euclid(360.0) } else { x.clamp(0.0, max) };
+                            *slot = if f.wraps { x.rem_euclid(360.0) } else { x.clamp(0.0, f.max) };
                         }
-                        let [a, b, d] = v3.map(|v| v as f32);
-                        let col = match name {
-                            "HSL" => figcraft_color::Hsl { h: a, s: b / 100.0, l: d / 100.0 }.to_color(),
-                            "LCH" => figcraft_color::Lch { l: a, c: b, h: d }.to_color(),
-                            "OKLCH" => figcraft_color::Oklch { l: a / 100.0, c: b, h: d }.to_color(),
-                            _ => Hsb { h: a, s: b / 100.0, b: d / 100.0 }.to_color(),
-                        };
-                        out = Some(col.with_alpha(c.a));
+                        let col = spec.color(v3).with_alpha(c.a);
+                        kept = v3;
+                        out = Some(col);
                     }
                 }
+                let shown = out.unwrap_or(c).to_rgba8();
+                ui.data_mut(|d| d.insert_temp(kept_id, (name, kept, shown)));
             }
             "CSS" => {
                 if let Some(text) = widgets::text_field(ui, Id::new("cp_css"), &c.to_css(), 152.0, "") {
@@ -362,6 +342,93 @@ fn model_fields(ui: &mut Ui, c: Color) -> Option<(Color, bool)> {
         }
     });
     out.map(|c| (c, done))
+}
+
+/// One field of a [`Polar`] model: its id, decimals shown, scrub/arrow step and range (0..=max,
+/// or a hue that wraps at 360).
+struct PolarField {
+    id: &'static str,
+    decimals: i32,
+    step: f64,
+    max: f64,
+    wraps: bool,
+}
+
+const fn field(id: &'static str, decimals: i32, step: f64, max: f64) -> PolarField {
+    PolarField { id, decimals, step, max, wraps: false }
+}
+
+const fn hue(id: &'static str) -> PolarField {
+    PolarField { id, decimals: 0, step: 1.0, max: 360.0, wraps: true }
+}
+
+/// The three-field models: HSL, HSB, LCH and OKLCH, shown in their CSS units (percentages for
+/// saturation and lightness, OKLCH lightness in percent).
+#[derive(Clone, Copy)]
+enum Polar {
+    Hsl,
+    Hsb,
+    Lch,
+    Oklch,
+}
+
+impl Polar {
+    fn of(name: &str) -> Option<Self> {
+        Some(match name {
+            "HSL" => Self::Hsl,
+            "HSB" => Self::Hsb,
+            "LCH" => Self::Lch,
+            "OKLCH" => Self::Oklch,
+            _ => return None,
+        })
+    }
+
+    const HSL_FIELDS: [PolarField; 3] = [hue("hsl_h"), field("hsl_s", 0, 1.0, 100.0), field("hsl_l", 0, 1.0, 100.0)];
+    const HSB_FIELDS: [PolarField; 3] = [hue("hsb_h"), field("hsb_s", 0, 1.0, 100.0), field("hsb_b", 0, 1.0, 100.0)];
+    const LCH_FIELDS: [PolarField; 3] = [field("lch_l", 0, 1.0, 100.0), field("lch_c", 0, 1.0, 230.0), hue("lch_h")];
+    const OKLCH_FIELDS: [PolarField; 3] = [field("oklch_l", 0, 1.0, 100.0), field("oklch_c", 2, 0.01, 0.5), hue("oklch_h")];
+
+    const fn fields(self) -> &'static [PolarField; 3] {
+        match self {
+            Self::Hsl => &Self::HSL_FIELDS,
+            Self::Hsb => &Self::HSB_FIELDS,
+            Self::Lch => &Self::LCH_FIELDS,
+            Self::Oklch => &Self::OKLCH_FIELDS,
+        }
+    }
+
+    fn values(self, c: Color) -> [f64; 3] {
+        let v = match self {
+            Self::Hsl => {
+                let x = figcraft_color::Hsl::from_color(c);
+                [x.h, x.s * 100.0, x.l * 100.0]
+            }
+            Self::Hsb => {
+                let x = Hsb::from_color(c);
+                [x.h, x.s * 100.0, x.b * 100.0]
+            }
+            Self::Lch => {
+                let x = figcraft_color::Lch::from_color(c);
+                [x.l, x.c, x.h]
+            }
+            Self::Oklch => {
+                let x = figcraft_color::Oklch::from_color(c);
+                [x.l * 100.0, x.c, x.h]
+            }
+        };
+        v.map(f64::from)
+    }
+
+    /// Opaque.
+    fn color(self, v: [f64; 3]) -> Color {
+        let [a, b, d] = v.map(|v| v as f32);
+        match self {
+            Self::Hsl => figcraft_color::Hsl { h: a, s: b / 100.0, l: d / 100.0 }.to_color(),
+            Self::Hsb => Hsb { h: a, s: b / 100.0, b: d / 100.0 }.to_color(),
+            Self::Lch => figcraft_color::Lch { l: a, c: b, h: d }.to_color(),
+            Self::Oklch => figcraft_color::Oklch { l: a / 100.0, c: b, h: d }.to_color(),
+        }
+    }
 }
 
 fn hue_color(ctx: &egui::Context, h: f32) -> Color32 {

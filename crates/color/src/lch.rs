@@ -5,6 +5,7 @@
 //! Björn Ottosson's published OKLab matrices.
 
 use crate::Color;
+use crate::profile::{apply as mul, decode, encode};
 use serde::{Deserialize, Serialize};
 
 /// CIE LCH: lightness 0..100, chroma 0.. (about 0..150 for real colours), hue 0..360.
@@ -25,25 +26,8 @@ pub struct Oklch {
 
 type V3 = [f64; 3];
 
-fn mul(m: &[V3; 3], v: V3) -> V3 {
-    let row = |r: &V3| r[0] * v[0] + r[1] * v[1] + r[2] * v[2];
-    [row(&m[0]), row(&m[1]), row(&m[2])]
-}
-
-fn to_linear(c: f64) -> f64 {
-    let a = c.abs();
-    let l = if a <= 0.04045 { a / 12.92 } else { ((a + 0.055) / 1.055).powf(2.4) };
-    l.copysign(c)
-}
-
-fn from_linear(c: f64) -> f64 {
-    let a = c.abs();
-    let e = if a <= 0.0031308 { a * 12.92 } else { 1.055 * a.powf(1.0 / 2.4) - 0.055 };
-    e.copysign(c)
-}
-
 fn linear_rgb(c: Color) -> V3 {
-    [to_linear(f64::from(c.r)), to_linear(f64::from(c.g)), to_linear(f64::from(c.b))]
+    [decode(c.r), decode(c.g), decode(c.b)]
 }
 
 const SRGB_TO_XYZ: [V3; 3] = [
@@ -133,10 +117,8 @@ fn in_gamut(rgb: V3) -> bool {
 /// The sRGB colour for a lightness, chroma and hue: out of gamut, the chroma comes down (a binary
 /// search) until it fits, so lightness and hue stay what was asked for, as CSS gamut mapping does.
 fn map_to_srgb(l: f64, c: f64, h: f64, to_linear_rgb: impl Fn(V3) -> V3) -> Color {
-    let lab = |c: f64| {
-        let (s, co) = h.to_radians().sin_cos();
-        [l, c * co, c * s]
-    };
+    let (sin, cos) = h.to_radians().sin_cos();
+    let lab = |c: f64| [l, c * cos, c * sin];
     let mut rgb = to_linear_rgb(lab(c));
     if !in_gamut(rgb) {
         let (mut lo, mut hi) = (0.0, c);
@@ -150,8 +132,7 @@ fn map_to_srgb(l: f64, c: f64, h: f64, to_linear_rgb: impl Fn(V3) -> V3) -> Colo
         }
         rgb = to_linear_rgb(lab(lo));
     }
-    let ch = |v: f64| from_linear(v.clamp(0.0, 1.0)) as f32;
-    Color::new(ch(rgb[0]), ch(rgb[1]), ch(rgb[2]), 1.0)
+    Color::new(encode(rgb[0]), encode(rgb[1]), encode(rgb[2]), 1.0)
 }
 
 impl Lch {

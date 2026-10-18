@@ -65,3 +65,41 @@ fn css_reads_lch_and_oklch() {
     assert!(Color::parse_css("oklch(nan 0 0)").is_none());
     assert!(Color::parse_css("lch(50)").is_none());
 }
+
+#[test]
+fn css_hue_units_and_none() {
+    let blue = Color::parse_css("oklch(0.6 0.2 260)").unwrap();
+    for h in ["260deg", "0.7222222turn", "288.8888grad", "4.537856rad"] {
+        assert_eq!(Color::parse_css(&format!("oklch(0.6 0.2 {h})")).unwrap().to_hex(), blue.to_hex(), "{h}");
+    }
+    assert_eq!(Color::parse_css("lch(50 none none)").unwrap().to_hex(), Color::parse_css("lch(50 0 0)").unwrap().to_hex());
+    assert_eq!(Color::parse_css("oklch(none 0 0 / none)").unwrap().to_rgba8(), [0, 0, 0, 255]);
+}
+
+#[test]
+fn css_lch_and_oklch_junk_is_refused_or_in_range() {
+    let long = "9".repeat(100_000);
+    let junk = [
+        "oklch()".to_string(),
+        "oklch(,,)".into(),
+        "lch(1 2 3 4 5)".into(),
+        "oklch(0.5 0.1 1e40)".into(),
+        "lch(inf 0 0)".into(),
+        "oklch(0.5 0.1 deg)".into(),
+        "lch(50 50 50 / / /)".into(),
+        "oklch(🟥 0 0)".into(),
+        "lch(\u{0} 0 0)".into(),
+        format!("oklch({long} {long} {long})"),
+        format!("lch(50 50 {long}turn)"),
+    ];
+    for j in &junk {
+        if let Some(c) = Color::parse_css(j) {
+            for v in [c.r, c.g, c.b, c.a] {
+                assert!(v.is_finite() && (0.0..=1.0).contains(&v), "{j:.40}: {c:?}");
+            }
+        }
+    }
+    for j in ["oklch()", "lch(1 2 3 4 5)", "lch(inf 0 0)", "oklch(0.5 0.1 deg)", "oklch(🟥 0 0)", "oklch(0.5 0.1 1e40)"] {
+        assert!(Color::parse_css(j).is_none(), "{j}");
+    }
+}
