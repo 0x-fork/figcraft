@@ -110,16 +110,26 @@ pub fn specs() -> Vec<CommandSpec> {
             ))
         }),
         spec!("variable.createCollection", "Create variable collection", "{name, modes? [names]}", true, |s, p| {
-            let name = req_string("variable.createCollection", p, "name")?;
-            let doc = s.doc_mut()?;
-            if doc.variables.collections.iter().any(|c| c.name == name) {
-                return Err(bad("variable.createCollection", format!("a collection named `{name}` already exists")));
+            let cmd = "variable.createCollection";
+            let name = req_string(cmd, p, "name")?.trim().to_string();
+            if name.is_empty() {
+                return Err(bad(cmd, "name can't be empty"));
             }
-            let id = doc.new_collection_id();
             let modes: Vec<String> = match get(p, "modes") {
-                Some(Value::Array(a)) => a.iter().filter_map(|m| m.as_str().map(str::to_string)).collect(),
+                Some(Value::Array(a)) => a.iter().filter_map(|m| m.as_str().map(|m| m.trim().to_string())).collect(),
                 _ => vec!["Mode 1".into()],
             };
+            if modes.is_empty() {
+                return Err(bad(cmd, "a collection needs at least one mode"));
+            }
+            if modes.iter().any(String::is_empty) {
+                return Err(bad(cmd, "mode names can't be empty"));
+            }
+            let doc = s.doc_mut()?;
+            if doc.variables.collections.iter().any(|c| c.name == name) {
+                return Err(bad(cmd, format!("a collection named `{name}` already exists")));
+            }
+            let id = doc.new_collection_id();
             let modes = modes.into_iter().enumerate().map(|(i, m)| Mode { id: format!("{id}/mode{}", i + 1), name: m }).collect();
             doc.variables.collections.push(Collection { id: id.clone(), name, modes, extends: None });
             Ok(json!({"id": id}))
