@@ -1,18 +1,15 @@
-# FigCraft interface strings: English, the source language.
+# FigCraft interface strings: বাংলা, ইংরেজি থেকে অনূদিত।
 #
-# Keys are the English text as the code writes it (`tr("…")`, `trf`, `trn`, `tr_noop`); values are
-# the same text, except plural entries ({ one, other }). Command labels come from the engine.
-# `cargo test -p figcraft-ui-egui i18n` lists missing and unused keys. See docs/translating.md.
+# কীগুলো কোডে ব্যবহৃত ইংরেজি টেক্সট (`tr("…")`, `trf`, `trn`, `tr_noop`); মানগুলো অনূদিত,
+# বহুবচন এন্ট্রি ({ one, other }) ছাড়া। কমান্ডের লেবেল ইঞ্জিন থেকে আসে।
+# `cargo test -p figcraft-ui-egui i18n` অনুপস্থিত ও অব্যবহৃত কী তালিকাভুক্ত করে। docs/translating.md দেখুন।
 
-[meta]
-name = "বাংলা"
-status = "draft — needs native review"
 [meta]
 name = "বাংলা"
 status = "draft — needs native review"
 
 [ui]
-"% of all commits" = "% of all commits"
+"% of all commits" = "সমস্ত কমিটের শতাংশ"
 "(no longer published)" = "(প্রকাশিত নয়)"
 "({n} warnings: some entries were skipped)" = { one = "({n}টি সতর্কতা: কিছু এন্ট্রি বাদ দেওয়া হয়েছে)", other = "({n}টি সতর্কতা: কিছু এন্ট্রি বাদ দেওয়া হয়েছে)" }
 "+ Create variable" = "+ ভেরিয়েবল তৈরি করুন"
