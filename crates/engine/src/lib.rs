@@ -1744,6 +1744,8 @@ mod proto_run_tests;
 #[cfg(test)]
 mod proto_tail_tests;
 #[cfg(test)]
+mod rest_slot_tests;
+#[cfg(test)]
 mod retained_walk_tests;
 #[cfg(test)]
 mod rotated_guides_tests;
@@ -1815,6 +1817,8 @@ mod variable_tests;
 mod variables_behaviour_tests;
 #[cfg(test)]
 mod variables_editor_tests;
+#[cfg(test)]
+mod variables_import_shapes_tests;
 #[cfg(test)]
 mod variables_io_tests;
 #[cfg(test)]
