@@ -1342,7 +1342,7 @@ fn paint_set(s: &mut Session, p: &Value, fills: bool) -> Result<Value> {
         if let Some(b) = blend(p, "blend") {
             slot.blend = b;
         }
-        super::lists::remap_stop_bindings(n, fills, at, &old);
+        super::lists::rebind_edited_paint(n, fills, at, &old);
         if fills {
             n.styles.fill = None;
         } else {
