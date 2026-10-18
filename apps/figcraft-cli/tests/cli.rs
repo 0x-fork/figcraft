@@ -172,3 +172,70 @@ fn commands_json_lists_everything() {
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(v.as_array().unwrap().len() > 200);
 }
+
+/// The automation roots confine the file subcommands too, not just `mcp` (#833): a read outside a
+/// root, and a write outside a write root, are refused and leave no file behind. Without the flags
+/// the same commands behave as they always did.
+#[test]
+fn file_subcommands_are_confined_to_automation_roots() {
+    let d = tmp("file-roots");
+    let _ = std::fs::remove_dir_all(&d);
+    for sub in ["in", "out"] {
+        std::fs::create_dir_all(d.join(sub)).unwrap();
+    }
+    let p = |rel: &str| d.join(rel).to_string_lossy().into_owned();
+    let out_of = |o: &std::process::Output| String::from_utf8_lossy(&o.stderr).into_owned();
+
+    // A document to work on, made unconfined.
+    std::fs::write(d.join("in/make.json"), br#"[{"command":"shape.rectangle","params":{"x":0,"y":0,"width":40,"height":20}}]"#).unwrap();
+    let made = bin().args(["run", &p("in/make.json"), "--out", &p("in/doc.figcraft")]).output().unwrap();
+    assert!(made.status.success(), "{}", out_of(&made));
+
+    // Inside the roots: renders as usual.
+    let ok = bin()
+        .args(["render", &p("in/doc.figcraft"), "-o", &p("out/ok.png"), "--automation-read-root", &p("in"), "--automation-write-root", &p("out")])
+        .output()
+        .unwrap();
+    assert!(ok.status.success(), "{}", out_of(&ok));
+    assert!(d.join("out/ok.png").is_file());
+
+    // A write outside the write root is refused, and nothing is written.
+    let escaped = d.join("escaped.png");
+    let refused = bin()
+        .args([
+            "render",
+            &p("in/doc.figcraft"),
+            "-o",
+            &escaped.to_string_lossy(),
+            "--automation-read-root",
+            &p("in"),
+            "--automation-write-root",
+            &p("out"),
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(out_of(&refused).contains("may be written"), "{}", out_of(&refused));
+    assert!(!escaped.exists(), "the refused render wrote a file anyway");
+
+    // No write root at all: writing is refused outright, reading still works.
+    let no_write = bin().args(["render", &p("in/doc.figcraft"), "-o", &p("out/no.png"), "--automation-read-root", &p("in")]).output().unwrap();
+    assert!(!no_write.status.success());
+    assert!(out_of(&no_write).contains("no folder may be written"), "{}", out_of(&no_write));
+
+    // A read outside every root is refused: `info` on the document with only `out` readable.
+    let read_refused = bin().args(["info", &p("in/doc.figcraft"), "--automation-read-root", &p("out")]).output().unwrap();
+    assert!(!read_refused.status.success());
+    assert!(out_of(&read_refused).contains("may be read"), "{}", out_of(&read_refused));
+
+    // `convert` and `run` take them as well, and a root that is not a folder is refused.
+    let missing = bin().args(["convert", &p("in/doc.figcraft"), &p("out/c.svg"), "--automation-read-root", &p("missing")]).output().unwrap();
+    assert!(!missing.status.success());
+    assert!(out_of(&missing).contains("automation-read-root"), "{}", out_of(&missing));
+
+    // Unconfined, the same render still writes wherever it is told.
+    let plain = bin().args(["render", &p("in/doc.figcraft"), "-o", &escaped.to_string_lossy()]).output().unwrap();
+    assert!(plain.status.success(), "{}", out_of(&plain));
+    assert!(escaped.is_file());
+    let _ = std::fs::remove_dir_all(&d);
+}
