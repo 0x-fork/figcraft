@@ -162,7 +162,7 @@ mod tests {
     fn the_ui_language_script_comes_first() {
         let order = |need, ui| samples(need, ui).into_iter().map(|(c, _)| c).collect::<String>();
         let first_face = |need, ui| samples(need, ui).first().and_then(|(_, f)| f.first()).copied();
-        assert_eq!(order(KANA | HAN | HANGUL | BENGALI, 0), "あ漢한অ");
+        assert_eq!(order(KANA | HAN | HANGUL | BENGALI, language("bn")), "অあ漢한");
         assert_eq!(order(KANA | HAN | HANGUL, KANA | HAN), "あ漢한");
         assert_eq!(order(KANA | HAN | HANGUL, HANGUL), "한漢あ");
         assert_eq!(order(HANGUL, 0), "한");
