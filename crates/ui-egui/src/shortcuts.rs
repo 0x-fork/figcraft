@@ -212,10 +212,10 @@ pub fn swallowed_paste(app: &mut FigApp, ctx: &Context) -> Swallowed {
 pub fn run_binding(app: &mut FigApp, id: &str) {
     match id {
         "select.none" => {
-            if let Some(ctx) = &app.ui_context {
-                if crate::proto_panel::close_editor(ctx) {
-                    return;
-                }
+            if let Some(ctx) = &app.ui_context
+                && crate::proto_panel::close_editor(ctx)
+            {
+                return;
             }
             if let Err(e) = app.session.escape() {
                 app.toast(e.to_string());
