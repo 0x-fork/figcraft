@@ -28,7 +28,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 
-use figcraft_doc::{Document, ImageData};
+use figcraft_doc::color::{Color, Paint};
+use figcraft_doc::{Document, ImageData, NodeKind};
 use serde::de::{Deserializer, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Value, json};
@@ -309,6 +310,21 @@ impl<'de> Deserialize<'de> for Header {
     }
 }
 
+/// Earlier versions gave every component set the purple dashed outline of the canvas as a real
+/// stroke, so it exported with the set. New sets carry no paint; files written back then lose
+/// exactly that decoration when opened, and the canvas draws the outline itself.
+fn drop_component_set_decoration(doc: &mut Document) {
+    let decoration = Paint::solid(Color::from_rgb8_const(0x97, 0x47, 0xFF));
+    let ids: Vec<_> = doc.nodes().filter(|n| matches!(n.kind, NodeKind::ComponentSet { .. })).map(|n| n.id).collect();
+    for id in ids {
+        let Some(n) = doc.node_mut(id) else { continue };
+        if n.strokes.len() == 1 && n.strokes.first() == Some(&decoration) && n.stroke.dashes.as_slice() == [10.0, 5.0] {
+            n.strokes.clear();
+            n.stroke.dashes.clear();
+        }
+    }
+}
+
 /// Parse `document.json` content; also returns its [`ImageIndex`]. The header is checked first
 /// (a newer file is refused before its document is read), then the document is deserialized
 /// straight from the text.
@@ -321,6 +337,7 @@ fn parse_json(text: &str) -> Result<(Document, Vec<String>, ImageIndex), FormatE
         return Err(FormatError::Newer(u32::try_from(ver).unwrap_or(u32::MAX)));
     }
     let mut doc: Document = serde_json::from_str(text).map_err(corrupt)?;
+    drop_component_set_decoration(&mut doc);
     let issues = doc.validate();
     if !issues.is_empty() {
         doc.repair();
