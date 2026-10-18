@@ -118,6 +118,8 @@ mod home_tests;
 #[cfg(test)]
 mod idle_tests;
 #[cfg(test)]
+mod ime_tests;
+#[cfg(test)]
 mod import_report_tests;
 #[cfg(test)]
 mod layers_behaviour_tests;
@@ -173,6 +175,8 @@ mod plugin_panel_tests;
 mod plugins_browse_tests;
 #[cfg(test)]
 mod popup_width_tests;
+#[cfg(test)]
+mod present_links_tests;
 #[cfg(test)]
 mod present_tests;
 #[cfg(test)]
