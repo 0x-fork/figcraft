@@ -8,6 +8,46 @@ use super::*;
 /// Languages that must translate every UI string and command label.
 const COMPLETE: &[&str] = &["es"];
 
+#[test]
+fn finnish_locale_tags_and_integer_plurals() {
+    let fi = resolve("fi", None);
+    assert_eq!(LANGS[fi].code, "fi");
+    assert_eq!(LANGS[fi].name, "Suomi");
+    assert!(LANGS[fi].draft, "AI-assisted Finnish still needs human review");
+    let mut session = figcraft_engine::Session::new();
+    session.execute("pref.language", &serde_json::json!({"language":"fi"})).unwrap();
+    let saved = serde_json::to_string(&session.prefs).unwrap();
+    let restored: figcraft_engine::Prefs = serde_json::from_str(&saved).unwrap();
+    assert_eq!(restored.language, "fi");
+    for locale in ["fi-FI", "fi_FI.UTF-8", "FI-fi", "fi"] {
+        assert_eq!(resolve("system", Some(locale)), fi, "{locale}");
+    }
+    for (count, expected) in [(0, "0 tasoa"), (1, "1 taso"), (2, "2 tasoa"), (21, "21 tasoa"), (101, "101 tasoa")] {
+        assert_eq!(fill(counted(fi, "{n} layers", count), &[("n", &count)]), expected);
+    }
+    assert_eq!(fill(counted(fi, "{n} minutes ago", 1), &[("n", &1)]), "1 minuutti sitten");
+    assert_eq!(fill(counted(fi, "{n} minutes ago", 2), &[("n", &2)]), "2 minuuttia sitten");
+    assert_eq!(fill(counted(fi, "{n} people joined", 2), &[("n", &2)]), "2 henkilöä liittyi");
+}
+
+#[test]
+fn finnish_keeps_interpolated_names_and_context_specific_labels() {
+    let fi = resolve("fi", None);
+    let text = |key| match lookup(fi, key).unwrap() {
+        Text::Plain(s) => *s,
+        _ => panic!("expected a plain Finnish label: {key}"),
+    };
+    assert_eq!(text("Cancel"), "Peruuta");
+    assert_eq!(text("Fill"), "Täyttö");
+    assert_eq!(text("Fill|sizing"), "Täytä");
+    assert_eq!(text("Join|stroke"), "Liitos");
+    assert_eq!(text("Open|comments"), "Avoin");
+    assert_eq!(fill(text("Actions for {name}"), &[("name", &"File {1}.figcraft")]), "Kohteen File {1}.figcraft toiminnot");
+    assert!(lookup(fi, "My layer {name}.svg").is_none());
+    assert!(matches!(find(LANGS[fi].commands, "edit.undo"), Some(Text::Plain("Kumoa"))));
+    assert!(matches!(find(LANGS[fi].menu, "file.import"), Some(Text::Plain("Tuo tiedostosta…"))));
+}
+
 /// Keys looked up from data rather than written as `tr("…")` in the code: the main menu's
 /// submenu names (the engine's menu catalog) and labels of engine and document enums.
 fn dynamic_keys() -> BTreeSet<String> {

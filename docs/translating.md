@@ -68,6 +68,18 @@ language also needs its script in `cjk::language`.
 
 ## Adding a language
 
+Finnish (`fi`, Suomi) is an AI-assisted draft awaiting native-speaker review. Its initial catalog
+covers the current 1,729 English UI keys, 567 command labels and 31 menu-specific wordings, including
+42 plural entries. Counts use singular only for 1 (`1 taso`, `0/2/21 tasoa`); this already follows
+the default integer rule. Context keys distinguish paint `Fill` (Täyttö), sizing `Fill|sizing`
+(Täytä), stroke `Join|stroke` (Liitos) and comment status `Open|comments` (Avoin).
+The build discovers `fi.toml` automatically; `fi-FI` and `fi_FI.UTF-8` resolve to it. Product names,
+code identifiers and shortcut notation retain their identity. Like the other unreviewed catalogs,
+Finnish remains a draft outside `COMPLETE`; future English additions may fall back until translated.
+Noise modes Mono/Duo/Multi describe one, two or many grain colours and read Yksivärinen,
+Kaksivärinen and Monivärinen, independently of their stable enum names.
+The narrow glass-effect light-intensity field uses Vahvuus so its complete label fits beside the value.
+
 1. Copy `crates/ui-egui/locales/es.toml` to `<code>.toml` (a BCP 47 code: `fr`, `pt-BR`, `ja`) and
    set `[meta] name` and `status = "draft — needs native review"`.
 2. Translate every value; keep the keys. Keep `{placeholders}` exactly, "…" where English has it,
