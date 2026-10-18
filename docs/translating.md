@@ -16,8 +16,8 @@ Simplified.
 
 The catalogs: English (`en`, the source), and Spanish (`es`, with the Latin American overlay
 `es-419`), French (`fr`), German (`de`), Dutch (`nl`), Brazilian Portuguese (`pt-BR`), Japanese
-(`ja`), Korean (`ko`), Simplified Chinese (`zh-Hans`), Czech (`cs`), Indonesian (`id`) and Finnish
-(`fi`), machine-drafted and waiting for native speakers' review. Russian (`ru`, Русский) was
+(`ja`), Korean (`ko`), Simplified Chinese (`zh-Hans`), Czech (`cs`), Indonesian (`id`), Finnish
+(`fi`) and Bengali (`bn`), machine-drafted and waiting for native speakers' review. Russian (`ru`, Русский) was
 reviewed and approved by VanTan; its catalog keeps Frame, Dev Mode and Smart animate as familiar
 tool names and uses « » quotes. Turkish (`tr`) was machine-drafted and reviewed by a native speaker,
 and Swedish (`sv`) translates every UI string, command label and menu wording.
