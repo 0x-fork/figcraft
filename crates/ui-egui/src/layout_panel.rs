@@ -401,6 +401,8 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
     }
 }
 
+/// The Spacing row: gap fields, then the H/V padding pair (or the 2x2 per-side
+/// grid while the individual-padding toggle is open).
 fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
     let col = widgets::col_width(ui.available_width());
     let [pt, pr, pb, pl] = l.padding;

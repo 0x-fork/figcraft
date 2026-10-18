@@ -149,6 +149,7 @@ mod tests {
         assert!(s.execute("node.set", &json!({"id": b, "props": {"absolute": "maybe"}})).is_err());
     }
 
+    /// Each side key writes its own padding slot and leaves the other three alone.
     #[test]
     fn each_side_padding_sets_its_side_alone() {
         let mut s = Session::new();

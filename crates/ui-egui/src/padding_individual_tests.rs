@@ -23,16 +23,19 @@ fn scene() -> (Ui, NodeId) {
     (Ui::new(s), f)
 }
 
+/// The frame's padding as `[top, right, bottom, left]`.
 fn padding(u: &Ui, f: NodeId) -> [f64; 4] {
     u.app.session.doc().unwrap().node(f).unwrap().layout.clone().unwrap().padding
 }
 
+/// A full press-and-release at `p`, then settling one frame.
 fn click(u: &mut Ui, p: Pos2) {
     u.button(p, true);
     u.button(p, false);
     u.frame(vec![]);
 }
 
+/// A press-and-release of Enter, committing the focused number field.
 fn enter(u: &mut Ui) {
     u.frame(vec![
         Event::Key { key: Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE },
@@ -51,6 +54,8 @@ fn named_button(u: &mut Ui, label: &str) -> Pos2 {
     pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32)
 }
 
+/// The side fields stay hidden until the toggle opens, then typing in one sets
+/// that side alone in a single undo step.
 #[test]
 fn side_fields_show_only_once_the_toggle_opens_and_set_one_side() {
     let (mut u, f) = scene();
