@@ -120,8 +120,7 @@ impl Recovery {
         (0..10).find_map(|n| {
             let dir = root.join(if n == 0 { pid.to_string() } else { format!("{pid}-{n}") });
             std::fs::create_dir_all(&dir).ok()?;
-            let lock = File::options().write(true).create(true).truncate(false).open(dir.join(LOCK)).ok()?;
-            lock.try_lock().ok()?;
+            let lock = lock_briefly(&dir.join(LOCK))?;
             Some(Self { dir, _lock: lock, written: HashMap::new(), next: 0.0, waiting: Vec::new() })
         })
     }
@@ -293,6 +292,27 @@ fn remove_kept(w: Waiting) {
 /// The extension of the note beside the copy of a document that is one of your online files.
 const ONLINE: &str = "online";
 
+/// How long a folder's lock that frees itself is waited for, and between the tries.
+const LOCK_WAIT: (usize, std::time::Duration) = (20, std::time::Duration::from_millis(5));
+
+/// Lock the folder's `file`, waiting briefly for a lock that frees itself. A child between its
+/// `fork` and its `exec` inherits the run's open descriptors, and a `flock` lasts while any
+/// descriptor for the file is open, so a run that has ended can look like one that is still going
+/// for the length of that window. A run that really is running holds the lock for as long as it
+/// runs, and we give up on it after [`LOCK_WAIT`] (#334).
+fn lock_briefly(file: &Path) -> Option<File> {
+    let lock = File::options().write(true).create(true).truncate(false).open(file).ok()?;
+    let (tries, pause) = LOCK_WAIT;
+    for _ in 0..tries {
+        match lock.try_lock() {
+            Ok(()) => return Some(lock),
+            Err(std::fs::TryLockError::WouldBlock) => std::thread::sleep(pause),
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 /// The copy at `file` is of one of your online files: join that file again as its owner, keeping
 /// the copy to compare with what arrives. The session, or `None` when the copy isn't one (or its
 /// file isn't recorded any more, or is open already): then it opens as any other copy.
@@ -369,10 +389,7 @@ pub fn recover_all(root: &Path, s: &mut Session) -> Recovered {
             continue;
         }
         // Still running (another window of the app), or not ours to take.
-        let Ok(lock) = File::options().write(true).create(true).truncate(false).open(path.join(LOCK)) else { continue };
-        if lock.try_lock().is_err() {
-            continue;
-        }
+        let Some(lock) = lock_briefly(&path.join(LOCK)) else { continue };
         let lock = Arc::new(lock);
         let files: Vec<PathBuf> = std::fs::read_dir(&path).into_iter().flatten().flatten().map(|f| f.path()).collect();
         for f in &files {
