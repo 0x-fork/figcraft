@@ -40,6 +40,7 @@ pub mod live;
 pub mod live_text;
 pub mod measure_overlay;
 pub mod menus;
+pub mod missing_fonts;
 pub mod online;
 pub mod pending_open;
 pub mod plugins_ui;
@@ -148,6 +149,8 @@ mod live_text_tests;
 mod menu_aim_tests;
 #[cfg(test)]
 mod menu_input_tests;
+#[cfg(test)]
+mod missing_fonts_tests;
 #[cfg(test)]
 mod online_tests;
 #[cfg(test)]
@@ -508,6 +511,9 @@ pub struct UiState {
     pub pending_open_frames: u8,
     /// The latest successful file import's summary and compatibility notes.
     pub import_report: Option<import_report::Report>,
+    /// Files the user opened whose fonts are yet to be checked (by document uid).
+    pub font_checks: Vec<u64>,
+    pub missing_fonts: Option<missing_fonts::Shown>,
     pub screenshot_requests: Vec<(u64, String)>,
     pub frame_ms: f64,
     pub render_ms: f64,
@@ -636,6 +642,8 @@ impl Default for UiState {
             pending_opens: Vec::new(),
             pending_open_frames: 0,
             import_report: None,
+            font_checks: Vec::new(),
+            missing_fonts: None,
             screenshot_requests: Vec::new(),
             frame_ms: 0.0,
             render_ms: 0.0,
@@ -764,6 +772,7 @@ impl FigApp {
         if let Some(result) = &result {
             import_report::capture(self, id, &params, result);
         }
+        missing_fonts::check_later(self, id, result.as_ref());
         result
     }
 
@@ -878,6 +887,7 @@ impl FigApp {
                     self.ui.about_tab = dialogs::AboutTab::About;
                 }
                 "dialog.preferences" => self.ui.preferences = true,
+                "dialog.missingFonts" => missing_fonts::request(self),
                 "panel.shortcuts" => self.ui.shortcuts_panel = !self.ui.shortcuts_panel,
                 "palette.actions" => menus::toggle_palette(&mut self.ui),
                 "panel.design" => self.ui.right_tab = RightTab::Design,
@@ -1669,6 +1679,7 @@ impl FigApp {
             "importReport": self.ui.import_report.as_ref().map(import_report::Report::inspect),
         });
         state["pendingOpens"] = json!(self.ui.pending_opens.len());
+        state["missingFonts"] = json!(self.ui.missing_fonts.as_ref().map(missing_fonts::Shown::inspect));
         state
     }
 }
