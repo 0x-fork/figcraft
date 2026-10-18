@@ -429,8 +429,8 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
 `vector.create {path | points}` makes the layer's box from the geometry; `width`/`height` scale
 the geometry to the size asked for (with both, each side independently; with one, the other keeps
 its proportion). A path or point set that draws nothing is refused instead of making an invisible
-0×0 layer, as is a size on an axis the geometry has none of and a size that would collapse both
-axes.
+0×0 layer, as is a size on an axis the geometry has none of (except 0, such as a horizontal line's
+height) and a size of 0 or less on an axis it has, which would flatten it.
 
 Vector edit mode is driven with `run_command` (or `pointer`/`key` for gestures):
 `vector.edit.begin {id? | ids?}` (default the selection; converts shapes to vectors; several layers
