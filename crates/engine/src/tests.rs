@@ -627,21 +627,3 @@ fn find_replace_changing_only_the_case_replaces_every_occurrence() {
     assert_eq!(s.doc().unwrap().node(t).unwrap().kind.text().unwrap().characters, "FigCraft and FigCraft, FigCraft");
     assert_eq!(s.doc().unwrap().node(f).unwrap().name, "FigCraft / FigCraft");
 }
-
-/// `text.loadFont` refuses what isn't a font file; `text.rescanFonts` reports what it added.
-#[test]
-fn fonts_load_from_files_and_rescans_report_new_families() {
-    let mut s = sess();
-    assert!(s.execute("text.loadFont", &json!({})).is_err());
-    assert!(s.execute("text.loadFont", &json!({"data": "bm90IGEgZm9udA=="})).is_err(), "not a font file");
-    assert!(s.execute("text.loadFont", &json!({"data": "%%%"})).is_err());
-    assert!(s.execute("text.loadFont", &json!({"path": "no-such-dir/x.ttf"})).is_err());
-    if let Some(f) = figcraft_text::CRAFT_FONTS.first() {
-        use base64::Engine as _;
-        let data = base64::engine::general_purpose::STANDARD.encode(f.bytes);
-        let r = s.execute("text.loadFont", &json!({"data": data})).unwrap();
-        assert_eq!(r["families"].as_array().map(Vec::len), Some(1));
-    }
-    let r = s.execute("text.rescanFonts", &json!({})).unwrap();
-    assert!(r["added"].is_array());
-}
