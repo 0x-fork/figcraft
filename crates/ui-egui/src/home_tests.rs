@@ -573,6 +573,71 @@ fn dropping_a_file_without_one_on_disk_opens_it_as_a_new_unsaved_document() {
     assert!(!path.exists(), "nothing is written");
 }
 
+/// What a drop's read gives, once it has arrived.
+type Arrival = std::rc::Rc<std::cell::RefCell<Option<Result<Vec<u8>, String>>>>;
+
+/// A drop whose contents arrive later, as every drop in the browser does: pending until `arrived`
+/// holds them.
+fn later(arrived: &Arrival) -> crate::ReadFuture {
+    let arrived = arrived.clone();
+    Box::pin(std::future::poll_fn(move |_| match arrived.borrow_mut().take() {
+        Some(bytes) => std::task::Poll::Ready(bytes),
+        None => std::task::Poll::Pending,
+    }))
+}
+
+#[test]
+fn a_dropped_file_whose_contents_arrive_later_opens_once_they_do() {
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="red"/></svg>"#.to_vec();
+    let arrived = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let mut u = first_run();
+    u.app.ui.home = true;
+    u.app.ui.pending_opens.push(crate::pending_open::PendingOpen {
+        label: "Browser drop.svg".into(),
+        params: json!({"name": "Browser drop.svg"}),
+        command: "file.open",
+        target: None,
+        read: Some(later(&arrived)),
+    });
+    // egui lays a new card out invisibly on its first frame.
+    u.frame(vec![]);
+    for _ in 0..5 {
+        let s = flat(&u.frame_output(vec![]).shapes);
+        assert!(has_text(&s, "Browser drop.svg"), "the card shows while the contents are read");
+    }
+    assert!(u.app.session.docs.is_empty(), "nothing opens before the contents arrive");
+    *arrived.borrow_mut() = Some(Ok(svg));
+    for _ in 0..3 {
+        u.frame(vec![]);
+    }
+    assert!(u.app.ui.pending_opens.is_empty());
+    assert_eq!(u.app.ui.last_error, None);
+    assert_eq!(u.app.session.docs.len(), 1, "the contents open");
+    assert_eq!(u.app.session.docs[0].path, None);
+    assert!(u.app.session.docs[0].doc.nodes().any(|n| matches!(n.kind, figcraft_doc::NodeKind::Rectangle)), "the SVG's content");
+    assert!(!u.app.ui.home);
+}
+
+#[test]
+fn a_dropped_file_that_cannot_be_read_says_so_and_opens_nothing() {
+    let arrived = std::rc::Rc::new(std::cell::RefCell::new(Some(Err(crate::unreadable("Unreadable.figcraft")))));
+    let mut u = first_run();
+    u.app.ui.home = true;
+    u.app.ui.pending_opens.push(crate::pending_open::PendingOpen {
+        label: "Unreadable.figcraft".into(),
+        params: json!({"name": "Unreadable.figcraft"}),
+        command: "file.open",
+        target: None,
+        read: Some(later(&arrived)),
+    });
+    for _ in 0..3 {
+        u.frame(vec![]);
+    }
+    assert!(u.app.ui.pending_opens.is_empty());
+    assert!(u.app.session.docs.is_empty());
+    assert_eq!(u.app.ui.last_error.as_deref(), Some("Couldn't read Unreadable.figcraft."));
+}
+
 #[test]
 fn dropping_a_native_file_on_the_home_screen_opens_it() {
     let dir = Temp::new();
