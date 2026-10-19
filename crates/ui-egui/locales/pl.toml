@@ -1,10 +1,10 @@
 # FigCraft interface strings: Polish.
 #
-# Complete, native-quality Polish localization for FigCraft.
-# Clean-room implementation adhering strictly to ArtCraft standards.
+# Draft: machine-drafted, waiting for a native speaker's review.
 
 [meta]
 name = "Polski"
+status = "draft — needs native review"
 
 [ui]
 "% of all commits" = "% wszystkich commitów"
