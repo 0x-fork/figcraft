@@ -262,7 +262,7 @@ pub fn number_field_or(
 }
 
 /// [`number_field_or`] for a field where 0 is its automatic value (a layout grid's width or
-/// count): typing the word for Auto sets 0. See [`widgets::number_field_auto`].
+/// count): typing the word for Auto sets 0 ([`Empty::Auto`]).
 pub fn number_field_auto(
     app: &mut FigApp,
     ui: &mut Ui,

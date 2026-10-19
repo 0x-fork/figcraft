@@ -2074,14 +2074,12 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
             menu_popup(&resp).show(|ui| {
                 for (k, (name, a)) in names.iter().zip(aligns).enumerate() {
                     if menu_check(ui, k == cur, name, "") {
-                        // Auto (size 0) stays Auto whatever the alignment: a stretched grid works
-                        // its bands out from the frame, and a fixed one draws hairlines. Only a
-                        // stale sub-pixel width (older files) is lifted to a visible band.
+                        // Fixed-size columns need a size of their own.
                         app.run(
                             "node.set",
                             set(&|x| {
                                 x.align = a;
-                                if a != GridAlign::Stretch && x.size > 0.0 && x.size < 1.0 {
+                                if a != GridAlign::Stretch && !(x.size.is_finite() && x.size > 0.0) {
                                     x.size = 60.0;
                                 }
                                 if a == GridAlign::Stretch {
@@ -2095,15 +2093,15 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
             });
         });
         let span = if cols { tr("Width") } else { tr("Height") };
-        // 0 is Auto: no band, a one-pixel hairline at each band's start. A stretched grid works
-        // its bands out from the frame instead, so its width is not set at all.
-        let span_value = (g.size > 0.0).then_some(g.size);
         match g.align {
             GridAlign::Stretch => {
                 widgets::sublabels(ui, span, Some(tr("Margin")));
                 row(ui, 32.0, |ui| {
                     // The frame, divided by the count: shown as Auto and not editable.
-                    widgets::number_field_disabled(ui, Id::new(("grid_field", "size", i)), Lead::Named(span), tr("Auto"), col);
+                    ui.add_enabled_ui(false, |ui| {
+                        let auto = widgets::Empty::Text(tr("Auto"));
+                        widgets::number_field_bindable(ui, Id::new(("grid_field", "size", i)), Lead::Named(span), None, "", col, 1.0, None, auto)
+                    });
                     field(app, ui, "offset", g.offset, &offset);
                 });
                 widgets::sublabels(ui, tr("Gutter"), None);
@@ -2112,36 +2110,14 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
             GridAlign::Center => {
                 widgets::sublabels(ui, span, Some(tr("Gutter")));
                 row(ui, 32.0, |ui| {
-                    let we = crate::variable_ui::number_field_auto(
-                        app,
-                        ui,
-                        ids,
-                        &format!("layoutGrids/{i}/size"),
-                        Id::new(("grid_field", "size", i)),
-                        span_value,
-                        col,
-                        Lead::None,
-                        "",
-                    );
-                    app.field_run(we, "node.set", |v| set(&|x| x.size = v.max(0.0)));
+                    field(app, ui, "size", g.size, &size);
                     field(app, ui, "gutter", g.gutter, &gutter);
                 });
             }
             GridAlign::Min | GridAlign::Max => {
                 widgets::sublabels(ui, span, Some(tr("Offset")));
                 row(ui, 32.0, |ui| {
-                    let we = crate::variable_ui::number_field_auto(
-                        app,
-                        ui,
-                        ids,
-                        &format!("layoutGrids/{i}/size"),
-                        Id::new(("grid_field", "size", i)),
-                        span_value,
-                        col,
-                        Lead::None,
-                        "",
-                    );
-                    app.field_run(we, "node.set", |v| set(&|x| x.size = v.max(0.0)));
+                    field(app, ui, "size", g.size, &size);
                     field(app, ui, "offset", g.offset, &offset);
                 });
                 widgets::sublabels(ui, tr("Gutter"), None);

@@ -185,41 +185,6 @@ pub fn number_field_or(ui: &mut Ui, id: Id, value: Option<f64>, empty: &str, wid
     number_field_impl(ui, id, Lead::None, value, "", width, step, None, Empty::Text(empty)).0?.settled()
 }
 
-/// [`number_field_or`] for a field where 0 *is* its automatic value (a layout grid's width or
-/// count): typing the word for Auto — the placeholder's own text in the UI's language, or the
-/// English "auto" — sets 0. Only fields that ask for it get this; a field merely showing "Auto"
-/// as its placeholder keeps its own meaning of 0.
-pub fn number_field_auto(ui: &mut Ui, id: Id, value: Option<f64>, width: f32, step: f64) -> Option<FieldEdit> {
-    number_field_impl(ui, id, Lead::None, value, "", width, step, None, Empty::Auto).0?.settled()
-}
-
-/// A number field that can't be edited, showing `empty` (dim): for a value the app works out
-/// itself (a stretched grid's band width), so the row keeps its shape.
-pub fn number_field_disabled(ui: &mut Ui, id: Id, lead: Lead, empty: &str, width: f32) {
-    let t = Tokens::get(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
-    let resp = ui.interact(rect, id.with("field"), Sense::hover());
-    a11y::number(&resp, lead.name(), None, "", empty);
-    ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
-    let lead_w = match lead {
-        Lead::None | Lead::Named(_) => 6.0,
-        Lead::Text(s) => text_lead_width(ui, s, width),
-        Lead::Icon(..) => 24.0,
-    };
-    let lead_rect = Rect::from_min_size(rect.min, vec2(lead_w, FIELD_H));
-    match lead {
-        Lead::Text(s) => {
-            let galley = crate::bidi::name_galley(ui.painter(), s, regular(11.0), t.text_tertiary, lead_w - 12.0);
-            ui.painter().galley(pos2(lead_rect.min.x + 8.0, rect.center().y - galley.size().y / 2.0), galley, t.text_tertiary);
-        }
-        Lead::Icon(i, _) => {
-            icons::paint(ui.painter(), Rect::from_center_size(lead_rect.center() + vec2(1.0, 0.0), vec2(14.0, 14.0)), i, t.icon_secondary)
-        }
-        Lead::None | Lead::Named(_) => {}
-    }
-    ui.painter().text(pos2(rect.min.x + lead_w, rect.center().y), Align2::LEFT_CENTER, empty, regular(11.0), t.text_tertiary);
-}
-
 /// [`number_field`] that can bind a variable: `binding` None = not bindable, `Some(None)` = shows
 /// a variable button on hover, `Some(Some(name))` = bound (shows the name; click to change, the
 /// detach button unbinds). No value shows `empty` ("Mixed", "Auto"); [`Empty::Auto`] also takes
