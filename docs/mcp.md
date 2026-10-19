@@ -419,8 +419,7 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   accessibility setting turns it on too). Prototype transitions still play.
 - `pref.autoSave {on?}`: files that have a path save themselves a few seconds after they change
   (off by default; the desktop app's timer does it, so scripts still call `file.save`).
-- `pref.language {language: system|en|cs|ru|es|es-419|fr|de|pt-BR|ja|ko|zh-Hans|…}`: the app's interface language, applied live ("system":
-- `pref.language {language: system|en|es|es-419|fr|de|pt-BR|ja|ko|sv|zh-Hans|…}`: the app's interface language, applied live ("system":
+- `pref.language {language: system|en|cs|ru|es|es-419|fr|de|pt-BR|ja|ka|ko|sv|zh-Hans|…}`: the app's interface language, applied live ("system":
   the OS or browser language; a language without a catalog shows English). Command ids, labels and
   every result stay English.
 

@@ -62,13 +62,12 @@ fn craft_fonts(dir: &std::path::Path, manifest_rel: &str) -> Result<String, Stri
         };
         // CJK fonts are large; the desktop app finds system CJK fonts instead unless asked.
         let cjk = scripts.contains("Hans");
-        let bengali = scripts.contains("Beng");
         if cjk && std::env::var_os("FIGCRAFT_EMBED_CJK").is_none() {
             continue;
         }
-        // Web builds have a size budget: Inter, plus Noto Sans CJK (every CJK script, for CJK UI
-        // text) when asked.
-        if wasm && *family != "Inter" && !cjk && !bengali{
+        // Web builds have a size budget: Inter, Noto Sans Georgian (small, for the Georgian UI),
+        // plus Noto Sans CJK (every CJK script, for CJK UI text) when asked.
+        if wasm && !matches!(*family, "Inter" | "Noto Sans Georgian") && !cjk {
             continue;
         }
         let path = dir.join(file).canonicalize().map_err(|e| format!("{file}: {e}"))?;

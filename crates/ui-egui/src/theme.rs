@@ -253,7 +253,7 @@ pub fn install_fonts(ctx: &Context, system: bool, cjk: u8) {
     semi.extend(fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
     fonts.families.insert(FontFamily::Name("semibold".into()), semi);
     // CJK and other scripts from craft-fonts as fallbacks (Noto Sans CJK only with FIGCRAFT_EMBED_CJK).
-    const BUILT_IN: [&str; 4] = ["Inter", "BIZ UDPGothic", "Noto Sans CJK SC", "Noto Sans Arabic"];
+    const BUILT_IN: [&str; 5] = ["Inter", "BIZ UDPGothic", "Noto Sans CJK SC", "Noto Sans Arabic", "Noto Sans Georgian"];
     let lang = crate::i18n::current().map_or("en", |l| l.code);
     // A Chinese UI draws Han in a Chinese face: the built-in Japanese one goes after the system faces.
     let late = |family: &str| family == "BIZ UDPGothic" && crate::cjk::language(lang) == crate::cjk::HAN;
