@@ -395,6 +395,27 @@ fn number_variables_are_pixels_and_edits_are_one_undo_step() {
 }
 
 #[test]
+fn create_collection_keeps_at_least_one_named_mode() {
+    // A collection keeps at least one mode (removeMode) and mode names can't be empty (renameMode),
+    // so createCollection refuses an empty mode list, blank mode names and a blank collection name.
+    let mut s = Session::new();
+    for p in [
+        json!({"name": "C", "modes": []}),
+        json!({"name": "C", "modes": [1]}),
+        json!({"name": "C", "modes": ["", "  "]}),
+        json!({"name": "C", "modes": ["A", " "]}),
+        json!({"name": "  "}),
+        json!({"name": ""}),
+    ] {
+        assert!(s.execute("variable.createCollection", &p).is_err(), "{p} should be refused");
+    }
+    assert!(s.doc().unwrap().variables.collections.is_empty(), "a refused call creates nothing");
+    run(&mut s, "variable.createCollection", json!({"name": "C", "modes": [" Light ", "Dark"]}));
+    let names: Vec<String> = s.doc().unwrap().variables.collections[0].modes.iter().map(|m| m.name.clone()).collect();
+    assert_eq!(names, ["Light", "Dark"]);
+}
+
+#[test]
 fn explicit_edits_of_bound_fields_stick_and_detach_that_binding() {
     // #809: an edit of a bound field detaches its binding (as a paint edit does) instead of
     // the variable's value coming back; bindings whose value the edit kept stay.
