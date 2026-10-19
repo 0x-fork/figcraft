@@ -1,12 +1,14 @@
 # FigCraft interface strings: Georgian.
 #
-# Draft — needs native review: machine-drafted from the English catalog. Brand names and keyboard
-# glyphs stay as they are. Georgian has no letter case, and a noun after a numeral stays singular, so
-# counts read "შრე: {n}" and plural entries give the same text for one and other. See docs/translating.md.
+# Written with AI assistance (Claude) from the meaning of each English string, following the glossary
+# the Craft apps share, and reviewed by a native Georgian speaker; kept as a draft until a maintainer
+# changes its status. Brand names and keyboard glyphs stay as they are. Georgian has no letter case,
+# and a noun after a numeral stays singular, so counts read "შრე: {n}" and plural entries give the
+# same text for one and other. See docs/translating.md.
 
 [meta]
 name = "ქართული"
-status = "draft — needs native review"
+status = "draft — reviewed by a native speaker, awaiting a maintainer's approval"
 
 [ui]
 "% of all commits" = "ყველა კომიტის %"
