@@ -194,9 +194,9 @@ fn main() -> eframe::Result {
     session.live.links = figcraft_collab_net::links::system();
     session.invite_links_startup();
     // A first run (no settings kept yet, nothing to open) starts on the home screen, with its
-    // tips and templates; later runs start in a new file.
+    // tips and templates; later runs start in a new file unless the preference says Home.
     let first_run = svc.prefs.is_none() && args.join.is_none();
-    if session.docs.is_empty() && !first_run {
+    if session.docs.is_empty() && !first_run && !session.prefs.start_on_home {
         let _ = session.execute("file.new", &json!({}));
     }
     // The interface language from the first frame on, and for the message when the window can't
