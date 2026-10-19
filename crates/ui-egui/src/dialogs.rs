@@ -226,6 +226,9 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
             if !cfg!(target_arch = "wasm32") && crate::widgets::checkbox(ui, prefs.auto_save, tr("Save files automatically")) {
                 toggles.push("pref.autoSave");
             }
+            if !cfg!(target_arch = "wasm32") && crate::widgets::checkbox(ui, prefs.start_on_home, tr("Start on the Home screen")) {
+                toggles.push("pref.startOnHome");
+            }
             for c in toggles {
                 app.run(c, json!({}));
             }
