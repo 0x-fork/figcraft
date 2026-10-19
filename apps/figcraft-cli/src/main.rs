@@ -56,18 +56,17 @@ See docs/cli.md and docs/mcp.md.";
 /// unconfined, as before; giving either confines every file the subcommand touches (#833).
 const ROOT_FLAGS: [&str; 2] = ["automation-read-root", "automation-write-root"];
 
-fn roots_of(a: &Args) -> CliResult<Option<std::sync::Arc<figcraft_engine::file_access::Roots>>> {
+fn roots_of(a: &Args) -> CliResult<Option<figcraft_engine::file_access::Roots>> {
     let (read, write) = (a.values("automation-read-root"), a.values("automation-write-root"));
     if read.is_empty() && write.is_empty() {
         return Ok(None);
     }
-    let roots = figcraft_engine::file_access::Roots::new(read, write).map_err(CliError::Failed)?;
-    Ok(Some(std::sync::Arc::new(roots)))
+    Ok(Some(figcraft_engine::file_access::Roots::new(read, write).map_err(CliError::Failed)?))
 }
 
 /// Runs `f` confined to the roots `a` carries.
 fn confined<R>(a: &Args, f: impl FnOnce() -> CliResult<R>) -> CliResult<R> {
-    let roots = roots_of(a)?;
+    let roots = roots_of(a)?.map(std::sync::Arc::new);
     figcraft_engine::file_access::confined(roots.as_ref(), f)
 }
 
@@ -163,23 +162,20 @@ fn run(argv: &[String]) -> CliResult<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         "mcp" => {
-            let a = Args::parse(rest, &["attach", "automation-read-root", "automation-write-root"], &[])?;
+            let valued = [&["attach"][..], &ROOT_FLAGS[..]].concat();
+            let a = Args::parse(rest, &valued, &[])?;
             if !a.positional.is_empty() {
                 return Err(CliError::Usage("mcp takes no positional arguments".into()));
             }
-            let (read, write) = (a.values("automation-read-root"), a.values("automation-write-root"));
-            let roots = match (read.is_empty() && write.is_empty(), a.value("attach")) {
-                (true, _) => None,
-                // The app runs the commands: only its own roots can confine them.
-                (false, Some(_)) => {
-                    return Err(CliError::Usage(
-                        "--attach can't take automation roots: start the app with them instead (`figcraft --control PORT --automation-read-root DIR ...`)"
-                            .into(),
-                    ));
-                }
-                (false, None) => Some(figcraft_engine::file_access::Roots::new(read, write).map_err(CliError::Failed)?),
-            };
-            mcp(a.value("attach").as_deref(), roots)
+            let attach = a.value("attach");
+            // The app runs the commands: only its own roots can confine them.
+            if attach.is_some() && ROOT_FLAGS.iter().any(|f| !a.values(f).is_empty()) {
+                return Err(CliError::Usage(
+                    "--attach can't take automation roots: start the app with them instead (`figcraft --control PORT --automation-read-root DIR ...`)"
+                        .into(),
+                ));
+            }
+            mcp(attach.as_deref(), roots_of(&a)?)
         }
         "plugin" => {
             let a = Args::parse(rest, &["server"], &[])?;
