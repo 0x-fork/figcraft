@@ -77,6 +77,10 @@ fn carets_and_clicks_treat_it_like_a_newline() {
             assert_eq!(ls.hit(x, line.top + 5.0), ln.hit(x, line.top + 5.0), "click at {x} on the line at {}", line.top);
         }
     }
+    // Before the separator: the end of the first line; after it: the start of the second.
+    assert_eq!(ls.caret(2).1, 0);
+    assert!(ls.caret(2).0 > 0.0);
+    assert_eq!(ls.caret(3), (0.0, 1));
     // A click right of the first line lands before the separator, not after it.
     assert_eq!(ls.hit(ls.lines[0].width + 50.0, ls.lines[0].top + 5.0), 2);
 }
