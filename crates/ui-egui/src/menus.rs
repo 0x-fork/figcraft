@@ -117,6 +117,19 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         // Edit ▸ Delete (and the Delete binding) with an interaction open in the Prototype tab
         // removes that interaction, not the layer (#767).
         "edit.delete" if app.ui_context.clone().is_some_and(|ctx| crate::proto_panel::delete_selected_interaction(app, &ctx)) => {}
+        // After a click in the Pages list, while the list is on screen and its file open, with no
+        // layers selected, it deletes the current page (#859).
+        "edit.delete" if crate::layers::pages_have_keyboard(app) && app.session.selection().is_empty() => {
+            if let Ok(page) = app.session.page() {
+                crate::layers::delete_page(app, page);
+            }
+        }
+        // Otherwise the list gives up the keyboard: once Delete has taken layers selected since the
+        // click (Select all, say), a second Delete must not take the page.
+        "edit.delete" if app.ui.pages_focus.is_some() => {
+            app.ui.pages_focus = None;
+            app.run(id, json!({}));
+        }
         "file.open" => app.open_dialog(),
         "plugin.import" => crate::plugins_ui::import_dialog(app),
         "file.import" => app.import_dialog(false),

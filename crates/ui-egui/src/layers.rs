@@ -206,6 +206,7 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     }
     icons::paint(ui.painter(), ar.shrink(5.0), Icon::Plus, t.icon);
     if aresp.clicked() {
+        app.ui.pages_focus = app.session.ds().ok().map(|d| d.uid);
         app.run("page.add", json!({}));
     }
     if !app.ui.pages_open {
@@ -222,6 +223,7 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
         pages.iter().filter(|(_, name, divider)| filter.is_empty() || (!divider && name.to_lowercase().contains(&filter))).cloned().collect();
     let filtering = !filter.is_empty();
     let cur = ds.page;
+    let uid = ds.uid;
     let sel = ds.selection.clone();
     let mut select = None;
     let mut rename_done: Option<(NodeId, String)> = None;
@@ -274,6 +276,8 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
             }
             if resp.clicked() && !divider {
                 select = Some(id);
+                app.ui.pages_focus = Some(uid);
+                app.ui.layers_focus = false;
             }
             if resp.double_clicked() {
                 app.ui.rename_page = Some((id, name.clone()));
@@ -291,7 +295,7 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
                     ui.close();
                 }
                 if ui.button(tr("Delete page")).clicked() {
-                    app.run("page.delete", json!({"id": id}));
+                    delete_page(app, id);
                     ui.close();
                 }
             });
@@ -355,6 +359,20 @@ fn page_search_field(app: &mut FigApp, ui: &mut Ui, t: &Tokens, w: f32, id: Id, 
     if app.ui.page_search && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         app.ui.page_search = false;
         app.ui.page_filter.clear();
+    }
+}
+
+/// The Pages list has the keyboard: a page row (or the add-page button) of the open file was
+/// clicked last, and the list is still on screen.
+pub(crate) fn pages_have_keyboard(app: &FigApp) -> bool {
+    let Ok(ds) = app.session.ds() else { return false };
+    app.ui.pages_focus == Some(ds.uid) && app.ui.pages_open && !app.ui.left_collapsed && !ds.view.ui_hidden && app.ui.left_tab == LeftTab::File
+}
+
+/// Delete `page` (no confirmation: Undo brings it back) and say so.
+pub(crate) fn delete_page(app: &mut FigApp, page: NodeId) {
+    if app.run("page.delete", json!({"id": page})).is_some() {
+        app.toast(tr("Page deleted"));
     }
 }
 
@@ -1111,6 +1129,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
     }
     if let Some((id, m)) = clicked {
         app.ui.layers_focus = true;
+        app.ui.pages_focus = None;
         let order: Vec<NodeId> = rows.iter().map(|r| r.id).collect();
         let pos = |x: NodeId| order.iter().position(|o| *o == x);
         let anchor = app.ui.layer_anchor.filter(|a| sel.contains(a)).and_then(pos);
