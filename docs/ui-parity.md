@@ -165,13 +165,14 @@ in the table. `crates/ui-egui/src/shortcut_keys_tests.rs` drives the keys a look
 | Keyboard navigation: F6 regions, Tab within, focus ring | done | |
 | Layers panel from the keyboard: arrows, F2 / Cmd+R rename (the row gets the keyboard back), Shift+F10 context menu; 10k-layer lists | done | revealing a layer, expanding, collapsing and arrow keys timed in `cargo xtask bench` |
 | Reduced motion | done | system setting or preference |
-| WCAG AA contrast of secondary and accent text | done | |
+| WCAG AA contrast of secondary and accent text | done | disabled and dim text at least 3:1 against panels, fields and selected rows, selected text at least 3:1 on its highlight, in both themes (`theme::tests`, #890) |
 | Tested with VoiceOver, NVDA, Narrator, Orca | missing | human QA |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | minor | Readable disabled and selected text (#890): the dim text colour (disabled buttons, placeholders, hints) is at least 3:1 against panels, fields and selected rows in both themes (it was 2.1:1 in the light theme), a disabled button is grey with that text instead of fading to 40%, and selected text (renaming a page or layer, any text box) takes the theme's readable green on the highlight (1.4:1 in the dark theme before, now 4.2:1 or more); checked with the colour contrast helper (`theme::tests`). Numbers unchanged |
 | 2026-10-20 | minor | Measuring while nudging (#894): with Alt held over another layer, the arrows nudge the selection (Shift: the big step) and the distances follow every nudge (Alt+arrows used to do nothing); while measuring, the selection's handles and size label hide and both layers keep their outlines (`measure_nudge_tests`). Numbers unchanged |
 | 2026-10-18 | minor | A rename (layers double-click, F2, File ▸ Rename, a page) selects the whole name in the frame its field first draws, so the first key replaces the name instead of being appended. Checked in the app on Windows over the control channel |
 | 2026-10-17 | minor | Escape or Enter while the pen draws ends the path and keeps its vector in edit mode with the pen, so the next path is drawn into the same layer (unconnected); another Escape leaves edit mode (#760). Entering edit mode on a layer that already is a vector no longer records an empty undo step. Numbers unchanged |
