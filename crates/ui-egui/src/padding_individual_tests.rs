@@ -90,13 +90,15 @@ fn named_field(u: &mut Ui, label: &str) -> Pos2 {
     pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32)
 }
 
-/// The shut pair fields edit their own axis: horizontal touches left and right
-/// only, vertical touches top and bottom only.
+/// The shut pair fields read Mixed when their sides disagree and edit their own axis: horizontal
+/// touches left and right only, vertical touches top and bottom only.
 #[test]
 fn shut_pair_fields_edit_their_own_axis() {
     let (mut u, f) = scene();
     u.app.run("node.set", json!({"ids": [f], "props": {"paddingLeft": 16.0, "paddingRight": 54.0}}));
     assert_eq!(padding(&u, f), [10.0, 54.0, 10.0, 16.0]);
+    let shown = crate::live_tests::texts(&crate::live_tests::flat(&u.frame_output(vec![]).shapes));
+    assert!(shown.iter().any(|(t, _, _)| t == "Mixed"), "sides that disagree read Mixed: {shown:?}");
     let h = named_field(&mut u, "Horizontal padding");
     click(&mut u, h);
     u.frame(vec![Event::Text("20".into())]);
