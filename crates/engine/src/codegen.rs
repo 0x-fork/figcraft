@@ -876,11 +876,16 @@ pub(crate) fn swift(ctx: &Ctx, id: NodeId, depth: usize, out: &mut String, extra
     swift_layer(ctx, n, depth, out, extra);
 }
 
+/// A layer name safe for a single-line `//` comment: line breaks become spaces.
+fn one_line(name: &str) -> String {
+    name.replace(['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}'], " ")
+}
+
 fn swift_layer(ctx: &Ctx, n: &Node, depth: usize, out: &mut String, extra: &[String]) {
     let doc = ctx.doc;
     let pad = indent(depth);
     if ctx.too_deep(depth) {
-        out.push_str(&format!("{pad}// {} …\n", n.name));
+        out.push_str(&format!("{pad}// {} …\n", one_line(&n.name)));
         return;
     }
     // Nested instances are calls; an instance swap parameter is a view.
@@ -1053,7 +1058,7 @@ fn compose_layer(ctx: &Ctx, n: &Node, depth: usize, out: &mut String) {
     let doc = ctx.doc;
     let pad = indent(depth);
     if ctx.too_deep(depth) {
-        out.push_str(&format!("{pad}// {} …\n", n.name));
+        out.push_str(&format!("{pad}// {} …\n", one_line(&n.name)));
         return;
     }
     // Nested instances are calls; an instance swap parameter is a composable.
@@ -1185,5 +1190,27 @@ mod tests {
         let kt = code_for(doc, root, CodeLang::Compose);
         assert!(kt.contains("Modifier.offset(7.dp, 9.dp)"));
         assert!(code_for(doc, NodeId(999_999), CodeLang::Css).is_empty());
+    }
+
+    #[test]
+    fn too_deep_placeholder_keeps_a_multiline_layer_name_in_the_comment() {
+        let mut s = Session::new();
+        let name = "deep\nevil()\r\u{2028}more()";
+        let mut parent = id_of(&s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 50, "height": 50, "name": name})).unwrap()["id"]).unwrap();
+        let root = parent;
+        for _ in 0..16 {
+            parent =
+                id_of(&s.execute("frame.create", &json!({"x": 1, "y": 1, "width": 40, "height": 40, "parent": parent, "name": name})).unwrap()["id"])
+                    .unwrap();
+        }
+        let doc = s.doc().unwrap();
+        for lang in [CodeLang::SwiftUi, CodeLang::Compose] {
+            let code = code_for(doc, root, lang);
+            assert!(code.contains("// deep evil()  more() …\n"), "{code}");
+            for line in code.lines() {
+                let t = line.trim_start();
+                assert!(!t.starts_with("evil()") && !t.starts_with("more()"), "layer name leaked as code:\n{code}");
+            }
+        }
     }
 }

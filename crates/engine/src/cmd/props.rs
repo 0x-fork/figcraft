@@ -61,6 +61,48 @@ pub fn snake(v: &Value) -> Value {
     }
 }
 
+/// `v` as an effect list, refusing keys an effect doesn't read: serde dropped them without a word,
+/// so a shadow given `offsetY` kept the default offset.
+pub fn effects_from(cmd: &str, v: &Value) -> Result<Vec<Effect>> {
+    let effects: Vec<Effect> = serde_json::from_value(snake(v)).map_err(|e| bad(cmd, format!("effects: {e}")))?;
+    for (i, given) in v.as_array().into_iter().flatten().enumerate() {
+        refuse_ignored_effect_keys(cmd, &format!("effects[{i}]"), given, |v| serde_json::from_value(snake(v)).ok())?;
+    }
+    Ok(effects)
+}
+
+/// `p[key]` as one effect, read as serde reads it (its aliases too), refusing keys it doesn't read.
+pub fn effect_from(cmd: &str, p: &Value, key: &str) -> Result<Option<Effect>> {
+    let Some(v) = get(p, key) else { return Ok(None) };
+    let effect: Effect = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("`{key}`: {e}")))?;
+    refuse_ignored_effect_keys(cmd, &format!("`{key}`"), v, |v| serde_json::from_value(v.clone()).ok())?;
+    Ok(Some(effect))
+}
+
+/// Refuse the keys of effect `given` that `parse` ignores, naming the keys the effect takes. Set to
+/// null, a key it reads fails to parse or changes the effect; a key it ignores changes nothing.
+fn refuse_ignored_effect_keys(cmd: &str, at: &str, given: &Value, parse: impl Fn(&Value) -> Option<Effect>) -> Result<()> {
+    let Some(fields) = given.as_object() else { return Ok(()) };
+    let parsed = parse(given);
+    let ignored: Vec<&str> = fields
+        .iter()
+        .filter(|(_, v)| !v.is_null())
+        .filter(|(k, _)| {
+            let mut probe = fields.clone();
+            probe.insert((*k).clone(), Value::Null);
+            parse(&Value::Object(probe)).is_some_and(|e| Some(e) == parsed)
+        })
+        .map(|(k, _)| k.as_str())
+        .collect();
+    if ignored.is_empty() {
+        return Ok(());
+    }
+    let takes = parsed.and_then(|e| serde_json::to_value(e).ok()).map(crate::inspect::camel).unwrap_or_default();
+    let kind = takes.get("type").and_then(Value::as_str).unwrap_or("effect").to_string();
+    let names: Vec<&str> = takes.as_object().into_iter().flatten().map(|(k, _)| k.as_str()).collect();
+    Err(bad(cmd, format!("{at}: unknown properties: {} (a {kind} takes {})", ignored.join(", "), names.join(", "))))
+}
+
 pub(crate) fn enum_of<T: serde::de::DeserializeOwned>(v: &Value) -> Option<T> {
     let s = v.as_str()?;
     // Accept camelCase, snake/upper-case and spaced variants.
@@ -482,7 +524,7 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 }
             }
             "cornerSmoothing" => doc.get_mut(id)?.corners.smoothing = f64_of(v).unwrap_or(0.0).clamp(0.0, 1.0),
-            "effects" => doc.get_mut(id)?.effects = serde_json::from_value(snake(v)).map_err(|e| bad(cmd, format!("effects: {e}")))?,
+            "effects" => doc.get_mut(id)?.effects = effects_from(cmd, v)?,
             "clip" | "clipsContent" => doc.get_mut(id)?.clip = v.as_bool().ok_or_else(|| bad(cmd, "`clip` must be a boolean"))?,
             "isMask" => doc.get_mut(id)?.is_mask = v.as_bool().unwrap_or(false),
             "devStatus" => {
