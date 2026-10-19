@@ -37,6 +37,11 @@ real_name = "Justin John"
 
 [people.Losminek]
 
+[people.alrifatsabbir]
+real_name = "Al Rifat Sabbir"
+display_name = "Al Rifat Sabbir"
+sync_github_name = true
+
 [people.RevDonz]
 
 [people.Nael-Nathanael]
