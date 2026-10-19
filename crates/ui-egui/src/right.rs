@@ -2056,8 +2056,13 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
             // 0 is Auto for fixed-size columns (rows); a stretched grid has at least one.
             let count = (!auto_count(g)).then(|| f64::from(g.count.max(1)));
             let key = format!("layoutGrids/{i}/count");
-            let e =
-                crate::variable_ui::number_field_or(app, ui, ids, &key, Id::new(("grid_field", "count", i)), count, col, tr("Auto"), Lead::None, "");
+            let id = Id::new(("grid_field", "count", i));
+            // A stretched grid has at least one band, so 0 (Auto) isn't a count it can take.
+            let e = if g.align == GridAlign::Stretch {
+                crate::variable_ui::number_field_or(app, ui, ids, &key, id, count, col, "", Lead::None, "")
+            } else {
+                crate::variable_ui::number_field_auto(app, ui, ids, &key, id, count, col, Lead::None, "")
+            };
             app.field_run(e, "node.set", |v| {
                 set(&|x| x.count = if x.align == GridAlign::Stretch { v.round().clamp(1.0, 1000.0) } else { v.round().clamp(0.0, 1000.0) } as u32)
             });
@@ -2090,11 +2095,17 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
         let span = if cols { tr("Width") } else { tr("Height") };
         match g.align {
             GridAlign::Stretch => {
-                widgets::sublabels(ui, tr("Margin"), Some(tr("Gutter")));
+                widgets::sublabels(ui, span, Some(tr("Margin")));
                 row(ui, 32.0, |ui| {
+                    // The frame, divided by the count: shown as Auto and not editable.
+                    ui.add_enabled_ui(false, |ui| {
+                        let auto = widgets::Empty::Text(tr("Auto"));
+                        widgets::number_field_bindable(ui, Id::new(("grid_field", "size", i)), Lead::Named(span), None, "", col, 1.0, None, auto)
+                    });
                     field(app, ui, "offset", g.offset, &offset);
-                    field(app, ui, "gutter", g.gutter, &gutter);
                 });
+                widgets::sublabels(ui, tr("Gutter"), None);
+                row(ui, 32.0, |ui| field(app, ui, "gutter", g.gutter, &gutter));
             }
             GridAlign::Center => {
                 widgets::sublabels(ui, span, Some(tr("Gutter")));

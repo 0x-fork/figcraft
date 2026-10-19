@@ -1775,6 +1775,8 @@ mod pixel_preview_tests;
 #[cfg(test)]
 mod playground_tests;
 #[cfg(test)]
+mod plugin_data_tests;
+#[cfg(test)]
 mod plugin_directory_tests;
 #[cfg(test)]
 mod plugin_panels_tests;

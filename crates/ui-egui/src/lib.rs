@@ -147,6 +147,8 @@ mod live_tests;
 #[cfg(test)]
 mod live_text_tests;
 #[cfg(test)]
+mod measure_nudge_tests;
+#[cfg(test)]
 mod menu_aim_tests;
 #[cfg(test)]
 mod menu_input_tests;
@@ -1510,7 +1512,7 @@ impl FigApp {
         // What happened in a live session (the network woke us for it).
         if self.session.live_poll() {
             if let Some(m) = self.session.message.take() {
-                self.toast(m);
+                self.toast(live::failure_text(&m));
             }
             self.background_done(&ctx);
         }
