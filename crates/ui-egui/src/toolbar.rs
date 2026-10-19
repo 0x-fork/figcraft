@@ -509,6 +509,9 @@ mod tests {
             assert_eq!(mark.len(), 1, "one width at {ppp}×: {mark:?}");
             assert_eq!(widths(ppp, Icon::Chevron, CARET), mark, "caret at {ppp}×");
             assert_eq!(widths(ppp, Icon::Code, GLYPH), mark, "mode mark at {ppp}×");
+            for icon in [Icon::Frame, Icon::Text] {
+                assert_eq!(widths(ppp, icon, GLYPH), mark, "{icon:?} at {ppp}×");
+            }
         }
     }
 }
