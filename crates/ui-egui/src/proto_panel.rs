@@ -53,6 +53,8 @@ pub fn delete_selected_interaction(app: &mut FigApp, ctx: &egui::Context) -> boo
         return false;
     }
     open_editor(ctx, None);
+    // Delete went to the interaction, so a later one doesn't go to the Pages list.
+    app.ui.pages_focus = None;
     let ids = targets_for(app, node);
     app.run("proto.interaction.remove", json!({"ids": ids, "index": index}));
     true
