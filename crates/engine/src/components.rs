@@ -285,6 +285,8 @@ pub fn create_instance_at(doc: &mut Document, component: NodeId, parent: NodeId,
     root.dev_resources.clear();
     // The main's interactions play on its instances in prototypes; the instance's own start empty.
     root.interactions.clear();
+    // So do the variable modes the main sets (see `Document::inherited_modes`).
+    root.var_modes.clear();
     doc.insert(root, parent, index)?;
     sync_instance(doc, id);
     Ok(id)

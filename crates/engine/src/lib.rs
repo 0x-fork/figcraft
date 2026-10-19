@@ -1460,20 +1460,34 @@ fn affects_layout(before: &Document, doc: &Document, id: NodeId) -> bool {
 }
 
 /// The layers whose variable bindings an edit may have changed: every bound layer when a variable
-/// changed, else the touched layers and everything below those that moved, are new or chose
-/// another variable mode (modes are inherited).
+/// changed, else the touched layers and everything below those that moved, are new, chose
+/// another variable mode or became an instance of another main (modes are inherited, an
+/// instance's from its main too), and the instances of a main that chose another mode.
 fn binding_scope(doc: &Document, before: &Document, touched: &BTreeSet<NodeId>) -> Option<BTreeSet<NodeId>> {
     if doc.variables != before.variables {
         return None;
     }
+    let main = |n: &Node| match n.kind {
+        figcraft_doc::NodeKind::Instance { component, .. } => Some(component),
+        _ => None,
+    };
     let mut out = BTreeSet::new();
     for &id in touched {
         let Some(n) = doc.node(id) else { continue };
-        let inherited = before.node(id).is_none_or(|b| b.var_modes != n.var_modes || b.parent != n.parent);
-        if inherited {
+        let Some(b) = before.node(id) else {
+            out.extend(doc.subtree(id));
+            continue;
+        };
+        let modes = b.var_modes != n.var_modes;
+        if modes || b.parent != n.parent || main(b) != main(n) {
             out.extend(doc.subtree(id));
         } else {
             out.insert(id);
+        }
+        if modes && matches!(n.kind, figcraft_doc::NodeKind::Component { .. }) {
+            for i in components::instances_of(doc, id) {
+                out.extend(doc.subtree(i));
+            }
         }
     }
     Some(out)
@@ -1651,6 +1665,8 @@ mod import_export_tests;
 mod import_journal_tests;
 #[cfg(test)]
 mod inspect_behaviour_tests;
+#[cfg(test)]
+mod instance_modes_tests;
 #[cfg(test)]
 mod instance_resizing_tests;
 #[cfg(test)]

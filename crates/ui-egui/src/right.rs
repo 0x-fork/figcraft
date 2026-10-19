@@ -961,8 +961,8 @@ fn variable_modes(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
     // The collection's name, then a wider mode picker ("Auto (Light)") across both field columns.
     let col = widgets::col_width(ui.available_width());
     let (name_w, pick_w) = ((col * 0.7).round(), (col * 1.3).round());
-    // Auto resolves from the parent of the first selected layer.
-    let parent_modes = sel.first().and_then(|i| doc.node(*i)).and_then(|n| n.parent).map(|p| doc.modes_for(p)).unwrap_or_default();
+    // Auto resolves as for the first selected layer: from its parent, or an instance's main.
+    let parent_modes = sel.first().map(|i| doc.inherited_modes(*i)).unwrap_or_default();
     let mut group = None;
     for r in &rows {
         let c = r.coll;
