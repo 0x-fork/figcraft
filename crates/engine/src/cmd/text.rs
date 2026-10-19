@@ -364,6 +364,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let ids = req_targets("text.style", s, p)?;
                 let m = p.as_object().cloned().unwrap_or_default();
                 let doc = s.doc_mut()?;
+                let before = super::styles::bound_before(doc, &ids);
                 for i in ids {
                     let n = doc.get_mut(i)?;
                     let NodeKind::Text(t) = &mut n.kind else { return Err(bad("text.style", format!("{i} is not text"))) };
@@ -377,6 +378,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         super::props::apply_text_style("text.style", t, a, b, k, v)?;
                     }
                 }
+                super::styles::detach_edited(doc, &before);
                 ok()
             }
         ),
