@@ -261,7 +261,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         spec!("effect.set", "Set effect", "{ids?, index, effect {..}}", true, |s, p| {
             let i = req_index("effect.set", p, "index")?;
-            let e: Effect = parse("effect.set", p, "effect")?.ok_or_else(|| bad("effect.set", "`effect` required"))?;
+            let e = super::props::effect_from("effect.set", p, "effect")?.ok_or_else(|| bad("effect.set", "`effect` required"))?;
             for id in req_targets("effect.set", s, p)? {
                 let n = s.doc_mut()?.get_mut(id)?;
                 if let Some(slot) = n.effects.get_mut(i) {
@@ -1382,8 +1382,8 @@ fn pattern_fill(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn effect_add(s: &mut Session, p: &Value) -> Result<Value> {
-    let e: Effect = match get(p, "effect") {
-        Some(v) => serde_json::from_value(v.clone()).map_err(|e| bad("effect.add", e.to_string()))?,
+    let e: Effect = match super::props::effect_from("effect.add", p, "effect")? {
+        Some(e) => e,
         None => {
             let ty = string(p, "type").unwrap_or_else(|| "dropShadow".into());
             Effect::of_type(&ty).ok_or_else(|| bad("effect.add", format!("unknown effect type `{ty}`")))?
