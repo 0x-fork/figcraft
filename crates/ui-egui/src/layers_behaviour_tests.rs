@@ -217,16 +217,34 @@ fn pages_search_button_opens_the_filter_and_escape_clears_it() {
 }
 
 #[test]
-fn pages_search_escape_closes_even_when_the_field_is_unfocused() {
-    let mut u = Ui::new(Session::new());
+fn pages_search_leaves_escape_to_the_canvas_when_the_field_is_unfocused() {
+    let mut s = Session::new();
+    let r = rect(&mut s, "r", 0.0, None);
+    s.execute("select.set", &json!({"ids": [r]})).unwrap();
+    let mut u = Ui::new(s);
     u.app.ui.page_search = true;
     u.app.ui.page_filter = "COMPON".into();
     u.frame(vec![]);
 
     u.frame(vec![Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
 
-    assert!(!u.app.ui.page_search, "Escape closes page search without field focus");
-    assert!(u.app.ui.page_filter.is_empty(), "Escape clears the filter without field focus");
+    assert!(u.app.session.selection().is_empty(), "Escape deselects on the canvas");
+    assert!(u.app.ui.page_search, "the page search stays open");
+    assert_eq!(u.app.ui.page_filter, "COMPON", "and keeps its filter");
+}
+
+#[test]
+fn escape_in_the_pages_search_does_not_reach_the_canvas() {
+    let mut s = Session::new();
+    let r = rect(&mut s, "r", 0.0, None);
+    s.execute("select.set", &json!({"ids": [r]})).unwrap();
+    let mut u = Ui::new(s);
+    click(&mut u, Pos2::new(246.0, 124.0), Modifiers::NONE);
+    assert!(u.app.ui.page_search);
+    u.frame(vec![Event::Text("x".into())]);
+    u.frame(vec![Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
+    assert!(!u.app.ui.page_search, "Escape closes the page search");
+    assert_eq!(u.app.session.selection(), vec![r], "and leaves the selection alone");
 }
 
 #[test]
