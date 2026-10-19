@@ -66,8 +66,9 @@ something on screen needs it (see `crates/ui-egui/src/cjk.rs`). The web build ha
 so Japanese, Korean and Chinese appear there only in a build with craft-fonts and
 `FIGCRAFT_EMBED_CJK=1` (Noto Sans CJK SC, +16 MB); otherwise they are left out of the picker. A
 Chinese UI puts its Chinese face first so Han takes Simplified Chinese shapes. Georgian is drawn in
-craft-fonts' Noto Sans Georgian, one of the built-in faces in `theme::install_fonts` (and kept in
-web builds by `crates/text/build.rs`). A new CJK or other non-Latin language also needs its script in
+craft-fonts' Noto Sans Georgian, one of the built-in faces in `theme::install_fonts`. Web builds
+keep it only when built with craft-fonts (`crates/text/build.rs`); the web release isn't, so its
+picker leaves Georgian out. A new CJK or other non-Latin language also needs its script in
 `cjk::language`, or a built-in craft-fonts face.
 
 ## Adding a language
