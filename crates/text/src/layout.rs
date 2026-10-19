@@ -157,6 +157,11 @@ fn deco_len(m: DecorationLength, size: f64, auto: f64) -> f64 {
     if v.is_finite() { v } else { auto }
 }
 
+/// A char that ends its line: a newline (which also ends the paragraph).
+fn is_line_break(c: char) -> bool {
+    c == '\n'
+}
+
 /// Opening punctuation, which hangs outside a line's start.
 fn opens(c: char) -> bool {
     matches!(c, '"' | '\'' | '\u{201C}' | '\u{2018}' | '\u{201E}' | '\u{201A}' | '\u{00AB}' | '\u{2039}' | '(' | '[' | '{' | '\u{00BF}' | '\u{00A1}')
@@ -332,7 +337,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
     }
     // Colour emoji are their own, large faces (Apple Color Emoji is ~180 MB): they are read only
     // for a text with emoji, or with characters nothing above covers.
-    let covered = |c: char| c == '\n' || faces.iter().flatten().any(|f| f.has_char(c)) || fallbacks.iter().any(|f| f.has_char(c));
+    let covered = |c: char| is_line_break(c) || faces.iter().flatten().any(|f| f.has_char(c)) || fallbacks.iter().any(|f| f.has_char(c));
     let emoji = if chars.iter().any(|c| is_emoji(*c) || !covered(*c)) { dbw.emoji_fallbacks() } else { Vec::new() };
     fallbacks.extend(emoji.iter().cloned());
     drop(dbw);
@@ -370,7 +375,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                 {
                     return f.clone();
                 }
-                if c == '\n' || primary.has_char(c) {
+                if is_line_break(c) || primary.has_char(c) {
                     return primary.clone();
                 }
                 let fallbacks = style_fallbacks.get(st_idx).unwrap_or(&fallbacks);
@@ -382,13 +387,15 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             let mut seg_end = seg_start + 1;
             while seg_end < *end
                 && chars.get(seg_end).is_some_and(|c| {
-                    *c != '\n' && first != '\n' && (!cluster_start.get(seg_end).copied().unwrap_or(true) || face_for(*c).id == face.id)
+                    !is_line_break(*c)
+                        && !is_line_break(first)
+                        && (!cluster_start.get(seg_end).copied().unwrap_or(true) || face_for(*c).id == face.id)
                 })
                 && level_at(seg_end) == level
             {
                 seg_end += 1;
             }
-            if first == '\n' {
+            if is_line_break(first) {
                 items.push(Item {
                     face: face.clone(),
                     coords: no_coords(),
@@ -401,7 +408,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                     char_start: seg_start,
                     char_end: seg_start + 1,
                     style: st_idx,
-                    ch: '\n',
+                    ch: first,
                     level,
                 });
             } else {
@@ -546,7 +553,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         let baseline = y + (lh - (asc + desc)) / 2.0 + asc;
         // Trailing spaces don't count for width/alignment.
         let mut vis_end = *e;
-        while vis_end > *s && items.get(vis_end - 1).is_some_and(|it| it.is_space() || it.ch == '\n') {
+        while vis_end > *s && items.get(vis_end - 1).is_some_and(|it| it.is_space() || is_line_break(it.ch)) {
             vis_end -= 1;
         }
         // Letter spacing separates glyphs: none after the line's last visible one.
@@ -574,7 +581,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             .get(vis_end..*e)
             .unwrap_or(&[])
             .iter()
-            .filter(|it| it.ch != '\n')
+            .filter(|it| !is_line_break(it.ch))
             .map(|it| it.adv + if it.is_space() { justify_extra } else { 0.0 })
             .sum();
         let mut pen = if rtl_line { -trailing } else { line_indent - hang_l };
@@ -649,7 +656,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             (0..line_items.len()).collect()
         };
         for it in order.iter().filter_map(|k| line_items.get(*k)) {
-            if it.ch == '\n' {
+            if is_line_break(it.ch) {
                 continue;
             }
             let size = styles.get(it.style).map(|st| sanitize_size(st.font_size)).unwrap_or(12.0) * it.scale;
