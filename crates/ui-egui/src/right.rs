@@ -2069,12 +2069,13 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
             menu_popup(&resp).show(|ui| {
                 for (k, (name, a)) in names.iter().zip(aligns).enumerate() {
                     if menu_check(ui, k == cur, name, "") {
-                        // Fixed-size columns need a size of their own.
+                        // Keep Auto (size 0); only lift stale sub-pixel sizes (0 < size < 1) to a
+                        // sensible band, so a width typed as 0 stays Auto.
                         app.run(
                             "node.set",
                             set(&|x| {
                                 x.align = a;
-                                if a != GridAlign::Stretch && !(x.size.is_finite() && x.size > 0.0) {
+                                if a != GridAlign::Stretch && x.size > 0.0 && x.size < 1.0 {
                                     x.size = 60.0;
                                 }
                                 if a == GridAlign::Stretch {
@@ -2099,14 +2100,16 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
             GridAlign::Center => {
                 widgets::sublabels(ui, span, Some(tr("Gutter")));
                 row(ui, 32.0, |ui| {
-                    field(app, ui, "size", g.size, &size);
+                    let e = crate::variable_ui::number_field_or(app, ui, ids, &format!("layoutGrids/{i}/size"), Id::new(("grid_field", "size", i)), Some(g.size), col, tr("Auto"), Lead::None, "");
+                    app.field_run(e, "node.set", |v| set(&|x| x.size = v.max(0.0)));
                     field(app, ui, "gutter", g.gutter, &gutter);
                 });
             }
             GridAlign::Min | GridAlign::Max => {
                 widgets::sublabels(ui, span, Some(tr("Offset")));
                 row(ui, 32.0, |ui| {
-                    field(app, ui, "size", g.size, &size);
+                    let e = crate::variable_ui::number_field_or(app, ui, ids, &format!("layoutGrids/{i}/size"), Id::new(("grid_field", "size", i)), Some(g.size), col, tr("Auto"), Lead::None, "");
+                    app.field_run(e, "node.set", |v| set(&|x| x.size = v.max(0.0)));
                     field(app, ui, "offset", g.offset, &offset);
                 });
                 widgets::sublabels(ui, tr("Gutter"), None);

@@ -1047,6 +1047,9 @@ pub fn grid_lines(g: &LayoutGrid, w: f64, h: f64) -> Vec<Rect> {
             let total = if cols { w } else { h };
             let gutter = if g.gutter.is_finite() { g.gutter.max(0.0) } else { 0.0 };
             let offset = if g.offset.is_finite() { g.offset.max(0.0) } else { 0.0 };
+            // Auto width (size 0, a non-stretched grid) draws a one-pixel hairline down the
+            // band's middle, like the square grid; otherwise a filled band of `size`.
+            let auto = g.size <= 0.0 && g.align != GridAlign::Stretch;
             let count = match g.count {
                 // Auto: as many fixed-size columns (rows) as fit in the room the type leaves them.
                 0 if g.align != GridAlign::Stretch => {
@@ -1074,7 +1077,13 @@ pub fn grid_lines(g: &LayoutGrid, w: f64, h: f64) -> Vec<Rect> {
             };
             for i in 0..count {
                 let a = start + i as f64 * (size + gutter);
-                out.push(if cols { Rect::new(a, 0.0, a + size, h) } else { Rect::new(0.0, a, w, a + size) });
+                if auto {
+                    // A one-pixel hairline down the band's middle (the square grid's lines).
+                    let c = a + size / 2.0;
+                    out.push(if cols { Rect::new(c, 0.0, c, h) } else { Rect::new(0.0, c, w, c) });
+                } else {
+                    out.push(if cols { Rect::new(a, 0.0, a + size, h) } else { Rect::new(0.0, a, w, a + size) });
+                }
             }
         }
     }

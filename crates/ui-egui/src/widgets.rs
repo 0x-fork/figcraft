@@ -259,10 +259,21 @@ fn number_field_impl(
     };
     // A relative edit of no single value goes to each layer's own.
     let set = |v: f64| Edit::All(FieldEdit::Set(v));
-    let typed = |text: &str| match (parse(text, suffix == "%")?, value) {
-        (Typed::Value(v), _) => Some(set(v)),
-        (Typed::Rel(r), Some(cur)) => r.apply(cur).map(set),
-        (Typed::Rel(r), None) => Some(Edit::Each(r)),
+    let typed = |text: &str| {
+        // A field whose placeholder is "Auto" (grid width/count, auto-gap, …) also takes the
+        // word "Auto" (or the Chinese "自动") as input, setting it to 0 — its automatic value.
+        let auto_token: &str = &*tr("Auto");
+        if empty == auto_token {
+            let t = text.trim();
+            if t.eq_ignore_ascii_case("auto") || t == "自动" {
+                return Some(set(0.0));
+            }
+        }
+        match (parse(text, suffix == "%")?, value) {
+            (Typed::Value(v), _) => Some(set(v)),
+            (Typed::Rel(r), Some(cur)) => r.apply(cur).map(set),
+            (Typed::Rel(r), None) => Some(Edit::Each(r)),
+        }
     };
     // With the keyboard on the field (Tab) and nothing typed yet, the arrows step it as it is.
     if editing.is_none()

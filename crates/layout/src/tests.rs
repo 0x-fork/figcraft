@@ -447,3 +447,27 @@ fn grid_hostile_values() {
         assert!(x.is_finite() && y.is_finite() && w.is_finite() && h.is_finite());
     }
 }
+
+#[test]
+fn grid_lines_auto_width_columns_rows_hairline() {
+    // Columns with Auto width (size 0, non-stretched) draw one-pixel hairlines at each band's
+    // middle, like the square grid; a set width draws filled bands.
+    let g = LayoutGrid { kind: GridKind::Columns, align: GridAlign::Min, count: 3, size: 0.0, gutter: 10.0, offset: 0.0, ..LayoutGrid::default() };
+    let lines = grid_lines(&g, 300.0, 50.0);
+    assert_eq!(lines.len(), 3, "three hairlines");
+    for r in &lines {
+        assert!((r.x0 - r.x1).abs() < 1e-9 && (r.y0 - r.y1).abs() > 1.0, "a vertical hairline: {r:?}");
+    }
+    // A positive width draws filled bands again.
+    let g = LayoutGrid { kind: GridKind::Columns, align: GridAlign::Min, count: 3, size: 8.0, gutter: 10.0, offset: 0.0, ..LayoutGrid::default() };
+    let lines = grid_lines(&g, 300.0, 50.0);
+    assert!(lines.iter().all(|r| (r.x1 - r.x0).abs() > 1e-9), "a set width draws bands");
+
+    // Rows Auto width: horizontal hairlines.
+    let g = LayoutGrid { kind: GridKind::Rows, align: GridAlign::Min, count: 2, size: 0.0, gutter: 10.0, offset: 0.0, ..LayoutGrid::default() };
+    let lines = grid_lines(&g, 50.0, 200.0);
+    assert_eq!(lines.len(), 2, "two hairlines");
+    for r in &lines {
+        assert!((r.y0 - r.y1).abs() < 1e-9 && (r.x0 - r.x1).abs() > 1.0, "a horizontal hairline: {r:?}");
+    }
+}
