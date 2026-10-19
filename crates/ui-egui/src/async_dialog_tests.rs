@@ -87,8 +87,38 @@ impl Services for Contents {
         panic!("a platform that picks contents is never asked for a path")
     }
     fn pick_open_contents(&mut self, _title: &str, _exts: &[&str]) -> Option<ContentsFuture> {
-        Some(Box::pin(std::future::ready(Some((self.0.to_string(), self.1.clone())))))
+        Some(Box::pin(std::future::ready(Some(Ok((self.0.to_string(), self.1.clone()))))))
     }
+}
+
+/// The browser, with a picked file it won't read.
+struct Unreadable(String);
+
+impl Services for Unreadable {
+    fn pick_open_contents(&mut self, _title: &str, _exts: &[&str]) -> Option<ContentsFuture> {
+        Some(Box::pin(std::future::ready(Some(Err(self.0.clone())))))
+    }
+}
+
+#[test]
+fn a_picked_file_that_cannot_be_read_says_why_and_opens_nothing() {
+    let why = crate::browser_can_read("Huge.fig", 600.0 * 1024.0 * 1024.0).unwrap_err();
+    let mut app = FigApp::new(Session::empty(), Box::new(Unreadable(why.clone())));
+    app.open_dialog();
+    app.poll_dialog(&egui::Context::default());
+    assert!(app.session.docs.is_empty());
+    assert_eq!(app.ui.last_error.as_deref(), Some(why.as_str()));
+    assert!(why.contains("Huge.fig"), "{why}");
+}
+
+#[test]
+fn the_browser_reads_files_up_to_512_mib() {
+    let max = (512u64 << 20) as f64;
+    assert!(crate::browser_can_read("a", 0.0).is_ok());
+    assert!(crate::browser_can_read("a", max).is_ok());
+    assert!(crate::browser_can_read("a", max + 1.0).is_err());
+    assert!(crate::browser_can_read("a", f64::NAN).is_err());
+    assert!(crate::browser_can_read("a", f64::INFINITY).is_err());
 }
 
 #[test]

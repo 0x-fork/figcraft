@@ -295,30 +295,53 @@ pub trait Services {
 }
 
 pub type DialogFuture = Pin<Box<dyn Future<Output = Option<PathBuf>>>>;
-/// A picked file's name and contents ([`Services::pick_open_contents`]).
-pub type ContentsFuture = Pin<Box<dyn Future<Output = Option<(String, Vec<u8>)>>>>;
-/// A dropped file's contents, read once they arrive (`None`: they couldn't be read).
-pub type ReadFuture = Pin<Box<dyn Future<Output = Option<Vec<u8>>>>>;
+/// A picked file's name and contents ([`Services::pick_open_contents`]); `None` when the picker
+/// was cancelled, `Err` with what to tell the user when the file couldn't be read.
+pub type ContentsFuture = Pin<Box<dyn Future<Output = Option<Result<(String, Vec<u8>), String>>>>>;
+/// A dropped file's contents, read once they arrive (`Err`: what to tell the user when they
+/// couldn't be read).
+pub type ReadFuture = Pin<Box<dyn Future<Output = Result<Vec<u8>, String>>>>;
 type PickFuture = Pin<Box<dyn Future<Output = Option<Picked>>>>;
 type DialogDone = Box<dyn FnOnce(&mut FigApp, Picked)>;
 
-/// What a dialog picked: a path, or a file's name and contents where there are no paths.
+/// What a dialog picked: a path, or a file's name and contents where there are no paths, or why
+/// the picked file couldn't be read.
 enum Picked {
     Path(PathBuf),
     Contents(String, Vec<u8>),
+    Unreadable(String),
 }
 
 impl Picked {
-    /// The file as `file.open` and `file.import` take it.
-    fn file_params(self) -> Value {
+    /// The file as `file.open` and `file.import` take it (`Err`: what to tell the user instead).
+    fn file_params(self) -> Result<Value, String> {
         match self {
-            Picked::Path(p) => json!({"path": p.to_string_lossy()}),
+            Picked::Path(p) => Ok(json!({"path": p.to_string_lossy()})),
             Picked::Contents(name, bytes) => {
                 use base64::Engine as _;
-                json!({"data": base64::engine::general_purpose::STANDARD.encode(&bytes), "name": name})
+                Ok(json!({"data": base64::engine::general_purpose::STANDARD.encode(&bytes), "name": name}))
             }
+            Picked::Unreadable(why) => Err(why),
         }
     }
+}
+
+/// What the user is told about a file whose contents couldn't be read.
+pub fn unreadable(name: &str) -> String {
+    i18n::trf("Couldn't read {name}.", &[("name", &name)])
+}
+
+/// The largest file read in the browser: wasm has at most 4 GiB of memory, and a file's contents
+/// are held about three times on their way to `file.open` (the bytes, base64, decoded again).
+/// As large as one member of a `.figcraft` file may be.
+const MAX_BROWSER_FILE: f64 = (512u64 << 20) as f64;
+
+/// Checks a file of `size` bytes before the browser reads it (`Err`: what to tell the user).
+pub fn browser_can_read(name: &str, size: f64) -> Result<(), String> {
+    if size.is_nan() || size > MAX_BROWSER_FILE {
+        return Err(i18n::trf("{name} is too large to open in the browser (over 512 MB).", &[("name", &name)]));
+    }
+    Ok(())
 }
 
 /// A native dialog in flight. The app keeps working while it is open, so its result goes to the
@@ -809,6 +832,11 @@ impl FigApp {
     fn failed(&mut self, id: &str, e: &figcraft_engine::EngineError) {
         let msg = e.to_string();
         log::warn!("{id}: {msg}");
+        self.show_error(msg);
+    }
+
+    /// Show an error as a toast, kept as the last error.
+    pub(crate) fn show_error(&mut self, msg: String) {
         self.toast(msg.clone());
         self.ui.last_error = Some(msg);
     }
@@ -1154,7 +1182,9 @@ impl FigApp {
         self.start_pick(
             |services| -> PickFuture {
                 match services.pick_open_contents(title, exts) {
-                    Some(read) => Box::pin(async move { read.await.map(|(name, bytes)| Picked::Contents(name, bytes)) }),
+                    Some(read) => {
+                        Box::pin(async move { read.await.map(|r| r.map_or_else(Picked::Unreadable, |(name, bytes)| Picked::Contents(name, bytes))) })
+                    }
                     None => {
                         let pick = services.pick_open(title, exts);
                         Box::pin(async move { pick.await.map(Picked::Path) })
@@ -1162,7 +1192,10 @@ impl FigApp {
                 }
             },
             pin,
-            move |app, picked| done(app, picked.file_params()),
+            move |app, picked| match picked.file_params() {
+                Ok(file) => done(app, file),
+                Err(why) => app.show_error(why),
+            },
         );
     }
 
@@ -1751,17 +1784,22 @@ pub(crate) fn opens(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()).is_some_and(|e| OPEN_EXTENSIONS.iter().any(|x| x.eq_ignore_ascii_case(e)))
 }
 
-/// Reads the contents of a dropped file that has no file on disk to read by path.
+/// Reads the contents of dropped file `name` that has no file on disk to read by path.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn dropped_bytes(f: &egui::DroppedFileHandle) -> ReadFuture {
-    Box::pin(std::future::ready(f.bytes().ok()))
+pub(crate) fn dropped_bytes(f: &egui::DroppedFileHandle, name: &str) -> ReadFuture {
+    Box::pin(std::future::ready(f.bytes().map_err(|_| unreadable(name))))
 }
 
-/// Reads the contents of a dropped file; the browser hands them over asynchronously.
+/// Reads the contents of dropped file `name`; the browser hands them over asynchronously.
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn dropped_bytes(f: &egui::DroppedFileHandle) -> ReadFuture {
-    let f = f.clone();
-    Box::pin(async move { f.bytes_async().await.ok() })
+pub(crate) fn dropped_bytes(f: &egui::DroppedFileHandle, name: &str) -> ReadFuture {
+    let (f, name) = (f.clone(), name.to_string());
+    Box::pin(async move {
+        if let Some(file) = f.web_file() {
+            browser_can_read(&name, file.size())?;
+        }
+        f.bytes_async().await.map_err(|_| unreadable(&name))
+    })
 }
 
 /// While files are dragged over the window: a tinted, outlined `rect` with `label` in its middle,

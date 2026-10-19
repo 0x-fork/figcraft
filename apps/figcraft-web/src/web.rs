@@ -147,12 +147,10 @@ impl Services for WebServices {
     }
 }
 
-/// The largest file read from the picker (browsers read at most 4 GiB into one buffer).
-const MAX_PICKED_BYTES: f64 = u32::MAX as f64;
-
 /// The file picked in the browser's file picker (`accept`: the extensions it offers), with its
-/// name; `None` when the picker is cancelled.
-async fn pick_file(accept: &str) -> Result<Option<(String, Vec<u8>)>, wasm_bindgen::JsValue> {
+/// name; `None` when the picker is cancelled, `Some(Err)` with what to tell the user when the file
+/// can't be read.
+async fn pick_file(accept: &str) -> Result<Option<Result<(String, Vec<u8>), String>>, wasm_bindgen::JsValue> {
     let window = web_sys::window().ok_or("no window")?;
     let document = window.document().ok_or("no document")?;
     let body = document.body().ok_or("no body")?;
@@ -169,15 +167,22 @@ async fn pick_file(accept: &str) -> Result<Option<(String, Vec<u8>)>, wasm_bindg
     drop(picker);
     result?;
     let Some(file) = file else { return Ok(None) };
-    if file.size() > MAX_PICKED_BYTES {
-        return Err(format!("{} is too large to read in the browser", file.name()).into());
+    let name = file.name();
+    if let Err(why) = figcraft_ui_egui::browser_can_read(&name, file.size()) {
+        return Ok(Some(Err(why)));
     }
-    let buffer = wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await?;
-    Ok(Some((file.name(), js_sys::Uint8Array::new(&buffer).to_vec())))
+    Ok(Some(match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
+        Ok(buffer) => Ok((name, js_sys::Uint8Array::new(&buffer).to_vec())),
+        Err(e) => {
+            log::error!("couldn't read {name}: {e:?}");
+            Err(figcraft_ui_egui::unreadable(&name))
+        }
+    }))
 }
 
 /// How long after the page gets focus back the file picker counts as closed (milliseconds): a
-/// picked file's `change` can come just after the focus, and must win.
+/// picked file's `change` can come just after the focus, and must win. A `change` later than this
+/// (a slow cloud-backed file in a browser that never sends `cancel`) counts as a cancel.
 const PICKER_FOCUS_SETTLE_MS: i32 = 1_000;
 
 /// Settles a file picker's promise once: on `change` (a file was picked), on `cancel` (closed

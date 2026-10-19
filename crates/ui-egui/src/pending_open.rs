@@ -72,8 +72,7 @@ fn run_pending(app: &mut FigApp, pending: PendingOpen) -> Option<Value> {
 
 /// An import that has no destination left: nothing is imported, and the user is told why.
 fn cancel(app: &mut FigApp, message: String) {
-    app.ui.last_error = Some(message.clone());
-    app.toast(message);
+    app.show_error(message);
 }
 
 /// Frames the card is drawn before the files open: egui lays a new card out invisibly on its first
@@ -94,20 +93,20 @@ fn read_contents(app: &mut FigApp, ctx: &egui::Context) -> bool {
                 reading = true;
                 true
             }
-            Poll::Ready(Some(bytes)) => {
+            Poll::Ready(Ok(bytes)) => {
                 use base64::Engine as _;
                 pending.params["data"] = json!(base64::engine::general_purpose::STANDARD.encode(&bytes));
                 pending.read = None;
                 true
             }
-            Poll::Ready(None) => {
-                unread.push(pending.label.clone());
+            Poll::Ready(Err(why)) => {
+                unread.push(why);
                 false
             }
         }
     });
-    for name in unread {
-        cancel(app, trf("Couldn't read {name}.", &[("name", &name)]));
+    for why in unread {
+        app.show_error(why);
     }
     reading
 }

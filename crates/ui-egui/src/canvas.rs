@@ -510,7 +510,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
         let (params, read) = if path.exists() {
             (json!({"path": path.to_string_lossy(), "x": pt.x, "y": pt.y}), None)
         } else {
-            (json!({"name": name, "x": pt.x, "y": pt.y}), Some(crate::dropped_bytes(&f)))
+            (json!({"name": name, "x": pt.x, "y": pt.y}), Some(crate::dropped_bytes(&f, &name)))
         };
         let Some(target) =
             app.session.ds().ok().map(|doc| crate::pending_open::ImportTarget { uid: doc.uid, page: doc.page, name: doc.doc.name.clone() })

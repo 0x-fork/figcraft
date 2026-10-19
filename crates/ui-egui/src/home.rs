@@ -187,8 +187,11 @@ fn dropped(app: &mut FigApp, ctx: &egui::Context) {
         }
         // `opens` saw an extension, so there is a file name to tell the format by.
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        let (params, read) =
-            if path.exists() { (json!({"path": path.to_string_lossy()}), None) } else { (json!({"name": name}), Some(crate::dropped_bytes(&f))) };
+        let (params, read) = if path.exists() {
+            (json!({"path": path.to_string_lossy()}), None)
+        } else {
+            (json!({"name": name}), Some(crate::dropped_bytes(&f, &name)))
+        };
         app.ui.pending_opens.push(crate::pending_open::PendingOpen { label: name, params, command: "file.open", target: None, read });
     }
 }
