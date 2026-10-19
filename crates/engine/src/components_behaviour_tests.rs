@@ -83,6 +83,118 @@ fn text(n: &Node) -> &TextData {
 }
 
 #[test]
+fn copying_a_main_component_pastes_a_linked_instance() {
+    for command in ["edit.paste", "edit.pasteOver", "edit.pasteReplace"] {
+        let mut s = Session::new();
+        let k = kit(&mut s);
+        ex(&mut s, "select.set", json!({"ids": [k.card]}));
+        ex(&mut s, "edit.copy", json!({}));
+        if command != "edit.paste" {
+            ex(&mut s, "select.set", json!({"ids": [k.inst]}));
+        }
+        let before = undo_len(&s);
+        let pasted = crate::params::id_of(&ex(&mut s, command, json!({}))["ids"][0]).unwrap();
+        assert_eq!(component_of(&s, pasted), k.card, "{command}");
+        assert_eq!(node(&s, pasted).parent, Some(s.page().unwrap()));
+        assert_eq!(node(&s, pasted).source, Some(k.card));
+        assert_eq!(undo_len(&s), before + 1);
+        ex(&mut s, "edit.undo", json!({}));
+        assert!(s.doc().unwrap().node(pasted).is_none());
+        ex(&mut s, "edit.redo", json!({}));
+        assert_eq!(component_of(&s, pasted), k.card);
+        ex(&mut s, "node.set", json!({"id": k.title, "props": {"characters": "Updated"}}));
+        assert_eq!(chars(&s, copy_of(&s, pasted, k.title)), "Updated");
+        healthy(&s);
+    }
+}
+
+#[test]
+fn copying_a_variant_pastes_an_instance_but_copying_its_set_keeps_the_components() {
+    let mut s = Session::new();
+    let (set, _, hover) = button_set(&mut s);
+    ex(&mut s, "select.set", json!({"ids": [hover]}));
+    ex(&mut s, "edit.copy", json!({}));
+    let pasted = crate::params::id_of(&ex(&mut s, "edit.paste", json!({}))["ids"][0]).unwrap();
+    assert_eq!(component_of(&s, pasted), hover);
+    assert_eq!(node(&s, pasted).name, node(&s, set).name);
+    let NodeKind::Instance { props, .. } = &node(&s, pasted).kind else { panic!("pasted variant is not an instance") };
+    assert_eq!(chars(&s, layer(&s, pasted, "Label").unwrap()), "Hover");
+    assert_eq!(props["Show dot"], true);
+    assert_eq!(node(&s, pasted).parent, Some(s.page().unwrap()));
+
+    ex(&mut s, "select.set", json!({"ids": [set]}));
+    ex(&mut s, "edit.copy", json!({}));
+    let copied_set = crate::params::id_of(&ex(&mut s, "edit.paste", json!({}))["ids"][0]).unwrap();
+    assert!(matches!(node(&s, copied_set).kind, NodeKind::ComponentSet { .. }));
+    assert_eq!(node(&s, copied_set).parent, Some(s.page().unwrap()));
+    assert_eq!(kids(&s, copied_set).len(), 2);
+    for variant in kids(&s, copied_set) {
+        assert!(matches!(node(&s, variant).kind, NodeKind::Component { .. }));
+        assert!(!kids(&s, set).contains(&variant));
+    }
+    healthy(&s);
+}
+
+#[test]
+fn cut_components_and_components_copied_to_another_file_remain_components() {
+    for (copy, undo_cut, new_file) in [("edit.cut", false, false), ("edit.cut", true, false), ("edit.copy", false, true)] {
+        let mut s = Session::new();
+        let k = kit(&mut s);
+        ex(&mut s, copy, json!({"ids": [k.card]}));
+        if undo_cut {
+            ex(&mut s, "edit.undo", json!({}));
+        }
+        if new_file {
+            ex(&mut s, "file.new", json!({}));
+        }
+        let page = s.page().unwrap();
+        let pasted = crate::params::id_of(&ex(&mut s, "edit.paste", json!({"parent": page}))["ids"][0]).unwrap();
+        assert!(matches!(node(&s, pasted).kind, NodeKind::Component { .. }), "{copy}, undo={undo_cut}, new_file={new_file}");
+        assert_eq!(kids(&s, pasted).len(), 3);
+        healthy(&s);
+    }
+}
+
+#[test]
+fn copying_a_component_does_not_link_to_an_id_reused_after_undo() {
+    let mut s = Session::new();
+    let frame = idv(&ex(&mut s, "frame.create", json!({"width": 120, "height": 60, "name": "Copied main"})));
+    let main = idv(&ex(&mut s, "component.create", json!({"ids": [frame]})));
+    ex(&mut s, "edit.copy", json!({"ids": [main]}));
+    s.undo().unwrap();
+    s.undo().unwrap();
+    let other = idv(&ex(&mut s, "frame.create", json!({"width": 300, "height": 200, "name": "Unrelated main"})));
+    ex(&mut s, "component.create", json!({"ids": [other]}));
+    assert_eq!(other, main, "undo makes the original id available again");
+    let page = s.page().unwrap();
+    let pasted = crate::params::id_of(&ex(&mut s, "edit.paste", json!({"parent": page}))["ids"][0]).unwrap();
+    assert_eq!(node(&s, pasted).name, "Copied main");
+    assert_eq!((node(&s, pasted).width, node(&s, pasted).height), (120.0, 60.0));
+    assert!(matches!(node(&s, pasted).kind, NodeKind::Component { .. }));
+    healthy(&s);
+}
+
+#[test]
+fn pasted_component_instances_keep_the_copied_transform_in_the_target_frame() {
+    let mut s = Session::new();
+    let k = kit(&mut s);
+    ex(&mut s, "node.set", json!({"id": k.card, "props": {"rotation": 30}}));
+    let original = s.doc().unwrap().world_transform(k.card);
+    let frame = idv(&ex(&mut s, "frame.create", json!({"x": -100, "y": -100, "width": 1000, "height": 1000})));
+    ex(&mut s, "edit.copy", json!({"ids": [k.card]}));
+    let pasted = crate::params::id_of(&ex(&mut s, "edit.paste", json!({"parent": frame}))["ids"][0]).unwrap();
+    assert_eq!(component_of(&s, pasted), k.card);
+    for (actual, expected) in s.doc().unwrap().world_transform(pasted).as_coeffs().into_iter().zip(original.as_coeffs()) {
+        assert!((actual - expected).abs() < 1e-9);
+    }
+    assert_eq!(node(&s, pasted).parent, Some(frame));
+    let before = s.doc().unwrap().clone();
+    assert!(s.execute("edit.paste", &json!({"parent": k.card})).is_err());
+    assert_eq!(s.doc().unwrap(), &before, "pasting into the main is refused atomically");
+    healthy(&s);
+}
+
+#[test]
 fn overridable_properties_stay_through_main_edits_and_reset() {
     // (what, layer, group, override on the instance, the same property edited on the main, read,
     // derivation)

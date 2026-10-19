@@ -61,6 +61,7 @@ pub mod tabs;
 pub mod theme;
 pub mod toolbar;
 pub mod typography;
+pub mod ui_scale;
 pub mod variable_ui;
 pub mod variables_panel;
 pub mod vector_panel;
@@ -156,6 +157,8 @@ mod online_tests;
 #[cfg(test)]
 mod open_issues_tests;
 #[cfg(test)]
+mod padding_individual_tests;
+#[cfg(test)]
 mod palette_tests;
 #[cfg(test)]
 mod panel_remove_tests;
@@ -203,6 +206,8 @@ mod style_folder_rename_tests;
 mod text_enter_tests;
 #[cfg(test)]
 mod titlebar_tests;
+#[cfg(test)]
+mod ui_scale_tests;
 #[cfg(test)]
 mod variables_export_ui_tests;
 #[cfg(test)]
@@ -483,6 +488,9 @@ pub struct UiState {
     pub last_right_tab: RightTab,
     pub left_tab: LeftTab,
     pub pages_open: bool,
+    /// Pages panel search: open, and the case-insensitive name filter.
+    pub page_search: bool,
+    pub page_filter: String,
     /// The height asked for the pages list (`None`: a share of the panel).
     pub pages_height: Option<f32>,
     pub expanded: BTreeSet<NodeId>,
@@ -511,6 +519,9 @@ pub struct UiState {
     pub menu_input: Option<dialogs::MenuInput>,
     /// File ▸ Rename: the file name in the left panel starts its inline rename on the next frame.
     pub rename_file: bool,
+    /// What the interface size drew last frame and whether the window held it back. Set by
+    /// [`FigApp::logic`] for the main window.
+    pub ui_scale: ui_scale::Plan,
     pub shortcuts_panel: bool,
     /// The Keyboard shortcuts panel's tab and search text.
     pub shortcuts_tab: figcraft_engine::keymap::Group,
@@ -552,6 +563,10 @@ pub struct UiState {
     /// The layers panel has the keyboard: arrow keys move through its rows instead of nudging
     /// (set by a click on a row, cleared by a press on the canvas).
     pub layers_focus: bool,
+    /// The file (its `uid`) whose pages list has the keyboard: Delete with no layers selected deletes
+    /// its current page (set by a click on a page row or the add-page button, cleared by a click on a
+    /// layer row or a press on the canvas).
+    pub pages_focus: Option<u64>,
     pub layers_seen_sel: Vec<NodeId>,
     pub dark: bool,
     pub follow_system: bool,
@@ -647,6 +662,8 @@ impl Default for UiState {
             last_right_tab: RightTab::Design,
             left_tab: LeftTab::File,
             pages_open: true,
+            page_search: false,
+            page_filter: String::new(),
             pages_height: None,
             expanded: BTreeSet::new(),
             rename: None,
@@ -664,6 +681,7 @@ impl Default for UiState {
             preferences: false,
             menu_input: None,
             rename_file: false,
+            ui_scale: ui_scale::plan(1.0, None, None),
             shortcuts_panel: false,
             shortcuts_tab: figcraft_engine::keymap::Group::Essential,
             shortcuts_query: String::new(),
@@ -686,6 +704,7 @@ impl Default for UiState {
             layer_filter: String::new(),
             layer_anchor: None,
             layers_focus: false,
+            pages_focus: None,
             layers_seen_sel: Vec::new(),
             dark: false,
             follow_system: false,
@@ -1288,11 +1307,11 @@ impl FigApp {
         self.session.prefs.reduce_motion || self.services.reduce_motion()
     }
 
-    /// The CJK scripts the UI shows: the language's, the language picker's (Preferences open),
+    /// The CJK and Bengali scripts the UI shows: the language's, the language picker's (Preferences open),
     /// typed text's, and those in the open file's names and comments (read when it changes, not
     /// mid-drag). Nothing is checked once every script has a face.
     fn cjk_needed(&mut self, ctx: &egui::Context, installed: u8) -> u8 {
-        if installed == cjk::KANA | cjk::HANGUL | cjk::HAN {
+        if installed == cjk::ALL {
             return installed;
         }
         let mut need = i18n::current().map_or(0, |l| cjk::language(l.code));
@@ -1351,6 +1370,16 @@ impl FigApp {
                 self.script_fonts = Some((cjk, lang));
                 theme::install_fonts(ctx, true, cjk);
             }
+        }
+        // egui's zoom is for the whole app and multiplies each window's own system scale, so the
+        // size is the same relative to every screen; the main window, whose size can hold a size
+        // back, sets it. The browser keeps its own zoom.
+        if ctx.viewport_id() == egui::ViewportId::ROOT {
+            let window_px = ctx.content_rect().size() * ctx.pixels_per_point();
+            let size = if cfg!(target_arch = "wasm32") { 1.0 } else { self.session.prefs.ui_scale };
+            let plan = ui_scale::plan(size, ctx.native_pixels_per_point(), Some((window_px.x, window_px.y)));
+            ctx.set_zoom_factor(plan.zoom);
+            self.ui.ui_scale = plan;
         }
         let dark = match self.session.prefs.theme.as_str() {
             "dark" => true,
@@ -1770,6 +1799,8 @@ impl FigApp {
             "importReport": self.ui.import_report.as_ref().map(import_report::Report::inspect),
         });
         state["homeSearch"] = json!(self.ui.home_view.file_query);
+        // Set apart from the literal above, which is at the macro recursion limit.
+        state["uiScale"] = json!({"choice": self.session.prefs.ui_scale, "zoom": self.ui.ui_scale.zoom, "drawn": self.ui.ui_scale.drawn, "limited": self.ui.ui_scale.limited});
         state["pendingOpens"] = json!(self.ui.pending_opens.len());
         state["missingFonts"] = json!(self.ui.missing_fonts.as_ref().map(missing_fonts::Shown::inspect));
         state

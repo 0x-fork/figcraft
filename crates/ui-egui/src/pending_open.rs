@@ -75,6 +75,9 @@ fn cancel(app: &mut FigApp, message: String) {
     app.show_error(message);
 }
 
+/// Space between files dropped together on the canvas.
+const IMPORT_GAP: f64 = 20.0;
+
 /// Frames the card is drawn before the files open: egui lays a new card out invisibly on its first
 /// frame, so the second one is the first the window shows.
 const FRAMES_BEFORE_OPENING: u8 = 2;
@@ -122,10 +125,25 @@ pub fn pending_opens(app: &mut FigApp, ctx: &egui::Context) {
     ctx.request_repaint();
     if app.ui.pending_open_frames >= FRAMES_BEFORE_OPENING && !reading {
         app.ui.pending_open_frames = 0;
-        for pending in std::mem::take(&mut app.ui.pending_opens) {
+        // Files dropped together land side by side: each starts where the previous one ends.
+        let mut next_x: Option<f64> = None;
+        for mut pending in std::mem::take(&mut app.ui.pending_opens) {
             let command = pending.command;
-            if run_pending(app, pending).is_some() && command == "file.open" {
+            let canvas = command == "file.import" && pending.params.get("x").is_some();
+            if canvas && let Some(x) = next_x {
+                pending.params["x"] = json!(x);
+            }
+            let page = pending.target.as_ref().map(|t| (t.uid, t.page));
+            let result = run_pending(app, pending);
+            if result.is_some() && command == "file.open" {
                 app.ui.home = false;
+            }
+            if canvas {
+                let right = result.as_ref().and_then(|r| r.get("id")?.as_u64()).and_then(|id| {
+                    let doc = &app.session.docs.iter().find(|d| Some(d.uid) == page.map(|p| p.0))?.doc;
+                    doc.world_bounds(NodeId(id)).map(|b| b.x1)
+                });
+                next_x = right.map(|r| r + IMPORT_GAP).or(next_x);
             }
         }
         return;
