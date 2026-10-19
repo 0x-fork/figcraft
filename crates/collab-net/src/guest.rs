@@ -369,9 +369,9 @@ fn read_loop(mut ws: WebSocket<Duplex>, ctx: &ReaderCtx) {
             Ok(_) => {}
             Err(tungstenite::Error::Capacity(_)) => {
                 let max = ctx.cfg.limits.max_server_message;
-                let limit = if max >= 1 << 20 {
+                let limit = if max >= 1 << 20 && max.is_multiple_of(1 << 20) {
                     format!("{} MiB", max >> 20)
-                } else if max >= 1 << 10 {
+                } else if max >= 1 << 10 && max.is_multiple_of(1 << 10) {
                     format!("{} KiB", max >> 10)
                 } else {
                     format!("{max} bytes")

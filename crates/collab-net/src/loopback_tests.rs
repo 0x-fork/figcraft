@@ -693,7 +693,7 @@ fn oversized_server_message_reports_accurate_diagnostic() {
 
     let guest_probe = Probe::new();
     let mut guest_cfg = quick(GuestConfig::new(invite, "Ada".into()));
-    guest_cfg.limits = NetLimits { max_server_message: 512, ..fast_limits() };
+    guest_cfg.limits = NetLimits { max_server_message: 1536, ..fast_limits() };
     let _g = Guest::start(guest_cfg, guest_probe.inbox.clone()).unwrap();
     let mut gp = guest_probe;
     gp.wait("accurate failure diagnostic", |e| {
@@ -701,7 +701,7 @@ fn oversized_server_message_reports_accurate_diagnostic() {
             matches!(
                 ev,
                 Event::Status(Status::Failed { reason })
-                    if !reason.contains("The host refused") && reason.contains("received message exceeded size limit (max 512 bytes)")
+                    if !reason.contains("The host refused") && reason.contains("received message exceeded size limit (max 1536 bytes)")
             )
         })
     });
