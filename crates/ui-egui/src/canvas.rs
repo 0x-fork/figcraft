@@ -490,6 +490,8 @@ fn zoom_tool(app: &mut FigApp, ui: &Ui, resp: &egui::Response, pos: Pos2, mods: 
 /// then doesn't show.
 fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
     if crate::proto_canvas::input(app, ui, resp) {
+        // A prototype gesture is a press on the canvas too: the Pages list gives up the keyboard.
+        app.ui.pages_focus = None;
         return true;
     }
     let ctx = ui.ctx().clone();
