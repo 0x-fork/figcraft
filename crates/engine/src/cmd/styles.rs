@@ -1105,6 +1105,8 @@ pub(crate) fn apply_paint_bindings_on_load(doc: &mut Document) {
     doc.mark_dirty(pending);
 }
 
+/// Re-apply the variable bindings whose field passes `include`, on the `only` nodes (every bound
+/// node when `None`). Auto layout fields wait while their node has no auto layout.
 fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::BTreeSet<NodeId>>, include: impl Fn(&str) -> bool) {
     use super::lists::{BoundList, list_binding};
     if doc.variables.variables.is_empty() {
@@ -1119,6 +1121,7 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
         let modes = doc.modes_for(id);
         let Some(n) = doc.node(id) else { continue };
         let binds = n.bound.clone();
+        let has_layout = n.layout.is_some();
         let mut sets = serde_json::Map::new();
         let mut effect_sets: Vec<(usize, String, VariableValue)> = Vec::new();
         let mut paint_sets: Vec<(bool, usize, Option<usize>, Color)> = Vec::new();
@@ -1126,6 +1129,10 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
         let mut prop_sets: Vec<(String, VariableValue)> = Vec::new();
         for (field, var) in binds {
             if !include(&field) {
+                continue;
+            }
+            // A binding never creates an auto layout: without one it waits for the next.
+            if !has_layout && super::props::LAYOUT_KEYS.contains(&field.as_str()) {
                 continue;
             }
             let Some(val) = doc.variables.resolve(&var, &modes) else { continue };

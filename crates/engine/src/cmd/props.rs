@@ -297,6 +297,12 @@ pub const LAYOUT_KEYS: &[&str] = &[
     "gridRowTracks",
 ];
 
+/// Drop the bindings of auto layout fields (gap, padding…): they go with the auto layout, or
+/// re-applying them would bring it back.
+pub fn drop_layout_bindings(n: &mut Node) {
+    n.bound.retain(|k, _| !LAYOUT_KEYS.contains(&k.as_str()));
+}
+
 /// The auto layout of a frame-like node, created when it has none yet. Other nodes can't hold an
 /// auto layout: an auto layout key on them is refused, not stored where nothing reads it
 /// (`node.set` on several layers skips them instead, see `edit::set`).
@@ -500,8 +506,14 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                     return Err(bad(cmd, "auto layout needs a frame"));
                 }
                 match v {
-                    Value::Null => n.layout = None,
-                    Value::String(s) if s.eq_ignore_ascii_case("none") => n.layout = None,
+                    Value::Null => {
+                        n.layout = None;
+                        drop_layout_bindings(n);
+                    }
+                    Value::String(s) if s.eq_ignore_ascii_case("none") => {
+                        n.layout = None;
+                        drop_layout_bindings(n);
+                    }
                     Value::String(s) => {
                         let mode = match s.to_ascii_lowercase().as_str() {
                             "horizontal" | "row" => LayoutMode::Horizontal,
