@@ -61,6 +61,15 @@ fn drag_id() -> Id {
     Id::new("selection_spacing_drag")
 }
 
+/// The reorder ring of a layer with world bounds `b`: its centre on screen and hit radius. The
+/// radius is 8 px, at most a quarter of the layer's smaller side on screen, so most of a small
+/// layer still drags the selection; a layer under 16 px on screen has no ring.
+fn ring(app: &FigApp, b: figcraft_geom::Rect) -> Option<(Pos2, f32)> {
+    let zoom = app.session.ds().map_or(1.0, |d| d.view.zoom);
+    let side = ((b.x1 - b.x0).min(b.y1 - b.y0) * zoom) as f32;
+    (side >= 16.0).then(|| (app.to_screen((b.x0 + b.x1) * 0.5, (b.y0 + b.y1) * 0.5), (side / 4.0).min(8.0)))
+}
+
 #[derive(Clone)]
 enum Action {
     Spacing { axis: Axis, value: f64, last_value: Option<f64> },
@@ -279,8 +288,7 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Option<Pos2>, hovered: 
     let ids = app.session.selection();
     if let Some(reorder) = reorder_layout(app, ctx, &ids) {
         for (id, b) in &reorder.slots {
-            let center = app.to_screen((b.x0 + b.x1) * 0.5, (b.y0 + b.y1) * 0.5);
-            if center.distance(p) <= 8.0 {
+            if ring(app, *b).is_some_and(|(center, r)| center.distance(p) <= r) {
                 ctx.set_cursor_icon(CursorIcon::Grab);
                 if ctx.input(|i| i.pointer.primary_pressed()) {
                     let source = *id;
@@ -329,9 +337,8 @@ pub fn draw(app: &FigApp, painter: &egui::Painter) {
     };
     if let Some(layout) = reorder {
         for (id, _) in &layout.slots {
-            let Some(b) = ds.doc.world_bounds(*id) else { continue };
-            let center = app.to_screen((b.x0 + b.x1) * 0.5, (b.y0 + b.y1) * 0.5);
-            let hot = hover.is_some_and(|p| center.distance(p) <= 8.0);
+            let Some((center, r)) = ds.doc.world_bounds(*id).and_then(|b| ring(app, b)) else { continue };
+            let hot = hover.is_some_and(|p| center.distance(p) <= r);
             let active = matches!(drag.as_ref().map(|d| &d.action), Some(Action::Reorder { source, .. }) if source == id);
             if active {
                 painter.circle_filled(center, 4.5, PINK);

@@ -333,3 +333,29 @@ fn an_externally_finished_reorder_cannot_resume_on_later_pointer_motion() {
     assert_eq!(u.app.session.undo_depth().0, history);
     assert_eq!(xy(&u, ids[0]), (260., 100.));
 }
+
+#[test]
+fn small_layers_on_screen_have_no_reorder_ring_and_drag_the_selection_from_their_middle() {
+    let mut u = Ui::new(Session::new());
+    let z = u.app.session.ds().unwrap().view.zoom;
+    // 12 px squares 36 px apart on screen: a regular row, too small for rings.
+    let ids: Vec<NodeId> = (0..3)
+        .map(|col| {
+            let p = json!({"x": (100. + f64::from(col) * 36.) / z, "y": 100. / z, "width": 12. / z, "height": 12. / z});
+            NodeId(u.app.session.execute("shape.rectangle", &p).unwrap()["id"].as_u64().unwrap())
+        })
+        .collect();
+    u.app.session.execute("select.set", &json!({"ids": ids})).unwrap();
+    let before: Vec<_> = ids.iter().map(|id| xy(&u, *id)).collect();
+    let p = u.app.to_screen(before[0].0 + 6. / z, before[0].1 + 6. / z);
+    let output = u.frame_output(vec![Event::PointerMoved(p)]);
+    assert_ne!(output.platform_output.cursor_icon, egui::CursorIcon::Grab);
+    drag(&mut u, p, vec2(0., 60.), true);
+    let after: Vec<_> = ids.iter().map(|id| xy(&u, *id)).collect();
+    assert!(after[0].1 > before[0].1, "the selection moved: {before:?} -> {after:?}");
+    assert!(
+        before.iter().zip(&after).all(|(b, a)| (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1 - (after[0].1 - before[0].1)).abs() < 1e-6),
+        "all together, in order"
+    );
+    assert_eq!(u.app.session.selection(), ids);
+}
