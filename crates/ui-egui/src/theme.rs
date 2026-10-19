@@ -52,6 +52,27 @@ pub const BRAND: Color32 = Color32::from_rgb(0x02, 0xDA, 0x96);
 pub const ACCENT: Color32 = Color32::from_rgb(0x00, 0x87, 0x5F);
 /// Ink on the bright green brand surface (white would not have enough contrast).
 pub const ACCENT_ON: Color32 = Color32::from_rgb(0x07, 0x35, 0x2A);
+/// Id of the canvas overlays' green for this frame ([`set_canvas_page`]).
+const CANVAS_ACCENT: &str = "figcraft-canvas-accent";
+
+/// Remember the page colour the canvas shows. Its overlays (outlines, handles, arrows) take
+/// whichever green contrasts more with it: the bright one on a dark page, the darker on a light one.
+pub fn set_canvas_page(ctx: &Context, page: Color32) {
+    let c = |x: Color32| figcraft_color::Color::new(f32::from(x.r()) / 255.0, f32::from(x.g()) / 255.0, f32::from(x.b()) / 255.0, 1.0);
+    let pick = if c(BRAND).contrast(c(page)) > c(ACCENT).contrast(c(page)) { BRAND } else { ACCENT };
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(CANVAS_ACCENT), pick));
+}
+
+/// The green for overlays drawn on the page ([`set_canvas_page`]); [`ACCENT`] before a page shows.
+pub fn canvas_accent(ctx: &Context) -> Color32 {
+    ctx.data(|d| d.get_temp(egui::Id::new(CANVAS_ACCENT))).unwrap_or(ACCENT)
+}
+
+/// A fill under white text: the darker green stands in for the bright one.
+pub fn under_white(c: Color32) -> Color32 {
+    if c == BRAND { ACCENT } else { c }
+}
+
 pub const COMPONENT: Color32 = Color32::from_rgb(0x97, 0x47, 0xFF);
 /// Handoff status badges (white text on these, in both themes).
 pub const DEV_READY: Color32 = Color32::from_rgb(0x08, 0x7D, 0x4F);
@@ -425,6 +446,21 @@ pub fn doc_c32(ctx: &Context, c: figcraft_color::Color) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canvas_overlays_take_the_green_that_stands_out_on_the_page() {
+        let ctx = Context::default();
+        assert_eq!(canvas_accent(&ctx), ACCENT, "before any page shows");
+        set_canvas_page(&ctx, Color32::from_rgb(0x1E, 0x1E, 0x1E));
+        assert_eq!(canvas_accent(&ctx), BRAND, "the bright green on a dark page");
+        set_canvas_page(&ctx, Color32::WHITE);
+        assert_eq!(canvas_accent(&ctx), ACCENT, "the darker green on a light page");
+        set_canvas_page(&ctx, Color32::from_rgb(0xF5, 0xF5, 0xF5));
+        assert_eq!(canvas_accent(&ctx), ACCENT);
+        // White text never sits on the bright green.
+        assert_eq!(under_white(BRAND), ACCENT);
+        assert_eq!(under_white(COMPONENT), COMPONENT);
+    }
 
     #[test]
     fn ui_font_draws_every_mac_shortcut_glyph() {
