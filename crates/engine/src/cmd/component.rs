@@ -472,6 +472,7 @@ fn detach(s: &mut Session, p: &Value) -> Result<Value> {
         // Own layers lose their link (slot content stays as it is); nested instances stay
         // instances of their own mains.
         let nested = unlink_layers(doc, i, Some(i));
+        keep_main_modes(doc, i)?;
         let n = doc.get_mut(i)?;
         n.kind = NodeKind::Frame;
         n.source = None;
@@ -489,6 +490,19 @@ fn detach(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.set_selection(out.clone());
     Ok(json!({"ids": out}))
+}
+
+/// Make the variable modes instance `i` takes from its main its own (it's being detached).
+fn keep_main_modes(doc: &mut Document, i: NodeId) -> Result<()> {
+    let modes = match doc.get(i)?.kind {
+        NodeKind::Instance { component, .. } => doc.node(component).map(|m| m.var_modes.clone()).unwrap_or_default(),
+        _ => return Ok(()),
+    };
+    let own = &mut doc.get_mut(i)?.var_modes;
+    for (c, m) in modes {
+        own.entry(c).or_insert(m);
+    }
+    Ok(())
 }
 
 fn reset_instance(s: &mut Session, p: &Value) -> Result<Value> {
