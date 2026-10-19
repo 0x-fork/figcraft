@@ -1,10 +1,10 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-19 · **Change:** minor (Georgian (`ka`) draft catalog; macOS finds its downloadable CJK system fonts (#406); string counts re-measured: 2,272 entries, the drafts at 95–99%; Swedish command labels and menu wordings; Russian, Swedish, Turkish, Czech and Indonesian listed; a duplicated paragraph removed; draft catalogs catch up: every draft translates every string again; Simplified Chinese draft catalog) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-17 · **Change:** minor (macOS finds its downloadable CJK system fonts (#406); string counts re-measured: 2,272 entries, the drafts at 95–99%; Swedish command labels and menu wordings; Russian, Swedish, Turkish, Czech and Indonesian listed; a duplicated paragraph removed; draft catalogs catch up: every draft translates every string again; Simplified Chinese draft catalog) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft's interface has a localization layer with an English catalog, a Russian catalog reviewed
 by a native speaker, and Spanish (with a Latin American overlay), French, German, Brazilian
-Portuguese, Japanese, Korean, Simplified Chinese, Indonesian, Czech and Georgian drafts (machine-drafted,
+Portuguese, Japanese, Korean, Simplified Chinese, Indonesian and Czech drafts (machine-drafted,
 waiting for native speakers' review), plus Swedish and Turkish catalogs. This page lists the twelve key
 languages of the craftrules standard, then the other languages Figma ships. How to add a
 language: [`translating.md`](translating.md).
@@ -32,7 +32,7 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
   channel stay English. Accessibility names come from the same strings.
 - **Language preference:** Preferences ▸ Language (System, then each catalog by its own name:
   English, Čeština, Deutsch, Español, Español (Latinoamérica), Français, Bahasa Indonesia, 日本語,
-  ქართული, 한국어, Português (Brasil), Русский, Svenska, Türkçe, 简体中文), applied at once without a
+  한국어, Português (Brasil), Русский, Svenska, Türkçe, 简体中文), applied at once without a
   restart; System takes the first of the OS's preferred languages that has a catalog (on Windows
   only the first preferred language counts, since that list also holds the languages added for a
   keyboard; macOS AppleLanguages, `LANGUAGE` then the locale variables on Linux and BSD; a regional
@@ -102,9 +102,7 @@ Other languages (measured 2026-10-17): Russian (`ru`) 2,244 / 2,272 (98.8%), rev
 by VanTan, one/few/many integer plurals; Swedish (`sv`) 2,264 (99.6%), its command labels and menu
 wordings added 2026-10-17 (#599), native review welcome; Turkish (`tr`) 2,243 (98.7%), whose header
 says it was machine-drafted and reviewed by a native speaker; Czech (`cs`) 2,244 (98.8%), a draft
-with one/few/other plurals; Georgian (`ka`) 2,328 / 2,328 (100%, measured 2026-10-19), a draft
-whose plural entries read the same for one and other (a noun stays singular after a count), its UI
-text in craft-fonts' Noto Sans Georgian (built in, on the web too). Figma ships none beyond the eight above.
+with one/few/other plurals. Figma ships none beyond the eight above.
 
 The layer is done. Per-language hours above are agent hours for a catalog of ~1,800 entries
 (a machine draft, then a pass over the panels for overflow), plus each language's plural rule where
