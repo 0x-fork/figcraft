@@ -999,26 +999,26 @@ pub fn radio(ui: &mut Ui, on: bool, label: &str) -> bool {
 }
 
 /// A text button: `primary` is filled with the accent colour, otherwise outlined. A disabled
-/// button is dimmed and never reports clicks.
+/// button is grey with dim text (still readable) and never reports clicks.
 pub fn button(ui: &mut Ui, label: &str, primary: bool, enabled: bool) -> Response {
     let t = Tokens::get(ui.ctx());
     let galley = ui.painter().layout_no_wrap(label.to_string(), regular(11.0), t.text);
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let (rect, resp) = ui.allocate_exact_size(vec2(galley.size().x + 24.0, FIELD_H), sense);
     a11y::button(&resp, label);
-    let hot = enabled && resp.hovered();
-    let (fill, text) = match (primary, hot) {
-        (true, false) => (t.accent, t.accent_on),
-        (true, true) => (t.accent_hover, t.accent_on),
-        (false, false) => (Color32::TRANSPARENT, t.text),
-        (false, true) => (t.hover, t.text),
+    let (fill, text) = match (enabled, primary, resp.hovered()) {
+        (false, true, _) => (t.field, t.text_tertiary),
+        (false, false, _) => (Color32::TRANSPARENT, t.text_tertiary),
+        (true, true, false) => (t.accent, t.accent_on),
+        (true, true, true) => (t.accent_hover, t.accent_on),
+        (true, false, false) => (Color32::TRANSPARENT, t.text),
+        (true, false, true) => (t.hover, t.text),
     };
-    let dim = |c: Color32| if enabled { c } else { c.gamma_multiply(0.4) };
-    ui.painter().rect_filled(rect, CornerRadius::same(5), dim(fill));
+    ui.painter().rect_filled(rect, CornerRadius::same(5), fill);
     if !primary {
         ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.border_strong), StrokeKind::Inside);
     }
-    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, regular(11.0), dim(text));
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, regular(11.0), text);
     resp
 }
 
