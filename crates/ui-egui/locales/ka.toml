@@ -8,7 +8,7 @@
 
 [meta]
 name = "ქართული"
-status = "draft — needs native review"
+status = "draft — reviewed by a native speaker, awaiting a maintainer's approval"
 
 [ui]
 "% of all commits" = "ყველა კომიტის %"

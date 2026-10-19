@@ -108,7 +108,7 @@ picker leaves Georgian out. A new CJK or other non-Latin language also needs its
 The check fails on keys the code uses that `en.toml` lacks (it prints the lines to paste), keys no
 code uses, unknown command ids, placeholders that don't match English, and, for complete languages,
 anything untranslated. Machine-drafted catalogs stay marked as drafts until a native speaker has
-reviewed them.
+reviewed them; a reviewed catalog stays a draft until a maintainer approves it (its `status` says which).
 
 ## Adding strings in code
 
