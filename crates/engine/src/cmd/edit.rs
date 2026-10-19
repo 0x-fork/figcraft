@@ -18,13 +18,19 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "edit.duplicate",
             "Duplicate",
-            "{ids?, dx?, dy? (page offset; default: the offset of the last duplicate when ids are its copies, still selected; else top-level frames to the right with a 100 gap, everything else in place)}",
+            "{ids?, dx?, dy? (page offset; default: the offset of the last duplicate when ids are its copies, still selected; else top-level frames to the right with a 100 gap, everything else in place)}  a main component's copy is an instance of it (a variant stays a new variant in its set)",
             true,
             duplicate
         ),
         spec!("edit.copy", "Copy", "{ids?}", false, copy),
         spec!("edit.cut", "Cut", "{ids?}", true, cut),
-        spec!("edit.paste", "Paste", "{parent?, x?, y? (page coordinates of the pasted top-left)}", true, paste),
+        spec!(
+            "edit.paste",
+            "Paste",
+            "{parent?, x?, y? (page coordinates of the pasted top-left)}  a copied main component pastes as an instance of it within its file (cut ones, and pastes into other files, keep the component)",
+            true,
+            paste
+        ),
         spec!(
             "edit.pasteDesignLayers",
             "Paste design layers",
@@ -466,7 +472,7 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         let top_frame = doc.node(parent).is_some_and(Node::is_page) && n.kind.is_frame_like();
         let idx = doc.index_in_parent(i).map(|x| x + 1);
         let w = n.width;
-        let nid = doc.duplicate_into(i, parent, idx)?;
+        let nid = crate::components::copy_in_file(doc, i, parent, idx)?;
         let (dx, dy) = match (num(p, "dx"), num(p, "dy")) {
             (Some(dx), dy) => (dx, dy.unwrap_or(0.0)),
             (None, Some(dy)) => (0.0, dy),
@@ -481,7 +487,8 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
                 nn.transform = Affine::translate((dx, dy)) * nn.transform;
             }
         }
-        if rename {
+        // An instance keeps the name instances get by default.
+        if rename && !matches!(doc.get(nid)?.kind, NodeKind::Instance { .. }) {
             let nn = doc.get_mut(nid)?;
             nn.name = bump_name(&nn.name);
         }
