@@ -160,9 +160,13 @@ fn deco_len(m: DecorationLength, size: f64, auto: f64) -> f64 {
     if v.is_finite() { v } else { auto }
 }
 
-/// A char that ends its line: a newline (which also ends the paragraph).
+/// The line separator (U+2028): a line break inside a paragraph, as Figma's Shift+Enter stores it
+/// (imported text keeps it; typed text has newlines only).
+const LINE_SEPARATOR: char = '\u{2028}';
+
+/// A char that ends its line: a newline (which also ends the paragraph) or a line separator.
 fn is_line_break(c: char) -> bool {
-    c == '\n'
+    c == '\n' || c == LINE_SEPARATOR
 }
 
 /// Opening punctuation, which hangs outside a line's start.
@@ -475,6 +479,17 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             para += 1;
             continue;
         }
+        // A line separator (Figma's Shift+Enter) breaks the line inside its paragraph: no
+        // paragraph spacing and no new list marker after it.
+        if it.ch == LINE_SEPARATOR {
+            lines.push((line_start, i + 1, false, para));
+            i += 1;
+            line_start = i;
+            x = 0.0;
+            last_break = None;
+            para_first_line = false;
+            continue;
+        }
         let line_indent = line_indent_of(para, para_first_line, it.char_start);
         let w = it.adv;
         // Hanging punctuation takes no room inside the box.
@@ -502,7 +517,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         i += 1;
     }
     let break_after = |e: usize| e.checked_sub(1).and_then(|i| items.get(i)).is_some_and(|it| is_line_break(it.ch));
-    if line_start < items.len() || lines.is_empty() || lines.last().is_some_and(|l| l.2) {
+    if line_start < items.len() || lines.is_empty() || lines.last().is_some_and(|l| l.2 || break_after(l.1)) {
         lines.push((line_start, items.len(), true, para));
     }
 
@@ -574,7 +589,9 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         // Justify: extra space per gap.
         let gaps = items.get(*s..vis_end).unwrap_or(&[]).iter().filter(|it| it.is_space()).count();
         let justify_extra = match (text.align_h, wrap) {
-            (TextAlignH::Justified, Some(maxw)) if !para_end && gaps > 0 => ((maxw - line_indent + hang_l + hang_r - width) / gaps as f64).max(0.0),
+            (TextAlignH::Justified, Some(maxw)) if !para_end && !break_after(*e) && gaps > 0 => {
+                ((maxw - line_indent + hang_l + hang_r - width) / gaps as f64).max(0.0)
+            }
             _ => 0.0,
         };
         // Where the visible text ends once justified.
