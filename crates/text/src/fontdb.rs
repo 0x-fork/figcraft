@@ -819,12 +819,18 @@ fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (Str
         // Very large files are indexed all the same (Apple Color Emoji is ~180 MB and is where the
         // system's colour emoji live): `index_bytes` reads headers and name tables out of a zeroed
         // buffer, so only those parts are ever touched.
-        let Some(bytes) = usize::try_from(meta.len()).ok().filter(|l| *l <= 256 * 1024 * 1024).and_then(|l| index_bytes(&path, l)) else { continue };
+        if meta.len() > MAX_FONT_FILE {
+            continue;
+        }
+        let Some(bytes) = usize::try_from(meta.len()).ok().and_then(|l| index_bytes(&path, l)) else { continue };
         for (index, family, style) in faces_in(&bytes) {
             out.entry(family.to_lowercase()).or_insert_with(|| (family.clone(), Vec::new())).1.push(Pending { path: path.clone(), index, style });
         }
     }
 }
+
+/// The largest font file read (CJK collections run to ~120 MB, Apple Color Emoji ~180 MB).
+pub const MAX_FONT_FILE: u64 = 256 * 1024 * 1024;
 
 /// The parts of a font file the scan reads: headers, table directories and `name` tables, at their
 /// offsets in a zeroed buffer of the file's length (reading whole files was most of the scan).

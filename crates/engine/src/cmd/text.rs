@@ -497,7 +497,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     let b64 = b64.split_once(',').map(|(_, d)| d.to_string()).unwrap_or(b64);
                     base64::engine::general_purpose::STANDARD.decode(b64.trim()).map_err(|e| bad(cmd, format!("`data`: {e}")))?
                 } else if let Some(path) = string(p, "path") {
-                    super::create::read_path(&path)?
+                    super::file::read_capped(&path, figcraft_text::fontdb::MAX_FONT_FILE)?
                 } else {
                     return Err(bad(cmd, "pass `path` or `data` (base64)"));
                 };
