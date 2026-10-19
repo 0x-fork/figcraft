@@ -418,4 +418,16 @@ fn a_gesture_or_a_text_style_on_a_bound_field_detaches_it() {
     run(&mut s, "text.style", json!({"id": t, "fontSize": 20}));
     assert!(node(&s, t).bound.is_empty());
     assert_eq!(node(&s, t).kind.text().unwrap().style.font_size, 20.0);
+
+    // The font size/weight/tracking shortcuts and text content edits detach too.
+    run(&mut s, "variable.bind", json!({"ids": [t], "field": "fontSize", "variable": v}));
+    assert_eq!(node(&s, t).kind.text().unwrap().style.font_size, 8.0);
+    run(&mut s, "text.sizeUp", json!({"ids": [t]}));
+    assert_eq!(node(&s, t).kind.text().unwrap().style.font_size, 9.0);
+    assert!(node(&s, t).bound.is_empty());
+    let c = vid(run(&mut s, "variable.create", json!({"collection": "C", "name": "c", "type": "string", "value": "Hello"})));
+    run(&mut s, "variable.bind", json!({"ids": [t], "field": "characters", "variable": c}));
+    run(&mut s, "text.set", json!({"id": t, "characters": "Bye"}));
+    assert_eq!(node(&s, t).kind.text().unwrap().characters, "Bye");
+    assert!(node(&s, t).bound.is_empty());
 }
