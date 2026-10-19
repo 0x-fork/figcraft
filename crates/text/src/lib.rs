@@ -150,6 +150,8 @@ mod behaviour_tests;
 #[cfg(test)]
 mod cache_tests;
 #[cfg(test)]
+mod line_separator_tests;
+#[cfg(test)]
 mod list_tests;
 #[cfg(test)]
 mod metrics_tests;
