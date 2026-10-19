@@ -183,7 +183,7 @@ fn plural(code: &str, n: usize) -> Plural {
 }
 
 // CLDR's million-count "many" in French, Spanish and Portuguese still reads their existing
-// "other" wording. Czech supplies separate few forms; Russian supplies few/many forms.
+// "other" wording. Czech supplies separate few forms; Russian and Polish supply few/many forms.
 
 /// Whether count `n` takes the "one" form: 0 and 1 in French and Brazilian Portuguese, never in
 /// Japanese, Korean and Chinese (no plural forms: always "other"), 1 elsewhere (CLDR's integer rules).
