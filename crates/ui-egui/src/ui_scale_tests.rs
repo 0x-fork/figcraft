@@ -1,5 +1,5 @@
-//! The interface size, driven through egui headless on screens of different system scales: Auto
-//! leaves the system's scale alone, a fixed size comes out the same on every screen, and the
+//! The interface size, driven through egui headless on screens of different system scales: 100 %
+//! leaves the system's scale alone, another size is relative to it on every screen, and the
 //! Preferences drop-down tells a screen reader its name and value.
 //!
 //! The test window's size is fixed in points, so it grows with the zoom here; the limit for a small
@@ -29,25 +29,25 @@ fn settle(u: &mut Ui, native: f32) {
 const SCREENS: [f32; 5] = [1.0, 1.25, 1.5, 2.0, 3.0];
 
 #[test]
-fn auto_leaves_the_systems_scale_and_the_menu_can_say_what_it_is() {
+fn by_default_the_interface_is_the_systems_own_size() {
     for native in SCREENS {
         let mut u = Ui::new(Session::new());
         settle(&mut u, native);
         assert_eq!(u.ctx.zoom_factor(), 1.0, "{native}");
         assert_eq!(u.ctx.pixels_per_point(), native, "{native}");
-        assert_eq!(u.app.ui.ui_native, native, "what Auto shows in the menu: {native}");
     }
 }
 
 #[test]
-fn a_fixed_size_draws_the_same_on_every_screen_and_auto_brings_the_systems_scale_back() {
+fn a_size_is_relative_to_the_systems_scale_on_every_screen_and_auto_is_100() {
     for native in SCREENS {
         let mut u = Ui::new(Session::new());
-        for size in [0.75_f64, 1.0, 1.5] {
+        for size in [0.75_f64, 0.9, 1.25, 1.5] {
             assert!(u.app.run("pref.uiScale", json!({"scale": size})).is_some());
             settle(&mut u, native);
             let drawn = u.ctx.pixels_per_point();
-            assert!((drawn - size as f32).abs() < 1e-4, "{size} on a {native}× screen drew at {drawn}");
+            assert!((drawn - size as f32 * native).abs() < 1e-4, "{size} on a {native}× screen drew at {drawn}");
+            assert!((u.ctx.zoom_factor() - size as f32).abs() < 1e-5, "{size} on {native}");
             assert!(!u.app.ui.ui_scale.limited, "{size} on {native}");
         }
         assert!(u.app.run("pref.uiScale", json!({"scale": "auto"})).is_some());
@@ -68,8 +68,8 @@ fn the_interface_size_menu_has_a_name_a_value_and_a_state_for_a_screen_reader() 
         let n = nodes.iter().find(|n| n.role() == Role::ComboBox && n.label() == Some("Interface size")).expect("an Interface size menu");
         (n.value().map(str::to_owned), n.is_expanded())
     };
-    // Auto says the size it draws at: a 2× screen is 200 %.
-    assert_eq!(combo(&mut u), (Some("Auto (200%)".to_owned()), Some(false)));
+    // 100 % is the system's own size, whatever it is (2× here).
+    assert_eq!(combo(&mut u), (Some("100%".to_owned()), Some(false)));
     u.app.run("pref.uiScale", json!({"scale": 1.25}));
     assert_eq!(combo(&mut u), (Some("125%".to_owned()), Some(false)));
 }
@@ -100,17 +100,14 @@ fn every_window_size_system_scale_and_interface_size_lays_out_inside_the_window(
         (5120.0, 2880.0),
         (2560.0, 520.0),
     ];
-    let mut choices: Vec<Option<f64>> = vec![None];
-    choices.extend(SIZES.iter().map(|s| Some(*s)));
 
     for native in [1.0_f32, 1.25, 1.5, 1.75, 2.0, 3.0] {
         for (w, h) in windows {
             let px = vec2(w * native, h * native);
-            for choice in &choices {
-                let case = format!("{w}x{h} pt at {native}x, {choice:?}");
+            for want in SIZES {
+                let case = format!("{w}x{h} pt at {native}x, {want}");
                 let mut app = FigApp::new(Session::new(), Box::new(NoServices));
-                let scale = choice.map_or(json!("auto"), |c| json!(c));
-                assert!(app.run("pref.uiScale", json!({"scale": scale})).is_some(), "{case}");
+                assert!(app.run("pref.uiScale", json!({"scale": want})).is_some(), "{case}");
                 let ctx = egui::Context::default();
                 let mut time = 0.0;
                 let mut seen = Vec::new();
@@ -129,24 +126,18 @@ fn every_window_size_system_scale_and_interface_size_lays_out_inside_the_window(
                 assert!(ppp.is_finite() && ppp > 0.0 && content.x.is_finite() && content.y.is_finite(), "{case}: {ppp} {content:?}");
                 let plan = app.ui.ui_scale;
                 assert!((ppp - plan.drawn).abs() < 1e-3, "{case}: egui draws at {ppp}, the plan said {}", plan.drawn);
-                match choice {
-                    None => assert!((ppp - native).abs() < 1e-3 && !plan.limited, "{case}: Auto must keep the system's scale"),
-                    Some(want) => {
-                        let want = *want as f32;
-                        assert_eq!(plan.limited, ppp < want - 0.005, "{case}: limited flag");
-                        // Above 100 % the window holds the smallest layout; at or below it there is nothing more to give up.
-                        if ppp > 1.001 {
-                            assert!(
-                                content.x >= FIT_POINTS.0 - 0.5 && content.y >= FIT_POINTS.1 - 0.5,
-                                "{case}: window is {content:?} points at {ppp}"
-                            );
-                        }
-                        // It never draws bigger than asked, and only a window too small for it draws smaller.
-                        assert!(ppp <= want + 1e-3, "{case}");
-                        if !plan.limited {
-                            assert!((ppp - want).abs() < 1e-3, "{case}");
-                        }
-                    }
+                // The size drawn, relative to the system's scale.
+                let zoom = ppp / native;
+                let want = want as f32;
+                assert_eq!(plan.limited, zoom < want - 0.005, "{case}: limited flag");
+                // Above 100 % the window holds the smallest layout; at or below it there is nothing more to give up.
+                if zoom > 1.001 {
+                    assert!(content.x >= FIT_POINTS.0 - 0.5 && content.y >= FIT_POINTS.1 - 0.5, "{case}: window is {content:?} points at {ppp}");
+                }
+                // It never draws bigger than asked, and only a window too small for it draws smaller.
+                assert!(zoom <= want + 1e-3, "{case}");
+                if !plan.limited {
+                    assert!((zoom - want).abs() < 1e-3, "{case}");
                 }
                 let panels = &app.inspect()["panels"];
                 let side = panels["left"].as_f64().unwrap_or(0.0) + panels["right"].as_f64().unwrap_or(0.0);
@@ -191,7 +182,7 @@ fn the_interface_size_menu_works_from_the_keyboard() {
     u.app.ui.preferences = true;
     u.ctx.enable_accesskit();
     settle(&mut u, 1.0);
-    assert_eq!(chosen(&u), json!("auto"));
+    assert_eq!(chosen(&u), json!(1.0));
 
     // Escape closes the menu and nothing else: the size is unchanged and Preferences stays open.
     open(&mut u);
@@ -199,14 +190,14 @@ fn the_interface_size_menu_works_from_the_keyboard() {
     u.frame(vec![]);
     assert!(!Popup::is_any_open(&u.ctx));
     assert!(u.app.ui.preferences, "the first Escape closes the menu only");
-    assert_eq!(chosen(&u), json!("auto"));
+    assert_eq!(chosen(&u), json!(1.0));
 
-    // The arrows enter the menu on Auto (which says the size it draws at) and go down through the
-    // sizes (75, 100, 125); Enter picks the one that has the keyboard and closes the menu.
+    // The arrows enter the menu on its first size and go down through the sizes (75, 90, 100, 110,
+    // 125); Enter picks the one that has the keyboard and closes the menu.
     open(&mut u);
     press(&mut u, Key::ArrowDown);
-    assert_eq!(focused_name(&u.ctx), "Auto (100%)");
-    for _ in 0..3 {
+    assert_eq!(focused_name(&u.ctx), "75%");
+    for _ in 0..4 {
         press(&mut u, Key::ArrowDown);
     }
     assert_eq!(focused_name(&u.ctx), "125%");

@@ -479,33 +479,25 @@ pub(crate) fn batch_rename_params(b: &BatchRenameUi) -> serde_json::Value {
     p
 }
 
-/// Rename layers: Match, Rename to with buttons for the current name and numbers, where numbers
-/// start, a preview of the first new names, then one `object.batchRename`.
-/// Preferences ▸ Interface size: Auto (the system's scale) or a fixed size, as a drop-down that
-/// takes effect at once, with what each means written out. The browser has its own zoom, so there
+/// Preferences ▸ Interface size: a size relative to the system's display scale (100 % is the
+/// system's own), as a drop-down that takes effect at once. The browser has its own zoom, so there
 /// the row only says so.
-fn interface_size(app: &mut FigApp, ui: &mut egui::Ui, chosen: Option<f64>) {
+fn interface_size(app: &mut FigApp, ui: &mut egui::Ui, chosen: f64) {
     let t = Tokens::get(ui.ctx());
     if cfg!(target_arch = "wasm32") {
         ui.label(tr("Interface size"));
         crate::widgets::label(ui, tr("Use your browser's zoom to change the interface size."), t.text_secondary);
         return;
     }
-    let percent = |scale: f32| crate::ui_scale::percent(scale);
-    let auto = trf("Auto ({percent}%)", &[("percent", &percent(app.ui.ui_native))]);
-    let fixed = |size: f64| trf("{percent}%", &[("percent", &percent(size as f32))]);
-    let shown = chosen.map_or_else(|| auto.clone(), fixed);
+    let percent = |size: f64| trf("{percent}%", &[("percent", &crate::ui_scale::percent(size as f32))]);
+    let shown = percent(chosen);
     ui.horizontal(|ui| {
         ui.label(tr("Interface size"));
         let resp = crate::widgets::dropdown(ui, &shown, 120.0, None);
         crate::a11y::combo(&resp, tr("Interface size"), &shown, crate::a11y::menu_open(&resp));
         crate::right::menu_popup(&resp).show(|ui| {
-            if crate::right::menu_check(ui, chosen.is_none(), &auto, "") {
-                app.run("pref.uiScale", json!({"scale": "auto"}));
-                ui.close();
-            }
             for size in crate::ui_scale::SIZES {
-                if crate::right::menu_check(ui, chosen == Some(size), &fixed(size), "") {
+                if crate::right::menu_check(ui, (chosen - size).abs() < 1e-6, &percent(size), "") {
                     app.run("pref.uiScale", json!({"scale": size}));
                     ui.close();
                 }
@@ -514,19 +506,21 @@ fn interface_size(app: &mut FigApp, ui: &mut egui::Ui, chosen: Option<f64>) {
     });
     crate::widgets::label(
         ui,
-        tr("Auto follows your system's display scaling; the other sizes ignore it. Document zoom is separate."),
+        tr("Relative to your system's display scaling (100% is the system's own size). Document zoom is separate."),
         t.text_secondary,
     );
     // Said in words, not only by the menu's value: the window is too small for the size chosen.
-    if let Some(size) = chosen.filter(|_| app.ui.ui_scale.limited) {
+    if app.ui.ui_scale.limited {
         let note = trf(
             "The window is too small for {size}%, so the interface is drawn at {drawn}%. Make the window larger to use {size}%.",
-            &[("size", &percent(size as f32)), ("drawn", &percent(app.ui.ui_scale.drawn))],
+            &[("size", &crate::ui_scale::percent(chosen as f32)), ("drawn", &crate::ui_scale::percent(app.ui.ui_scale.zoom))],
         );
         crate::widgets::label(ui, &note, t.text_secondary);
     }
 }
 
+/// Rename layers: Match, Rename to with buttons for the current name and numbers, where numbers
+/// start, a preview of the first new names, then one `object.batchRename`.
 fn batch_rename_dialog(app: &mut FigApp, ctx: &Context) {
     let Some(mut b) = app.ui.batch_rename.clone() else { return };
     let t = Tokens::get(ctx);

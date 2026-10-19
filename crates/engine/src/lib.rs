@@ -603,20 +603,21 @@ impl DocState {
     }
 }
 
-/// The smallest and largest fixed interface size: 1.0 is one screen pixel per point, whatever scale
-/// the system reports.
+/// The smallest and largest interface size, relative to the system's display scale (1.0 is the
+/// system's own size).
 pub const UI_SCALE_MIN: f64 = 0.75;
 pub const UI_SCALE_MAX: f64 = 3.0;
 
-/// `scale` kept between [`UI_SCALE_MIN`] and [`UI_SCALE_MAX`]; not a finite number: `None` (Auto).
+/// `scale` kept between [`UI_SCALE_MIN`] and [`UI_SCALE_MAX`]; not a finite number: `None`.
 pub fn clamp_ui_scale(scale: f64) -> Option<f64> {
     scale.is_finite().then(|| scale.clamp(UI_SCALE_MIN, UI_SCALE_MAX))
 }
 
-/// Reads the saved interface size. Anything but a number reads as Auto and a number out of range is
-/// clamped, so a settings file edited by hand never costs the other preferences.
-fn read_ui_scale<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<f64>, D::Error> {
-    Ok(Value::deserialize(d)?.as_f64().and_then(clamp_ui_scale))
+/// Reads the saved interface size. Anything but a number reads as 1 (the system's size) and a
+/// number out of range is clamped, so a settings file edited by hand never costs the other
+/// preferences.
+fn read_ui_scale<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<f64, D::Error> {
+    Ok(Value::deserialize(d)?.as_f64().and_then(clamp_ui_scale).unwrap_or(1.0))
 }
 
 /// App-wide preferences that commands read (nudge amounts, behaviours).
@@ -646,11 +647,11 @@ pub struct Prefs {
     /// Reduce motion: the interface's own animations are off (the system's setting turns them off
     /// too). Prototype transitions still play.
     pub reduce_motion: bool,
-    /// How large the whole interface is drawn. `None` is Auto: the scale the system reports. A
-    /// number is a fixed size, 1.0 being one screen pixel per point, so it ignores the system's
-    /// scale (kept between [`UI_SCALE_MIN`] and [`UI_SCALE_MAX`]). The canvas zoom is separate.
+    /// How large the whole interface is drawn, relative to the system's display scale: 1.0 is the
+    /// system's own size, 1.25 a quarter larger (kept between [`UI_SCALE_MIN`] and
+    /// [`UI_SCALE_MAX`]). The canvas zoom is separate.
     #[serde(deserialize_with = "read_ui_scale")]
-    pub ui_scale: Option<f64>,
+    pub ui_scale: f64,
     /// Files that have a path are saved by themselves a few seconds after they change (the app's
     /// timer; off: only File ▸ Save writes them).
     pub auto_save: bool,
@@ -719,7 +720,7 @@ impl Default for Prefs {
             language: "system".into(),
             user_name: cmd::comment::DEFAULT_AUTHOR.into(),
             reduce_motion: false,
-            ui_scale: None,
+            ui_scale: 1.0,
             auto_save: false,
             invite_links: None,
             plugins: Vec::new(),

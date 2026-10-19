@@ -8,8 +8,6 @@ name = "Español"
 status = "draft — needs native review"
 
 [ui]
-"Auto ({percent}%)" = "Auto ({percent}%)"
-"Auto follows your system's display scaling; the other sizes ignore it. Document zoom is separate." = "Auto sigue el escalado de pantalla del sistema; los demás tamaños lo ignoran. El zoom del documento es independiente."
 "Compatibility notes" = "Notas de compatibilidad"
 "Couldn't download the variables" = "No se pudieron descargar las variables"
 
@@ -1065,6 +1063,7 @@ status = "draft — needs native review"
 "Reduce motion" = "Reducir movimiento"
 "Refraction" = "Refracción"
 "Regular expression" = "Expresión regular"
+"Relative to your system's display scaling (100% is the system's own size). Document zoom is separate." = "Relativo al escalado de pantalla del sistema (100% es el tamaño del propio sistema). El zoom del documento es independiente."
 "Remove" = "Quitar"
 "Remove all" = "Quitar todo"
 "Remove annotation" = "Quitar anotación"
