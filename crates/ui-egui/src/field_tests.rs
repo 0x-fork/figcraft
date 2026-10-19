@@ -611,6 +611,9 @@ fn typing_auto_is_zero_only_where_zero_is_the_automatic_value() {
     assert!(u.ctx.read_response(Id::new(("grid_field", "size", 0usize)).with("field")).is_some(), "the width row is shown");
     type_at(&mut u, Id::new(("grid_field", "size", 0usize)), "40");
     assert_eq!(u.app.session.doc().unwrap().node(f).unwrap().grids[0].size, 0.0, "a stretched grid's width isn't set");
+    // Nor its count: a stretched grid has at least one band, so the word commits nothing.
+    type_at(&mut u, Id::new(("grid_field", "count", 0usize)), "Auto");
+    assert_eq!(u.app.session.doc().unwrap().node(f).unwrap().grids[0].count, 3, "a stretched grid keeps its count");
 
     // The auto layout's gap: its placeholder says Auto, but Auto is a mode, not 0.
     let mut s = Session::new();

@@ -2056,7 +2056,13 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
             // 0 is Auto for fixed-size columns (rows); a stretched grid has at least one.
             let count = (!auto_count(g)).then(|| f64::from(g.count.max(1)));
             let key = format!("layoutGrids/{i}/count");
-            let e = crate::variable_ui::number_field_auto(app, ui, ids, &key, Id::new(("grid_field", "count", i)), count, col, Lead::None, "");
+            let id = Id::new(("grid_field", "count", i));
+            // A stretched grid has at least one band, so 0 (Auto) isn't a count it can take.
+            let e = if g.align == GridAlign::Stretch {
+                crate::variable_ui::number_field_or(app, ui, ids, &key, id, count, col, "", Lead::None, "")
+            } else {
+                crate::variable_ui::number_field_auto(app, ui, ids, &key, id, count, col, Lead::None, "")
+            };
             app.field_run(e, "node.set", |v| {
                 set(&|x| x.count = if x.align == GridAlign::Stretch { v.round().clamp(1.0, 1000.0) } else { v.round().clamp(0.0, 1000.0) } as u32)
             });
