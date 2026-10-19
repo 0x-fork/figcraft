@@ -700,6 +700,33 @@ fn dropping_a_native_file_on_canvas_keeps_its_receiving_document_after_tab_switc
 }
 
 #[test]
+fn dropping_several_files_on_canvas_places_them_side_by_side() {
+    let dir = Temp::new();
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10" fill="#f00"/></svg>"##;
+    let paths: Vec<_> = ["a.svg", "b.svg", "c.svg"].iter().map(|n| dir.path(n)).collect();
+    for path in &paths {
+        std::fs::write(path, svg).unwrap();
+    }
+    let mut u = Ui::new(Session::new());
+    u.app.ui.home = false;
+    u.frame(vec![]);
+    let pos = u.app.canvas.rect.center();
+    let files: Vec<egui::DroppedFileHandle> = paths.iter().map(|p| std::sync::Arc::new(Dropped(p.clone())) as egui::DroppedFileHandle).collect();
+    u.frame_raw(egui::RawInput { events: vec![Event::PointerMoved(pos)], dropped_files: files, ..Default::default() });
+    for _ in 0..4 {
+        u.frame(vec![]);
+    }
+    assert!(u.app.ui.pending_opens.is_empty());
+    let doc = u.app.session.doc().unwrap();
+    let page = u.app.session.page().unwrap();
+    let rects: Vec<_> = doc.node(page).unwrap().children.iter().map(|c| doc.world_bounds(*c).unwrap()).collect();
+    assert_eq!(rects.len(), 3);
+    for pair in rects.windows(2) {
+        assert!(pair[1].x0 > pair[0].x1, "left to right with a gap: {rects:?}");
+    }
+}
+
+#[test]
 fn canvas_import_uses_queued_page_and_restores_the_page_selected_while_waiting() {
     let dir = Temp::new();
     let path = dir.path("Queued.svg");
