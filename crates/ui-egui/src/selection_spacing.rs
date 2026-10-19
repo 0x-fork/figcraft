@@ -87,6 +87,7 @@ fn start_drag(app: &mut FigApp, ctx: &egui::Context, ids: Vec<NodeId>, p: Pos2, 
     {
         let drag = Drag { ids, action, start: p, uid: ds.uid, page: ds.page, moved: false };
         app.ui.layers_focus = false;
+        app.ui.pages_focus = None;
         app.ui.key_box = None;
         ctx.memory_mut(|m| {
             if let Some(f) = m.focused() {
