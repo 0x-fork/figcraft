@@ -367,7 +367,17 @@ fn read_loop(mut ws: WebSocket<Duplex>, ctx: &ReaderCtx) {
             Ok(Message::Close(f)) => break f.map_or_else(|| closed(0, ""), |f| closed(f.code.into(), &f.reason)),
             Ok(Message::Text(_)) => break Outcome::Refused("the host sent a text message".into()),
             Ok(_) => {}
-            Err(tungstenite::Error::Capacity(_)) => break Outcome::Refused("the host sent a message over the size limit".into()),
+            Err(tungstenite::Error::Capacity(_)) => {
+                let max = ctx.cfg.limits.max_server_message;
+                let limit = if max >= 1 << 20 {
+                    format!("{} MiB", max >> 20)
+                } else if max >= 1 << 10 {
+                    format!("{} KiB", max >> 10)
+                } else {
+                    format!("{max} bytes")
+                };
+                break Outcome::Failed(format!("received message exceeded size limit (max {limit})"));
+            }
             Err(e) => break Outcome::Retry(e.to_string()),
         }
     };

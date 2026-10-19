@@ -139,7 +139,7 @@ impl LiveLink for NetLink {
             doc,
             name: o.name,
             limits: self.limits,
-            core: figcraft_collab::Limits::default(),
+            core: figcraft_collab::Limits { max_message_bytes: self.limits.max_server_message, ..figcraft_collab::Limits::default() },
         };
         let host = Host::start(cfg, inbox.clone()).map_err(|e| format!("can't listen on {ip}: {e}"))?;
         let invite = Invite::new(host.addr().to_string(), file, token);
