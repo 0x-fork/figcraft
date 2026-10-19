@@ -123,3 +123,11 @@ proptest! {
         prop_assert_eq!(Invite::parse(&i.url()), Ok(i));
     }
 }
+
+#[test]
+fn port_must_be_all_digits() {
+    assert!(Endpoint::parse("ws://localhost:80/").is_ok());
+    for bad in ["ws://localhost:+80/", "ws://localhost:-80/", "ws://localhost:/"] {
+        assert!(Endpoint::parse(bad).is_err(), "accepted {bad}");
+    }
+}
