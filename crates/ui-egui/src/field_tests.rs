@@ -576,43 +576,49 @@ fn grid_ui(grid: serde_json::Value) -> (Ui, NodeId) {
     (u, f)
 }
 
-/// Scroll the Design panel down: the grid settings sit below the fold on the test screen.
-fn scroll_panel(u: &mut Ui) {
+/// Scroll the Design panel (over its own field `id`) until that field is on the test screen: the
+/// grid settings sit below the fold.
+fn scroll_to(u: &mut Ui, id: Id) {
     let wheel = Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,
         delta: egui::vec2(0.0, -300.0),
         phase: egui::TouchPhase::Move,
         modifiers: Modifiers::NONE,
     };
-    for _ in 0..4 {
-        u.frame(vec![Event::PointerMoved(pos2(1300.0, 600.0)), wheel.clone()]);
-    }
-    for _ in 0..5 {
-        u.frame(vec![]);
+    for _ in 0..10 {
+        let p = at(u, id);
+        if p.y < 860.0 {
+            break;
+        }
+        u.frame(vec![Event::PointerMoved(pos2(p.x, 500.0)), wheel.clone()]);
+        // Let the scroll settle.
+        for _ in 0..30 {
+            u.frame(vec![]);
+        }
     }
 }
 
-/// The word for Auto types 0 only where 0 *is* the automatic value: a layout grid's width and
-/// count do, an auto layout's gap (Auto there is "Space between") does not. Keying it on the
-/// field's placeholder said 0 everywhere, which turned the gap's mode off.
+/// The word for Auto types 0 only where 0 *is* the automatic value: a fixed layout grid's count
+/// does, an auto layout's gap (Auto there is "Space between") does not. Keying it on the field's
+/// placeholder said 0 everywhere, which turned the gap's mode off.
 #[test]
 fn typing_auto_is_zero_only_where_zero_is_the_automatic_value() {
+    let count_id = Id::new(("grid_field", "count", 0usize));
     let (mut u, f) = grid_ui(json!({"kind": "columns", "align": "min", "count": 3, "size": 8, "gutter": 10}));
-    let size = |u: &Ui| u.app.session.doc().unwrap().node(f).unwrap().grids[0].size;
-    assert_eq!(size(&u), 8.0);
-    scroll_panel(&mut u);
-    type_at(&mut u, Id::new(("grid_field", "size", 0usize)), "Auto");
-    assert_eq!(size(&u), 0.0, "a grid's width: Auto is 0");
-    type_at(&mut u, Id::new(("grid_field", "size", 0usize)), "6");
-    assert_eq!(size(&u), 6.0, "and a number is that width");
+    let count = |u: &Ui| u.app.session.doc().unwrap().node(f).unwrap().grids[0].count;
+    scroll_to(&mut u, count_id);
+    type_at(&mut u, count_id, "Auto");
+    assert_eq!(count(&u), 0, "a fixed grid's count: Auto is 0");
+    type_at(&mut u, count_id, "4");
+    assert_eq!(count(&u), 4, "and a number is that count");
     // A stretched grid works its width out from the frame: the field shows Auto and takes no edit.
     let (mut u, f) = grid_ui(json!({"kind": "columns", "align": "stretch", "count": 3, "size": 0}));
-    scroll_panel(&mut u);
-    assert!(u.ctx.read_response(Id::new(("grid_field", "size", 0usize)).with("field")).is_some(), "the width row is shown");
-    type_at(&mut u, Id::new(("grid_field", "size", 0usize)), "40");
+    let size_id = Id::new(("grid_field", "size", 0usize));
+    scroll_to(&mut u, size_id);
+    type_at(&mut u, size_id, "40");
     assert_eq!(u.app.session.doc().unwrap().node(f).unwrap().grids[0].size, 0.0, "a stretched grid's width isn't set");
     // Nor its count: a stretched grid has at least one band, so the word commits nothing.
-    type_at(&mut u, Id::new(("grid_field", "count", 0usize)), "Auto");
+    type_at(&mut u, count_id, "Auto");
     assert_eq!(u.app.session.doc().unwrap().node(f).unwrap().grids[0].count, 3, "a stretched grid keeps its count");
 
     // The auto layout's gap: its placeholder says Auto, but Auto is a mode, not 0.
