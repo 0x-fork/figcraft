@@ -199,6 +199,7 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     }
     icons::paint(ui.painter(), ar.shrink(5.0), Icon::Plus, t.icon);
     if aresp.clicked() {
+        app.ui.pages_focus = true;
         app.run("page.add", json!({}));
     }
     if !app.ui.pages_open {
@@ -257,6 +258,8 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
             }
             if resp.clicked() && !divider {
                 select = Some(id);
+                app.ui.pages_focus = true;
+                app.ui.layers_focus = false;
             }
             if resp.double_clicked() {
                 app.ui.rename_page = Some((id, name.clone()));
@@ -274,7 +277,7 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
                     ui.close();
                 }
                 if ui.button(tr("Delete page")).clicked() {
-                    app.run("page.delete", json!({"id": id}));
+                    delete_page(app, id);
                     ui.close();
                 }
             });
@@ -309,6 +312,13 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     }
     // `inner_rect` is the room the list was given; a short list shrinks to its rows.
     pages_edge(app, ui, moved.inner_rect.height().min(moved.content_size.y));
+}
+
+/// Delete `page` (no confirmation: Undo brings it back) and say so.
+pub(crate) fn delete_page(app: &mut FigApp, page: NodeId) {
+    if app.run("page.delete", json!({"id": page})).is_some() {
+        app.toast(tr("Page deleted"));
+    }
 }
 
 /// The pages list's height in a panel with `avail` below the Pages header: the height asked for
@@ -1064,6 +1074,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
     }
     if let Some((id, m)) = clicked {
         app.ui.layers_focus = true;
+        app.ui.pages_focus = false;
         let order: Vec<NodeId> = rows.iter().map(|r| r.id).collect();
         let pos = |x: NodeId| order.iter().position(|o| *o == x);
         let anchor = app.ui.layer_anchor.filter(|a| sel.contains(a)).and_then(pos);

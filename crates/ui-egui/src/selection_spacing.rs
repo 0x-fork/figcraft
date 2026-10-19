@@ -217,6 +217,7 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Option<Pos2>, hovered: 
                 let drag =
                     Drag { ids, axis: axis.clone(), start: p, value: h.value, uid: ds.uid, page: ds.page, moved: false, last_value: axis.value };
                 app.ui.layers_focus = false;
+                app.ui.pages_focus = false;
                 app.ui.key_box = None;
                 ctx.memory_mut(|m| {
                     if let Some(f) = m.focused() {

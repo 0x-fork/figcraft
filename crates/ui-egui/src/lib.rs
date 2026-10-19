@@ -500,6 +500,10 @@ pub struct UiState {
     /// The layers panel has the keyboard: arrow keys move through its rows instead of nudging
     /// (set by a click on a row, cleared by a press on the canvas).
     pub layers_focus: bool,
+    /// The pages list has the keyboard: Delete with no layers selected deletes the current page (set
+    /// by a click on a page row or the add-page button, cleared by a click on a layer row or a press
+    /// on the canvas).
+    pub pages_focus: bool,
     pub layers_seen_sel: Vec<NodeId>,
     pub dark: bool,
     pub follow_system: bool,
@@ -634,6 +638,7 @@ impl Default for UiState {
             layer_filter: String::new(),
             layer_anchor: None,
             layers_focus: false,
+            pages_focus: false,
             layers_seen_sel: Vec::new(),
             dark: false,
             follow_system: false,

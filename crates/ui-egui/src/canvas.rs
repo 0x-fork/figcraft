@@ -544,6 +544,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
     // A press on the canvas gives the keyboard back to it (arrows nudge again).
     if resp.hovered() && ctx.input(|i| i.pointer.any_pressed()) {
         app.ui.layers_focus = false;
+        app.ui.pages_focus = false;
         app.ui.key_box = None;
     }
     // Zoom (pinch, Cmd/Ctrl+scroll) about the pointer; plain scroll pans.
