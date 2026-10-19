@@ -950,6 +950,104 @@ pub fn apply_bindings_to(doc: &mut Document, only: Option<&std::collections::BTr
     apply_bindings_matching(doc, only, |_| true);
 }
 
+/// The layers `ids` before an explicit edit, for [`detach_edited`] (only those with bindings).
+pub(crate) fn bound_before(doc: &Document, ids: &[NodeId]) -> Vec<std::sync::Arc<Node>> {
+    ids.iter().filter_map(|i| doc.node_arc(*i)).filter(|n| !n.bound.is_empty()).cloned().collect()
+}
+
+/// An explicit edit sticks: each layer's own bound field (not a list item's) whose value the edit
+/// changed drops its binding, which would otherwise write the variable's value back (#809).
+/// Compared by value, so keys written unchanged keep their bindings and fields moved along with
+/// another (proportions, min/max) lose theirs.
+pub(crate) fn detach_edited(doc: &mut Document, before: &[std::sync::Arc<Node>]) {
+    for old in before {
+        let Some(n) = doc.node(old.id) else { continue };
+        let edited: Vec<String> = n
+            .bound
+            .keys()
+            // A binding the edit itself made (`boundVariables`) stays.
+            .filter(|f| old.bound.get(*f) == n.bound.get(*f))
+            .filter(|f| super::lists::list_binding(f).is_none() && !f.starts_with(crate::components::PROP_BINDING))
+            .filter(|f| bound_field(old, f) != bound_field(n, f))
+            .cloned()
+            .collect();
+        if edited.is_empty() {
+            continue;
+        }
+        if let Ok(n) = doc.get_mut(old.id) {
+            for f in edited {
+                n.bound.remove(&f);
+            }
+        }
+    }
+}
+
+/// The stored value a layer-level binding writes, comparable (`None`: the layer has no such field).
+fn bound_field(n: &Node, field: &str) -> Option<String> {
+    let text = |f: &dyn Fn(&TextStyle) -> String| match &n.kind {
+        NodeKind::Text(t) => Some(std::iter::once(&t.style).chain(t.runs.iter().map(|r| &r.style)).map(f).collect::<Vec<_>>().join(",")),
+        _ => None,
+    };
+    let layout = n.layout.as_ref();
+    let cl = &n.child_layout;
+    let pad = |i: usize| layout.and_then(|l| l.padding.get(i).copied());
+    Some(match field {
+        "width" => format!("{}", n.width),
+        "height" => format!("{}", n.height),
+        "minWidth" => format!("{:?}", cl.min_w),
+        "maxWidth" => format!("{:?}", cl.max_w),
+        "minHeight" => format!("{:?}", cl.min_h),
+        "maxHeight" => format!("{:?}", cl.max_h),
+        "opacity" => format!("{}", n.opacity),
+        "visible" => format!("{}", n.visible),
+        "gap" | "columnGap" => format!("{:?}", layout.map(|l| l.gap)),
+        "crossGap" | "rowGap" => format!("{:?}", layout.map(|l| l.cross_gap)),
+        "padding" => format!("{:?}", layout.map(|l| l.padding)),
+        "paddingTop" => format!("{:?}", pad(0)),
+        "paddingRight" => format!("{:?}", pad(1)),
+        "paddingBottom" => format!("{:?}", pad(2)),
+        "paddingLeft" => format!("{:?}", pad(3)),
+        "paddingHorizontal" => format!("{:?}", (pad(1), pad(3))),
+        "paddingVertical" => format!("{:?}", (pad(0), pad(2))),
+        "cornerRadius" => format!("{:?}", n.corners.radii),
+        "topLeftRadius" => format!("{:?}", n.corners.radii.first()),
+        "topRightRadius" => format!("{:?}", n.corners.radii.get(1)),
+        "bottomRightRadius" => format!("{:?}", n.corners.radii.get(2)),
+        "bottomLeftRadius" => format!("{:?}", n.corners.radii.get(3)),
+        "strokeWeight" => format!("{:?}", (n.stroke.weight, n.stroke.sides)),
+        "strokeTopWeight" | "strokeRightWeight" | "strokeBottomWeight" | "strokeLeftWeight" => format!("{:?}", n.stroke.sides),
+        "arcStart" | "arcSweep" | "arcInner" => match &n.kind {
+            NodeKind::Ellipse { start, sweep, inner } => format!(
+                "{}",
+                if field == "arcStart" {
+                    start
+                } else if field == "arcSweep" {
+                    sweep
+                } else {
+                    inner
+                }
+            ),
+            _ => return None,
+        },
+        "characters" => match &n.kind {
+            NodeKind::Text(t) => t.characters.clone(),
+            _ => return None,
+        },
+        "paragraphSpacing" | "paragraphIndent" => match &n.kind {
+            NodeKind::Text(t) => format!("{}", if field == "paragraphSpacing" { t.paragraph_spacing } else { t.paragraph_indent }),
+            _ => return None,
+        },
+        "fontFamily" => text(&|s| s.font_family.clone())?,
+        "fontStyle" => text(&|s| s.font_style.clone())?,
+        "fontWeight" => text(&|s| s.weight().to_string())?,
+        "fontSize" => text(&|s| s.font_size.to_string())?,
+        "lineHeight" => text(&|s| format!("{:?}", s.line_height))?,
+        "letterSpacing" => text(&|s| format!("{:?}", s.letter_spacing))?,
+        // shortcut: other layer-level fields keep their binding on edits; add a reader when one is bound in practice.
+        _ => return None,
+    })
+}
+
 /// Imported files (`.fig`, REST) keep a solid paint's alpha in its opacity, a bound paint's too,
 /// while the bound colour brings its own alpha: take the variable's alpha back out of the opacity
 /// (styles' paints and layers') before the bindings are first resolved, so it applies once.

@@ -365,3 +365,69 @@ fn number_variables_are_pixels_and_edits_are_one_undo_step() {
     s.undo().unwrap();
     assert_eq!(lh(&s), LineHeight::Pixels(20.0), "the value and the bound layer go back together");
 }
+
+#[test]
+fn explicit_edits_of_bound_fields_stick_and_detach_that_binding() {
+    // #809: an edit of a bound field detaches its binding (as a paint edit does) instead of
+    // the variable's value coming back; bindings whose value the edit kept stay.
+    let mut s = Session::new();
+    run(&mut s, "variable.createCollection", json!({"name": "C"}));
+    let w = vid(run(&mut s, "variable.create", json!({"collection": "C", "name": "w", "type": "number", "value": 48})));
+    let o = vid(run(&mut s, "variable.create", json!({"collection": "C", "name": "o", "type": "number", "value": 40})));
+    let r = rect(&mut s, None);
+    for (field, v) in [("width", &w), ("height", &w), ("opacity", &o)] {
+        run(&mut s, "variable.bind", json!({"ids": [r], "field": field, "variable": v}));
+    }
+    assert_eq!((node(&s, r).width, node(&s, r).opacity), (48.0, 0.4));
+
+    run(&mut s, "node.set", json!({"ids": [r], "width": 100, "opacity": 0.4}));
+    let n = node(&s, r);
+    assert_eq!(n.width, 100.0);
+    assert!(!n.bound.contains_key("width"));
+    assert!(n.bound.contains_key("height") && n.bound.contains_key("opacity"), "unchanged values keep their bindings");
+
+    run(&mut s, "transform.resize", json!({"ids": [r], "height": 30}));
+    assert_eq!(node(&s, r).height, 30.0);
+    assert!(!node(&s, r).bound.contains_key("height"));
+
+    run(&mut s, "object.opacityKeys", json!({"ids": [r], "digits": "9"}));
+    assert_eq!(node(&s, r).opacity, 0.9);
+    assert!(node(&s, r).bound.is_empty());
+
+    // A value set with its binding in the same call keeps the new binding.
+    run(&mut s, "node.set", json!({"ids": [r], "width": 5, "boundVariables": {"width": w}}));
+    assert_eq!((node(&s, r).width, node(&s, r).bound.get("width")), (48.0, Some(&w)));
+}
+
+#[test]
+fn a_gesture_or_a_text_style_on_a_bound_field_detaches_it() {
+    let mut s = Session::new();
+    run(&mut s, "variable.createCollection", json!({"name": "C"}));
+    let v = vid(run(&mut s, "variable.create", json!({"collection": "C", "name": "r", "type": "number", "value": 8})));
+    let r = rect(&mut s, None);
+    run(&mut s, "variable.bind", json!({"ids": [r], "field": "cornerRadius", "variable": v}));
+    s.begin_interaction("Edit").unwrap();
+    let props = serde_json::Map::from_iter([("cornerRadius".to_string(), json!(2))]);
+    s.preview(|d, _| crate::cmd::props::apply("node.set", d, r, &props)).unwrap();
+    s.commit_interaction().unwrap();
+    assert_eq!(node(&s, r).corners.radii, [2.0; 4]);
+    assert!(node(&s, r).bound.is_empty());
+
+    let t = id(run(&mut s, "text.create", json!({"x": 0, "y": 0, "text": "Hi"})));
+    run(&mut s, "variable.bind", json!({"ids": [t], "field": "fontSize", "variable": v}));
+    run(&mut s, "text.style", json!({"id": t, "fontSize": 20}));
+    assert!(node(&s, t).bound.is_empty());
+    assert_eq!(node(&s, t).kind.text().unwrap().style.font_size, 20.0);
+
+    // The font size/weight/tracking shortcuts and text content edits detach too.
+    run(&mut s, "variable.bind", json!({"ids": [t], "field": "fontSize", "variable": v}));
+    assert_eq!(node(&s, t).kind.text().unwrap().style.font_size, 8.0);
+    run(&mut s, "text.sizeUp", json!({"ids": [t]}));
+    assert_eq!(node(&s, t).kind.text().unwrap().style.font_size, 9.0);
+    assert!(node(&s, t).bound.is_empty());
+    let c = vid(run(&mut s, "variable.create", json!({"collection": "C", "name": "c", "type": "string", "value": "Hello"})));
+    run(&mut s, "variable.bind", json!({"ids": [t], "field": "characters", "variable": c}));
+    run(&mut s, "text.set", json!({"id": t, "characters": "Bye"}));
+    assert_eq!(node(&s, t).kind.text().unwrap().characters, "Bye");
+    assert!(node(&s, t).bound.is_empty());
+}
