@@ -25,7 +25,6 @@ jobs:
       app-name: figcraft
       app-title: FigCraft
       craft-fonts-ref: 43913056ce82a3fdad0ef69f6b88d1dc922a8104
-      web-craft-fonts: true
       has-server: true
       version: ${{ inputs.version }}
     secrets:
