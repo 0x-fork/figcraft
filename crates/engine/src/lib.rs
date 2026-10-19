@@ -633,6 +633,8 @@ pub struct Prefs {
     /// Files that have a path are saved by themselves a few seconds after they change (the app's
     /// timer; off: only File ▸ Save writes them).
     pub auto_save: bool,
+    /// The desktop app starts on the Home screen instead of in a new file.
+    pub start_on_home: bool,
     /// `figcraft://` invite links open this app (`collab.registerLinks`); `None`: on for installed
     /// builds, off for development builds.
     pub invite_links: Option<bool>,
@@ -699,6 +701,7 @@ impl Default for Prefs {
             user_name: cmd::comment::DEFAULT_AUTHOR.into(),
             reduce_motion: false,
             auto_save: false,
+            start_on_home: false,
             invite_links: None,
             plugins: Vec::new(),
             plugin_settings: BTreeMap::new(),
@@ -1098,8 +1101,11 @@ impl Session {
         let Some(it) = ds.interaction.clone() else { return Err(EngineError::Other("no gesture in progress".into())) };
         let mut doc = (*it.doc).clone();
         let mut sel = it.selection.clone();
+        // What the gesture changes on the selected layers is an explicit edit.
+        let before = cmd::styles::bound_before(&doc, &it.selection);
         let res = f(&mut doc, &mut sel);
         if res.is_ok() {
+            cmd::styles::detach_edited(&mut doc, &before);
             normalize(&mut doc, &it.doc);
             // The same preview again (a handle held still) keeps the document: a new one would
             // re-render the canvas for nothing.

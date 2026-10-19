@@ -10,6 +10,8 @@ use super::{CommandSpec, ok};
 use crate::params::*;
 use crate::{EngineError, Result, Session, bad, spec};
 
+/// The layer structure commands: group, frame, mask, boolean operations, flatten, auto layout
+/// add/remove, move to page and vector path edits.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!("object.group", "Group selection", "{ids?, name?}", true, |s, p| wrap(s, p, "object.group", Wrap::Group)),
@@ -71,7 +73,9 @@ pub fn specs() -> Vec<CommandSpec> {
                 // Hugging needs auto layout and the children that filled have nothing to fill: both
                 // become fixed (the frame keeps filling its own auto layout parent).
                 let doc = s.doc_mut()?;
-                doc.get_mut(i)?.layout = None;
+                let n = doc.get_mut(i)?;
+                n.layout = None;
+                super::props::drop_layout_bindings(n);
                 figcraft_layout::coherent_sizing(doc, i);
             }
             ok()
@@ -286,7 +290,7 @@ fn convert_to_section(s: &mut Session, p: &Value) -> Result<Value> {
         n.grids.clear();
         n.guides.clear();
         n.styles.grid = None;
-        n.bound.retain(|k, _| !k.starts_with("padding") && !matches!(k.as_str(), "gap" | "counterAxisSpacing"));
+        super::props::drop_layout_bindings(n);
         let kids = n.children.clone();
         for k in kids {
             // Out of the flow there is nothing to fill or to be absolute against.

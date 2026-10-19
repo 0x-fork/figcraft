@@ -267,7 +267,11 @@ Or in a project's `.mcp.json`:
   `style.duplicate {style}` adds "<name> copy" right below, `style.renameFolder {folder, name}`.
 - **Variables**: `variable.bind` refuses a variable of a type the field doesn't take (a colour on
   `width`); scopes only filter pickers. `variable.delete` / `variable.deleteCollection` unbind the
-  layers using them (they keep their last value) and give aliases to them their values.
+  layers using them (they keep their last value) and give aliases to them their values. An
+  explicit edit that changes a bound field's value (`node.set`, `transform.resize`,
+  `object.opacityKeys`, `text.style`, `text.set`, the text size, weight and
+  tracking shortcuts, a canvas drag) detaches that field's variable; fields the edit
+  left as they were stay bound.
   `variable.addMode {from}` duplicates a mode, `variable.moveMode {collection, mode, to}` reorders
   (index 0 is the default mode, which layers on Auto follow). `variable.update {codeSyntax: {WEB?,
   iOS?, ANDROID?}}` sets code names (`""` clears); generated CSS uses the Web one.
@@ -419,6 +423,9 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   accessibility setting turns it on too). Prototype transitions still play.
 - `pref.autoSave {on?}`: files that have a path save themselves a few seconds after they change
   (off by default; the desktop app's timer does it, so scripts still call `file.save`).
+- `pref.startOnHome {on?}`: the desktop app starts on the Home screen instead of in a new file
+  (off by default; files named on the command line still open, and `--control` starts in a new
+  file anyway, so control callers have a document).
 - `pref.language {language: system|en|cs|ru|es|es-419|fr|de|pt-BR|ja|ka|ko|sv|zh-Hans|…}`: the app's interface language, applied live ("system":
   the OS or browser language; a language without a catalog shows English). Command ids, labels and
   every result stay English.
