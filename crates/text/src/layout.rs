@@ -82,6 +82,9 @@ pub struct Line {
     pub x: f64,
     /// The line ends a paragraph (hard break or end of text).
     pub para_end: bool,
+    /// The line ends with a line break char: a newline, or a line separator (U+2028) that breaks
+    /// the line inside its paragraph.
+    pub break_after: bool,
     /// The paragraph runs right to left (its first strong character is right-to-left).
     pub rtl: bool,
 }
@@ -498,6 +501,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         }
         i += 1;
     }
+    let break_after = |e: usize| e.checked_sub(1).and_then(|i| items.get(i)).is_some_and(|it| is_line_break(it.ch));
     if line_start < items.len() || lines.is_empty() || lines.last().is_some_and(|l| l.2) {
         lines.push((line_start, items.len(), true, para));
     }
@@ -694,6 +698,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             width: width + line_indent - hang_l - hang_r,
             x: 0.0,
             para_end: *para_end,
+            break_after: break_after(*e),
             rtl: rtl_line,
         });
         y += lh;
@@ -1151,11 +1156,11 @@ impl TextLayout {
             let last_line = li + 1 == self.lines.len();
             let in_line = index >= line.char_start && (index < line.char_end || (last_line && index <= line.char_end));
             // A caret at the end of a soft-wrapped line belongs to the next line.
-            if !(in_line || index == line.char_end && line.para_end && !last_line) {
+            if !(in_line || index == line.char_end && line.break_after && !last_line) {
                 continue;
             }
-            if index == line.char_end && line.para_end && !last_line {
-                // Before the newline: end of this line.
+            if index == line.char_end && line.break_after && !last_line {
+                // Before the line break: end of this line.
                 let x = self.line_end_x(line);
                 return (x, li);
             }
@@ -1186,8 +1191,8 @@ impl TextLayout {
         if !line.rtl && !gl.iter().any(|g| g.rtl) {
             return None;
         }
-        // The caret can't sit after a paragraph's newline on its own line.
-        let end = if line.para_end && li + 1 < self.lines.len() { line.char_end.saturating_sub(1) } else { line.char_end };
+        // The caret can't sit after a line's break on its own line.
+        let end = if line.break_after && li + 1 < self.lines.len() { line.char_end.saturating_sub(1) } else { line.char_end };
         let next = (line.char_start..=end.max(line.char_start))
             .filter(|i| *i != index)
             .map(|i| (i, self.caret(i).0))
@@ -1254,7 +1259,7 @@ impl TextLayout {
             }
         }
         let last_line = li + 1 == self.lines.len();
-        let end = if line.para_end && !last_line { line.char_end.saturating_sub(1).max(line.char_start) } else { line.char_end };
+        let end = if line.break_after && !last_line { line.char_end.saturating_sub(1).max(line.char_start) } else { line.char_end };
         // Right of a right-to-left line is its start.
         if line.rtl { line.char_start } else { end }
     }
@@ -1286,7 +1291,7 @@ impl TextLayout {
             let x0 = if a <= line.char_start { self.line_start_x(line) } else { self.caret(a).0 };
             let x1 = if b >= line.char_end {
                 // The last line has no paragraph break to show, so it ends at its glyphs.
-                self.line_end_x(line) + if line.para_end && !last && b > line.char_end.saturating_sub(1) { 4.0 } else { 0.0 }
+                self.line_end_x(line) + if line.break_after && !last && b > line.char_end.saturating_sub(1) { 4.0 } else { 0.0 }
             } else {
                 self.caret(b).0
             };
