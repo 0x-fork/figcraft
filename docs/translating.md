@@ -17,7 +17,9 @@ Simplified.
 The catalogs: English (`en`, the source), and Spanish (`es`, with the Latin American overlay
 `es-419`), French (`fr`), German (`de`), Dutch (`nl`), Brazilian Portuguese (`pt-BR`), Japanese
 (`ja`), Korean (`ko`), Simplified Chinese (`zh-Hans`), Czech (`cs`), Indonesian (`id`), Finnish
-(`fi`), Polish (`pl`), Georgian (`ka`) and Bengali (`bn`), machine-drafted and waiting for native speakers' review. Russian (`ru`, Русский) was
+(`fi`), Polish (`pl`) and Bengali (`bn`), machine-drafted and waiting for native speakers' review. Georgian
+(`ka`) was written with AI assistance and reviewed by a native speaker, and stays a draft until a
+maintainer changes its status. Russian (`ru`, Русский) was
 reviewed and approved by VanTan; its catalog keeps Frame, Dev Mode and Smart animate as familiar
 tool names and uses « » quotes. Turkish (`tr`) was machine-drafted and reviewed by a native speaker,
 and Swedish (`sv`) translates every UI string, command label and menu wording.
@@ -106,7 +108,7 @@ picker leaves Georgian out. A new CJK or other non-Latin language also needs its
 The check fails on keys the code uses that `en.toml` lacks (it prints the lines to paste), keys no
 code uses, unknown command ids, placeholders that don't match English, and, for complete languages,
 anything untranslated. Machine-drafted catalogs stay marked as drafts until a native speaker has
-reviewed them.
+reviewed them; a reviewed catalog stays a draft until a maintainer approves it (its `status` says which).
 
 ## Adding strings in code
 

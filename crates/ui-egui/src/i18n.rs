@@ -27,7 +27,8 @@ pub struct Lang {
     pub code: &'static str,
     /// The language's own name for itself (the language picker shows it untranslated).
     pub name: &'static str,
-    /// Machine-drafted, waiting for a native speaker's review (`[meta] status`).
+    /// A draft (`[meta] status` set): waiting for a native speaker's review, or reviewed and waiting for
+    /// a maintainer's approval.
     pub draft: bool,
     /// Index into [`LANGS`] of the catalog a regional one overlays ("es" under "es-419": it lists
     /// only what differs), else 0 (English).
