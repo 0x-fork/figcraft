@@ -1,4 +1,4 @@
-//! A line separator (U+2028: what Figma's Shift+Enter stores, and `.fig` imports keep) breaks the
+//! A line separator (U+2028: a soft break in `.fig` files, kept on import) breaks the
 //! line inside its paragraph: no paragraph spacing or new list marker after it, and no glyph (#852).
 
 use super::*;
@@ -41,7 +41,7 @@ fn breaks_the_line_but_not_the_paragraph() {
 
 #[test]
 fn before_a_newline_or_at_the_end_it_leaves_an_empty_line() {
-    // "Hi,⏎¶Season" in #852: Figma shows an empty line between the two.
+    // "Hi,⏎¶Season" in #852: an empty line between the two.
     let Some(t) = text("Hi,\u{2028}\nSeason") else { return };
     let l = layout(&t, None, None);
     assert_eq!(line_texts(&t, &l), ["Hi,\u{2028}", "\n", "Season"]);

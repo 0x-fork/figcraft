@@ -160,8 +160,8 @@ fn deco_len(m: DecorationLength, size: f64, auto: f64) -> f64 {
     if v.is_finite() { v } else { auto }
 }
 
-/// The line separator (U+2028): a line break inside a paragraph, as Figma's Shift+Enter stores it
-/// (imported text keeps it; typed text has newlines only).
+/// The line separator (U+2028): a line break inside a paragraph, as `.fig` files store a soft
+/// break (imported text keeps it; typed text has newlines only).
 const LINE_SEPARATOR: char = '\u{2028}';
 
 /// A char that ends its line: a newline (which also ends the paragraph) or a line separator.
@@ -479,7 +479,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             para += 1;
             continue;
         }
-        // A line separator (Figma's Shift+Enter) breaks the line inside its paragraph: no
+        // A line separator (a soft break) breaks the line inside its paragraph: no
         // paragraph spacing and no new list marker after it.
         if it.ch == LINE_SEPARATOR {
             lines.push((line_start, i + 1, false, para));
