@@ -1,8 +1,9 @@
-//! Chinese, Japanese, Korean and Bengali text in the UI. egui's own fonts and Inter have no CJK or non-Latin glyphs, so
-//! the UI adds a face per script it needs: the UI language's, the scripts in the open file's names
+//! Chinese, Japanese, Korean and Bengali text in the UI. egui's own fonts and Inter have no glyphs
+//! for them, so the UI adds a face per script it needs: the UI language's, the scripts in the open file's names
 //! and comments, the language picker's and typed text. Desktop finds them among the installed
 //! fonts (the system font scan), only once one is needed, so English users load none; the web
-//! build has only the CJK and non-Latin faces built in from craft-fonts (`FIGCRAFT_EMBED_CJK`), else none.
+//! build has only the CJK faces built in from craft-fonts (`FIGCRAFT_EMBED_CJK`), else none (no
+//! Bengali face is built in, so the web leaves Bengali out).
 
 use std::sync::Arc;
 
@@ -12,15 +13,14 @@ pub const KANA: u8 = 1;
 pub const HANGUL: u8 = 2;
 /// Han characters (and CJK punctuation and full-width forms).
 pub const HAN: u8 = 4;
+/// Bengali script.
 pub const BENGALI: u8 = 8;
+/// Every script bit: nothing more to look for once all have a face.
+pub const ALL: u8 = KANA | HANGUL | HAN | BENGALI;
 
-const BENGALI_FONTS: &[&str] = &[
-    "Noto Sans Bengali",
-    "Nirmala UI",
-    "Bangla Sangam MN",
-    "Kalpurush",
-    "SolaimanLipi",
-];
+/// Bengali faces: cross-platform, Windows, macOS, then Linux names.
+const BENGALI_FONTS: &[&str] = &["Noto Sans Bengali", "Nirmala UI", "Bangla Sangam MN", "Kalpurush", "SolaimanLipi"];
+
 /// Japanese faces, the built-in one first: Windows, macOS, then Linux names.
 const JAPANESE: &[&str] = &[
     "BIZ UDPGothic",
@@ -108,12 +108,7 @@ fn samples(need: u8, ui: u8) -> Vec<(char, Vec<&'static str>)> {
         (false, HANGUL) => ('漢', [KOREAN, JAPANESE, CHINESE].concat()),
         (false, _) => ('漢', [JAPANESE, KOREAN, CHINESE].concat()),
     };
-    let mut v = vec![
-        (KANA, ('あ', JAPANESE.to_vec())),
-        (HAN, han),
-        (HANGUL, ('한', KOREAN.to_vec())),
-        (BENGALI, ('অ', BENGALI_FONTS.to_vec())),
-    ];
+    let mut v = vec![(KANA, ('あ', JAPANESE.to_vec())), (HAN, han), (HANGUL, ('한', KOREAN.to_vec())), (BENGALI, ('অ', BENGALI_FONTS.to_vec()))];
     match ui {
         HANGUL => v.reverse(),
         HAN => v.swap(0, 1),
@@ -178,6 +173,7 @@ mod tests {
     fn the_ui_language_script_comes_first() {
         let order = |need, ui| samples(need, ui).into_iter().map(|(c, _)| c).collect::<String>();
         let first_face = |need, ui| samples(need, ui).first().and_then(|(_, f)| f.first()).copied();
+        assert_eq!(order(KANA | HAN | HANGUL, 0), "あ漢한");
         assert_eq!(order(KANA | HAN | HANGUL | BENGALI, language("bn")), "অあ漢한");
         assert_eq!(order(KANA | HAN | HANGUL, KANA | HAN), "あ漢한");
         assert_eq!(order(KANA | HAN | HANGUL, HANGUL), "한漢あ");
