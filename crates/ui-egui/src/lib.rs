@@ -431,6 +431,9 @@ pub struct UiState {
     pub last_right_tab: RightTab,
     pub left_tab: LeftTab,
     pub pages_open: bool,
+    /// Pages panel search: open, and the case-insensitive name filter.
+    pub page_search: bool,
+    pub page_filter: String,
     /// The height asked for the pages list (`None`: a share of the panel).
     pub pages_height: Option<f32>,
     pub expanded: BTreeSet<NodeId>,
@@ -595,6 +598,8 @@ impl Default for UiState {
             last_right_tab: RightTab::Design,
             left_tab: LeftTab::File,
             pages_open: true,
+            page_search: false,
+            page_filter: String::new(),
             pages_height: None,
             expanded: BTreeSet::new(),
             rename: None,

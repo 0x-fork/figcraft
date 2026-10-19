@@ -184,13 +184,20 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
         app.ui.pages_open = !app.ui.pages_open;
     }
     let sr = Rect::from_center_size(pos2(hr.max.x - 50.0, hr.center().y), vec2(24.0, 24.0));
-    let sresp = ui.interact(sr, ui.id().with("lsearch"), Sense::click()).tip(crate::shortcuts::tip(tr("Find"), "edit.findReplace"));
+    let sresp = ui.interact(sr, ui.id().with("lsearch"), Sense::click()).tip(tr("Search pages"));
     if sresp.hovered() {
         ui.painter().rect_filled(sr, CornerRadius::same(5), t.hover);
     }
     icons::paint(ui.painter(), sr.shrink(5.0), Icon::Search, t.icon);
+    let search_id = Id::new("page_search_field");
+    let mut focus_search = false;
     if sresp.clicked() {
-        app.ui.find = Some((String::new(), String::new()));
+        app.ui.page_search = !app.ui.page_search;
+        app.ui.page_filter.clear();
+        if app.ui.page_search {
+            app.ui.pages_open = true;
+            focus_search = true;
+        }
     }
     let ar = Rect::from_center_size(pos2(hr.max.x - 22.0, hr.center().y), vec2(24.0, 24.0));
     let aresp = ui.interact(ar, ui.id().with("addpage"), Sense::click()).tip(tr("Add new page"));
@@ -204,9 +211,16 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     if !app.ui.pages_open {
         return;
     }
+    if app.ui.page_search {
+        page_search_field(app, ui, &t, w, search_id, focus_search);
+    }
     let Ok(ds) = app.session.ds() else { return };
     let pages: Vec<(NodeId, String, bool)> =
         ds.doc.pages.iter().filter_map(|p| ds.doc.node(*p).map(|n| (*p, n.name.clone(), ds.doc.is_divider(*p)))).collect();
+    let filter = app.ui.page_filter.trim().to_lowercase();
+    let visible_pages: Vec<(NodeId, String, bool)> =
+        pages.iter().filter(|(_, name, divider)| filter.is_empty() || (!divider && name.to_lowercase().contains(&filter))).cloned().collect();
+    let filtering = !filter.is_empty();
     let cur = ds.page;
     let sel = ds.selection.clone();
     let mut select = None;
@@ -220,9 +234,12 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     // A long list scrolls in its own area, so the layers keep their room below it.
     let max_h = pages_list_height(app.ui.pages_height, ui.available_height());
     let mut moved = egui::ScrollArea::vertical().id_salt("pages_list").max_height(max_h).show(ui, |ui| {
-        for (k, (id, name, divider)) in pages.iter().cloned().enumerate() {
-            let (r, resp) = ui.allocate_exact_size(vec2(w, 32.0), Sense::click_and_drag());
-            reorder.row_by(&resp, k, r, || if divider { tr("Divider").to_string() } else { name.clone() });
+        for (k, (id, name, divider)) in visible_pages.iter().cloned().enumerate() {
+            let sense = if filtering { Sense::click() } else { Sense::click_and_drag() };
+            let (r, resp) = ui.allocate_exact_size(vec2(w, 32.0), sense);
+            if !filtering {
+                reorder.row_by(&resp, k, r, || if divider { tr("Divider").to_string() } else { name.clone() });
+            }
             a11y::list_item(&resp, if divider { tr("Divider") } else { &name }, id == cur);
             let r = r.shrink2(vec2(8.0, 0.0));
             a11y::ring_around(ui, r, &resp);
@@ -309,6 +326,36 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     }
     // `inner_rect` is the room the list was given; a short list shrinks to its rows.
     pages_edge(app, ui, moved.inner_rect.height().min(moved.content_size.y));
+}
+
+/// The Pages panel's inline filter (Escape clears and closes it).
+fn page_search_field(app: &mut FigApp, ui: &mut Ui, t: &Tokens, w: f32, id: Id, focus: bool) {
+    let (fr, _) = ui.allocate_exact_size(vec2(w, 32.0), Sense::hover());
+    let field = Rect::from_min_max(pos2(fr.min.x + 12.0, fr.min.y + 2.0), pos2(fr.max.x - 12.0, fr.max.y - 6.0));
+    ui.painter().rect_filled(field, CornerRadius::same(5), t.field);
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(field.min.x + 12.0, field.center().y), vec2(12.0, 12.0)), Icon::Search, t.icon_secondary);
+    let te_rect = Rect::from_min_max(pos2(field.min.x + 24.0, field.center().y - 7.0), pos2(field.max.x - 6.0, field.center().y + 7.0));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(te_rect));
+    let r = child.add(
+        egui::TextEdit::singleline(&mut app.ui.page_filter)
+            .id(id)
+            .frame(egui::Frame::NONE)
+            .font(regular(11.0))
+            .hint_text(tr("Search pages"))
+            .vertical_align(egui::Align::Center)
+            .desired_width(te_rect.width()),
+    );
+    if focus {
+        r.request_focus();
+    }
+    crate::widgets::select_all_on_focus(ui, &r, &app.ui.page_filter);
+    if r.has_focus() {
+        ui.painter().rect_stroke(field, CornerRadius::same(5), Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+    }
+    if (r.has_focus() || r.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        app.ui.page_search = false;
+        app.ui.page_filter.clear();
+    }
 }
 
 /// The pages list's height in a panel with `avail` below the Pages header: the height asked for
