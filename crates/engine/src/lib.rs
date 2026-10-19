@@ -735,6 +735,8 @@ pub struct Clipboard {
     /// The page-space bounds of the copied selection.
     pub bounds: Option<figcraft_geom::Rect>,
     pub source_doc: u64,
+    /// Copied component/set roots, excluding cuts and originals discarded by undo (ids are reused).
+    pub copied_components: std::collections::BTreeSet<NodeId>,
     /// The document copied from (pastes into other files follow its mains) and its file path.
     pub source: Option<Arc<Document>>,
     pub source_path: Option<String>,
@@ -1166,6 +1168,13 @@ impl Session {
         }
         ds.clean_selection();
         ds.revision += 1;
+        let (uid, doc) = (ds.uid, ds.doc.clone());
+        if self.clipboard.source_doc == uid {
+            self.clipboard.copied_components.retain(|id| {
+                doc.node(*id)
+                    .is_some_and(|n| matches!(n.kind, figcraft_doc::NodeKind::Component { .. } | figcraft_doc::NodeKind::ComponentSet { .. }))
+            });
+        }
         Ok(true)
     }
 
