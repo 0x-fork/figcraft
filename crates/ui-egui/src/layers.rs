@@ -352,7 +352,7 @@ fn page_search_field(app: &mut FigApp, ui: &mut Ui, t: &Tokens, w: f32, id: Id, 
     if r.has_focus() {
         ui.painter().rect_stroke(field, CornerRadius::same(5), Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
     }
-    if (r.has_focus() || r.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if app.ui.page_search && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         app.ui.page_search = false;
         app.ui.page_filter.clear();
     }

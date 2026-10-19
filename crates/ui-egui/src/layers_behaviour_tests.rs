@@ -217,6 +217,19 @@ fn pages_search_button_opens_the_filter_and_escape_clears_it() {
 }
 
 #[test]
+fn pages_search_escape_closes_even_when_the_field_is_unfocused() {
+    let mut u = Ui::new(Session::new());
+    u.app.ui.page_search = true;
+    u.app.ui.page_filter = "COMPON".into();
+    u.frame(vec![]);
+
+    u.frame(vec![Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
+
+    assert!(!u.app.ui.page_search, "Escape closes page search without field focus");
+    assert!(u.app.ui.page_filter.is_empty(), "Escape clears the filter without field focus");
+}
+
+#[test]
 fn pages_search_filters_page_names_case_insensitively() {
     let mut s = Session::new();
     let _overview = s.page().unwrap();
