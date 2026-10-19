@@ -69,13 +69,22 @@ pub fn language(code: &str) -> u8 {
 }
 
 /// Whether the UI can draw language `code`: always on desktop (a system face is found when it's
-/// needed; tofu at worst), on the web only with built-in faces for its scripts. The language
-/// picker and the system language skip a language it can't.
+/// needed; tofu at worst), on the web only with built-in faces for its scripts (Georgian: craft-fonts'
+/// Noto Sans Georgian). The language picker and the system language skip a language it can't.
 pub fn can_show(code: &str) -> bool {
+    shows(code, cfg!(target_arch = "wasm32"))
+}
+
+/// [`can_show`] in a desktop or (`web`) a web build.
+fn shows(code: &str, web: bool) -> bool {
+    if !web {
+        return true;
+    }
+    if code.split('-').next() == Some("ka") {
+        return figcraft_text::face_with_char('ა', &["Noto Sans Georgian"]).is_some();
+    }
     let need = language(code);
-    need == 0
-        || !cfg!(target_arch = "wasm32")
-        || samples(need, 0).iter().all(|(c, _)| figcraft_text::face_with_char(*c, &["BIZ UDPGothic", "Noto Sans CJK SC"]).is_some())
+    need == 0 || samples(need, 0).iter().all(|(c, _)| figcraft_text::face_with_char(*c, &["BIZ UDPGothic", "Noto Sans CJK SC"]).is_some())
 }
 
 /// A character standing for each script in `need`, with the families to look for it in, the UI
@@ -131,6 +140,15 @@ mod tests {
         assert_eq!(language("zh-Hans"), HAN);
         assert_eq!(language("fr"), 0);
         assert!(["en", "es", "es-419", "fr", "de", "pt-BR", "tr", "id"].iter().all(|c| can_show(c)));
+    }
+
+    #[test]
+    fn the_web_offers_georgian_only_with_its_face() {
+        assert!(shows("ka", false), "desktop always lists Georgian");
+        let face = figcraft_text::face_with_char('ა', &["Noto Sans Georgian"]).is_some();
+        assert_eq!(shows("ka", true), face);
+        assert_eq!(shows("ka-GE", true), face);
+        assert!(shows("en", true) && shows("tr", true));
     }
 
     #[test]
