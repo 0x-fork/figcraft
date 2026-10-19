@@ -172,7 +172,10 @@ instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).
 `canvas` or `properties`), whether `keyboard` mode is on (F6 or Tab moved the focus since the last
 pointer press, so the focus ring shows) and the name of the `control` with the keyboard (what a
 screen reader announces; empty when nothing has it). `reduceMotion` is true when the preference or
-the system's accessibility setting turns the interface's animations off. `live` is the live
+the system's accessibility setting turns the interface's animations off. `uiScale` is the interface
+size: the `choice` (relative to the system's display scale, `pref.uiScale`), the `zoom` drawn
+(relative too), what that is in physical pixels per point (`drawn`) and whether the window is too
+small for the choice (`limited`, so `zoom` is smaller). `live` is the live
 session of the window's active file as the window shows it (sessions are per file: another tab
 shows its own, or `status: "off"`): `session` (its id, null when the file isn't in one),
 `sessions` (how many the app has running), `status`, `role`, the number of `peers`, who you `follow`, the

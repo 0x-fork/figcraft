@@ -421,6 +421,11 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   nested layers), Escape or a click drops it.
 - `pref.reduceMotion {on?}`: reduced motion (the interface's own animations off; the system's
   accessibility setting turns it on too). Prototype transitions still play.
+- `pref.uiScale {scale?}`: how large the whole interface is drawn, relative to the system's display
+  scale: 1 (the default) is the system's own size on every screen, 1.25 means 125 %, not 125; from
+  0.75 to 3 (outside the range it stops at the nearest end; `"auto"` is 1). Omit `scale` to read it.
+  The canvas zoom is separate. A window too small for a size above 100 % draws a smaller one until
+  it is larger; the choice is kept. In the browser the interface always follows the browser's zoom.
 - `pref.autoSave {on?}`: files that have a path save themselves a few seconds after they change
   (off by default; the desktop app's timer does it, so scripts still call `file.save`).
 - `pref.startOnHome {on?}`: the desktop app starts on the Home screen instead of in a new file
