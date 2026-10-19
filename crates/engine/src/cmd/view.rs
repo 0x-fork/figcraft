@@ -523,3 +523,24 @@ pub fn specs() -> Vec<CommandSpec> {
 
 #[allow(dead_code)]
 fn unused(_: NodeId) {}
+
+#[cfg(test)]
+mod start_on_home_tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    #[test]
+    fn start_on_home_is_a_preference_that_persists() {
+        let mut s = Session::new();
+        assert!(!s.prefs.start_on_home);
+        assert_eq!(s.execute("pref.startOnHome", &json!({})).unwrap()["on"], true);
+        assert!(s.prefs.start_on_home);
+        // Saved with the other preferences and read back; older settings files without it read as off.
+        let saved: crate::Prefs = serde_json::from_value(serde_json::to_value(&s.prefs).unwrap()).unwrap();
+        assert!(saved.start_on_home);
+        assert_eq!(s.execute("pref.startOnHome", &json!({"on": false})).unwrap()["on"], false);
+        let old: crate::Prefs = serde_json::from_value(json!({"theme": "dark"})).unwrap();
+        assert!(!old.start_on_home);
+    }
+}
