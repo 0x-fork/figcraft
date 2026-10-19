@@ -1510,7 +1510,7 @@ impl FigApp {
         // What happened in a live session (the network woke us for it).
         if self.session.live_poll() {
             if let Some(m) = self.session.message.take() {
-                self.toast(m);
+                self.toast(live::failure_text(&m));
             }
             self.background_done(&ctx);
         }

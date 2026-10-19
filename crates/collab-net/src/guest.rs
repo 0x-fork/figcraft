@@ -26,7 +26,7 @@ use tungstenite::{Bytes, Message};
 use crate::inbox::Inbox;
 use crate::invite::{Endpoint, Invite};
 pub use crate::join::GuestConfig;
-use crate::join::{Next, Outcome, Resuming, Seen, Taken, after, closed, hello, resolved, take, unresolved};
+use crate::join::{Next, Outcome, Resuming, Seen, Taken, after, closed, hello, resolved, take, too_large, unresolved};
 use crate::manage;
 use crate::net::{Duplex, NetLimits, config, open, shutdown};
 use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
@@ -367,17 +367,7 @@ fn read_loop(mut ws: WebSocket<Duplex>, ctx: &ReaderCtx) {
             Ok(Message::Close(f)) => break f.map_or_else(|| closed(0, ""), |f| closed(f.code.into(), &f.reason)),
             Ok(Message::Text(_)) => break Outcome::Refused("the host sent a text message".into()),
             Ok(_) => {}
-            Err(tungstenite::Error::Capacity(_)) => {
-                let max = ctx.cfg.limits.max_server_message;
-                let limit = if max >= 1 << 20 && max.is_multiple_of(1 << 20) {
-                    format!("{} MiB", max >> 20)
-                } else if max >= 1 << 10 && max.is_multiple_of(1 << 10) {
-                    format!("{} KiB", max >> 10)
-                } else {
-                    format!("{max} bytes")
-                };
-                break Outcome::Failed(format!("received message exceeded size limit (max {limit})"));
-            }
+            Err(tungstenite::Error::Capacity(_)) => break too_large(&ctx.cfg.limits),
             Err(e) => break Outcome::Retry(e.to_string()),
         }
     };

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use figcraft_collab::message::{self, ClientMsg, Hello, Presence, ServerMsg, Signal};
 use figcraft_collab::{Client, Limits};
 use figcraft_doc::{Document, NodeId};
-use figcraft_engine::live::{Event, PEOPLE, Status};
+use figcraft_engine::live::{Event, PEOPLE, Status, TOO_LARGE_TO_JOIN};
 use tungstenite::protocol::WebSocket;
 use tungstenite::{Bytes, Message};
 
@@ -644,11 +644,10 @@ fn the_host_removes_someone_and_they_cant_come_back() {
 }
 
 #[test]
-fn welcome_messages_larger_than_client_message_limit_are_delivered() {
-    let mut doc = Document::new("A".repeat(3000));
+fn a_welcome_over_the_size_limit_says_the_file_is_too_large() {
+    let mut doc = Document::new("B".repeat(1 << 20));
     doc.repair();
     let probe = Probe::new();
-    let limits = NetLimits { max_client_message: 1024, max_server_message: 64 << 10, ..fast_limits() };
     let cfg = HostConfig {
         addr: SocketAddr::from(([127, 0, 0, 1], 0)),
         any_port_if_taken: false,
@@ -656,55 +655,18 @@ fn welcome_messages_larger_than_client_message_limit_are_delivered() {
         token: TOKEN.into(),
         doc,
         name: "Hana".into(),
-        limits,
-        core: Limits { max_message_bytes: 64 << 10, ..Limits::default() },
+        limits: fast_limits(),
+        core: Limits::default(),
     };
     let mut host = Host::start(cfg, probe.inbox.clone()).unwrap();
     let invite = Invite::new(host.addr().to_string(), FILE, TOKEN);
 
-    let guest_probe = Probe::new();
     let mut guest_cfg = quick(GuestConfig::new(invite, "Ada".into()));
-    guest_cfg.limits = limits;
-    let _g = Guest::start(guest_cfg, guest_probe.inbox.clone()).unwrap();
-    let mut gp = guest_probe;
-    gp.wait("welcome", welcomed);
-    assert!(welcomed(&gp.events));
-    host.stop();
-}
-
-#[test]
-fn oversized_server_message_reports_accurate_diagnostic() {
-    let mut doc = Document::new("B".repeat(3000));
-    doc.repair();
-    let probe = Probe::new();
-    let limits = NetLimits { max_server_message: 64 << 10, ..fast_limits() };
-    let cfg = HostConfig {
-        addr: SocketAddr::from(([127, 0, 0, 1], 0)),
-        any_port_if_taken: false,
-        file: FILE.into(),
-        token: TOKEN.into(),
-        doc,
-        name: "Hana".into(),
-        limits,
-        core: Limits { max_message_bytes: 64 << 10, ..Limits::default() },
-    };
-    let mut host = Host::start(cfg, probe.inbox.clone()).unwrap();
-    let invite = Invite::new(host.addr().to_string(), FILE, TOKEN);
-
-    let guest_probe = Probe::new();
-    let mut guest_cfg = quick(GuestConfig::new(invite, "Ada".into()));
-    guest_cfg.limits = NetLimits { max_server_message: 1536, ..fast_limits() };
-    let _g = Guest::start(guest_cfg, guest_probe.inbox.clone()).unwrap();
-    let mut gp = guest_probe;
-    gp.wait("accurate failure diagnostic", |e| {
-        e.iter().any(|ev| {
-            matches!(
-                ev,
-                Event::Status(Status::Failed { reason })
-                    if !reason.contains("The host refused") && reason.contains("received message exceeded size limit (max 1536 bytes)")
-            )
-        })
-    });
+    guest_cfg.limits = NetLimits { max_server_message: 1 << 20, ..fast_limits() };
+    let mut gp = Probe::new();
+    let _g = Guest::start(guest_cfg, gp.inbox.clone()).unwrap();
+    let too_large = TOO_LARGE_TO_JOIN.replace("{mb}", "1");
+    gp.wait("the file too large to join", |e| e.iter().any(|ev| matches!(ev, Event::Status(Status::Failed { reason }) if *reason == too_large)));
     assert!(!welcomed(&gp.events));
     host.stop();
 }

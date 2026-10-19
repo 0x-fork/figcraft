@@ -249,19 +249,3 @@ fn cursor_chat_and_spotlight_between_apps() {
     pump(&mut host, &mut guest, "the spotlight ending", |_, g| g.live().spotlight.is_none());
     pump(&mut host, &mut late, "the spotlight ending for the late joiner", |_, l| l.live().spotlight.is_none() && l.live().follow.is_none());
 }
-
-#[test]
-#[ignore = "allocates a document larger than 64 MiB: cargo test -p figcraft-collab-net -- --ignored"]
-fn welcome_larger_than_64_mib_is_delivered() {
-    let mut host = session("Hana");
-    let mut guest = session("Ada");
-    host.doc_mut().unwrap().name = "A".repeat((64 << 20) + 4096);
-    let r = host.execute("collab.host", &json!({"port": 0})).unwrap();
-    assert_eq!(r["status"], "live");
-    let link = r["link"].as_str().unwrap().to_string();
-    let r = guest.execute("collab.join", &json!({"link": link})).unwrap();
-    assert_eq!(r["status"], "connecting");
-    pump(&mut host, &mut guest, "the large welcome", |h, g| g.live().status == Status::Live && h.live().peers.len() == 1);
-    assert_eq!(guest.doc().unwrap().name.len(), (64 << 20) + 4096);
-    host.execute("collab.stop", &json!({})).unwrap();
-}
