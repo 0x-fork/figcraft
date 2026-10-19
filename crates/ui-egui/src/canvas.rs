@@ -1011,7 +1011,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
             width_overlay(app, painter, &doc, &ve, zoom);
         } else if let Some(c) = app.session.vector_edit_box() {
             let label = format!("{} × {}", fmt((c[1] - c[0]).hypot()), fmt((c[3] - c[0]).hypot()));
-            size_label = transform_box(app, painter, c.map(|p| app.to_screen(p.x, p.y)), accent(painter), true, 4, label);
+            size_label = transform_box(app, painter, c.map(|p| app.to_screen(p.x, p.y)), accent(painter), true, 4, Some(label));
         }
     }
     // Selection.
@@ -1035,8 +1035,10 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
             // A layer smaller than its handles on screen shows just its outline (they still answer
             // just outside it).
             let tiny = figcraft_engine::tools::box_sides_px(&b, zoom).1 < figcraft_engine::tools::SMALL_BOX_PX;
+            // Measuring to another layer (Alt held) shows just the outlines: no handles or size.
+            let measuring = app.session.tool.overlay.measure_box.is_some();
             // Locked layers (selected in the layers panel) can't be resized: no handles either.
-            let handles = if sel.iter().any(|i| figcraft_engine::tools::locked_in(&doc, *i)) {
+            let handles = if measuring || sel.iter().any(|i| figcraft_engine::tools::locked_in(&doc, *i)) {
                 0
             } else if is_line {
                 2
@@ -1045,9 +1047,11 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
             } else {
                 4
             };
-            size_label = transform_box(app, painter, b.map(|p| app.to_screen(p.x, p.y)), col, sel.len() > 1, handles, label);
-            arc_overlay(app, painter, col);
-            shape_overlay(app, painter, col);
+            size_label = transform_box(app, painter, b.map(|p| app.to_screen(p.x, p.y)), col, sel.len() > 1, handles, (!measuring).then_some(label));
+            if !measuring {
+                arc_overlay(app, painter, col);
+                shape_overlay(app, painter, col);
+            }
             if app.session.tool.tool == ToolId::Scale {
                 // The point that stays put: the dragged pivot, else the anchor.
                 let pivot = scale
@@ -1185,8 +1189,16 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
 }
 
 /// A transform box (screen corners tl, tr, br, bl): its outline when `outline`, the first `handles`
-/// corner handles and, when dimensions are shown, the size `label` under it (its box returned).
-fn transform_box(app: &FigApp, painter: &egui::Painter, q: [Pos2; 4], col: Color32, outline: bool, handles: usize, label: String) -> Option<Rect> {
+/// corner handles and, when dimensions are shown, the size `label` (if any) under it (its box returned).
+fn transform_box(
+    app: &FigApp,
+    painter: &egui::Painter,
+    q: [Pos2; 4],
+    col: Color32,
+    outline: bool,
+    handles: usize,
+    label: Option<String>,
+) -> Option<Rect> {
     if outline {
         quad(painter, q, stroke(col, 1.0));
     }
@@ -1195,7 +1207,7 @@ fn transform_box(app: &FigApp, painter: &egui::Painter, q: [Pos2; 4], col: Color
         painter.rect_filled(r, CornerRadius::same(1), Color32::WHITE);
         painter.rect_stroke(r, CornerRadius::same(1), stroke(col, 1.0), StrokeKind::Inside);
     }
-    if app.session.prefs.show_dimensions {
+    if let Some(label) = label.filter(|_| app.session.prefs.show_dimensions) {
         let bottom = q.iter().map(|p| p.y).fold(f32::MIN, f32::max);
         let cx = q.iter().map(|p| p.x).sum::<f32>() / 4.0;
         return Some(pill(painter, pos2(cx, bottom + 9.0), Align2::CENTER_TOP, label, col));
