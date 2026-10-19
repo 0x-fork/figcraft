@@ -974,7 +974,7 @@ pub fn checkbox(ui: &mut Ui, on: bool, label: &str) -> bool {
     let b = Rect::from_min_size(pos2(rect.min.x, rect.center().y - 7.0), vec2(14.0, 14.0));
     if on {
         ui.painter().rect_filled(b, CornerRadius::same(3), t.accent);
-        icons::paint(ui.painter(), b.shrink(1.5), Icon::Check, Color32::WHITE);
+        icons::paint(ui.painter(), b.shrink(1.5), Icon::Check, t.accent_on);
     } else {
         ui.painter().rect_stroke(b, CornerRadius::same(3), Stroke::new(1.0, t.border_strong), StrokeKind::Inside);
     }
@@ -990,7 +990,7 @@ pub fn radio(ui: &mut Ui, on: bool, label: &str) -> bool {
     let c = pos2(rect.min.x + 7.0, rect.center().y);
     if on {
         ui.painter().circle_filled(c, 7.0, t.accent);
-        ui.painter().circle_filled(c, 2.5, Color32::WHITE);
+        ui.painter().circle_filled(c, 2.5, t.accent_on);
     } else {
         ui.painter().circle_stroke(c, 6.5, Stroke::new(1.0, if resp.hovered() { t.accent } else { t.border_strong }));
     }
@@ -1008,8 +1008,8 @@ pub fn button(ui: &mut Ui, label: &str, primary: bool, enabled: bool) -> Respons
     a11y::button(&resp, label);
     let hot = enabled && resp.hovered();
     let (fill, text) = match (primary, hot) {
-        (true, false) => (t.accent, Color32::WHITE),
-        (true, true) => (t.accent_hover, Color32::WHITE),
+        (true, false) => (t.accent, t.accent_on),
+        (true, true) => (t.accent_hover, t.accent_on),
         (false, false) => (Color32::TRANSPARENT, t.text),
         (false, true) => (t.hover, t.text),
     };

@@ -400,7 +400,7 @@ pub fn draw(app: &FigApp, painter: &egui::Painter) {
     if let Some((x, y, _)) = &app.ui.comments.draft {
         let r = pin_rect(app.to_screen(*x, *y));
         painter.rect_filled(r, BUBBLE, ACCENT);
-        painter.circle_filled(r.center(), 3.0, Color32::WHITE);
+        painter.circle_filled(r.center(), 3.0, crate::theme::ACCENT_ON);
     }
 }
 

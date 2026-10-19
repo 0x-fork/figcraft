@@ -2234,9 +2234,9 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
             resp = resp.tip(tr("Inspect the layer under the pointer: size, colours, typography"));
         }
         if chrome.pane {
-            icons::paint(ui.painter(), br.shrink(5.0), *icon, t.icon);
+            icons::paint(ui.painter(), br.shrink(5.0), *icon, if on { t.accent_on } else { t.icon });
         } else {
-            ui.painter().text(br.center(), Align2::CENTER_CENTER, shown, regular(11.5), text);
+            ui.painter().text(br.center(), Align2::CENTER_CENTER, shown, regular(11.5), if on { t.accent_on } else { text });
         }
         if *act == BarAction::Options {
             let menu = crate::right::menu_popup(&resp).width(220.0).show(|ui| options_menu(p, ui, device, settings.responsive, now));

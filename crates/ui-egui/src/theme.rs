@@ -1,6 +1,6 @@
 //! Design tokens (UI3 light and dark) and fonts.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use egui::{Color32, Context, FontData, FontDefinitions, FontFamily, FontId, Stroke, TextStyle, Visuals};
 
@@ -23,6 +23,7 @@ pub struct Tokens {
     pub field_hover_border: Color32,
     pub accent: Color32,
     pub accent_hover: Color32,
+    pub accent_on: Color32,
     pub accent_text: Color32,
     pub selected_row: Color32,
     pub selected_row_child: Color32,
@@ -44,7 +45,10 @@ pub struct Tokens {
     pub focus: Color32,
 }
 
-pub const ACCENT: Color32 = Color32::from_rgb(0x0D, 0x99, 0xFF);
+/// FigCraft's brand green, shared with the original app icon.
+pub const ACCENT: Color32 = Color32::from_rgb(0x02, 0xDA, 0x96);
+/// Ink on the bright green brand surface (white would not have enough contrast).
+pub const ACCENT_ON: Color32 = Color32::from_rgb(0x07, 0x35, 0x2A);
 pub const COMPONENT: Color32 = Color32::from_rgb(0x97, 0x47, 0xFF);
 /// Handoff status badges (white text on these, in both themes).
 pub const DEV_READY: Color32 = Color32::from_rgb(0x14, 0xAE, 0x5C);
@@ -71,11 +75,12 @@ impl Tokens {
             field: Color32::from_rgb(0xF5, 0xF5, 0xF5),
             field_hover_border: Color32::from_rgb(0xE6, 0xE6, 0xE6),
             accent: ACCENT,
-            accent_hover: Color32::from_rgb(0x00, 0x7B, 0xE5),
-            // 5.2:1 on white, 4.6:1 on selected rows: WCAG AA for text.
-            accent_text: Color32::from_rgb(0x00, 0x6B, 0xD1),
-            selected_row: Color32::from_rgb(0xE5, 0xF4, 0xFF),
-            selected_row_child: Color32::from_rgb(0xF2, 0xF9, 0xFF),
+            accent_hover: Color32::from_rgb(0x00, 0xAD, 0x78),
+            accent_on: ACCENT_ON,
+            // Darker green keeps links and labels legible on white and selected rows.
+            accent_text: Color32::from_rgb(0x00, 0x7A, 0x56),
+            selected_row: Color32::from_rgb(0xE0, 0xFB, 0xF1),
+            selected_row_child: Color32::from_rgb(0xF1, 0xFC, 0xF7),
             component: COMPONENT,
             component_row: Color32::from_rgb(0xF1, 0xE9, 0xFF),
             danger: Color32::from_rgb(0xF2, 0x48, 0x22),
@@ -87,9 +92,9 @@ impl Tokens {
             shadow: Color32::from_black_alpha(40),
             menu: Color32::from_rgb(0x1E, 0x1E, 0x1E),
             menu_text: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-            menu_hover: ACCENT,
+            menu_hover: Color32::from_rgb(0x00, 0x6B, 0x4C),
             menu_dim: Color32::from_rgb(0x9A, 0x9A, 0x9A),
-            focus: Color32::from_rgb(0x00, 0x6B, 0xD1),
+            focus: Color32::from_rgb(0x00, 0x7A, 0x56),
         }
     }
 
@@ -111,10 +116,11 @@ impl Tokens {
             field: Color32::from_rgb(0x38, 0x38, 0x38),
             field_hover_border: Color32::from_rgb(0x4D, 0x4D, 0x4D),
             accent: ACCENT,
-            accent_hover: Color32::from_rgb(0x3D, 0xAD, 0xFF),
-            accent_text: Color32::from_rgb(0x7C, 0xC4, 0xF8),
-            selected_row: Color32::from_rgb(0x2A, 0x45, 0x5C),
-            selected_row_child: Color32::from_rgb(0x2D, 0x37, 0x41),
+            accent_hover: Color32::from_rgb(0x52, 0xE9, 0xB7),
+            accent_on: ACCENT_ON,
+            accent_text: Color32::from_rgb(0x52, 0xE9, 0xB7),
+            selected_row: Color32::from_rgb(0x16, 0x42, 0x36),
+            selected_row_child: Color32::from_rgb(0x12, 0x37, 0x2D),
             component: Color32::from_rgb(0xD2, 0x7C, 0xFF),
             component_row: Color32::from_rgb(0x3E, 0x30, 0x52),
             danger: Color32::from_rgb(0xF2, 0x48, 0x22),
@@ -126,7 +132,7 @@ impl Tokens {
             shadow: Color32::from_black_alpha(90),
             menu: Color32::from_rgb(0x1E, 0x1E, 0x1E),
             menu_text: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-            menu_hover: ACCENT,
+            menu_hover: Color32::from_rgb(0x00, 0x6B, 0x4C),
             menu_dim: Color32::from_rgb(0x9A, 0x9A, 0x9A),
             focus: ACCENT,
         }
@@ -226,7 +232,8 @@ pub fn on_dark<R>(ui: &mut egui::Ui, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
     r
 }
 
-/// UI fonts: Inter (from the craft-fonts build input) when present, else egui's defaults; with
+/// UI fonts: Inter and the Archivo wordmark (from the craft-fonts build input) when present;
+/// otherwise egui's defaults. With
 /// `system`, also system faces for scripts those lack (Hebrew, joined Arabic) so names in them show,
 /// and faces for the CJK scripts in `cjk` ([`crate::cjk`]).
 pub fn install_fonts(ctx: &Context, system: bool, cjk: u8) {
@@ -252,6 +259,18 @@ pub fn install_fonts(ctx: &Context, system: bool, cjk: u8) {
     }
     semi.extend(fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
     fonts.families.insert(FontFamily::Name("semibold".into()), semi);
+    // Keep the logo's typeface independent of UI text. System Archivo is used when available;
+    // releases with craft-fonts embed it so the wordmark does not depend on installation.
+    let archivo = find("Archivo", "SemiBold")
+        .map(FontData::from_static)
+        .or_else(|| system.then(|| figcraft_text::find_face("Archivo", "SemiBold")).flatten().map(|face| font_data(&face)));
+    let mut brand = Vec::new();
+    if let Some(data) = archivo {
+        fonts.font_data.insert("archivo".into(), Arc::new(data));
+        brand.push("archivo".into());
+    }
+    brand.extend(fonts.families.get(&FontFamily::Name("semibold".into())).cloned().unwrap_or_default());
+    fonts.families.insert(FontFamily::Name("brand".into()), brand);
     // CJK and other scripts from craft-fonts as fallbacks (Noto Sans CJK only with FIGCRAFT_EMBED_CJK).
     const BUILT_IN: [&str; 4] = ["Inter", "BIZ UDPGothic", "Noto Sans CJK SC", "Noto Sans Arabic"];
     let lang = crate::i18n::current().map_or("en", |l| l.code);
@@ -337,6 +356,40 @@ pub fn font_data(face: &figcraft_text::Face) -> FontData {
 
 pub fn semibold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("semibold".into()))
+}
+
+pub fn brand(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name("brand".into()))
+}
+
+/// The two-tone Archivo wordmark used in the home sidebar and About window.
+pub fn paint_wordmark(painter: &egui::Painter, left_center: egui::Pos2, size: f32, t: &Tokens) {
+    let font = brand(size);
+    let fig = painter.layout_no_wrap("Fig".into(), font.clone(), t.text);
+    let fig_width = fig.size().x;
+    painter.galley(egui::pos2(left_center.x, left_center.y - fig.size().y / 2.0), fig, t.text);
+    painter.text(egui::pos2(left_center.x + fig_width, left_center.y), egui::Align2::LEFT_CENTER, "Craft", font, t.accent);
+}
+
+/// Paint the owner's original chameleon icon from the existing app asset.
+pub fn paint_app_icon(ui: &egui::Ui, rect: egui::Rect) {
+    static ICON: OnceLock<Option<egui::ColorImage>> = OnceLock::new();
+    let image = ICON.get_or_init(|| {
+        let rgba = image::load_from_memory(include_bytes!("../../../assets/app-icon/figcraft-64.png")).ok()?.to_rgba8();
+        Some(egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw()))
+    });
+    let Some(image) = image else {
+        ui.painter().rect_filled(rect, egui::CornerRadius::same(5), ACCENT);
+        crate::icons::paint(ui.painter(), rect.shrink(rect.width() * 0.22), crate::icons::Icon::Logo, ACCENT_ON);
+        return;
+    };
+    let id = egui::Id::new("figcraft_original_app_icon");
+    let texture = ui.ctx().data(|data| data.get_temp::<egui::TextureHandle>(id)).unwrap_or_else(|| {
+        let texture = ui.ctx().load_texture("figcraft-original-app-icon", image.clone(), egui::TextureOptions::LINEAR);
+        ui.ctx().data_mut(|data| data.insert_temp(id, texture.clone()));
+        texture
+    });
+    ui.painter().image(texture.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
 }
 
 pub fn regular(size: f32) -> FontId {

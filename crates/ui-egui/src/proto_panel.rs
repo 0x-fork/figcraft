@@ -1048,7 +1048,7 @@ fn animation_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &In
                     let w = ui.available_width().max(200.0);
                     let (r, rr) = ui.allocate_exact_size(vec2(w, 26.0), Sense::click());
                     if rr.hovered() {
-                        ui.painter().rect_filled(r, CornerRadius::same(5), ACCENT);
+                        ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
                     }
                     let col = if rr.hovered() { Color32::WHITE } else { t.text };
                     curve(ui.painter(), Rect::from_min_size(pos2(r.min.x + 6.0, r.min.y + 4.0), vec2(28.0, 18.0)), *e, col, None);

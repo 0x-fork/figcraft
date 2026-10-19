@@ -149,7 +149,7 @@ fn main_toolbar(app: &mut FigApp, ui: &mut Ui, canvas: Rect, t: &Tokens) {
         } else if resp.hovered() {
             ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
         }
-        icons::paint(ui.painter(), r.shrink(7.0), icon, if actions_open { Color32::WHITE } else { t.icon });
+        icons::paint(ui.painter(), r.shrink(7.0), icon, if actions_open { t.accent_on } else { t.icon });
         if resp.clicked() {
             if id == "actions" {
                 crate::menus::toggle_palette(&mut app.ui);
@@ -379,7 +379,7 @@ fn tool_cell(ui: &mut Ui, t: &Tokens, r: Rect, id: impl egui::AsIdSalt, icon: Ic
         Color32::TRANSPARENT
     };
     ui.painter().rect_filled(r, CornerRadius::same(5), bg);
-    icons::paint(ui.painter(), r.shrink(7.0), icon, if active { Color32::WHITE } else { t.icon });
+    icons::paint(ui.painter(), r.shrink(7.0), icon, if active { t.accent_on } else { t.icon });
     resp
 }
 
@@ -396,7 +396,7 @@ fn done_button(ui: &mut Ui, t: &Tokens, x: f32, cy: f32, tip: &str) -> bool {
     let done = Rect::from_min_size(pos2(x + 12.0, cy - 14.0), vec2(DONE_W, 28.0));
     let resp = ui.interact(done, ui.id().with("tool_done"), Sense::click()).tip(tip);
     ui.painter().rect_filled(done, CornerRadius::same(6), if resp.hovered() { t.accent_hover } else { ACCENT });
-    ui.painter().text(done.center(), Align2::CENTER_CENTER, tr("Done"), crate::theme::semibold(11.5), Color32::WHITE);
+    ui.painter().text(done.center(), Align2::CENTER_CENTER, tr("Done"), crate::theme::semibold(11.5), t.accent_on);
     resp.clicked()
 }
 
