@@ -175,7 +175,14 @@ fn selected_layers_or_a_canvas_press_take_delete_back_from_the_pages_list() {
     key(&mut u, Key::Delete, false);
     assert_eq!(pages(&u), 2);
     assert!(u.app.session.doc().unwrap().node(a).is_none());
+    // Nothing is selected now, but the list gave up the keyboard: a second Delete keeps the page.
+    assert!(u.app.ui.pages_focus.is_none());
+    key(&mut u, Key::Delete, false);
+    assert_eq!(pages(&u), 2, "a second Delete keeps the page");
     // A press on the canvas gives Delete back to it.
+    u.button(row, true);
+    u.button(row, false);
+    assert!(u.app.ui.pages_focus.is_some());
     let p = pos2(900.0, 700.0);
     u.button(p, true);
     u.button(p, false);

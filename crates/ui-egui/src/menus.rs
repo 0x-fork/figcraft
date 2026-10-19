@@ -124,6 +124,12 @@ pub fn invoke(app: &mut FigApp, id: &str) {
                 crate::layers::delete_page(app, page);
             }
         }
+        // Otherwise the list gives up the keyboard: once Delete has taken layers selected since the
+        // click (Select all, say), a second Delete must not take the page.
+        "edit.delete" if app.ui.pages_focus.is_some() => {
+            app.ui.pages_focus = None;
+            app.run(id, json!({}));
+        }
         "file.open" => app.open_dialog(),
         "plugin.import" => crate::plugins_ui::import_dialog(app),
         "file.import" => app.import_dialog(false),
