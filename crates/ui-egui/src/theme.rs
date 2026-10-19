@@ -45,14 +45,17 @@ pub struct Tokens {
     pub focus: Color32,
 }
 
-/// FigCraft's brand green, shared with the original app icon.
-pub const ACCENT: Color32 = Color32::from_rgb(0x02, 0xDA, 0x96);
+/// FigCraft's brand green for solid surfaces.
+pub const BRAND: Color32 = Color32::from_rgb(0x02, 0xDA, 0x96);
+/// Contrast-safe green for thin selection outlines and white-on-green labels.
+/// It reaches 4.5:1 on white and 3:1 on the dark canvas.
+pub const ACCENT: Color32 = Color32::from_rgb(0x00, 0x87, 0x5F);
 /// Ink on the bright green brand surface (white would not have enough contrast).
 pub const ACCENT_ON: Color32 = Color32::from_rgb(0x07, 0x35, 0x2A);
 pub const COMPONENT: Color32 = Color32::from_rgb(0x97, 0x47, 0xFF);
 /// Handoff status badges (white text on these, in both themes).
-pub const DEV_READY: Color32 = Color32::from_rgb(0x14, 0xAE, 0x5C);
-pub const DEV_CHANGED: Color32 = Color32::from_rgb(0xD9, 0x7A, 0x06);
+pub const DEV_READY: Color32 = Color32::from_rgb(0x08, 0x7D, 0x4F);
+pub const DEV_CHANGED: Color32 = Color32::from_rgb(0xA7, 0x5B, 0x00);
 pub const DEV_COMPLETED: Color32 = Color32::from_rgb(0x6E, 0x6E, 0x73);
 
 impl Tokens {
@@ -74,7 +77,7 @@ impl Tokens {
             pressed: Color32::from_rgb(0xE6, 0xE6, 0xE6),
             field: Color32::from_rgb(0xF5, 0xF5, 0xF5),
             field_hover_border: Color32::from_rgb(0xE6, 0xE6, 0xE6),
-            accent: ACCENT,
+            accent: BRAND,
             accent_hover: Color32::from_rgb(0x00, 0xAD, 0x78),
             accent_on: ACCENT_ON,
             // Darker green keeps links and labels legible on white and selected rows.
@@ -84,7 +87,7 @@ impl Tokens {
             component: COMPONENT,
             component_row: Color32::from_rgb(0xF1, 0xE9, 0xFF),
             danger: Color32::from_rgb(0xF2, 0x48, 0x22),
-            success: Color32::from_rgb(0x14, 0xAE, 0x5C),
+            success: DEV_READY,
             warning: Color32::from_rgb(0xFF, 0xCD, 0x29),
             guide: Color32::from_rgb(0xF2, 0x48, 0x22),
             tab_bar: Color32::from_rgb(0xE8, 0xE8, 0xE8),
@@ -92,7 +95,7 @@ impl Tokens {
             shadow: Color32::from_black_alpha(40),
             menu: Color32::from_rgb(0x1E, 0x1E, 0x1E),
             menu_text: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-            menu_hover: Color32::from_rgb(0x00, 0x6B, 0x4C),
+            menu_hover: ACCENT,
             menu_dim: Color32::from_rgb(0x9A, 0x9A, 0x9A),
             focus: Color32::from_rgb(0x00, 0x7A, 0x56),
         }
@@ -115,7 +118,7 @@ impl Tokens {
             pressed: Color32::from_rgb(0x44, 0x44, 0x44),
             field: Color32::from_rgb(0x38, 0x38, 0x38),
             field_hover_border: Color32::from_rgb(0x4D, 0x4D, 0x4D),
-            accent: ACCENT,
+            accent: BRAND,
             accent_hover: Color32::from_rgb(0x52, 0xE9, 0xB7),
             accent_on: ACCENT_ON,
             accent_text: Color32::from_rgb(0x52, 0xE9, 0xB7),
@@ -124,7 +127,7 @@ impl Tokens {
             component: Color32::from_rgb(0xD2, 0x7C, 0xFF),
             component_row: Color32::from_rgb(0x3E, 0x30, 0x52),
             danger: Color32::from_rgb(0xF2, 0x48, 0x22),
-            success: Color32::from_rgb(0x14, 0xAE, 0x5C),
+            success: DEV_READY,
             warning: Color32::from_rgb(0xFF, 0xCD, 0x29),
             guide: Color32::from_rgb(0xF2, 0x48, 0x22),
             tab_bar: Color32::from_rgb(0x1E, 0x1E, 0x1E),
@@ -132,9 +135,9 @@ impl Tokens {
             shadow: Color32::from_black_alpha(90),
             menu: Color32::from_rgb(0x1E, 0x1E, 0x1E),
             menu_text: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-            menu_hover: Color32::from_rgb(0x00, 0x6B, 0x4C),
+            menu_hover: ACCENT,
             menu_dim: Color32::from_rgb(0x9A, 0x9A, 0x9A),
-            focus: ACCENT,
+            focus: BRAND,
         }
     }
 
@@ -192,7 +195,7 @@ fn visuals(t: Tokens) -> Visuals {
     v.window_corner_radius = egui::CornerRadius::same(13);
     v.menu_corner_radius = egui::CornerRadius::same(13);
     v.selection.bg_fill = t.accent.gamma_multiply(0.3);
-    v.selection.stroke = Stroke::new(1.0, t.accent);
+    v.selection.stroke = Stroke::new(1.0, ACCENT);
     v.hyperlink_color = t.accent_text;
     for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open, &mut v.widgets.noninteractive] {
         w.corner_radius = egui::CornerRadius::same(5);
@@ -208,10 +211,10 @@ fn visuals(t: Tokens) -> Visuals {
     v.widgets.hovered.bg_stroke = Stroke::new(1.0, t.field_hover_border);
     v.widgets.active.bg_fill = t.pressed;
     v.widgets.active.weak_bg_fill = t.pressed;
-    v.widgets.active.bg_stroke = Stroke::new(1.0, t.accent);
+    v.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
     v.popup_shadow = egui::Shadow { offset: [0, 4], blur: 16, spread: 0, color: t.shadow };
     v.window_shadow = egui::Shadow { offset: [0, 8], blur: 24, spread: 0, color: t.shadow };
-    v.text_cursor.stroke = Stroke::new(1.0, t.accent);
+    v.text_cursor.stroke = Stroke::new(1.0, ACCENT);
     v
 }
 
@@ -261,9 +264,9 @@ pub fn install_fonts(ctx: &Context, system: bool, cjk: u8) {
     fonts.families.insert(FontFamily::Name("semibold".into()), semi);
     // Keep the logo's typeface independent of UI text. System Archivo is used when available;
     // releases with craft-fonts embed it so the wordmark does not depend on installation.
-    let archivo = find("Archivo", "SemiBold")
-        .map(FontData::from_static)
-        .or_else(|| system.then(|| figcraft_text::find_face("Archivo", "SemiBold")).flatten().map(|face| font_data(&face)));
+    let archivo = find("Archivo", "SemiBold").map(FontData::from_static).or_else(|| {
+        system.then(|| figcraft_text::find_face("Archivo", "SemiBold")).flatten().filter(|face| face.family == "Archivo").map(|face| font_data(&face))
+    });
     let mut brand = Vec::new();
     if let Some(data) = archivo {
         fonts.font_data.insert("archivo".into(), Arc::new(data));
@@ -368,7 +371,7 @@ pub fn paint_wordmark(painter: &egui::Painter, left_center: egui::Pos2, size: f3
     let fig = painter.layout_no_wrap("Fig".into(), font.clone(), t.text);
     let fig_width = fig.size().x;
     painter.galley(egui::pos2(left_center.x, left_center.y - fig.size().y / 2.0), fig, t.text);
-    painter.text(egui::pos2(left_center.x + fig_width, left_center.y), egui::Align2::LEFT_CENTER, "Craft", font, t.accent);
+    painter.text(egui::pos2(left_center.x + fig_width, left_center.y), egui::Align2::LEFT_CENTER, "Craft", font, t.accent_text);
 }
 
 /// Paint the owner's original chameleon icon from the existing app asset.
@@ -379,7 +382,7 @@ pub fn paint_app_icon(ui: &egui::Ui, rect: egui::Rect) {
         Some(egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw()))
     });
     let Some(image) = image else {
-        ui.painter().rect_filled(rect, egui::CornerRadius::same(5), ACCENT);
+        ui.painter().rect_filled(rect, egui::CornerRadius::same(5), BRAND);
         crate::icons::paint(ui.painter(), rect.shrink(rect.width() * 0.22), crate::icons::Icon::Logo, ACCENT_ON);
         return;
     };

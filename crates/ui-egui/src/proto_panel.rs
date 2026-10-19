@@ -763,7 +763,7 @@ fn trigger_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &Inte
                 let id = capture_id().with("field");
                 ui.painter().rect_filled(r, CornerRadius::same(5), t.field);
                 if cap {
-                    ui.painter().rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, t.accent), StrokeKind::Inside);
+                    ui.painter().rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, ACCENT), StrokeKind::Inside);
                     ui.memory_mut(|m| m.request_focus(id));
                     let _ = ui.interact(r, id, Sense::focusable_noninteractive());
                     let pressed = ui.input(|i| {

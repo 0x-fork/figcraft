@@ -2223,7 +2223,7 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
         }
         let on = (*act == BarAction::Comments && p.view.comments) || (*act == BarAction::Inspect && p.view.inspect);
         if on {
-            ui.painter().rect_filled(br, CornerRadius::same(5), ACCENT);
+            ui.painter().rect_filled(br, CornerRadius::same(5), t.accent);
         } else if resp.hovered() {
             ui.painter().rect_filled(br, CornerRadius::same(5), hover);
         }

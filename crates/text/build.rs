@@ -65,8 +65,8 @@ fn craft_fonts(dir: &std::path::Path, manifest_rel: &str) -> Result<String, Stri
         if cjk && std::env::var_os("FIGCRAFT_EMBED_CJK").is_none() {
             continue;
         }
-        // Web builds have a size budget: UI fonts, the FigCraft wordmark, and optionally CJK.
-        if wasm && *family != "Inter" && *family != "Archivo" && !cjk {
+        // Web builds have a size budget: UI fonts, only the SemiBold wordmark, and optionally CJK.
+        if wasm && *family != "Inter" && !(*family == "Archivo" && *style == "SemiBold") && !cjk {
             continue;
         }
         let path = dir.join(file).canonicalize().map_err(|e| format!("{file}: {e}"))?;

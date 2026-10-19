@@ -217,7 +217,7 @@ fn number_field_impl(
     let hovered = field_resp.hovered() || lead_resp.hovered() || editing.is_some();
     ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
     if editing.is_some() {
-        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.accent), StrokeKind::Inside);
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, crate::theme::ACCENT), StrokeKind::Inside);
     } else if hovered {
         ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
     }
@@ -507,7 +507,7 @@ fn text_field_in(ui: &mut Ui, id: Id, value: &str, rect: Rect, placeholder: &str
     a11y::text(&resp, name, value);
     ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
     if editing.is_some() {
-        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.accent), StrokeKind::Inside);
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, crate::theme::ACCENT), StrokeKind::Inside);
     } else if resp.hovered() {
         ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
     }
@@ -570,7 +570,7 @@ pub fn text_input(ui: &mut Ui, id: Id, text: &mut String, width: f32, hint: &str
     ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
     let r = field_editor(ui, rect, id, text, hint);
     if r.has_focus() {
-        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.accent), StrokeKind::Inside);
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, crate::theme::ACCENT), StrokeKind::Inside);
     } else if ui.rect_contains_pointer(rect) {
         ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
     }
@@ -992,7 +992,7 @@ pub fn radio(ui: &mut Ui, on: bool, label: &str) -> bool {
         ui.painter().circle_filled(c, 7.0, t.accent);
         ui.painter().circle_filled(c, 2.5, t.accent_on);
     } else {
-        ui.painter().circle_stroke(c, 6.5, Stroke::new(1.0, if resp.hovered() { t.accent } else { t.border_strong }));
+        ui.painter().circle_stroke(c, 6.5, Stroke::new(1.0, if resp.hovered() { crate::theme::ACCENT } else { t.border_strong }));
     }
     ui.painter().text(pos2(rect.min.x + 22.0, rect.center().y), Align2::LEFT_CENTER, label, regular(11.0), t.text);
     resp.clicked()
@@ -1046,7 +1046,7 @@ pub fn text_field_inline(ui: &mut Ui, id: Id, value: &str, rect: Rect, font: egu
     match buf {
         Some(mut text) => {
             ui.painter().rect_filled(rect.expand(2.0), CornerRadius::same(4), t.panel);
-            ui.painter().rect_stroke(rect.expand(2.0), CornerRadius::same(4), Stroke::new(1.0, t.accent), StrokeKind::Inside);
+            ui.painter().rect_stroke(rect.expand(2.0), CornerRadius::same(4), Stroke::new(1.0, crate::theme::ACCENT), StrokeKind::Inside);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
             let r = crate::bidi::single_line(&mut child, te_id, &mut text, font, rect.width());
             a11y::own_focus(&r);
