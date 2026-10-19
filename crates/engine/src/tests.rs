@@ -376,6 +376,7 @@ fn pointer_draw_move_resize() {
     assert_eq!(s.selection(), vec![r]);
 }
 
+/// No command panics on junk parameters.
 #[test]
 fn every_command_survives_junk_params() {
     // A junk-parameter sweep: no command may panic (guard turns panics into Internal errors,
@@ -437,6 +438,8 @@ fn every_command_survives_junk_params() {
                 | "file.placeImage"
                 | "image.place"
                 | "file.revert"
+                // Takes no params and walks the font folders: one walk per junk is slow.
+                | "text.rescanFonts"
         ) {
             continue;
         }
