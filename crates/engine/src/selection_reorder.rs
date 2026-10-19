@@ -1,7 +1,6 @@
 //! Geometry for reordering a smart selection. Only regular, non-overlapping rows, columns
 //! and complete top-left-aligned grids have unambiguous insertion slots.
-//! Behavior reference: https://help.figma.com/hc/en-us/articles/360040450233
-//! (public documentation only; multi-item marking and irregular grids remain out of scope).
+//! Marking several items and irregular grids are out of scope.
 use figcraft_doc::{Document, NodeId};
 use figcraft_geom::{Point, Rect};
 
