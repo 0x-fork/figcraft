@@ -860,7 +860,7 @@ fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimit
     let Ok(peer) = stream.peer_addr().map(|a| a.ip().to_canonical()) else { return };
     let proxied = limits.trusted_proxy.is_some_and(|p| p.to_canonical() == peer);
     let Ok((rd, wr, sock)) = Duplex::split(stream, None) else { return };
-    let write_cfg = config(limits.max_server_message);
+    let cfg = config(limits.max_client_message);
     let mut forwarded = None;
     // The handshake callback's type is tungstenite's (its error is an HTTP response).
     #[allow(clippy::result_large_err)]
@@ -904,16 +904,14 @@ fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimit
         max_block: limits.max_queued_block,
         max_all: limits.max_queued_total,
     };
-    let writer = match sock
-        .try_clone()
-        .map(|s| spawn("live-write", move || write_loop(WebSocket::from_raw_socket(wr, Role::Server, Some(write_cfg)), &rx, &s)))
-    {
-        Ok(Ok(t)) => t,
-        _ => {
-            shutdown(&sock);
-            return;
-        }
-    };
+    let writer =
+        match sock.try_clone().map(|s| spawn("live-write", move || write_loop(WebSocket::from_raw_socket(wr, Role::Server, Some(cfg)), &rx, &s))) {
+            Ok(Ok(t)) => t,
+            _ => {
+                shutdown(&sock);
+                return;
+            }
+        };
     let end = |why: Option<&str>| {
         if let Some(why) = why {
             refuse(&out, why);
