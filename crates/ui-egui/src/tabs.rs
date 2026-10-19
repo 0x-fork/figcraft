@@ -2,8 +2,6 @@
 //! the title bar: its empty space drags the window (double-click maximises), and it carries the
 //! window buttons; the window's edges resize it.
 
-use std::collections::{HashMap, HashSet};
-
 use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::json;
 
@@ -17,98 +15,40 @@ pub const HEIGHT: f32 = 40.0;
 const MIN_TAB_WIDTH: f32 = 96.0;
 const OVERFLOW_WIDTH: f32 = 32.0;
 const OPEN_TIME: f64 = 0.18;
-const CLOSE_TIME: f64 = 0.24;
 
-#[derive(Clone)]
-struct TabSnapshot {
-    name: String,
-    rect: Rect,
-    active: bool,
-}
-
-#[derive(Clone)]
-struct ClosingTab {
-    snapshot: TabSnapshot,
-    started: f64,
-}
-
+/// Which tabs were open last frame and when the newly opened ones appeared. It is updated in place
+/// in egui's memory; it only allocates when the set of tabs changes.
 #[derive(Clone, Default)]
 struct TabMotion {
     initialized: bool,
-    known: HashSet<u64>,
-    opening: HashMap<u64, f64>,
-    last_visible: HashMap<u64, TabSnapshot>,
-    closing: Vec<ClosingTab>,
+    known: Vec<u64>,
+    opening: Vec<(u64, f64)>,
 }
 
 impl TabMotion {
-    /// Track tabs added or removed since the previous frame and expire their animations.
-    fn begin_frame(&mut self, current: HashSet<u64>, now: f64, reduce_motion: bool) {
-        if self.initialized && !reduce_motion {
-            for uid in current.difference(&self.known) {
-                self.opening.insert(*uid, now);
-            }
-            for uid in self.known.difference(&current) {
-                if let Some(snapshot) = self.last_visible.get(uid) {
-                    self.closing.push(ClosingTab { snapshot: snapshot.clone(), started: now });
+    /// Track tabs added since the previous frame and expire their animations.
+    fn begin_frame(&mut self, current: impl Iterator<Item = u64> + Clone, now: f64, reduce_motion: bool) {
+        if !self.known.iter().copied().eq(current.clone()) {
+            if self.initialized && !reduce_motion {
+                for uid in current.clone().filter(|uid| !self.known.contains(uid)) {
+                    self.opening.push((uid, now));
                 }
             }
+            self.known = current.collect();
         }
         self.initialized = true;
-        self.known = current;
-        self.last_visible.clear();
         if reduce_motion {
             self.opening.clear();
-            self.closing.clear();
         } else {
-            self.opening.retain(|uid, started| self.known.contains(uid) && now - *started < OPEN_TIME);
-            self.closing.retain(|tab| now - tab.started < CLOSE_TIME);
+            let known = &self.known;
+            self.opening.retain(|(uid, started)| known.contains(uid) && now - *started < OPEN_TIME);
         }
-    }
-
-    /// Return the entering tab's progress, or full width when it is not animating.
-    fn open_progress(&self, uid: u64, now: f64) -> f32 {
-        self.opening.get(&uid).map_or(1.0, |started| ((now - started) / OPEN_TIME).clamp(0.0, 1.0) as f32)
-    }
-
-    /// Keep requesting frames while an opening or closing tab remains visible.
-    fn is_animating(&self) -> bool {
-        !self.opening.is_empty() || !self.closing.is_empty()
     }
 }
 
-/// Paint removed tabs as fading snapshots below the strip until their exit motion ends.
-fn paint_closing_tabs(ui: &Ui, t: &Tokens, motion: &TabMotion, now: f64) {
-    if motion.closing.is_empty() {
-        return;
-    }
-    let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, ui.id().with("closing_tabs")));
-    for tab in &motion.closing {
-        let progress = ((now - tab.started) / CLOSE_TIME).clamp(0.0, 1.0) as f32;
-        let opacity = (1.0 - progress).powi(2);
-        let r = tab.snapshot.rect.translate(vec2(0.0, 40.0 * progress * progress));
-        painter.rect_filled(r, CornerRadius::same(4), if tab.snapshot.active { t.tab_active } else { t.hover }.linear_multiply(opacity));
-        icons::paint(
-            &painter,
-            Rect::from_center_size(pos2(r.min.x + 18.0, r.center().y), vec2(14.0, 14.0)),
-            Icon::Logo,
-            crate::theme::ACCENT.linear_multiply(opacity),
-        );
-        crate::bidi::paint_name(
-            &painter,
-            pos2(r.min.x + 32.0, r.center().y),
-            &tab.snapshot.name,
-            regular(12.0),
-            t.text.linear_multiply(opacity),
-            (r.width() - 64.0).max(0.0),
-        );
-        icons::paint(
-            &painter,
-            Rect::from_center_size(pos2(r.max.x - 16.0, r.center().y), vec2(10.0, 10.0)),
-            Icon::Close,
-            t.icon_secondary.linear_multiply(opacity),
-        );
-    }
+/// The entering tab's progress among `opening` (from [`TabMotion`]), or 1 when it is not animating.
+fn open_progress(opening: &[(u64, f64)], uid: u64, now: f64) -> f32 {
+    opening.iter().find(|(u, _)| *u == uid).map_or(1.0, |(_, started)| ((now - started) / OPEN_TIME).clamp(0.0, 1.0) as f32)
 }
 
 struct TabLayout {
@@ -183,9 +123,14 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
         let document_tabs: Vec<usize> = app.session.docs.iter().enumerate().filter_map(|(i, d)| app.shows(d.uid).then_some(i)).collect();
         let now = ui.input(|input| input.time);
         let motion_id = ui.id().with("tab_motion");
-        let mut motion = ui.ctx().data_mut(|data| data.get_temp::<TabMotion>(motion_id).unwrap_or_default());
-        let current_uids = document_tabs.iter().filter_map(|&i| app.session.docs.get(i).map(|d| d.uid)).collect();
-        motion.begin_frame(current_uids, now, app.reduce_motion());
+        let current_uids = document_tabs.iter().filter_map(|&i| app.session.docs.get(i).map(|d| d.uid));
+        let reduce_motion = app.reduce_motion();
+        // Cloning `opening` is free while nothing animates (an empty Vec).
+        let opening = ui.ctx().data_mut(|data| {
+            let motion = data.get_temp_mut_or_default::<TabMotion>(motion_id);
+            motion.begin_frame(current_uids, now, reduce_motion);
+            motion.opening.clone()
+        });
         let preferred: Vec<f32> = document_tabs
             .iter()
             .map(|&i| {
@@ -217,7 +162,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
             let i = document_tabs[layout.first + slot];
             let d = &app.session.docs[i];
             let active = i == app.session.active && !app.ui.home && app.ui.present.is_none();
-            let name = d.doc.name.clone();
+            let name = &d.doc.name;
             // In a live session: a mark after the name says whether others get in.
             let live = live_mark(app, d.uid);
             let mark_w = if live.is_some() { 18.0 } else { 0.0 };
@@ -250,13 +195,13 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
                 });
             }
             let label = match live {
-                Some(true) => trf("{name}, in a live session", &[("name", &name)]),
-                Some(false) => trf("{name}, online, open only to you", &[("name", &name)]),
+                Some(true) => trf("{name}, in a live session", &[("name", name)]),
+                Some(false) => trf("{name}, online, open only to you", &[("name", name)]),
                 None => name.clone(),
             };
             let resp = if live.is_some() { resp.on_hover_text(&label) } else { resp };
             crate::a11y::tab(&resp, &label, active);
-            let progress = motion.open_progress(d.uid, now);
+            let progress = open_progress(&opening, d.uid, now);
             let paint_r = r.translate(vec2(-28.0 * (1.0 - progress).powi(2), 0.0));
             let painter = ui.painter().with_clip_rect(r);
             if active {
@@ -274,7 +219,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
             let shown = crate::bidi::paint_name(
                 &painter,
                 pos2(paint_r.min.x + 32.0, paint_r.center().y),
-                &name,
+                name,
                 regular(12.0),
                 t.text.linear_multiply(progress),
                 (w - mark_w - if dirty { 72.0 } else { 60.0 }).max(0.0),
@@ -294,7 +239,6 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
                 }
                 icons::paint(&painter, cr.shrink(4.0), Icon::Close, t.icon_secondary.linear_multiply(progress));
             }
-            motion.last_visible.insert(d.uid, TabSnapshot { name, rect: r, active });
             if cresp.clicked() {
                 close = Some(i);
             }
@@ -323,15 +267,13 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
                 ui.painter().rect_filled(r, CornerRadius::ZERO, t.hover);
             }
             icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(14.0, 14.0)), Icon::Chevron, t.icon);
-            egui::Popup::menu(&resp).style(crate::right::menu_style).show(|ui| {
-                ui.set_min_width(180.0);
+            crate::right::menu_popup(&resp).show(|ui| {
                 egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
-                    for (slot, &i) in document_tabs.iter().enumerate() {
-                        if (layout.first..layout.first + layout.widths.len()).contains(&slot) {
-                            continue;
-                        }
-                        let d = &app.session.docs[i];
-                        if ui.button(&d.doc.name).clicked() {
+                    for &i in &document_tabs {
+                        let Some(d) = app.session.docs.get(i) else { continue };
+                        let on = i == app.session.active && !app.ui.home && app.ui.present.is_none();
+                        let label = if d.is_dirty() { format!("{} •", d.doc.name) } else { d.doc.name.clone() };
+                        if crate::right::menu_check(ui, on, &label, "") {
                             switch = Some(i);
                             ui.close();
                         }
@@ -452,13 +394,9 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
                 app.ui.present_uid = None;
             }
         }
-        paint_closing_tabs(ui, &t, &motion, now);
-        if motion.is_animating() {
+        if !opening.is_empty() {
             ui.ctx().request_repaint();
         }
-        ui.ctx().data_mut(|data| data.insert_temp(motion_id, motion));
-        let _ = Color32::TRANSPARENT;
-        let _ = Align2::LEFT_TOP;
     });
 }
 
@@ -555,9 +493,8 @@ pub fn resize_edges(ctx: &egui::Context) {
 
 #[cfg(test)]
 mod layout_tests {
-    use super::{MIN_TAB_WIDTH, OVERFLOW_WIDTH, TabMotion, TabSnapshot, tab_drop_position, tab_layout};
+    use super::{MIN_TAB_WIDTH, OPEN_TIME, OVERFLOW_WIDTH, TabMotion, open_progress, tab_drop_position, tab_layout};
     use egui::{Rect, pos2};
-    use std::collections::HashSet;
 
     #[test]
     fn tabs_shrink_to_fit_before_overflowing() {
@@ -590,18 +527,16 @@ mod layout_tests {
     }
 
     #[test]
-    fn new_tabs_animate_and_closed_tabs_fall_unless_motion_is_reduced() {
+    fn new_tabs_animate_unless_motion_is_reduced() {
         let mut motion = TabMotion::default();
-        motion.begin_frame(HashSet::from([1]), 0.0, false);
-        assert!(!motion.is_animating());
-        let snapshot = TabSnapshot { name: "First".into(), rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(120.0, 40.0)), active: false };
-        motion.last_visible.insert(1, snapshot.clone());
-        motion.begin_frame(HashSet::from([1, 2]), 1.0, false);
-        assert_eq!(motion.open_progress(2, 1.0), 0.0);
-        motion.last_visible.insert(1, snapshot);
-        motion.begin_frame(HashSet::from([2]), 1.05, false);
-        assert_eq!(motion.closing.len(), 1);
-        motion.begin_frame(HashSet::from([2]), 1.06, true);
-        assert!(!motion.is_animating());
+        motion.begin_frame([1].into_iter(), 0.0, false);
+        assert!(motion.opening.is_empty(), "the tabs open at start-up don't animate");
+        motion.begin_frame([1, 2].into_iter(), 1.0, false);
+        assert_eq!(open_progress(&motion.opening, 2, 1.0), 0.0);
+        assert_eq!(open_progress(&motion.opening, 1, 1.0), 1.0);
+        motion.begin_frame([1, 2].into_iter(), 1.0 + 2.0 * OPEN_TIME, false);
+        assert!(motion.opening.is_empty(), "the animation ends");
+        motion.begin_frame([1, 2, 3].into_iter(), 2.0, true);
+        assert!(motion.opening.is_empty(), "Reduce motion opens tabs at once");
     }
 }
