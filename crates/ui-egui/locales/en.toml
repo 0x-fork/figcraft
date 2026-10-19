@@ -8,7 +8,6 @@
 name = "English"
 
 [ui]
-"Reorder selection" = "Reorder selection"
 "% of all commits" = "% of all commits"
 "(no longer published)" = "(no longer published)"
 "({n} warnings: some entries were skipped)" = { one = "({n} warning: some entries were skipped)", other = "({n} warnings: some entries were skipped)" }
@@ -1101,6 +1100,7 @@ name = "English"
 "Rename on the server…" = "Rename on the server…"
 "Rename page" = "Rename page"
 "Rename to" = "Rename to"
+"Reorder selection" = "Reorder selection"
 "Replace all" = "Replace all"
 "Replace mixed export settings" = "Replace mixed export settings"
 "Replace with" = "Replace with"
