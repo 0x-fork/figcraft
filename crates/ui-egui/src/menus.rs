@@ -118,7 +118,7 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         // removes that interaction, not the layer (#767).
         "edit.delete" if app.ui_context.clone().is_some_and(|ctx| crate::proto_panel::delete_selected_interaction(app, &ctx)) => {}
         // After a click in the Pages list, with no layers selected, it deletes the current page (#859).
-        "edit.delete" if app.ui.pages_focus && app.session.selection().is_empty() => {
+        "edit.delete" if app.ui.pages_focus.is_some() && app.session.selection().is_empty() => {
             if let Ok(page) = app.session.page() {
                 crate::layers::delete_page(app, page);
             }

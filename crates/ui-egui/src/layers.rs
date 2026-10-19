@@ -199,7 +199,7 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     }
     icons::paint(ui.painter(), ar.shrink(5.0), Icon::Plus, t.icon);
     if aresp.clicked() {
-        app.ui.pages_focus = true;
+        app.ui.pages_focus = app.session.ds().ok().map(|d| d.uid);
         app.run("page.add", json!({}));
     }
     if !app.ui.pages_open {
@@ -209,6 +209,7 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     let pages: Vec<(NodeId, String, bool)> =
         ds.doc.pages.iter().filter_map(|p| ds.doc.node(*p).map(|n| (*p, n.name.clone(), ds.doc.is_divider(*p)))).collect();
     let cur = ds.page;
+    let uid = ds.uid;
     let sel = ds.selection.clone();
     let mut select = None;
     let mut rename_done: Option<(NodeId, String)> = None;
@@ -258,7 +259,7 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
             }
             if resp.clicked() && !divider {
                 select = Some(id);
-                app.ui.pages_focus = true;
+                app.ui.pages_focus = Some(uid);
                 app.ui.layers_focus = false;
             }
             if resp.double_clicked() {
@@ -1074,7 +1075,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
     }
     if let Some((id, m)) = clicked {
         app.ui.layers_focus = true;
-        app.ui.pages_focus = false;
+        app.ui.pages_focus = None;
         let order: Vec<NodeId> = rows.iter().map(|r| r.id).collect();
         let pos = |x: NodeId| order.iter().position(|o| *o == x);
         let anchor = app.ui.layer_anchor.filter(|a| sel.contains(a)).and_then(pos);

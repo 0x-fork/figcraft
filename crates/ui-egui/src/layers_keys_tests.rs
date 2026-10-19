@@ -169,7 +169,7 @@ fn selected_layers_or_a_canvas_press_take_delete_back_from_the_pages_list() {
     u.button(row, true);
     u.button(row, false);
     assert_eq!(u.app.session.page().unwrap(), first);
-    assert!(u.app.ui.pages_focus);
+    assert!(u.app.ui.pages_focus.is_some());
     // Layers selected after the click (Select all, say): Delete deletes them, not the page.
     u.app.run("select.set", json!({"ids": [a]}));
     key(&mut u, Key::Delete, false);
@@ -179,7 +179,7 @@ fn selected_layers_or_a_canvas_press_take_delete_back_from_the_pages_list() {
     let p = pos2(900.0, 700.0);
     u.button(p, true);
     u.button(p, false);
-    assert!(!u.app.ui.pages_focus);
+    assert!(u.app.ui.pages_focus.is_none());
     u.app.run("select.none", json!({}));
     key(&mut u, Key::Delete, false);
     assert_eq!(pages(&u), 2, "Delete with nothing selected on the canvas deletes no page");
