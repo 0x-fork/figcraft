@@ -1171,15 +1171,11 @@ impl TextLayout {
     pub fn caret(&self, index: usize) -> (f64, usize) {
         for (li, line) in self.lines.iter().enumerate() {
             let last_line = li + 1 == self.lines.len();
+            // A caret at a line's end belongs to the next line, whether the line wraps or ends with a
+            // line break (before the break it is still on this line: past its glyphs).
             let in_line = index >= line.char_start && (index < line.char_end || (last_line && index <= line.char_end));
-            // A caret at the end of a soft-wrapped line belongs to the next line.
-            if !(in_line || index == line.char_end && line.break_after && !last_line) {
+            if !in_line {
                 continue;
-            }
-            if index == line.char_end && line.break_after && !last_line {
-                // Before the line break: end of this line.
-                let x = self.line_end_x(line);
-                return (x, li);
             }
             let gl = self.glyphs.get(line.glyph_start..line.glyph_end).unwrap_or(&[]);
             for g in gl {
@@ -1303,8 +1299,7 @@ impl TextLayout {
                 out.extend(Self::mixed_selection(gl, a, b, line));
                 continue;
             }
-            // From the line's own start: `caret(char_start)` after a hard break is the end of the
-            // line above.
+            // From the line's own start.
             let x0 = if a <= line.char_start { self.line_start_x(line) } else { self.caret(a).0 };
             let x1 = if b >= line.char_end {
                 // The last line has no paragraph break to show, so it ends at its glyphs.
