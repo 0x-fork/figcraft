@@ -923,12 +923,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
                     let a = w * Point::new(r.x0, r.y0);
                     let b = w * Point::new(r.x1, r.y1);
                     let (sa, sb) = (app.to_screen(a.x, a.y), app.to_screen(b.x, b.y));
-                    // The square grid and an Auto-width line draw one-pixel hairlines; a filled
-                    // band (a column/row with a set width) is painted as a rectangle.
-                    if g.kind == figcraft_doc::GridKind::Grid
-                        || (r.x0 - r.x1).abs() < 1e-9
-                        || (r.y0 - r.y1).abs() < 1e-9
-                    {
+                    if g.kind == figcraft_doc::GridKind::Grid {
                         painter.line_segment([sa, sb], stroke(col, 1.0));
                     } else {
                         painter.rect_filled(Rect::from_two_pos(sa, sb), CornerRadius::ZERO, col);
