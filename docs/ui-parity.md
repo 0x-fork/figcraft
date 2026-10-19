@@ -105,7 +105,7 @@ interaction feel not yet compared.
 | Frames and sections drawn around layers take those fully inside; sections never drop into frames | done | not in auto layout frames |
 | Resizing a section leaves its contents in place | done | |
 | Masks: what a mask hides doesn't take clicks; a mask group's box is the mask's | done | |
-| Layout grids (Ctrl+G) | done | columns, rows and grid; Auto line width (0 draws a one-pixel hairline); stretch, left, centre, right; Auto count; several per frame; styles; not shown or snapped on a rotated frame; a nested frame's grids snap but only top-level frames draw them |
+| Layout grids (Ctrl+G) | done | columns, rows and grid; Auto line width (0 draws a one-pixel hairline at each band's start, spaced by the gutter; a stretched grid computes its width and shows Auto dim); stretch, left, centre, right; Auto count; several per frame; styles; not shown or snapped on a rotated frame; a nested frame's grids snap but only top-level frames draw them |
 | Gamut warnings for Display P3 files | done | colour picker note; View ▸ Soft-proof sRGB stripes what sRGB can't show (the canvas itself is sRGB) |
 | Gradient and padding/gap handles on the canvas | done | |
 | Hover outline, selection colours, handle sizes | done | measured from UI3 screenshots |
@@ -172,7 +172,7 @@ in the table. `crates/ui-egui/src/shortcut_keys_tests.rs` drives the keys a look
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-19 | minor | Layout grids: columns and rows take an Auto line width (0 or “Auto”), drawing a one-pixel hairline down each band's middle; the width field shows “Auto” and typing it clears the width. The align menu keeps a zero width as Auto instead of forcing 60 px. Regression test added. |
+| 2026-10-19 | minor | Layout grids: columns and rows take an Auto line width (0, or typing the word for Auto), drawing a one-pixel hairline at each band's start with the gutter as the step; the width field shows “Auto” and typing it clears the width; a stretched grid shows the width dim and computed. The word is taken only by the fields where 0 is Auto (the grid's width and count), not by an auto layout's gap or a prototype overlay's offset. The align menu keeps a zero width as Auto instead of forcing 60 px. Regression tests in the layout and field suites. |
 | 2026-10-18 | minor | A rename (layers double-click, F2, File ▸ Rename, a page) selects the whole name in the frame its field first draws, so the first key replaces the name instead of being appended. Checked in the app on Windows over the control channel |
 | 2026-10-17 | minor | Escape or Enter while the pen draws ends the path and keeps its vector in edit mode with the pen, so the next path is drawn into the same layer (unconnected); another Escape leaves edit mode (#760). Entering edit mode on a layer that already is a vector no longer records an empty undo step. Numbers unchanged |
 | 2026-10-17 | minor | Text layers keep the platform IME on for every frame of an edit, not only frames with input (an idle frame turned it off and macOS dropped each composition, #747); the candidate window opens at the caret instead of the canvas corner; keys pressed while composing go to the IME |

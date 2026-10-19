@@ -451,13 +451,21 @@ fn grid_hostile_values() {
 #[test]
 fn grid_lines_auto_width_columns_rows_hairline() {
     // Columns with Auto width (size 0, non-stretched) draw one-pixel hairlines at each band's
-    // middle, like the square grid; a set width draws filled bands.
+    // start, like the square grid; a set width draws filled bands.
     let g = LayoutGrid { kind: GridKind::Columns, align: GridAlign::Min, count: 3, size: 0.0, gutter: 10.0, offset: 0.0, ..LayoutGrid::default() };
     let lines = grid_lines(&g, 300.0, 50.0);
     assert_eq!(lines.len(), 3, "three hairlines");
     for r in &lines {
         assert!((r.x0 - r.x1).abs() < 1e-9 && (r.y0 - r.y1).abs() > 1.0, "a vertical hairline: {r:?}");
     }
+    // Auto has no width of its own, so the gutter alone is the step between the lines (no band
+    // width hidden in it).
+    let xs: Vec<f64> = lines.iter().map(|r| r.x0).collect();
+    assert_eq!(xs, [0.0, 10.0, 20.0], "Auto steps by the gutter: {xs:?}");
+    // Auto count: as many hairlines as the gutter fits.
+    let g = LayoutGrid { kind: GridKind::Columns, align: GridAlign::Min, count: 0, size: 0.0, gutter: 10.0, offset: 0.0, ..LayoutGrid::default() };
+    let lines = grid_lines(&g, 300.0, 50.0);
+    assert_eq!(lines.len(), 31, "300 wide, 10 apart: 31 lines");
     // A positive width draws filled bands again.
     let g = LayoutGrid { kind: GridKind::Columns, align: GridAlign::Min, count: 3, size: 8.0, gutter: 10.0, offset: 0.0, ..LayoutGrid::default() };
     let lines = grid_lines(&g, 300.0, 50.0);
@@ -470,4 +478,10 @@ fn grid_lines_auto_width_columns_rows_hairline() {
     for r in &lines {
         assert!((r.y0 - r.y1).abs() < 1e-9 && (r.x0 - r.x1).abs() > 1.0, "a horizontal hairline: {r:?}");
     }
+    // A stretched grid works its bands out from the frame whatever its width says.
+    let g =
+        LayoutGrid { kind: GridKind::Columns, align: GridAlign::Stretch, count: 4, size: 0.0, gutter: 10.0, offset: 0.0, ..LayoutGrid::default() };
+    let lines = grid_lines(&g, 400.0, 50.0);
+    assert!(lines.iter().all(|r| (r.x1 - r.x0) > 1.0), "stretch draws bands, not hairlines: {lines:?}");
+    assert!((lines[0].x0 - 0.0).abs() < 1e-9 && (lines[3].x1 - 400.0).abs() < 1e-9, "the bands fill the frame");
 }

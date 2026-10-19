@@ -1190,8 +1190,9 @@ pub enum GridAlign {
 pub struct LayoutGrid {
     pub kind: GridKind,
     /// Grid: cell size. Fixed (not stretched) columns/rows: their width/height. 0 (or Auto) draws
-    /// a one-pixel hairline like the square grid; a positive value draws a band that many
-    /// document units wide.
+    /// a one-pixel hairline at each band's start, like the square grid, and the bands step by
+    /// `gutter` alone (there is no width to add); a positive value draws a band that many document
+    /// units wide. A stretched grid works its bands out from the frame and ignores `size`.
     pub size: f64,
     /// Columns/rows: how many (0: Auto, as many fixed-size ones as fit; a stretched grid has 1).
     pub count: u32,

@@ -2056,8 +2056,7 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
             // 0 is Auto for fixed-size columns (rows); a stretched grid has at least one.
             let count = (!auto_count(g)).then(|| f64::from(g.count.max(1)));
             let key = format!("layoutGrids/{i}/count");
-            let e =
-                crate::variable_ui::number_field_or(app, ui, ids, &key, Id::new(("grid_field", "count", i)), count, col, tr("Auto"), Lead::None, "");
+            let e = crate::variable_ui::number_field_auto(app, ui, ids, &key, Id::new(("grid_field", "count", i)), count, col, Lead::None, "");
             app.field_run(e, "node.set", |v| {
                 set(&|x| x.count = if x.align == GridAlign::Stretch { v.round().clamp(1.0, 1000.0) } else { v.round().clamp(0.0, 1000.0) } as u32)
             });
@@ -2069,8 +2068,9 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
             menu_popup(&resp).show(|ui| {
                 for (k, (name, a)) in names.iter().zip(aligns).enumerate() {
                     if menu_check(ui, k == cur, name, "") {
-                        // Keep Auto (size 0); only lift stale sub-pixel sizes (0 < size < 1) to a
-                        // sensible band, so a width typed as 0 stays Auto.
+                        // Auto (size 0) stays Auto whatever the alignment: a stretched grid works
+                        // its bands out from the frame, and a fixed one draws hairlines. Only a
+                        // stale sub-pixel width (older files) is lifted to a visible band.
                         app.run(
                             "node.set",
                             set(&|x| {
@@ -2089,27 +2089,53 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
             });
         });
         let span = if cols { tr("Width") } else { tr("Height") };
+        // 0 is Auto: no band, a one-pixel hairline at each band's start. A stretched grid works
+        // its bands out from the frame instead, so its width is not set at all.
+        let span_value = (g.size > 0.0).then_some(g.size);
         match g.align {
             GridAlign::Stretch => {
-                widgets::sublabels(ui, tr("Margin"), Some(tr("Gutter")));
+                widgets::sublabels(ui, span, Some(tr("Margin")));
                 row(ui, 32.0, |ui| {
+                    // The frame, divided by the count: shown as Auto and not editable.
+                    widgets::number_field_disabled(ui, Id::new(("grid_field", "size", i)), Lead::Named(span), tr("Auto"), col);
                     field(app, ui, "offset", g.offset, &offset);
-                    field(app, ui, "gutter", g.gutter, &gutter);
                 });
+                widgets::sublabels(ui, tr("Gutter"), None);
+                row(ui, 32.0, |ui| field(app, ui, "gutter", g.gutter, &gutter));
             }
             GridAlign::Center => {
                 widgets::sublabels(ui, span, Some(tr("Gutter")));
                 row(ui, 32.0, |ui| {
-                    let e = crate::variable_ui::number_field_or(app, ui, ids, &format!("layoutGrids/{i}/size"), Id::new(("grid_field", "size", i)), Some(g.size), col, tr("Auto"), Lead::None, "");
-                    app.field_run(e, "node.set", |v| set(&|x| x.size = v.max(0.0)));
+                    let we = crate::variable_ui::number_field_auto(
+                        app,
+                        ui,
+                        ids,
+                        &format!("layoutGrids/{i}/size"),
+                        Id::new(("grid_field", "size", i)),
+                        span_value,
+                        col,
+                        Lead::None,
+                        "",
+                    );
+                    app.field_run(we, "node.set", |v| set(&|x| x.size = v.max(0.0)));
                     field(app, ui, "gutter", g.gutter, &gutter);
                 });
             }
             GridAlign::Min | GridAlign::Max => {
                 widgets::sublabels(ui, span, Some(tr("Offset")));
                 row(ui, 32.0, |ui| {
-                    let e = crate::variable_ui::number_field_or(app, ui, ids, &format!("layoutGrids/{i}/size"), Id::new(("grid_field", "size", i)), Some(g.size), col, tr("Auto"), Lead::None, "");
-                    app.field_run(e, "node.set", |v| set(&|x| x.size = v.max(0.0)));
+                    let we = crate::variable_ui::number_field_auto(
+                        app,
+                        ui,
+                        ids,
+                        &format!("layoutGrids/{i}/size"),
+                        Id::new(("grid_field", "size", i)),
+                        span_value,
+                        col,
+                        Lead::None,
+                        "",
+                    );
+                    app.field_run(we, "node.set", |v| set(&|x| x.size = v.max(0.0)));
                     field(app, ui, "offset", g.offset, &offset);
                 });
                 widgets::sublabels(ui, tr("Gutter"), None);

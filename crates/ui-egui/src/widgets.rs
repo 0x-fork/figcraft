@@ -37,6 +37,25 @@ impl Lead<'_> {
     }
 }
 
+/// What a number field shows when it has no single value, and whether that word types 0.
+#[derive(Clone, Copy)]
+pub enum Empty<'a> {
+    /// Dim text that is only a label ("Mixed", or "Auto" where 0 means something else).
+    Text(&'a str),
+    /// Auto, in the UI's language: 0 is the field's automatic value, so the word types 0.
+    Auto,
+}
+
+impl<'a> Empty<'a> {
+    /// The text shown when the field has no value.
+    fn text(self) -> &'a str {
+        match self {
+            Empty::Text(s) => s,
+            Empty::Auto => tr("Auto"),
+        }
+    }
+}
+
 /// Result of a field edit.
 pub enum FieldEdit {
     /// Committed a new value (Enter, Tab or focus loss; an arrow key's step).
@@ -157,18 +176,54 @@ pub fn number_field(ui: &mut Ui, id: Id, lead: Lead, value: Option<f64>, suffix:
 /// [`number_field`] over several layers: without a single value (`value` None, "Mixed") a relative
 /// edit comes back as one for each layer ([`Edit::Each`]).
 pub fn number_field_mixed(ui: &mut Ui, id: Id, lead: Lead, value: Option<f64>, suffix: &str, width: f32, step: f64) -> Option<Edit> {
-    number_field_bindable(ui, id, lead, value, suffix, width, step, None, tr("Mixed")).0
+    number_field_bindable(ui, id, lead, value, suffix, width, step, None, Empty::Text(tr("Mixed"))).0
 }
 
 /// [`number_field`] that shows `empty` (dim) for no value instead of "Mixed" (e.g. "Auto"): there
 /// is no value to edit relative to, so `+4` is 4.
 pub fn number_field_or(ui: &mut Ui, id: Id, value: Option<f64>, empty: &str, width: f32, step: f64) -> Option<FieldEdit> {
-    number_field_impl(ui, id, Lead::None, value, "", width, step, None, empty).0?.settled()
+    number_field_impl(ui, id, Lead::None, value, "", width, step, None, Empty::Text(empty)).0?.settled()
+}
+
+/// [`number_field_or`] for a field where 0 *is* its automatic value (a layout grid's width or
+/// count): typing the word for Auto — the placeholder's own text in the UI's language, or the
+/// English "auto" — sets 0. Only fields that ask for it get this; a field merely showing "Auto"
+/// as its placeholder keeps its own meaning of 0.
+pub fn number_field_auto(ui: &mut Ui, id: Id, value: Option<f64>, width: f32, step: f64) -> Option<FieldEdit> {
+    number_field_impl(ui, id, Lead::None, value, "", width, step, None, Empty::Auto).0?.settled()
+}
+
+/// A number field that can't be edited, showing `empty` (dim): for a value the app works out
+/// itself (a stretched grid's band width), so the row keeps its shape.
+pub fn number_field_disabled(ui: &mut Ui, id: Id, lead: Lead, empty: &str, width: f32) {
+    let t = Tokens::get(ui.ctx());
+    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
+    let resp = ui.interact(rect, id.with("field"), Sense::hover());
+    a11y::number(&resp, lead.name(), None, "", empty);
+    ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
+    let lead_w = match lead {
+        Lead::None | Lead::Named(_) => 6.0,
+        Lead::Text(s) => text_lead_width(ui, s, width),
+        Lead::Icon(..) => 24.0,
+    };
+    let lead_rect = Rect::from_min_size(rect.min, vec2(lead_w, FIELD_H));
+    match lead {
+        Lead::Text(s) => {
+            let galley = crate::bidi::name_galley(ui.painter(), s, regular(11.0), t.text_tertiary, lead_w - 12.0);
+            ui.painter().galley(pos2(lead_rect.min.x + 8.0, rect.center().y - galley.size().y / 2.0), galley, t.text_tertiary);
+        }
+        Lead::Icon(i, _) => {
+            icons::paint(ui.painter(), Rect::from_center_size(lead_rect.center() + vec2(1.0, 0.0), vec2(14.0, 14.0)), i, t.icon_secondary)
+        }
+        Lead::None | Lead::Named(_) => {}
+    }
+    ui.painter().text(pos2(rect.min.x + lead_w, rect.center().y), Align2::LEFT_CENTER, empty, regular(11.0), t.text_tertiary);
 }
 
 /// [`number_field`] that can bind a variable: `binding` None = not bindable, `Some(None)` = shows
 /// a variable button on hover, `Some(Some(name))` = bound (shows the name; click to change, the
-/// detach button unbinds). No value shows `empty` ("Mixed", "Auto").
+/// detach button unbinds). No value shows `empty` ("Mixed", "Auto"); [`Empty::Auto`] also takes
+/// the word for Auto as 0.
 pub fn number_field_bindable(
     ui: &mut Ui,
     id: Id,
@@ -178,7 +233,7 @@ pub fn number_field_bindable(
     width: f32,
     step: f64,
     binding: Option<Option<&str>>,
-    empty: &str,
+    empty: Empty<'_>,
 ) -> (Option<Edit>, Option<BindEvent>) {
     number_field_impl(ui, id, lead, value, suffix, width, step, binding, empty)
 }
@@ -192,7 +247,7 @@ fn number_field_impl(
     width: f32,
     step: f64,
     binding: Option<Option<&str>>,
-    empty: &str,
+    empty: Empty<'_>,
 ) -> (Option<Edit>, Option<BindEvent>) {
     let t = Tokens::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
@@ -210,7 +265,7 @@ fn number_field_impl(
     let editing_id = id.with("editing");
     let mut editing: Option<String> = ui.data(|d| d.get_temp(editing_id));
     let field_resp = ui.interact(edit_rect, id.with("field"), Sense::click());
-    a11y::number(&field_resp, lead.name(), value, suffix, empty);
+    a11y::number(&field_resp, lead.name(), value, suffix, empty.text());
     a11y::ring_around(ui, rect, &field_resp);
     // The label scrubs with the pointer; the keyboard stops at the value only.
     let lead_resp = ui.interact(lead_rect, id.with("lead"), Sense::CLICK | Sense::DRAG);
@@ -260,12 +315,12 @@ fn number_field_impl(
     // A relative edit of no single value goes to each layer's own.
     let set = |v: f64| Edit::All(FieldEdit::Set(v));
     let typed = |text: &str| {
-        // A field whose placeholder is "Auto" (grid width/count, auto-gap, …) also takes the
-        // word "Auto" (or the Chinese "自动") as input, setting it to 0 — its automatic value.
-        let auto_token: &str = &*tr("Auto");
-        if empty == auto_token {
+        // A field where 0 is its automatic value takes the word for Auto as input too: the
+        // placeholder's own text (so it is what the field shows, in the UI's language) or the
+        // English word.
+        if let Empty::Auto = empty {
             let t = text.trim();
-            if t.eq_ignore_ascii_case("auto") || t == "自动" {
+            if t == empty.text() || t.eq_ignore_ascii_case("auto") {
                 return Some(set(0.0));
             }
         }
@@ -360,7 +415,7 @@ fn number_field_impl(
         None => {
             let s = match value {
                 Some(v) => format!("{}{}", fmt_num(v), suffix),
-                None => empty.to_string(),
+                None => empty.text().to_string(),
             };
             let col = if value.is_some() { t.text } else { t.text_secondary };
             // A value too long for its room ends in "…", so a cut number never reads as another.
