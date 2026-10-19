@@ -315,6 +315,13 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     pages_edge(app, ui, moved.inner_rect.height().min(moved.content_size.y));
 }
 
+/// The Pages list has the keyboard: a page row (or the add-page button) of the open file was
+/// clicked last, and the list is still on screen.
+pub(crate) fn pages_have_keyboard(app: &FigApp) -> bool {
+    let Ok(ds) = app.session.ds() else { return false };
+    app.ui.pages_focus == Some(ds.uid) && app.ui.pages_open && !app.ui.left_collapsed && !ds.view.ui_hidden && app.ui.left_tab == LeftTab::File
+}
+
 /// Delete `page` (no confirmation: Undo brings it back) and say so.
 pub(crate) fn delete_page(app: &mut FigApp, page: NodeId) {
     if app.run("page.delete", json!({"id": page})).is_some() {

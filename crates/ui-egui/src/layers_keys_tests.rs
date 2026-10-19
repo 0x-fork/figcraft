@@ -184,3 +184,41 @@ fn selected_layers_or_a_canvas_press_take_delete_back_from_the_pages_list() {
     key(&mut u, Key::Delete, false);
     assert_eq!(pages(&u), 2, "Delete with nothing selected on the canvas deletes no page");
 }
+
+#[test]
+fn delete_deletes_no_page_once_the_pages_list_is_off_screen_or_another_file_is_open() {
+    let (mut u, ..) = setup();
+    let first = u.app.session.page().unwrap();
+    let second = id(u.app.session.execute("page.add", &json!({})).unwrap());
+    u.app.session.execute("page.select", &json!({"id": first})).unwrap();
+    u.frame(vec![]);
+    let row = page_row(&mut u, second, first);
+    let click = |u: &mut Ui| {
+        u.button(row, true);
+        u.button(row, false);
+        assert!(u.app.ui.pages_focus.is_some());
+    };
+    // The Assets tab, a collapsed Pages list, a collapsed left panel.
+    let hide: [fn(&mut Ui, bool); 3] = [
+        |u, on| u.app.ui.left_tab = if on { crate::LeftTab::Assets } else { crate::LeftTab::File },
+        |u, on| u.app.ui.pages_open = !on,
+        |u, on| u.app.ui.left_collapsed = on,
+    ];
+    for (k, hide) in hide.iter().enumerate() {
+        click(&mut u);
+        hide(&mut u, true);
+        u.frame(vec![]);
+        key(&mut u, Key::Delete, false);
+        assert_eq!(pages(&u), 2, "case {k}: the list is off screen");
+        hide(&mut u, false);
+        u.frame(vec![]);
+    }
+    // Another file open: its pages are safe.
+    click(&mut u);
+    u.app.run("file.new", json!({}));
+    u.app.run("page.add", json!({}));
+    u.frame(vec![]);
+    assert_eq!(pages(&u), 2);
+    key(&mut u, Key::Delete, false);
+    assert_eq!(pages(&u), 2, "the other file keeps its pages");
+}
