@@ -84,3 +84,14 @@ fn carets_and_clicks_treat_it_like_a_newline() {
     // A click right of the first line lands before the separator, not after it.
     assert_eq!(ls.hit(ls.lines[0].width + 50.0, ls.lines[0].top + 5.0), 2);
 }
+
+#[test]
+fn a_selection_across_it_shows_the_break_like_a_newline() {
+    let (Some(sep), Some(nl)) = (text("ab\u{2028}cd"), text("ab\ncd")) else { return };
+    let (ls, ln) = (layout(&sep, None, None), layout(&nl, None, None));
+    let (before, across) = (ls.selection_rects(0, 2), ls.selection_rects(0, 5));
+    assert_eq!((before.len(), across.len()), (1, 2));
+    // Reaching past the separator adds the 4 px break mark at the first line's end.
+    assert!((across[0].width() - before[0].width() - 4.0).abs() < EPS, "{} {}", across[0].width(), before[0].width());
+    assert_eq!(across, ln.selection_rects(0, 5));
+}
