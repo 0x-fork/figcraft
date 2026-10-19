@@ -187,16 +187,12 @@ fn dropped(app: &mut FigApp, ctx: &egui::Context) {
         }
         // `opens` saw an extension, so there is a file name to tell the format by.
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        let params = if path.exists() {
-            json!({"path": path.to_string_lossy()})
-        } else if let Some(bytes) = crate::dropped_bytes(&f) {
-            use base64::Engine as _;
-            let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-            json!({"data": data, "name": name})
+        let (params, read) = if path.exists() {
+            (json!({"path": path.to_string_lossy()}), None)
         } else {
-            continue;
+            (json!({"name": name}), Some(crate::dropped_bytes(&f, &name)))
         };
-        app.ui.pending_opens.push(crate::pending_open::PendingOpen { label: name, params, command: "file.open", target: None });
+        app.ui.pending_opens.push(crate::pending_open::PendingOpen { label: name, params, command: "file.open", target: None, read });
     }
 }
 
