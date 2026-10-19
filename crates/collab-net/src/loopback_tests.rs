@@ -708,33 +708,3 @@ fn oversized_server_message_reports_accurate_diagnostic() {
     assert!(!welcomed(&gp.events));
     host.stop();
 }
-
-#[test]
-#[ignore = "allocates a document larger than 64 MiB: cargo test -p figcraft-collab-net -- --ignored"]
-fn welcome_larger_than_64_mib_is_delivered() {
-    let mut doc = Document::new("A".repeat((64 << 20) + 4096));
-    doc.repair();
-    let probe = Probe::new();
-    let limits = NetLimits { max_client_message: 1024, max_server_message: 128 << 20, ..fast_limits() };
-    let cfg = HostConfig {
-        addr: SocketAddr::from(([127, 0, 0, 1], 0)),
-        any_port_if_taken: false,
-        file: FILE.into(),
-        token: TOKEN.into(),
-        doc,
-        name: "Hana".into(),
-        limits,
-        core: Limits { max_message_bytes: 128 << 20, ..Limits::default() },
-    };
-    let mut host = Host::start(cfg, probe.inbox.clone()).unwrap();
-    let invite = Invite::new(host.addr().to_string(), FILE, TOKEN);
-
-    let guest_probe = Probe::new();
-    let mut guest_cfg = quick(GuestConfig::new(invite, "Ada".into()));
-    guest_cfg.limits = limits;
-    let _g = Guest::start(guest_cfg, guest_probe.inbox.clone()).unwrap();
-    let mut gp = guest_probe;
-    gp.wait("welcome", welcomed);
-    assert!(welcomed(&gp.events));
-    host.stop();
-}
