@@ -141,8 +141,13 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
             })
             .collect();
         // Leave the new-tab button, theme toggle, window controls and a draggable gap free.
-        let present_w: f32 = app.ui.presents.iter().map(present_tab_width).sum();
-        let available = (rect.max.x - buttons_w - 70.0 - x - 34.0 - present_w).max(0.0);
+        let room = (rect.max.x - buttons_w - 70.0 - x - 34.0).max(0.0);
+        let present_pref: Vec<f32> = app.ui.presents.iter().map(present_tab_width).collect();
+        let present_on = app.ui.present.as_ref().and(app.ui.present_active);
+        let active_present = present_on.and_then(|id| app.ui.presents.iter().position(|p| p.id == id));
+        let present_layout = tab_layout(&present_pref, present_room(room, &present_pref, !document_tabs.is_empty()), active_present);
+        let present_used = present_layout.widths.iter().sum::<f32>() + if present_layout.overflow { OVERFLOW_WIDTH } else { 0.0 };
+        let available = (room - present_used).max(0.0);
         let active_tab = document_tabs.iter().position(|&i| i == app.session.active);
         let layout = tab_layout(&preferred, available, active_tab);
         let mut tab_rects = Vec::with_capacity(layout.widths.len());
@@ -286,9 +291,9 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
         // state (current screen, navigation history and scroll position) for the return trip.
         let mut to_present = None;
         let mut close_present_tab = None;
-        for tab in &app.ui.presents {
-            let active = app.ui.present.is_some() && app.ui.present_active == Some(tab.id);
-            let (w, clicked, closed) = present_tab(ui, &t, tab, x, rect, active);
+        for (tab, &w) in app.ui.presents.iter().skip(present_layout.first).zip(&present_layout.widths) {
+            let active = present_on == Some(tab.id);
+            let (clicked, closed) = present_tab(ui, &t, tab, Rect::from_min_size(pos2(x, rect.min.y), vec2(w, HEIGHT)), active);
             if clicked && !active {
                 to_present = Some(tab.id);
             }
@@ -297,6 +302,29 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
             }
             x += w;
             ui.painter().line_segment([pos2(x, rect.min.y + 10.0), pos2(x, rect.max.y - 10.0)], Stroke::new(1.0, t.border));
+        }
+        if present_layout.overflow {
+            let r = Rect::from_min_size(pos2(x, rect.min.y), vec2(OVERFLOW_WIDTH, HEIGHT));
+            let resp = ui.interact(r, ui.id().with("present_overflow"), Sense::click()).tip(tr("Open presentations"));
+            crate::a11y::menu_button(&resp, tr("Open presentations"), crate::a11y::menu_open(&resp));
+            if resp.hovered() {
+                ui.painter().rect_filled(r, CornerRadius::ZERO, t.hover);
+            }
+            icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(14.0, 14.0)), Icon::Chevron, t.icon);
+            crate::right::menu_popup(&resp).show(|ui| {
+                egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+                    for tab in &app.ui.presents {
+                        let on = present_on == Some(tab.id);
+                        if crate::right::menu_check(ui, on, &present_tab_name(tab), "") {
+                            if !on {
+                                to_present = Some(tab.id);
+                            }
+                            ui.close();
+                        }
+                    }
+                });
+            });
+            x += OVERFLOW_WIDTH;
         }
         // New tab.
         let nr = Rect::from_center_size(pos2(x + 20.0, rect.center().y), vec2(28.0, 28.0));
@@ -377,32 +405,38 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
     });
 }
 
-/// One presentation tab at `x`: its width, whether it was clicked and whether it was closed (its
-/// X or a middle click).
-fn present_tab(ui: &mut Ui, t: &Tokens, tab: &PresentTab, x: f32, bar: Rect, active: bool) -> (f32, bool, bool) {
+/// One presentation tab in `r`: whether it was clicked and whether it was closed (its X or a
+/// middle click).
+fn present_tab(ui: &mut Ui, t: &Tokens, tab: &PresentTab, r: Rect, active: bool) -> (bool, bool) {
     let label = present_tab_name(tab);
-    let w = present_tab_width(tab);
-    let r = Rect::from_min_size(pos2(x, bar.min.y), vec2(w, HEIGHT));
-    let resp = ui.interact(r, ui.id().with(("presentation_tab", tab.id)), Sense::click()).tip(tr("Present"));
+    let body_r = Rect::from_min_max(r.min, pos2(r.max.x - 32.0, r.max.y));
+    let close_r = Rect::from_min_max(body_r.right_top(), r.max);
+    let resp = ui.interact(body_r, ui.id().with(("presentation_tab", tab.id)), Sense::click()).tip(tr("Present"));
+    let cresp = ui.interact(close_r, ui.id().with(("presentation_close", tab.id)), Sense::click()).tip(tr("Close preview"));
     crate::a11y::tab(&resp, &label, active);
+    let hovered = resp.hovered() || cresp.hovered();
     if active {
         ui.painter().rect_filled(r, CornerRadius::ZERO, t.tab_active);
-    } else if resp.hovered() {
+    } else if hovered {
         ui.painter().rect_filled(r, CornerRadius::ZERO, t.hover);
     }
-    icons::paint(ui.painter(), Rect::from_center_size(pos2(x + 19.0, r.center().y), vec2(14.0, 14.0)), Icon::Play, t.icon);
-    crate::bidi::paint_name(ui.painter(), pos2(x + 34.0, r.center().y), &label, regular(12.0), t.text, w - 62.0);
-    let mut closed = false;
-    if resp.hovered() || active {
-        let cr = Rect::from_center_size(pos2(r.max.x - 16.0, r.center().y), vec2(18.0, 18.0));
-        let cresp = ui.interact(cr, ui.id().with(("presentation_close", tab.id)), Sense::click()).tip(tr("Close preview"));
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 19.0, r.center().y), vec2(14.0, 14.0)), Icon::Play, t.icon);
+    crate::bidi::paint_name(ui.painter(), pos2(r.min.x + 34.0, r.center().y), &label, regular(12.0), t.text, r.width() - 62.0);
+    if hovered || active {
+        let cr = Rect::from_center_size(close_r.center(), vec2(18.0, 18.0));
         if cresp.hovered() {
             ui.painter().rect_filled(cr, CornerRadius::same(4), t.pressed);
         }
         icons::paint(ui.painter(), cr.shrink(4.0), Icon::Close, t.icon_secondary);
-        closed = cresp.clicked();
     }
-    (w, resp.clicked() && !closed, closed || resp.middle_clicked())
+    let closed = cresp.clicked() || resp.middle_clicked() || cresp.middle_clicked();
+    (resp.clicked(), closed)
+}
+
+/// The part of the strip's free `room` the presentation tabs may use: all they want, but at most
+/// half of it while file tabs share the strip, so they shrink or overflow before covering controls.
+fn present_room(room: f32, preferred: &[f32], files: bool) -> f32 {
+    preferred.iter().sum::<f32>().min(if files { room / 2.0 } else { room })
 }
 
 fn present_tab_width(tab: &PresentTab) -> f32 {
@@ -612,8 +646,21 @@ pub fn resize_edges(ctx: &egui::Context) {
 
 #[cfg(test)]
 mod layout_tests {
-    use super::{MIN_TAB_WIDTH, OPEN_TIME, OVERFLOW_WIDTH, TabMotion, open_progress, tab_drop_position, tab_layout};
+    use super::{MIN_TAB_WIDTH, OPEN_TIME, OVERFLOW_WIDTH, TabMotion, open_progress, present_room, tab_drop_position, tab_layout};
     use egui::{Rect, pos2};
+
+    #[test]
+    fn many_presentation_tabs_stay_inside_their_share_of_the_strip() {
+        let preferred = vec![260.0; 8];
+        let room = 900.0;
+        let layout = tab_layout(&preferred, present_room(room, &preferred, true), Some(7));
+        assert!(layout.overflow);
+        assert!(layout.first <= 7 && 7 < layout.first + layout.widths.len());
+        assert!(layout.widths.iter().all(|&width| width >= MIN_TAB_WIDTH));
+        assert!(layout.widths.iter().sum::<f32>() + OVERFLOW_WIDTH <= room / 2.0 + 0.01);
+        assert_eq!(present_room(room, &preferred, false), room);
+        assert_eq!(present_room(room, &[200.0], true), 200.0);
+    }
 
     #[test]
     fn tabs_shrink_to_fit_before_overflowing() {
