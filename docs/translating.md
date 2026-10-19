@@ -17,7 +17,7 @@ Simplified.
 The catalogs: English (`en`, the source), and Spanish (`es`, with the Latin American overlay
 `es-419`), French (`fr`), German (`de`), Dutch (`nl`), Brazilian Portuguese (`pt-BR`), Japanese
 (`ja`), Korean (`ko`), Simplified Chinese (`zh-Hans`), Czech (`cs`), Indonesian (`id`), Finnish
-(`fi`) and Georgian (`ka`), machine-drafted and waiting for native speakers' review. Russian (`ru`, Русский) was
+(`fi`), Polish (`pl`) and Georgian (`ka`), machine-drafted and waiting for native speakers' review. Russian (`ru`, Русский) was
 reviewed and approved by VanTan; its catalog keeps Frame, Dev Mode and Smart animate as familiar
 tool names and uses « » quotes. Turkish (`tr`) was machine-drafted and reviewed by a native speaker,
 and Swedish (`sv`) translates every UI string, command label and menu wording.
@@ -86,6 +86,8 @@ picker leaves Georgian out. A new CJK or other non-Latin language also needs its
    a missing key uses the fallback catalog's own plural rule. Czech uses `one` for 1, `few` for
    2–4 and `other` for 0 and 5+ (e.g. `{n} vrstva`, `{n} vrstvy`, `{n} vrstev`). Keep `{n}` in all
    three forms. Czech's CLDR `many` applies only to decimals; `trn` takes integer counts.
+   Polish uses `one` for 1 only, `few` like Russian (2–4, 22–24… except 12–14) and `many` for
+   the other integers, including 0 and 21 (e.g. `{n} warstwa`, `{n} warstwy`, `{n} warstw`).
 4. To require full coverage, add the code to `COMPLETE` in
    [`crates/ui-egui/src/i18n_tests.rs`](../crates/ui-egui/src/i18n_tests.rs). Every later PR that
    adds a string then has to translate it into each complete language, so only Spanish is there:
