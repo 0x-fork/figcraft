@@ -701,8 +701,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         let doc = s.doc_mut()?;
         doc.images.entry(hash.clone()).or_insert(data);
         let node = doc.get_mut(*target)?;
-        node.fills = vec![figcraft_color::Paint::image(hash, figcraft_color::ImageScaleMode::Fill)];
-        node.styles.fill = None;
+        super::create::replace_with_image_fill(node, hash, figcraft_color::ImageScaleMode::Fill);
         return Ok(json!({"ids": [target]}));
     }
     let page = s.page()?;

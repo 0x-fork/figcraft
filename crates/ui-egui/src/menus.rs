@@ -36,22 +36,6 @@ pub const UI_COMMANDS: &[&str] = &[
 /// other way to read it). `at`: the page point to paste at (Paste here); `None` pastes in the
 /// middle of the view.
 pub fn paste(app: &mut FigApp, event_text: Option<&str>, at: Option<(f64, f64)>) {
-    let selected_layer = match app.session.selection().as_slice() {
-        [id] if at.is_none()
-            && app.session.doc().ok().and_then(|d| d.node(*id)).is_some_and(|n| figcraft_engine::cmd::create::accepts_image_fill(&n.kind)) =>
-        {
-            Some(*id)
-        }
-        _ => None,
-    };
-    if let Some(target) = selected_layer
-        && let Some((png, _, _)) = clipboard_png(app)
-    {
-        use base64::Engine as _;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(png);
-        app.run("image.place", json!({"data": b64, "target": target}));
-        return;
-    }
     // Only HTML that holds readable design data takes this path; other HTML pastes as before.
     if let Some(html) = app.services.clipboard_get_html().filter(|h| figcraft_engine::cmd::edit::design_clipboard_buffer(h).is_some()) {
         let mut params = json!({"html": html});
@@ -67,6 +51,22 @@ pub fn paste(app: &mut FigApp, event_text: Option<&str>, at: Option<(f64, f64)>)
                 app.toast(trn("Pasted design layers; {n} kinds of content were left out", left_out, &[]));
             }
         }
+        return;
+    }
+    let selected_layer = match app.session.selection().as_slice() {
+        [id] if at.is_none()
+            && app.session.doc().ok().and_then(|d| d.node(*id)).is_some_and(|n| figcraft_engine::cmd::create::accepts_image_fill(&n.kind)) =>
+        {
+            Some(*id)
+        }
+        _ => None,
+    };
+    if let Some(target) = selected_layer
+        && let Some((png, _, _)) = clipboard_png(app)
+    {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+        app.run("image.place", json!({"data": b64, "target": target}));
         return;
     }
     let sys_text = app.services.clipboard_get_text().or_else(|| event_text.map(str::to_string)).filter(|t| !t.is_empty());

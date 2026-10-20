@@ -209,6 +209,23 @@ fn cmd_v_fills_a_selected_oval_without_adding_a_layer() {
 }
 
 #[test]
+fn pasting_an_image_detaches_the_replaced_fill_variable() {
+    let mut w = Win::new();
+    let oval =
+        NodeId(w.app.session.execute("shape.ellipse", &json!({"x": 200, "y": 100, "width": 120, "height": 80})).unwrap()["id"].as_u64().unwrap());
+    w.app.session.execute("variable.createCollection", &json!({"name": "Theme"})).unwrap();
+    w.app.session.execute("variable.create", &json!({"collection": "Theme", "name": "brand", "type": "color", "value": "#FF0000"})).unwrap();
+    w.app.session.execute("variable.bind", &json!({"ids": [oval.0], "field": "fill", "variable": "brand"})).unwrap();
+    assert!(!w.app.session.doc().unwrap().node(oval).unwrap().bound.is_empty());
+
+    w.copy_image_elsewhere();
+    w.cmd_v(CMD);
+    let node = w.app.session.doc().unwrap().node(oval).unwrap();
+    assert!(matches!(node.fills[0].kind, figcraft_color::PaintKind::Image(_)));
+    assert!(node.bound.is_empty(), "the old colour variable must not remain on the image fill");
+}
+
+#[test]
 fn cmd_v_fills_a_selected_oval_with_an_image_copied_in_figcraft() {
     let mut w = Win::new();
     w.copy_image_elsewhere();

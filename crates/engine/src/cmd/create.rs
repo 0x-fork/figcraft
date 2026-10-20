@@ -377,6 +377,13 @@ pub fn accepts_image_fill(kind: &NodeKind) -> bool {
     kind.is_shape() || kind.is_frame_like() || matches!(kind, NodeKind::Text(_) | NodeKind::BooleanOp { .. })
 }
 
+/// Replace the fill list and detach variable bindings on paints that the image replaces.
+pub(crate) fn replace_with_image_fill(node: &mut Node, image: String, mode: ImageScaleMode) {
+    node.fills = vec![Paint::image(image, mode)];
+    node.bound.retain(|key, _| !matches!(super::lists::list_binding(key), Some((super::lists::BoundList::Fills, _, _))));
+    node.styles.fill = None;
+}
+
 /// Place an image as a rectangle with an image fill (Figma's image layer).
 pub fn place_image(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "image.place";
@@ -407,8 +414,7 @@ pub fn place_image(s: &mut Session, p: &Value) -> Result<Value> {
         let (hash, _, _) = figcraft_format::add_image(doc, bytes).map_err(|e| bad(cmd, e.to_string()))?;
         let profile = figcraft_render::images::profile_name(&hash, doc.images.get(&hash));
         let node = doc.get_mut(id)?;
-        node.fills = vec![Paint::image(hash.clone(), mode)];
-        node.styles.fill = None;
+        replace_with_image_fill(node, hash.clone(), mode);
         return Ok(json!({"id": id, "image": hash, "width": node.width, "height": node.height, "imageProfile": profile}));
     }
     let page = s.page()?;
