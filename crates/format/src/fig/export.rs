@@ -1436,20 +1436,25 @@ impl<'d> Exporter<'d> {
             f.extend([("gridColumnGap", fl(l.gap)), ("gridRowGap", fl(l.cross_gap)), ("gridColumns", map(&cols)), ("gridRows", map(&rows))]);
             // Sizing is keyed by track id like the order map. A track the document doesn't set is
             // left out, and one the format can't hold keeps its id (the import equalises it).
-            let sizing = |tracks: &[GridTrack], ids: &[u32]| -> Option<Kv<'static>> {
+            let mut dropped = false;
+            let sizing = |tracks: &[GridTrack], ids: &[u32], dropped: &mut bool| -> Option<Kv<'static>> {
                 let mut entries = Vec::new();
                 for (i, id) in ids.iter().enumerate() {
                     let Some(track) = tracks.get(i) else { continue };
-                    if let Some((kind, value)) = grid_track_size(track) {
-                        let size = || o(vec![("type", e(kind)), ("value", fl(value))]);
-                        entries.push(o(vec![("id", guid(AUX, *id)), ("trackSize", o(vec![("minSizing", size()), ("maxSizing", size())]))]));
+                    match grid_track_size(track) {
+                        Some((kind, value)) => {
+                            let size = || o(vec![("type", e(kind)), ("value", fl(value))]);
+                            entries.push(o(vec![("id", guid(AUX, *id)), ("trackSize", o(vec![("minSizing", size()), ("maxSizing", size())]))]));
+                        }
+                        None => *dropped = true,
                     }
                 }
                 (!entries.is_empty()).then(|| o(vec![("entries", arr(entries))]))
             };
-            let (column_sizing, row_sizing) = (sizing(&l.column_tracks, &cols), sizing(&l.row_tracks, &rows));
-            if l.column_tracks.iter().chain(&l.row_tracks).any(|t| grid_track_size(t).is_none()) {
-                self.warn("grid tracks of fixed or content size were written as equal tracks");
+            let column_sizing = sizing(&l.column_tracks, &cols, &mut dropped);
+            let row_sizing = sizing(&l.row_tracks, &rows, &mut dropped);
+            if dropped {
+                self.warn("grid tracks whose size the format can't hold were written as equal tracks");
             }
             for (name, sizing) in [("gridColumnsSizing", column_sizing), ("gridRowsSizing", row_sizing)] {
                 if let Some(v) = sizing {

@@ -1055,7 +1055,7 @@ fn grid_track_sizes_round_trip() {
         l.column_tracks[0] = GridTrack::fixed(-5.0);
     }
     let (bytes, warnings) = export(&odd, None).unwrap();
-    assert_eq!(warnings, vec!["grid tracks of fixed or content size were written as equal tracks".to_string()]);
+    assert_eq!(warnings, vec!["grid tracks whose size the format can't hold were written as equal tracks".to_string()]);
     let (back, _) = import(&bytes, "File").unwrap();
     let l = back.node(back.pages[0]).and_then(|p| p.children.first()).and_then(|c| back.node(*c)).and_then(|n| n.layout.clone()).unwrap();
     assert_eq!(l.column_tracks[0], GridTrack::fill(1.0), "an unwritable track reads back equal");
