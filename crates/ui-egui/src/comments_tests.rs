@@ -7,7 +7,7 @@ use egui::{Event, Key, Modifiers, Pos2, pos2, vec2};
 use figcraft_engine::Session;
 use serde_json::{Value, json};
 
-use crate::comments::{cluster, insert_mention, mention_matches, mention_query};
+use crate::comments::{cluster, insert_mention, mention_matches, mention_query, start_draft};
 use crate::present_tests::{Ui, id};
 
 fn add(s: &mut Session, x: f64, y: f64, text: &str, author: &str) -> u64 {
@@ -39,6 +39,18 @@ fn key(u: &mut Ui, key: Key, modifiers: Modifiers) {
 
 fn comments(u: &Ui) -> Value {
     u.app.inspect()["comments"].clone()
+}
+
+#[test]
+fn switching_from_comment_to_move_closes_the_unposted_composer() {
+    let mut u = Ui::new(Session::new());
+    u.app.run("tool.set", json!({"tool": "comment"}));
+    start_draft(&mut u.app, 100.0, 80.0);
+    assert!(comments(&u)["draft"].is_array());
+
+    u.app.run("tool.set", json!({"tool": "move"}));
+    u.frame(vec![]);
+    assert!(comments(&u)["draft"].is_null());
 }
 
 #[test]

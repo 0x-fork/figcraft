@@ -834,6 +834,9 @@ impl FigApp {
     /// Run a command, surfacing errors as a toast. Returns the result.
     pub fn run(&mut self, id: &str, params: Value) -> Option<Value> {
         let r = self.session.execute(id, &params);
+        if id == "tool.set" && r.is_ok() && self.session.tool.tool != figcraft_engine::tools::ToolId::Comment {
+            self.ui.comments.draft = None;
+        }
         self.handle_ui_requests();
         r.map_err(|e| self.failed(id, &e)).ok()
     }
