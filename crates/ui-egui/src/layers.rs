@@ -229,6 +229,8 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     let mut move_to: Option<(NodeId, String)> = None;
     // Pages are dragged up and down the list to reorder them.
     let mut reorder = crate::list_drag::ListDrag::in_order(ui, "pages");
+    let scroll_to_cur = app.ui.pages_seen_page != Some(cur);
+    app.ui.pages_seen_page = Some(cur);
     // A long list scrolls in its own area, so the layers keep their room below it.
     let max_h = pages_list_height(app.ui.pages_height, ui.available_height());
     let mut moved = egui::ScrollArea::vertical().id_salt("pages_list").max_height(max_h).show(ui, |ui| {
@@ -238,6 +240,9 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
             }
             let sense = if filtering { Sense::click() } else { Sense::click_and_drag() };
             let (r, resp) = ui.allocate_exact_size(vec2(w, 32.0), sense);
+            if scroll_to_cur && id == cur {
+                ui.scroll_to_rect(r, None);
+            }
             if !filtering {
                 reorder.row_by(&resp, k, r, || if divider { tr("Divider").to_string() } else { name.clone() });
             }
