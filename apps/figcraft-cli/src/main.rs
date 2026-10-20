@@ -46,10 +46,11 @@ the FIGCRAFT_SERVER_KEY environment variable (which keeps it out of the shell hi
 `--automation-read-root DIR` / `--automation-write-root DIR` (each may be repeated; the folders
 must exist) confine the files a subcommand touches: reads only inside a read or write root, writes
 only inside a write root, everything else refused -- so giving no write root denies writing
-altogether. They are taken by `mcp`, to confine the agent's commands, and by `info`, `export`,
-`convert`, `render` and `run`, to confine that one run; without them a subcommand reads and writes
-as the user who started it, as before. A running app confines itself: start it with
-`figcraft --control PORT` and the same flags (`--attach` refuses them).
+altogether. They reach the headless side only: `mcp` takes them to confine the agent's commands,
+and `info`, `export`, `convert`, `render` and `run` to confine that one run; without them a
+subcommand reads and writes as the user who started it, as before. A `mcp --attach` server is
+confined by the app it attaches to, not by flags passed to the CLI: start that app with
+`figcraft --control PORT` and the same roots (`--attach` refuses them).
 See docs/cli.md and docs/mcp.md.";
 
 /// The automation roots a file subcommand was given, if any. Omitting both leaves the run
