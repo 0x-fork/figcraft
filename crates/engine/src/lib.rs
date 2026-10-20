@@ -1062,7 +1062,9 @@ impl Session {
         };
         let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid) else { return };
         let changed = !Arc::ptr_eq(&ds.doc, &bdoc);
-        if changed {
+        // Saving may adopt the chosen filename as the document title. The encoded snapshot is
+        // already final; normalising it again would detach it from the saved baseline.
+        if changed && !matches!(spec.id, "file.save" | "file.saveAs") {
             normalize(ds.doc_mut(), &bdoc);
         }
         let edit = changed && ds.interaction.is_none();
