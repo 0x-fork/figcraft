@@ -139,7 +139,7 @@ fn paint(cx: &mut Ctx, p: &Value) -> Option<Paint> {
             return None;
         }
     };
-    Some(Paint { kind, opacity, visible: flag(p, "visible").unwrap_or(true), blend: paint_blend(p) })
+    Some(Paint { kind, opacity, visible: flag(p, "visible").unwrap_or(true), blend: paint_blend(p), color_alpha: false })
 }
 
 /// Gradient handles are already in the node's unit box (start, end, width), like ours.
