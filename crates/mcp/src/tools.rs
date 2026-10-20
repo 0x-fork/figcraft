@@ -178,7 +178,9 @@ pub fn tool_definitions() -> Vec<Value> {
                 json!({
                     "depth": int("Tree depth for the current page (default 4)"),
                     "allPages": boolean("Expand every page, not only the current one"),
-                    "maxBytes": int("Largest response to send, in bytes on the wire (default 8388608, which fits the usual 10 MiB client buffer)"),
+                    "maxBytes": int(
+                        "Largest response to send, in bytes of the whole JSON-RPC message (default 8388608, which fits the usual 10 MiB client buffer); 1024 of it is kept for the envelope and the request id"
+                    ),
                 }),
                 &[],
             ),
@@ -578,6 +580,14 @@ const MAX_RESPONSE: usize = 8 << 20;
 /// otherwise be able to push a response that only just fitted back over the limit.
 const MARKER_RESERVE: usize = 1 << 10;
 
+/// Room kept for everything the text block is wrapped in: the content object and `isError`, the
+/// JSON-RPC envelope (`jsonrpc`, `id`, `result`) and the newline the transport writes after it.
+/// About ninety bytes of that is fixed and the rest is the request id, so `maxBytes` holds for
+/// any id up to roughly 900 bytes -- which is every id in practice, a number or a UUID. An id
+/// larger than that is the one case where the message can pass the caller's figure, and sizing
+/// the real envelope here would mean handing the transport's request id to every tool.
+const ENVELOPE_RESERVE: usize = 1 << 10;
+
 /// The document at `depth`, and what its text block would take on the wire. The tree is sent as a
 /// text block, so it is measured pretty-printed *and* escaped -- escaping adds about a tenth.
 fn inspect_at(b: &mut dyn Backend, depth: u64, all: bool) -> Result<(Value, usize), String> {
@@ -602,37 +612,45 @@ fn inspect_document(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolR
         None => MAX_RESPONSE,
     };
 
+    // What the tree itself may take: the caller's figure is for the whole message.
+    let budget = max_bytes.saturating_sub(ENVELOPE_RESERVE);
+
     let (value, wire) = inspect_at(b, depth, all)?;
-    if wire <= max_bytes || depth == 0 {
+    if wire <= budget {
         return Ok(ToolResult::json(&value));
     }
 
-    // The deepest tree that fits, by bisection: a deeper tree holds every node of a shallower one,
-    // so the size does not fall as the depth grows. Bisecting keeps this to about six more walks
-    // of the document rather than one per level.
-    let (mut lo, mut hi) = (0u64, depth - 1);
-    let mut best: Option<(u64, Value, usize)> = None;
-    while lo <= hi {
-        let mid = lo + (hi - lo) / 2;
-        let (v, w) = inspect_at(b, mid, all)?;
-        if w + MARKER_RESERVE <= max_bytes {
-            best = Some((mid, v, w));
-            if mid == hi {
+    let (used, mut value, used_wire) = if depth == 0 {
+        // Depth 0 is the shallowest tree there is, so there is nothing smaller to send: it goes
+        // out over the limit with the marker saying so, the same as a bisection that reaches
+        // depth 0. An error would leave the caller with nothing at all.
+        (0, value, wire)
+    } else {
+        // The deepest tree that fits, by bisection: a deeper tree holds every node of a shallower
+        // one, so the size does not fall as the depth grows. Bisecting keeps this to about six
+        // more walks of the document rather than one per level.
+        let (mut lo, mut hi) = (0u64, depth - 1);
+        let mut best: Option<(u64, Value, usize)> = None;
+        while lo <= hi {
+            let mid = lo + (hi - lo) / 2;
+            let (v, w) = inspect_at(b, mid, all)?;
+            if w + MARKER_RESERVE <= budget {
+                best = Some((mid, v, w));
+                if mid == hi {
+                    break;
+                }
+                lo = mid + 1;
+            } else if mid == 0 {
+                best = Some((0, v, w));
                 break;
+            } else {
+                hi = mid - 1;
             }
-            lo = mid + 1;
-        } else if mid == 0 {
-            // Not even the shallowest tree fits. Send it anyway and say so: there is nothing
-            // smaller to send, and an error would leave the caller with nothing at all.
-            best = Some((0, v, w));
-            break;
-        } else {
-            hi = mid - 1;
         }
-    }
-
-    let Some((used, mut value, used_wire)) = best else {
-        return Ok(ToolResult::json(&value));
+        match best {
+            Some(found) => found,
+            None => return Ok(ToolResult::json(&value)),
+        }
     };
     if let Some(obj) = value.as_object_mut() {
         obj.insert(

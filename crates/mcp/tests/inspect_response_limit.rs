@@ -6,6 +6,10 @@ mod common;
 use common::Client;
 use serde_json::{Value, json};
 
+/// The allowance `inspect_document` keeps for the content object, the JSON-RPC envelope and the
+/// request id (`ENVELOPE_RESERVE`).
+const ENVELOPE: usize = 1024;
+
 /// A document whose tree is far larger than the limits used below.
 fn busy() -> Client {
     let mut c = Client::new();
@@ -49,8 +53,29 @@ fn a_tree_too_large_for_the_client_is_reported_shallower_and_says_so() {
     assert!(cut["pages"][0]["children"].as_array().is_some_and(|c| !c.is_empty()), "{cut}");
 
     // The deepest tree that fits is the one sent: a limit that admits the whole tree is not cut.
-    let (whole, _) = inspect(&mut c, json!({"depth": 6, "allPages": true, "maxBytes": full_wire}));
-    assert!(whole["truncated"].is_null(), "a limit at the exact size is not a truncation: {}", whole["truncated"]);
+    // maxBytes is the whole message, so the tree fits under it with room for the envelope, not
+    // at it: a text block of exactly maxBytes would be sent inside a larger message than that.
+    let (whole, _) = inspect(&mut c, json!({"depth": 6, "allPages": true, "maxBytes": full_wire + ENVELOPE}));
+    assert!(whole["truncated"].is_null(), "a limit that leaves room for the envelope is not a truncation: {}", whole["truncated"]);
+    let (tight, _) = inspect(&mut c, json!({"depth": 6, "allPages": true, "maxBytes": full_wire}));
+    assert_eq!(tight["truncated"]["requestedDepth"], 6, "a limit at the exact size of the tree leaves none for the envelope: {tight}");
+}
+
+/// Every over-limit response carries the marker, however the depth was arrived at: a caller that
+/// asked for depth 0 has no other way to learn that its limit was passed.
+#[test]
+fn a_depth_0_response_over_the_limit_says_so_too() {
+    let mut c = busy();
+    let (deep, _) = inspect(&mut c, json!({"depth": 0, "allPages": true}));
+    assert!(deep["truncated"].is_null(), "within the default limit: {}", deep["truncated"]);
+    let (v, wire) = inspect(&mut c, json!({"depth": 0, "allPages": true, "maxBytes": 1024}));
+    let t = &v["truncated"];
+    assert_eq!((t["requestedDepth"].as_u64(), t["depth"].as_u64()), (Some(0), Some(0)), "{t}");
+    // `bytes` is the tree, measured before the marker was added to it, so the message that goes
+    // out is larger still -- there being nothing smaller to send.
+    assert_eq!(t["bytes"], t["requestedDepthBytes"], "{t}");
+    assert!(wire > 1024, "the depth-0 tree is sent over the limit, with the marker saying so: {wire}");
+    assert!(!v["pages"].is_null(), "the tree is still sent, there being nothing smaller: {v}");
 }
 
 #[test]
