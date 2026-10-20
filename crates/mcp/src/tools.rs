@@ -173,9 +173,13 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "inspect_document",
             "Inspect document",
-            "The active document as JSON: name, path, dirty flag, current page, selection, the current page's layer tree (id, name, type, x/y relative to the parent frame (groups don't count), width, height, absoluteBounds in page coordinates, fills, strokes, effects, cornerRadius, layout, sizing, text properties, component links, overrides, bound variables), other pages summarised, styles, variable count and the undo history. Use it to verify every change.",
+            "The active document as JSON: name, path, dirty flag, current page, selection, the current page's layer tree (id, name, type, x/y relative to the parent frame (groups don't count), width, height, absoluteBounds in page coordinates, fills, strokes, effects, cornerRadius, layout, sizing, text properties, component links, overrides, bound variables), other pages summarised, styles, variable count and the undo history. Use it to verify every change. Each level of `depth` multiplies the response, and `allPages` multiplies it again: on a large document the tree is reported at a shallower depth than asked for, with a `truncated` object saying so. Use get_node to read one subtree deeply instead.",
             obj(
-                json!({"depth": int("Tree depth for the current page (default 4)"), "allPages": boolean("Expand every page, not only the current one")}),
+                json!({
+                    "depth": int("Tree depth for the current page (default 4)"),
+                    "allPages": boolean("Expand every page, not only the current one"),
+                    "maxBytes": int("Largest response to send, in bytes on the wire (default 8388608, which fits the usual 10 MiB client buffer)"),
+                }),
                 &[],
             ),
             true,
@@ -562,6 +566,27 @@ fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRes
     Ok(ToolResult::json(&out))
 }
 
+/// What one tool result may take on the wire. MCP stdio is newline-delimited JSON, so a result is
+/// a single message and has to fit the client's read buffer whole -- there is no streaming of part
+/// of one. The TypeScript SDK's stdio transport defaults to 10 MiB
+/// (`STDIO_DEFAULT_MAX_BUFFER_SIZE`) and hosts rarely raise it; a document whose tree went past
+/// that killed the server, because the client stopped reading, the pipe broke, and every later
+/// call failed (#912). The 2 MiB left over covers the JSON-RPC envelope.
+const MAX_RESPONSE: usize = 8 << 20;
+
+/// Room kept for the `truncated` object, which is added after the size is measured and would
+/// otherwise be able to push a response that only just fitted back over the limit.
+const MARKER_RESERVE: usize = 1 << 10;
+
+/// The document at `depth`, and what its text block would take on the wire. The tree is sent as a
+/// text block, so it is measured pretty-printed *and* escaped -- escaping adds about a tenth.
+fn inspect_at(b: &mut dyn Backend, depth: u64, all: bool) -> Result<(Value, usize), String> {
+    let value = b.call("document.inspect", json!({"depth": depth, "allPages": all}))?;
+    let text = serde_json::to_string_pretty(&value).unwrap_or_default();
+    let wire = serde_json::to_string(&text).map_or(text.len(), |s| s.len());
+    Ok((value, wire))
+}
+
 fn inspect_document(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
     let depth = n_arg(a, "depth")?.unwrap_or(4.0).clamp(0.0, 64.0) as u64;
     let all = match a.get("allPages") {
@@ -569,7 +594,63 @@ fn inspect_document(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolR
         Some(Value::Bool(x)) => *x,
         Some(_) => return Err("`allPages` must be a boolean".into()),
     };
-    b.call("document.inspect", json!({"depth": depth, "allPages": all})).map(|v| ToolResult::json(&v))
+    // A caller that knows its own buffer can say so; 1 KiB is below the shallowest tree, so the
+    // floor only keeps the arithmetic sane.
+    let max_bytes = match n_arg(a, "maxBytes")? {
+        Some(v) if v < 1024.0 => return Err("`maxBytes` must be at least 1024".into()),
+        Some(v) => v.min(usize::MAX as f64) as usize,
+        None => MAX_RESPONSE,
+    };
+
+    let (value, wire) = inspect_at(b, depth, all)?;
+    if wire <= max_bytes || depth == 0 {
+        return Ok(ToolResult::json(&value));
+    }
+
+    // The deepest tree that fits, by bisection: a deeper tree holds every node of a shallower one,
+    // so the size does not fall as the depth grows. Bisecting keeps this to about six more walks
+    // of the document rather than one per level.
+    let (mut lo, mut hi) = (0u64, depth - 1);
+    let mut best: Option<(u64, Value, usize)> = None;
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        let (v, w) = inspect_at(b, mid, all)?;
+        if w + MARKER_RESERVE <= max_bytes {
+            best = Some((mid, v, w));
+            if mid == hi {
+                break;
+            }
+            lo = mid + 1;
+        } else if mid == 0 {
+            // Not even the shallowest tree fits. Send it anyway and say so: there is nothing
+            // smaller to send, and an error would leave the caller with nothing at all.
+            best = Some((0, v, w));
+            break;
+        } else {
+            hi = mid - 1;
+        }
+    }
+
+    let Some((used, mut value, used_wire)) = best else {
+        return Ok(ToolResult::json(&value));
+    };
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "truncated".into(),
+            json!({
+                "requestedDepth": depth,
+                "depth": used,
+                "requestedDepthBytes": wire,
+                "bytes": used_wire,
+                "maxBytes": max_bytes,
+                "reason": format!(
+                    "the tree at depth {depth} would be {wire} bytes on the wire, over the {max_bytes}-byte limit a client can read in one message; it is reported at depth {used} instead"
+                ),
+                "hint": "get_node({id, depth}) walks one subtree at a time, so a deep tree can be read in parts without a size limit",
+            }),
+        );
+    }
+    Ok(ToolResult::json(&value))
 }
 
 fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
