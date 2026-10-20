@@ -54,6 +54,23 @@ fn switching_from_comment_to_move_closes_the_unposted_composer() {
 }
 
 #[test]
+fn control_channel_tool_switch_closes_the_unposted_composer() {
+    let mut u = Ui::new(Session::new());
+    u.app.run("tool.set", json!({"tool": "comment"}));
+    start_draft(&mut u.app, 100.0, 80.0);
+    assert!(comments(&u)["draft"].is_array());
+
+    let invalid = json!({"command": "tool.set", "params": {"tool": "not-a-tool"}});
+    assert!(crate::control::handle(&mut u.app, &egui::Context::default(), "engine.execute", &invalid).is_err());
+    assert!(comments(&u)["draft"].is_array());
+
+    crate::control::handle(&mut u.app, &egui::Context::default(), "engine.execute", &json!({"command": "tool.set", "params": {"tool": "move"}}))
+        .unwrap();
+    u.frame(vec![]);
+    assert!(comments(&u)["draft"].is_null());
+}
+
+#[test]
 fn mention_helpers() {
     // The `@query` before the cursor.
     assert_eq!(mention_query("Hi @Sa", 6), Some((3, 6)));
