@@ -252,13 +252,184 @@ fn image_index<S: Serializer>(images: &&BTreeMap<String, ImageData>, s: S) -> Re
     s.collect_seq(images.iter().map(|(hash, i)| Entry { hash, width: i.width, height: i.height }))
 }
 
+/// A serializer that writes nothing and fails on the first NaN or infinite float. JSON has no
+/// such numbers (`serde_json` writes `null`, which the reader rejects), so a document holding
+/// one is refused instead of saved as an unreadable file.
+struct FiniteCheck;
+
+impl serde::ser::Error for FiniteCheckError {
+    fn custom<T: std::fmt::Display>(msg: T) -> Self {
+        Self(msg.to_string())
+    }
+}
+
+#[derive(Debug)]
+struct FiniteCheckError(String);
+
+impl std::fmt::Display for FiniteCheckError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for FiniteCheckError {}
+
+macro_rules! check_skip {
+    ($($name:ident($ty:ty)),* $(,)?) => {
+        $(fn $name(self, _: $ty) -> Result<(), FiniteCheckError> { Ok(()) })*
+    };
+}
+
+impl Serializer for FiniteCheck {
+    type Ok = ();
+    type Error = FiniteCheckError;
+    type SerializeSeq = FiniteCheck;
+    type SerializeTuple = FiniteCheck;
+    type SerializeTupleStruct = FiniteCheck;
+    type SerializeTupleVariant = FiniteCheck;
+    type SerializeMap = FiniteCheck;
+    type SerializeStruct = FiniteCheck;
+    type SerializeStructVariant = FiniteCheck;
+
+    check_skip!(
+        serialize_bool(bool),
+        serialize_i8(i8),
+        serialize_i16(i16),
+        serialize_i32(i32),
+        serialize_i64(i64),
+        serialize_u8(u8),
+        serialize_u16(u16),
+        serialize_u32(u32),
+        serialize_u64(u64),
+        serialize_i128(i128),
+        serialize_u128(u128),
+        serialize_char(char),
+        serialize_str(&str),
+        serialize_bytes(&[u8])
+    );
+
+    fn serialize_f32(self, v: f32) -> Result<(), FiniteCheckError> {
+        if v.is_finite() { Ok(()) } else { Err(FiniteCheckError(format!("cannot save a non-finite number ({v})"))) }
+    }
+    fn serialize_f64(self, v: f64) -> Result<(), FiniteCheckError> {
+        if v.is_finite() { Ok(()) } else { Err(FiniteCheckError(format!("cannot save a non-finite number ({v})"))) }
+    }
+    fn serialize_none(self) -> Result<(), FiniteCheckError> {
+        Ok(())
+    }
+    fn serialize_some<T: ?Sized + Serialize>(self, v: &T) -> Result<(), FiniteCheckError> {
+        v.serialize(self)
+    }
+    fn serialize_unit(self) -> Result<(), FiniteCheckError> {
+        Ok(())
+    }
+    fn serialize_unit_struct(self, _: &'static str) -> Result<(), FiniteCheckError> {
+        Ok(())
+    }
+    fn serialize_unit_variant(self, _: &'static str, _: u32, _: &'static str) -> Result<(), FiniteCheckError> {
+        Ok(())
+    }
+    fn serialize_newtype_struct<T: ?Sized + Serialize>(self, _: &'static str, v: &T) -> Result<(), FiniteCheckError> {
+        v.serialize(self)
+    }
+    fn serialize_newtype_variant<T: ?Sized + Serialize>(self, _: &'static str, _: u32, _: &'static str, v: &T) -> Result<(), FiniteCheckError> {
+        v.serialize(self)
+    }
+    fn serialize_seq(self, _: Option<usize>) -> Result<FiniteCheck, FiniteCheckError> {
+        Ok(FiniteCheck)
+    }
+    fn serialize_tuple(self, _: usize) -> Result<FiniteCheck, FiniteCheckError> {
+        Ok(FiniteCheck)
+    }
+    fn serialize_tuple_struct(self, _: &'static str, _: usize) -> Result<FiniteCheck, FiniteCheckError> {
+        Ok(FiniteCheck)
+    }
+    fn serialize_tuple_variant(self, _: &'static str, _: u32, _: &'static str, _: usize) -> Result<FiniteCheck, FiniteCheckError> {
+        Ok(FiniteCheck)
+    }
+    fn serialize_map(self, _: Option<usize>) -> Result<FiniteCheck, FiniteCheckError> {
+        Ok(FiniteCheck)
+    }
+    fn serialize_struct(self, _: &'static str, _: usize) -> Result<FiniteCheck, FiniteCheckError> {
+        Ok(FiniteCheck)
+    }
+    fn serialize_struct_variant(self, _: &'static str, _: u32, _: &'static str, _: usize) -> Result<FiniteCheck, FiniteCheckError> {
+        Ok(FiniteCheck)
+    }
+}
+
+macro_rules! check_elements {
+    ($($trait:ident::$method:ident),* $(,)?) => {
+        $(impl serde::ser::$trait for FiniteCheck {
+            type Ok = ();
+            type Error = FiniteCheckError;
+            fn $method<T: ?Sized + Serialize>(&mut self, v: &T) -> Result<(), FiniteCheckError> {
+                v.serialize(FiniteCheck)
+            }
+            fn end(self) -> Result<(), FiniteCheckError> {
+                Ok(())
+            }
+        })*
+    };
+}
+
+check_elements!(
+    SerializeSeq::serialize_element,
+    SerializeTuple::serialize_element,
+    SerializeTupleStruct::serialize_field,
+    SerializeTupleVariant::serialize_field
+);
+
+impl serde::ser::SerializeMap for FiniteCheck {
+    type Ok = ();
+    type Error = FiniteCheckError;
+    fn serialize_key<T: ?Sized + Serialize>(&mut self, k: &T) -> Result<(), FiniteCheckError> {
+        k.serialize(FiniteCheck)
+    }
+    fn serialize_value<T: ?Sized + Serialize>(&mut self, v: &T) -> Result<(), FiniteCheckError> {
+        v.serialize(FiniteCheck)
+    }
+    fn end(self) -> Result<(), FiniteCheckError> {
+        Ok(())
+    }
+}
+
+impl serde::ser::SerializeStruct for FiniteCheck {
+    type Ok = ();
+    type Error = FiniteCheckError;
+    fn serialize_field<T: ?Sized + Serialize>(&mut self, _: &'static str, v: &T) -> Result<(), FiniteCheckError> {
+        v.serialize(FiniteCheck)
+    }
+    fn end(self) -> Result<(), FiniteCheckError> {
+        Ok(())
+    }
+}
+
+impl serde::ser::SerializeStructVariant for FiniteCheck {
+    type Ok = ();
+    type Error = FiniteCheckError;
+    fn serialize_field<T: ?Sized + Serialize>(&mut self, _: &'static str, v: &T) -> Result<(), FiniteCheckError> {
+        v.serialize(FiniteCheck)
+    }
+    fn end(self) -> Result<(), FiniteCheckError> {
+        Ok(())
+    }
+}
+
+/// Fail when the document holds a number JSON cannot represent.
+fn ensure_finite(doc: &Document) -> Result<(), FormatError> {
+    DocumentJson::new(doc).serialize(FiniteCheck).map_err(io_err)
+}
+
 /// Serialize the document (without images) to the JSON value stored in `document.json`.
 pub fn to_json(doc: &Document) -> Result<Value, FormatError> {
+    ensure_finite(doc)?;
     serde_json::to_value(DocumentJson::new(doc)).map_err(io_err)
 }
 
 /// Write the document (without images) as `document.json` content to `w`.
 pub fn write_json(doc: &Document, w: impl Write) -> Result<(), FormatError> {
+    ensure_finite(doc)?;
     serde_json::to_writer(w, &DocumentJson::new(doc)).map_err(io_err)
 }
 
@@ -806,6 +977,21 @@ mod tests {
         // Bare JSON opens too.
         let json = serde_json::to_vec(&to_json(&d).unwrap()).unwrap();
         assert!(load_bytes(&json).is_ok());
+    }
+
+    #[test]
+    fn non_finite_numbers_are_refused_at_save() {
+        let mut d = Document::new("NaN");
+        let p = d.first_page().unwrap();
+        let r = d.create(p, NodeKind::Rectangle, "R", 1.0, 2.0, 3.0, 4.0).unwrap();
+        assert!(save_bytes(&d, None).is_ok());
+        d.get_mut(r).unwrap().width = f64::NAN;
+        let e = save_bytes(&d, None).unwrap_err();
+        assert!(e.to_string().contains("non-finite"), "{e}");
+        d.get_mut(r).unwrap().width = 3.0;
+        d.get_mut(r).unwrap().opacity = f32::INFINITY;
+        let e = save_bytes(&d, None).unwrap_err();
+        assert!(e.to_string().contains("non-finite"), "{e}");
     }
 
     #[test]
