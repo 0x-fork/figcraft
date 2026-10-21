@@ -151,6 +151,8 @@ mod measure_nudge_tests;
 #[cfg(test)]
 mod menu_aim_tests;
 #[cfg(test)]
+mod menu_contrast_tests;
+#[cfg(test)]
 mod menu_input_tests;
 #[cfg(test)]
 mod missing_fonts_tests;
