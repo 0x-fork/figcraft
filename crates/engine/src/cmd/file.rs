@@ -556,13 +556,18 @@ fn load_with(
 
 /// Gives `None` when `bytes` are not a `.sketch` file. Then other readers can try.
 fn load_sketch(bytes: &[u8], name: &str) -> Option<Result<figcraft_format::Loaded>> {
-    let r = figcraft_format::sketch::try_import(bytes, name)?;
+    if !figcraft_format::sketch::is_sketch(bytes) {
+        return None;
+    }
+    // The import and what follows read the installed fonts: the system's must be known first (the
+    // desktop app scans them in the background; this waits for that scan).
+    figcraft_text::fontdb::scan_system_fonts();
+    let fonts: figcraft_format::sketch::FontLookup = Box::new(figcraft_text::fontdb::postscript_face);
+    let r = figcraft_format::sketch::try_import_with_fonts(bytes, name, Some(fonts))?;
     Some(r.map_err(|e| EngineError::Other(e.to_string())).map(|(mut doc, warnings)| {
-        // Both read the installed fonts: the system's must be known first (the desktop app scans
-        // them in the background; this waits for that scan).
-        figcraft_text::fontdb::scan_system_fonts();
         match_font_families(&mut doc);
         platform_tracking(&mut doc);
+        sketch_line_heights(&mut doc);
         link_instances(&mut doc);
         reflow_overridden_text(&mut doc);
         figcraft_format::Loaded { issues: warnings, ..doc.into() }
@@ -661,6 +666,74 @@ fn platform_tracking(doc: &mut Document) {
             for r in &mut td.runs {
                 track(&mut r.style);
             }
+        }
+    }
+}
+
+/// Families Sketch (Apple's text system) gives a fifth more than their ascent and descent as their
+/// natural line: classic Mac fonts, found on `sketchtool` renders. Other fonts show none of this.
+const TALL_LINE_FAMILIES: [&str; 11] =
+    ["Academy Engraved LET", "Courier", "Helvetica", "Hoefler Text", "Palatino", "Sathu", "Silom", "Skia", "Times", "Webdings", "Zapf Dingbats"];
+
+/// Sketch's natural line for a font of `ascent` and `descent` in `upem` units at `size` px: its
+/// height in px and how far down the text moves so its baseline sits where Sketch puts it. Sketch
+/// rounds the ascent and descent to whole pixels each and leaves the font's line gap out (a fifth
+/// more for [`TALL_LINE_FAMILIES`]), with the baseline above the rounded descent; FigCraft centres
+/// the font's own ascent and descent in the line. `(0, 0)` without metrics.
+pub(crate) fn sketch_line(ascent: f64, descent: f64, upem: f64, family: &str, size: f64) -> (f64, f64) {
+    let k = size / upem;
+    let (a, d) = (ascent * k, descent * k);
+    if !(a.is_finite() && d.is_finite()) || a + d <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let natural = a.round() + d.round();
+    let line = if TALL_LINE_FAMILIES.iter().any(|f| f.eq_ignore_ascii_case(family)) { (natural * 1.2).round() } else { natural };
+    let sketch_baseline = line - d.round();
+    let figcraft_baseline = (line - (a + d)) / 2.0 + a;
+    (line, sketch_baseline - figcraft_baseline)
+}
+
+/// Text without a fixed line height takes the line Sketch drew it with (FigCraft's natural line,
+/// like Figma's, counts the font's line gap and centres the font in it; Sketch's doesn't), as a
+/// share of its size so it still follows the size, and moves to Sketch's baseline. Shared text
+/// styles take the line too.
+fn sketch_line_heights(doc: &mut Document) {
+    // Per family and style: the face's ascent, descent and units per em.
+    type Metrics = Option<(f64, f64, f64)>;
+    let mut cache: std::collections::BTreeMap<(String, String), Metrics> = std::collections::BTreeMap::new();
+    let mut set = |style: &mut TextStyle| -> f64 {
+        if style.line_height != LineHeight::Auto || !style.font_size.is_finite() || style.font_size <= 0.0 {
+            return 0.0;
+        }
+        let m = *cache.entry((style.font_family.clone(), style.font_style.clone())).or_insert_with(|| {
+            figcraft_text::fontdb::has_family(&style.font_family)
+                .then(|| figcraft_text::fontdb::find_face(&style.font_family, &style.font_style))
+                .flatten()
+                .map(|f| (f.ascent, f.descent, f.upem))
+        });
+        let Some((a, d, upem)) = m else { return 0.0 };
+        let (line, down) = sketch_line(a, d, upem, &style.font_family, style.font_size);
+        if line > 0.0 {
+            style.line_height = LineHeight::Percent(line / style.font_size * 100.0);
+        }
+        down
+    };
+    let ids: Vec<NodeId> = doc.nodes().filter(|n| matches!(n.kind, NodeKind::Text(_))).map(|n| n.id).collect();
+    for id in ids {
+        let Some(n) = doc.node_mut(id) else { continue };
+        let NodeKind::Text(td) = &mut n.kind else { continue };
+        let down = set(&mut td.style);
+        for r in &mut td.runs {
+            set(&mut r.style);
+        }
+        // Down in the layer's own frame (a rotated text moves along its own axis).
+        if down.is_finite() && down != 0.0 {
+            n.transform *= figcraft_doc::geom::Affine::translate((0.0, down));
+        }
+    }
+    for st in &mut doc.styles {
+        if let StyleKind::Text { style } = &mut st.kind {
+            set(style);
         }
     }
 }

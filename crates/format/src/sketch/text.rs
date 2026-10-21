@@ -124,7 +124,7 @@ pub(crate) fn type_style(cx: &mut Cx, a: &Value) -> Value {
     let font = a.get("MSAttributedStringFontAttribute").and_then(|f| f.get("attributes"));
     let ps = font.and_then(|f| f.get("name")).and_then(Value::as_str).unwrap_or("");
     let size = font.and_then(|f| f.get("size")).and_then(Value::as_f64).filter(|s| s.is_finite() && *s > 0.0).unwrap_or(12.0);
-    let (family, style) = font_name(ps);
+    let (family, style) = installed(cx, ps).unwrap_or_else(|| font_name(ps));
     if ps.is_empty() {
         cx.warn("text without a font uses Helvetica");
     }
@@ -178,6 +178,23 @@ fn variations(v: &Value) -> Option<Value> {
         })
         .collect();
     (!axes.is_empty()).then_some(Value::Object(axes))
+}
+
+/// The installed family and style of PostScript name `ps`, when the import has a font lookup and
+/// the font is installed.
+fn installed(cx: &mut Cx, ps: &str) -> Option<(String, String)> {
+    if ps.is_empty() {
+        return None;
+    }
+    if let Some(found) = cx.font_cache.get(ps) {
+        return found.clone();
+    }
+    let found = cx.fonts.as_ref().and_then(|f| f(ps));
+    // A file names a few hundred fonts at most; junk ones don't grow the cache past that.
+    if cx.font_cache.len() < 4096 {
+        cx.font_cache.insert(ps.to_string(), found.clone());
+    }
+    found
 }
 
 /// Family and style of a font from its PostScript name: "HelveticaNeue-Bold" → ("Helvetica Neue",

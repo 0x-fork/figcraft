@@ -81,35 +81,55 @@ pub fn is_sketch(bytes: &[u8]) -> bool {
             }))
 }
 
+/// Finds the installed face a PostScript name belongs to: its family and style.
+pub type FontLookup = Box<dyn Fn(&str) -> Option<(String, String)>>;
+
 /// Import `bytes` when they are a `.sketch` file; `None` when they are something else.
 pub fn try_import(bytes: &[u8], name: &str) -> Option<Result<(Document, Vec<String>), FormatError>> {
-    is_sketch(bytes).then(|| import(bytes, name))
+    try_import_with_fonts(bytes, name, None)
+}
+
+/// [`try_import`] with `fonts` finding the installed faces the file's fonts (PostScript names)
+/// belong to; families of fonts it doesn't find are read from their names.
+pub fn try_import_with_fonts(bytes: &[u8], name: &str, fonts: Option<FontLookup>) -> Option<Result<(Document, Vec<String>), FormatError>> {
+    is_sketch(bytes).then(|| import_with_fonts(bytes, name, fonts))
 }
 
 /// Build a document from a `.sketch` file. Returns it with the warnings about what was skipped or
 /// approximated. `name`: the document name.
 pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), FormatError> {
-    import_parts(bytes, name, MAX_JSON_MEMBER, crate::fig::layer_budget(bytes.len()))
+    import_with_fonts(bytes, name, None)
+}
+
+/// [`import`] with a font lookup (see [`try_import_with_fonts`]).
+pub fn import_with_fonts(bytes: &[u8], name: &str, fonts: Option<FontLookup>) -> Result<(Document, Vec<String>), FormatError> {
+    import_parts(bytes, name, MAX_JSON_MEMBER, crate::fig::layer_budget(bytes.len()), fonts)
 }
 
 /// [`import`] reading pages of at most `max_member` bytes of JSON each.
 #[cfg(test)]
 pub(crate) fn import_within(bytes: &[u8], name: &str, max_member: u64) -> Result<(Document, Vec<String>), FormatError> {
-    import_parts(bytes, name, max_member, crate::fig::layer_budget(bytes.len()))
+    import_parts(bytes, name, max_member, crate::fig::layer_budget(bytes.len()), None)
 }
 
 /// [`import`] with at most `max_nodes` layers.
 #[cfg(test)]
 pub(crate) fn import_within_nodes(bytes: &[u8], name: &str, max_nodes: usize) -> Result<(Document, Vec<String>), FormatError> {
-    import_parts(bytes, name, MAX_JSON_MEMBER, max_nodes)
+    import_parts(bytes, name, MAX_JSON_MEMBER, max_nodes, None)
 }
 
-fn import_parts(bytes: &[u8], name: &str, max_member: u64, max_nodes: usize) -> Result<(Document, Vec<String>), FormatError> {
+fn import_parts(
+    bytes: &[u8],
+    name: &str,
+    max_member: u64,
+    max_nodes: usize,
+    fonts: Option<FontLookup>,
+) -> Result<(Document, Vec<String>), FormatError> {
     if bytes.starts_with(b"SQLite format 3\0") {
         return Err(FormatError::Io(TOO_OLD.into()));
     }
     let archive = Archive::open(bytes, max_member)?;
-    let map = tree::to_rest(&archive, name, max_nodes);
+    let map = tree::to_rest(&archive, name, max_nodes, fonts);
     if map.too_old {
         return Err(FormatError::Io(TOO_OLD.into()));
     }

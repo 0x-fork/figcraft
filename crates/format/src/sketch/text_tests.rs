@@ -235,3 +235,18 @@ fn font_references_without_data_are_no_embedded_fonts() {
     let (_, warnings) = import(&z, "f").unwrap();
     assert!(!warnings.iter().any(|w| w.contains("embedded")), "{warnings:?}");
 }
+
+/// With a font lookup, a PostScript name gives the installed family and style it belongs to (the
+/// name alone can't always tell: "CourierNewPSMT" is Courier New Regular); without one, or for a
+/// font that isn't installed, the family is read from the name.
+#[test]
+fn postscript_names_find_installed_fonts() {
+    let mk = |name: &str, ps: &str| text(name, 0.0, 0.0, 100.0, 20.0, "Hi", &[(0, 2, ps, 14.0, BLACK)]);
+    let z = sketch_zip("83.2", 139, document(&["P"]), &[page("P", "Page", vec![mk("A", "CourierNewPSMT"), mk("B", "BrandSans-Bold")])], &[]);
+    let lookup: crate::sketch::FontLookup = Box::new(|ps: &str| (ps == "CourierNewPSMT").then(|| ("Courier New".to_string(), "Regular".to_string())));
+    let (doc, _) = crate::sketch::import_with_fonts(&z, "f", Some(lookup)).unwrap();
+    assert_eq!((data(&doc, "A").style.font_family.as_str(), data(&doc, "A").style.font_style.as_str()), ("Courier New", "Regular"));
+    assert_eq!(data(&doc, "B").style.font_family, "Brand Sans");
+    let (doc, _) = import(&z, "f").unwrap();
+    assert_eq!(data(&doc, "A").style.font_family, "Courier New PSMT");
+}

@@ -2,7 +2,8 @@ use super::*;
 
 fn pending(styles: &[&str]) -> FontDb {
     let mut db = FontDb::default();
-    let entries = styles.iter().map(|s| Pending { path: format!("no-such-dir/{s}.ttf").into(), index: 0, style: (*s).into() }).collect();
+    let entries =
+        styles.iter().map(|s| Pending { path: format!("no-such-dir/{s}.ttf").into(), index: 0, style: (*s).into(), postscript: None }).collect();
     db.pending.insert("cjk ui".into(), ("CJK UI".into(), entries));
     db
 }
@@ -221,7 +222,7 @@ fn user_font_dirs_preserve_non_utf8_paths() {
 /// A rescan offers new families and the styles installed since, and never a file twice.
 #[test]
 fn a_rescan_offers_fonts_installed_since() {
-    let entry = |s: &str| Pending { path: format!("no-such-dir/{s}.ttf").into(), index: 0, style: s.into() };
+    let entry = |s: &str| Pending { path: format!("no-such-dir/{s}.ttf").into(), index: 0, style: s.into(), postscript: None };
     let mut db = pending(&["Regular"]);
     let found = |fams: &[(&str, &[&str])]| -> BTreeMap<String, (String, Vec<Pending>)> {
         fams.iter().map(|(f, styles)| (f.to_lowercase(), ((*f).to_string(), styles.iter().map(|s| entry(s)).collect()))).collect()
@@ -271,7 +272,7 @@ fn apple_system_font_names_find_the_system_font() {
     let mut db = FontDb::default();
     db.pending.insert(
         "system font".into(),
-        ("System Font".into(), vec![Pending { path: "no-such-dir/SFNS.ttf".into(), index: 0, style: "Regular".into() }]),
+        ("System Font".into(), vec![Pending { path: "no-such-dir/SFNS.ttf".into(), index: 0, style: "Regular".into(), postscript: None }]),
     );
     for name in ["SF Pro", "SF Pro Text", "SF Pro Display", "SF UI Text", "SF UI Display", ".SF NS Text", "San Francisco"] {
         assert!(db.has_family(name), "{name}");
@@ -323,4 +324,28 @@ fn trak_tracking_by_size() {
     if let Some(f) = plain.filter(|f| f.family != "System Font") {
         let _ = f.tracking(12.0);
     }
+}
+
+/// A face is found by its PostScript name (ignoring case), loaded or only scanned: the family and
+/// style it is offered under.
+#[test]
+fn faces_by_postscript_name() {
+    let mut db = FontDb::default();
+    db.pending.insert(
+        "brand sans".into(),
+        (
+            "Brand Sans".into(),
+            vec![Pending { path: "no-such-dir/b.ttf".into(), index: 0, style: "Bold".into(), postscript: Some("BrandSans-Bold".into()) }],
+        ),
+    );
+    assert_eq!(db.postscript_face("brandsans-bold"), Some(("Brand Sans".to_string(), "Bold".to_string())));
+    assert_eq!(db.postscript_face("BrandSans-Light"), None);
+    if let Some(f) = CRAFT_FONTS.first()
+        && let Some(face) = Face::from_bytes(FontBytes::Static(f.bytes), 0, Some(f.family), Some(f.style))
+        && let Some(ps) = face.postscript.clone()
+    {
+        db.add(face);
+        assert_eq!(db.postscript_face(&ps), Some((f.family.to_string(), f.style.to_string())));
+    }
+    assert!(postscript_face("").is_none());
 }

@@ -86,6 +86,8 @@ pub struct Face {
     pub id: u32,
     pub family: String,
     pub style: String,
+    /// The face's PostScript name ("HelveticaNeue-Bold").
+    pub postscript: Option<String>,
     pub weight: u16,
     pub italic: bool,
     pub bytes: FontBytes,
@@ -185,6 +187,7 @@ impl Face {
             id: NEXT_FACE.fetch_add(1, Ordering::Relaxed),
             italic: !matches!(attrs.style, skrifa::attribute::Style::Normal) || style.to_ascii_lowercase().contains("italic"),
             weight,
+            postscript: name_string(&f, StringId::POSTSCRIPT_NAME),
             family,
             style,
             index,
@@ -493,6 +496,8 @@ struct Pending {
     path: std::path::PathBuf,
     index: u32,
     style: String,
+    /// The face's PostScript name.
+    postscript: Option<String>,
 }
 
 #[derive(Default)]
@@ -568,6 +573,16 @@ impl FontDb {
             Err(_) => 0,
         };
         (0..count).filter_map(|i| Face::from_bytes(FontBytes::Shared(shared.clone()), i, None, None)).map(|f| self.add(f)).collect()
+    }
+
+    /// The family and style of the face whose PostScript name is `ps` (ignoring case), loaded or
+    /// only scanned.
+    pub fn postscript_face(&self, ps: &str) -> Option<(String, String)> {
+        let is = |p: &Option<String>| p.as_deref().is_some_and(|p| p.eq_ignore_ascii_case(ps));
+        if let Some(f) = self.faces.iter().find(|f| is(&f.postscript)) {
+            return Some((f.family.clone(), f.style.clone()));
+        }
+        self.pending.values().find_map(|(display, entries)| entries.iter().find(|e| is(&e.postscript)).map(|e| (display.clone(), e.style.clone())))
     }
 
     /// Family display names, sorted (loaded and known system families).
@@ -897,8 +912,13 @@ fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (Str
             continue;
         }
         let Some(bytes) = usize::try_from(meta.len()).ok().and_then(|l| index_bytes(&path, l)) else { continue };
-        for (index, family, style) in faces_in(&bytes) {
-            out.entry(family.to_lowercase()).or_insert_with(|| (family.clone(), Vec::new())).1.push(Pending { path: path.clone(), index, style });
+        for (index, family, style, postscript) in faces_in(&bytes) {
+            out.entry(family.to_lowercase()).or_insert_with(|| (family.clone(), Vec::new())).1.push(Pending {
+                path: path.clone(),
+                index,
+                style,
+                postscript,
+            });
         }
     }
 }
@@ -942,9 +962,9 @@ fn index_bytes(path: &std::path::Path, len: usize) -> Option<Vec<u8>> {
     Some(buf)
 }
 
-/// (index, family, style) of each face in a font file: outline fonts and colour fonts (Apple Color
+/// (index, family, style, PostScript name) of each face in a font file: outline fonts and colour fonts (Apple Color
 /// Emoji draws most emoji from `sbix`, Noto Color Emoji has no outlines at all).
-fn faces_in(bytes: &[u8]) -> Vec<(u32, String, String)> {
+fn faces_in(bytes: &[u8]) -> Vec<(u32, String, String, Option<String>)> {
     let count = match FileRef::new(bytes) {
         Ok(FileRef::Collection(c)) => c.len(),
         Ok(FileRef::Font(_)) => 1,
@@ -959,7 +979,7 @@ fn faces_in(bytes: &[u8]) -> Vec<(u32, String, String)> {
                 .then_some(())?;
             let (family, style) = names(&f);
             let family = public_family(&family?)?;
-            Some((i, family, style.unwrap_or_else(|| "Regular".into())))
+            Some((i, family, style.unwrap_or_else(|| "Regular".into()), name_string(&f, StringId::POSTSCRIPT_NAME)))
         })
         .collect()
 }
@@ -989,6 +1009,14 @@ fn apple_alias(key: &str) -> Option<&'static str> {
 }
 
 /// Convenience: find a face with the global db.
+/// The family and style of the installed face whose PostScript name is `ps`.
+pub fn postscript_face(ps: &str) -> Option<(String, String)> {
+    if ps.is_empty() {
+        return None;
+    }
+    db().read().unwrap_or_else(std::sync::PoisonError::into_inner).postscript_face(ps)
+}
+
 pub fn find_face(family: &str, style: &str) -> Option<Arc<Face>> {
     let mut db = db().write().unwrap_or_else(std::sync::PoisonError::into_inner);
     db.find(family, style).or_else(|| db.default_face())

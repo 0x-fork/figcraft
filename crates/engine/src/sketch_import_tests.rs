@@ -401,3 +401,43 @@ fn sketch_resized_stack_instances_reflow() {
     assert!((b.x0 - a.x1 - 8.0).abs() < 0.5, "{a:?} {b:?}");
     assert!((doc.world_bounds(inst).unwrap().x1 - 342.0).abs() < 1e-6);
 }
+
+/// Sketch's natural line: the font's ascent and descent each rounded to whole pixels, without its
+/// line gap, the baseline at the rounded ascent; the classic Mac fonts get a fifth more, all of it
+/// above the text.
+#[test]
+fn sketch_natural_line_rule() {
+    use crate::cmd::file::sketch_line;
+    // Helvetica Neue Medium (975 + 217 of 1000, a gap of 29 left out) at 17 px: 16.575 → 17 and
+    // 3.689 → 4, a line of 21 with the baseline at 17. FigCraft puts the baseline at
+    // (21 − 20.264) / 2 + 16.575 = 16.943, so the text moves down 0.057.
+    let (line, down) = sketch_line(975.0, 217.0, 1000.0, "Helvetica Neue", 17.0);
+    assert!((line - 21.0).abs() < 1e-9 && (down - 0.057).abs() < 1e-9, "{line} {down}");
+    // Helvetica at 100 px: 77 + 23 and a fifth more, 120, all of it above: the baseline at 97
+    // where FigCraft centres it at 87.
+    let (line, down) = sketch_line(1577.0, 471.0, 2048.0, "helvetica", 100.0);
+    assert!((line - 120.0).abs() < 1e-9 && (down - 10.0).abs() < 0.05, "{line} {down}");
+    assert_eq!(sketch_line(0.0, 0.0, 0.0, "X", 12.0), (0.0, 0.0), "no metrics, no change");
+    assert_eq!(sketch_line(900.0, 200.0, 1000.0, "X", f64::NAN), (0.0, 0.0));
+}
+
+/// Text without a fixed line height gets Sketch's natural line as a share of its size, in the
+/// layer and in shared text styles.
+#[test]
+fn sketch_text_gets_sketchs_natural_line() {
+    if !std::path::Path::new("/System/Library/Fonts/HelveticaNeue.ttc").exists() {
+        return;
+    }
+    figcraft_text::fontdb::scan_system_fonts();
+    let font = json!({"name": "HelveticaNeue", "size": 100});
+    let run = json!({"location": 0, "length": 2, "attributes": {"MSAttributedStringFontAttribute": {"attributes": font}}});
+    let t = shape("text", "Label", [0.0, 0.0, 200.0, 120.0], json!({"attributedString": {"string": "Hi", "attributes": [run]}, "textBehaviour": 0}));
+    let data = base64::engine::general_purpose::STANDARD.encode(sketch_with("64", &[("A", "Page")], &[t]));
+    let mut s = Session::new();
+    s.execute("file.open", &json!({"data": data, "name": "x.sketch"})).unwrap();
+    let doc = s.doc().unwrap();
+    let NodeKind::Text(td) = &doc.nodes().find(|n| n.name == "Label").unwrap().kind else { panic!("not text") };
+    // 95.2 → 95 and 21.3 → 21: 116 px, as a share of the size.
+    let figcraft_doc::LineHeight::Percent(p) = td.style.line_height else { panic!("{:?}", td.style.line_height) };
+    assert!((p - 116.0).abs() < 1e-9, "{p}");
+}

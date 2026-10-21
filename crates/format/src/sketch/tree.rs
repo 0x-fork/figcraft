@@ -58,6 +58,9 @@ pub(crate) struct Cx {
     /// Layers mapped so far, and the most the file may give.
     pub nodes: usize,
     pub max_nodes: usize,
+    /// Finds installed faces by PostScript name, and what it found (or didn't) so far.
+    pub fonts: Option<super::FontLookup>,
+    pub font_cache: std::collections::BTreeMap<String, Option<(String, String)>>,
 }
 
 impl Cx {
@@ -90,7 +93,7 @@ impl Cx {
 }
 
 /// Map the pages of `archive` to a REST file JSON named `name`.
-pub(crate) fn to_rest(archive: &Archive, name: &str, max_nodes: usize) -> Map {
+pub(crate) fn to_rest(archive: &Archive, name: &str, max_nodes: usize, fonts: Option<super::FontLookup>) -> Map {
     let symbols = super::symbols::Symbols::read(&archive.document, &archive.pages);
     let shared = super::shared::Shared::read(&archive.document);
     let mut cx = Cx {
@@ -109,6 +112,8 @@ pub(crate) fn to_rest(archive: &Archive, name: &str, max_nodes: usize) -> Map {
         too_old: false,
         nodes: 0,
         max_nodes,
+        fonts,
+        font_cache: std::collections::BTreeMap::new(),
     };
     let defs = super::shared::Shared::definitions(&mut cx);
     cx.style_defs = defs.iter().filter_map(|d| d.get("id").and_then(Value::as_str).map(str::to_string)).collect();
