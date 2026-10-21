@@ -1201,7 +1201,7 @@ impl Session {
         // inside, or the frame or canvas behind it) drags the selection.
         let behind_sel = |t: Option<NodeId>| t.is_none_or(|t| sel.iter().any(|s| *s != t && doc.is_ancestor(t, *s)));
         let target = match sel.iter().copied().find(|s| !locked_in(&doc, *s)) {
-            Some(first) if label.is_none() && !ev.shift && behind_sel(target) && doc.bounds_of(&sel).is_some_and(|b| b.contains(ev.p())) => {
+            Some(first) if label.is_none() && !ev.shift && behind_sel(target) && selection_box(&doc, &sel).is_some_and(|q| in_quad(&q, ev.p())) => {
                 Some(first)
             }
             _ => target,

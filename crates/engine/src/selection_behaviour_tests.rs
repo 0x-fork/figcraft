@@ -352,6 +352,19 @@ fn a_drag_inside_the_selection_box_moves_it_where_nothing_is_hit() {
             assert!(s.undo().unwrap(), "{why}: one undo step");
         }
     }
+    // A turned layer's box is turned with it: the corners of its page-aligned bounds are outside.
+    ex(&mut s, "node.set", json!({"ids": [k.r], "props": {"rotation": 45}}));
+    let b = s.doc().unwrap().world_bounds(k.r).unwrap();
+    ex(&mut s, "select.set", json!({"ids": [k.r]}));
+    drag(&mut s, (b.x0 + 2.0, b.y0 + 2.0), (b.x0 + 12.0, b.y0 + 12.0), NONE);
+    assert_eq!(at(&s, k.r), b.origin(), "a press outside a turned layer's box is a marquee: it doesn't move the layer");
+    ex(&mut s, "select.set", json!({"ids": [k.r]}));
+    let c = b.center();
+    drag(&mut s, (c.x, c.y), (c.x + 10.0, c.y + 10.0), NONE);
+    assert_eq!(s.selection(), vec![k.r], "inside the turned box it drags");
+    // Pixel snapping rounds the turned box's origin, so the move is about the pointer's.
+    let d = at(&s, k.r) - b.origin();
+    assert!((d.x - 10.0).abs() < 2.0 && (d.y - 10.0).abs() < 2.0, "it moves with the pointer: {d:?}");
 }
 
 #[test]
