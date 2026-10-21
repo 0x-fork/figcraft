@@ -40,7 +40,7 @@ mod tree_tests;
 use std::collections::BTreeSet;
 
 use figcraft_doc::Document;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::FormatError;
 
@@ -53,6 +53,15 @@ pub const NEWEST_TESTED_VERSION: u64 = 139;
 pub const TOO_OLD: &str = "saved by a Sketch older than 48; open it in a newer Sketch and save it again";
 /// Largest JSON member read (a real page of a few thousand layers takes 33 MB).
 const MAX_JSON_MEMBER: u64 = 512 * 1024 * 1024;
+/// Most bytes JSON members may unpack to, per compressed byte (real files pack 5–20 times; a
+/// zero-filled array a thousand times), with a floor for small members.
+const MAX_JSON_RATIO: u64 = 100;
+const MIN_JSON_ALLOWANCE: u64 = 16 * 1024 * 1024;
+/// Most JSON read from one file in all.
+#[cfg(not(target_pointer_width = "32"))]
+const MAX_JSON_TOTAL: u64 = 2 * 1024 * 1024 * 1024;
+#[cfg(target_pointer_width = "32")]
+const MAX_JSON_TOTAL: u64 = 512 * 1024 * 1024;
 /// Largest image member read.
 const MAX_IMAGE: u64 = 256 * 1024 * 1024;
 /// Most pages read from one file.
@@ -165,22 +174,36 @@ pub(crate) struct Archive<'b> {
 impl<'b> Archive<'b> {
     fn open(bytes: &'b [u8], max_member: u64) -> Result<Self, FormatError> {
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| corrupt(e.to_string()))?;
-        let json = |z: &mut zip::ZipArchive<std::io::Cursor<&'b [u8]>>, member: &str, limit: u64| -> Result<Value, FormatError> {
-            let data = crate::read_member(z, member, limit)?;
-            serde_json::from_slice(&data).map_err(|e| corrupt(format!("{member}: {e}")))
-        };
-        let meta = json(&mut z, "meta.json", MAX_JSON_MEMBER)?;
+        let mut total = 0u64;
+        let meta = json_member(&mut z, "meta.json", MAX_JSON_MEMBER, &mut total)?;
         if !meta.is_object() {
             return Err(corrupt("meta.json is not an object"));
         }
         if app_major(&meta).is_some_and(|v| v < MIN_SKETCH) {
             return Err(FormatError::Io(TOO_OLD.into()));
         }
-        let document = json(&mut z, "document.json", MAX_JSON_MEMBER)?;
         let mut warnings = Vec::new();
         if meta.get("version").and_then(Value::as_u64).is_some_and(|v| v > NEWEST_TESTED_VERSION) {
             warnings.push("the file was saved by a newer Sketch than the import was checked with; some layers may differ".to_string());
         }
+        // A document.json that can't be read (nested too deep, damaged) loses its shared styles and
+        // library copies, not the pages: they are then taken in archive order.
+        let document = match json_member(&mut z, "document.json", MAX_JSON_MEMBER, &mut total) {
+            Ok(d) if d.is_object() => d,
+            other => {
+                let why = other.err().map_or_else(|| "not an object".to_string(), |e| e.to_string());
+                warnings.push(format!(
+                    "the document's shared styles and library symbols were skipped: {}",
+                    why.trim_start_matches("not a valid FigCraft file: ")
+                ));
+                let pages: Vec<Value> = z
+                    .file_names()
+                    .filter_map(|n| n.strip_prefix("pages/")?.strip_suffix(".json"))
+                    .map(|id| json!({"_ref": format!("pages/{id}")}))
+                    .collect();
+                json!({"pages": pages})
+            }
+        };
         let refs = document.get("pages").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
         let mut pages = Vec::new();
         for r in refs.iter().take(MAX_PAGES) {
@@ -188,7 +211,7 @@ impl<'b> Archive<'b> {
                 warnings.push("pages the document lists without a valid reference were skipped".into());
                 continue;
             };
-            match json(&mut z, &format!("pages/{id}.json"), max_member) {
+            match json_member(&mut z, &format!("pages/{id}.json"), max_member, &mut total) {
                 Ok(page) if page.is_object() => pages.push((id.to_string(), page)),
                 Ok(_) => warnings.push("pages that aren't JSON objects were skipped".into()),
                 Err(e) => warnings.push(format!("a page was skipped: {}", e.to_string().trim_start_matches("not a valid FigCraft file: "))),
@@ -210,6 +233,23 @@ impl<'b> Archive<'b> {
         let mut z = self.zip.clone();
         crate::read_member(&mut z, &format!("images/{name}"), MAX_IMAGE).ok()
     }
+}
+
+/// JSON member `name`, refused before unpacking when it would be larger than `limit`, than
+/// [`MAX_JSON_RATIO`] times what it takes in the archive (past a floor), or than what is left of
+/// the file's [`MAX_JSON_TOTAL`] (`total`: read so far).
+fn json_member(z: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>, name: &str, limit: u64, total: &mut u64) -> Result<Value, FormatError> {
+    let (size, packed) = {
+        let f = z.by_name(name).map_err(|e| corrupt(format!("{name}: {e}")))?;
+        (f.size(), f.compressed_size())
+    };
+    let allowed = limit.min(packed.saturating_mul(MAX_JSON_RATIO).max(MIN_JSON_ALLOWANCE)).min(MAX_JSON_TOTAL.saturating_sub(*total));
+    if size > allowed {
+        return Err(corrupt(format!("{name} is too large")));
+    }
+    let data = crate::read_member(z, name, allowed)?;
+    *total += data.len() as u64;
+    serde_json::from_slice(&data).map_err(|e| corrupt(format!("{name}: {e}")))
 }
 
 /// The major version of the Sketch that saved the file (`meta.json` `appVersion`, "50.2" → 50).

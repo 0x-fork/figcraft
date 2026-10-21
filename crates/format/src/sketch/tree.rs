@@ -6,6 +6,16 @@ use serde_json::{Map as JsonMap, Value, json};
 
 use super::Archive;
 
+/// Most distinct notes kept.
+const MAX_NOTES: usize = 200;
+/// Work units symbol expansion may spend on one file (one per JSON value copied, see
+/// `symbols::weight`): about three times what the largest design kit checked spends (21M, with
+/// 2 GB at its peak), well below what runs out of memory; less on 32-bit targets (the web), where
+/// such a kit keeps its first instances and notes the rest.
+#[cfg(not(target_pointer_width = "32"))]
+const MAX_WORK: u64 = 60_000_000;
+#[cfg(target_pointer_width = "32")]
+const MAX_WORK: u64 = 15_000_000;
 /// Deepest layer nesting followed (deeper layers are skipped with a warning).
 const MAX_DEPTH: usize = 200;
 /// Largest size and farthest position kept (the REST importer's own bounds).
@@ -23,13 +33,16 @@ pub(crate) struct Map {
 }
 
 /// The mapping's state while walking the file.
-pub(crate) struct Cx<'a> {
-    /// `document.json`: shared styles and library copies.
-    pub document: &'a Value,
+pub(crate) struct Cx {
     pub symbols: super::symbols::Symbols,
     pub shared: super::shared::Shared,
     /// Ids of the styles made from the shared styles.
-    pub style_defs: Vec<String>,
+    pub style_defs: std::collections::BTreeSet<String>,
+    /// Work spent expanding symbols, and the most the file may take (see `symbols::weight`).
+    pub work: u64,
+    pub max_work: u64,
+    /// Notes given so far (each once).
+    pub seen: std::collections::BTreeSet<String>,
     /// The symbols being expanded, outermost first (a symbol inside itself stops there).
     pub chain: Vec<String>,
     pub warnings: Vec<String>,
@@ -40,12 +53,32 @@ pub(crate) struct Cx<'a> {
     pub max_nodes: usize,
 }
 
-impl Cx<'_> {
+impl Cx {
     pub(crate) fn warn(&mut self, msg: impl Into<String>) {
         let msg = msg.into();
-        if !self.warnings.contains(&msg) {
+        if self.seen.len() > MAX_NOTES || !self.seen.insert(msg.clone()) {
+            return;
+        }
+        if self.seen.len() > MAX_NOTES {
+            self.warnings.push("more notes were left out".into());
+        } else {
             self.warnings.push(msg);
         }
+    }
+
+    /// Spend `n` units of the work budget; false (with a note, once) when it would run out.
+    pub(crate) fn spend(&mut self, n: u64) -> bool {
+        if self.work.saturating_add(n) > self.max_work {
+            self.work = self.max_work;
+            self.warn("the file's symbols expand to more than the import handles; the instances past that were imported as empty frames");
+            return false;
+        }
+        self.work += n;
+        true
+    }
+
+    pub(crate) fn work_left(&self) -> u64 {
+        self.max_work.saturating_sub(self.work)
     }
 }
 
@@ -54,10 +87,12 @@ pub(crate) fn to_rest(archive: &Archive, name: &str, max_nodes: usize) -> Map {
     let symbols = super::symbols::Symbols::read(&archive.document, &archive.pages);
     let shared = super::shared::Shared::read(&archive.document);
     let mut cx = Cx {
-        document: &archive.document,
         symbols,
         shared,
-        style_defs: Vec::new(),
+        style_defs: std::collections::BTreeSet::new(),
+        work: 0,
+        max_work: MAX_WORK,
+        seen: std::collections::BTreeSet::new(),
         chain: Vec::new(),
         warnings: Vec::new(),
         networks: Vec::new(),
@@ -319,7 +354,8 @@ pub(crate) fn children(cx: &mut Cx, l: &Value, world: Affine, size: (f64, f64), 
         .flat_map(|(breaks, n)| match drawn_mask(&n) {
             // Sketch also draws a mask with its own style, under what it clips; a FigCraft mask
             // only clips, so a plain copy of it goes underneath.
-            Some(copy) => vec![(false, copy), (breaks, n)],
+            // The copy ends an earlier mask's chain as the mask itself would.
+            Some(copy) => vec![(breaks, copy), (breaks, n)],
             None => vec![(breaks, n)],
         })
         .collect();

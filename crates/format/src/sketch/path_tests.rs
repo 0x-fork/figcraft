@@ -152,3 +152,16 @@ fn even_odd_winding() {
     let NodeKind::Vector { network } = &node(&doc, "Holes").kind else { panic!("not a vector") };
     assert_eq!(network.regions[0].winding, figcraft_doc::WindingRule::EvenOdd);
 }
+
+#[test]
+fn huge_points_stay_finite() {
+    let mut p = shape_path("Huge", 0.0, 0.0, 1e6, 1e6, &[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)], true);
+    p["points"][1]["point"] = json!("{1e308, 0}");
+    p["points"][1]["curveMode"] = json!(2);
+    p["points"][1]["curveFrom"] = json!("{-1e308, 1e308}");
+    let doc = open(vec![p]);
+    if let NodeKind::Vector { network } = &node(&doc, "Huge").kind {
+        assert!(network.vertices.iter().all(|v| v.x.is_finite() && v.y.is_finite()));
+        assert!(network.segments.iter().all(|s| [s.ta.0, s.ta.1, s.tb.0, s.tb.1].iter().all(|c| c.is_finite())));
+    }
+}

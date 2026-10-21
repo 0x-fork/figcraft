@@ -14,8 +14,11 @@ use std::collections::BTreeMap;
 use figcraft_doc::geom::Affine;
 use serde_json::{Map as JsonMap, Value, json};
 
+use super::shared::Shared;
 use super::tree::{Cx, base, bool_field, children, local, size, str_field};
 
+/// Work units an override handed on to a nested instance costs (the JSON values it adds).
+const OVERRIDE_COST: u64 = 8;
 /// Most masters read from one file.
 const MAX_MASTERS: usize = 100_000;
 
@@ -23,6 +26,8 @@ const MAX_MASTERS: usize = 100_000;
 #[derive(Default)]
 pub(crate) struct Symbols {
     masters: BTreeMap<String, Value>,
+    /// What expanding each master costs (see [`weight`]).
+    weights: BTreeMap<String, u64>,
     /// Masters copied from libraries that no page holds (they get a page of their own), with the
     /// libraries' names.
     pub foreign: Vec<Value>,
@@ -61,13 +66,29 @@ impl Symbols {
         if self.masters.len() >= MAX_MASTERS {
             return;
         }
-        if let Some(id) = str_field(&m, "symbolID") {
-            self.masters.entry(id.to_string()).or_insert(m);
+        if let Some(id) = str_field(&m, "symbolID")
+            && !self.masters.contains_key(id)
+        {
+            self.weights.insert(id.to_string(), weight(&m, 0));
+            self.masters.insert(id.to_string(), m);
         }
     }
 
     fn master(&self, symbol_id: &str) -> Option<&Value> {
         self.masters.get(symbol_id)
+    }
+}
+
+/// What copying and mapping `v` costs, in work units: one per JSON value, one per 8 bytes of text.
+fn weight(v: &Value, depth: usize) -> u64 {
+    if depth > 256 {
+        return 1;
+    }
+    match v {
+        Value::String(s) => 1 + s.len() as u64 / 8,
+        Value::Array(a) => 1 + a.iter().map(|x| weight(x, depth + 1)).sum::<u64>(),
+        Value::Object(o) => 1 + o.iter().map(|(k, x)| k.len() as u64 / 8 + weight(x, depth + 1)).sum::<u64>(),
+        _ => 1,
     }
 }
 
@@ -117,6 +138,12 @@ pub(crate) fn instance(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, roo
     let (w, h) = size(l);
     let world = parent * local(l, w, h);
     let sid = str_field(l, "symbolID").unwrap_or("");
+    let cost = cx.symbols.weights.get(sid).copied().unwrap_or(0);
+    if cx.symbols.master(sid).is_some() && !cx.spend(cost) {
+        let mut node = base(l, "FRAME", parent, world, w, h, root);
+        node.insert("children".into(), json!([]));
+        return Some(Value::Object(node));
+    }
     let Some(m) = cx.symbols.master(sid).cloned() else {
         cx.warn("instances of symbols that aren't in the file were imported as empty frames");
         let mut node = base(l, "FRAME", parent, world, w, h, root);
@@ -144,9 +171,17 @@ pub(crate) fn instance(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, roo
     // An instance shows its master's grids (else they'd differ, and count as an override).
     super::proto::layout_grids(&m, h, &mut node);
     let overrides = overrides(l);
+    let nested = nested(&overrides);
     let mut copy = m;
+    let mut budget = cx.work_left();
     if let Some(layers) = copy.get_mut("layers").and_then(Value::as_array_mut) {
-        apply(layers, &overrides, cx.document, 0);
+        apply(layers, &overrides, &nested, &cx.shared, 0, &mut budget);
+    }
+    let used = cx.work_left().saturating_sub(budget);
+    cx.spend(used);
+    if budget == 0 {
+        // The budget ran out handing overrides on: noted.
+        cx.spend(1);
     }
     let (mw, mh) = size(&copy);
     cx.chain.push(sid.to_string());
@@ -172,9 +207,30 @@ fn overrides(l: &Value) -> BTreeMap<String, Value> {
         .collect()
 }
 
+/// The overrides of layers inside nested instances, by the nested instance's id: `X/rest_prop` →
+/// `X` → [(`rest_prop`, value)].
+fn nested(ov: &BTreeMap<String, Value>) -> BTreeMap<&str, Vec<(&str, &Value)>> {
+    let mut out: BTreeMap<&str, Vec<(&str, &Value)>> = BTreeMap::new();
+    for (k, v) in ov {
+        if let Some((first, rest)) = k.split_once('/') {
+            out.entry(first).or_default().push((rest, v));
+        }
+    }
+    out
+}
+
 /// Apply `ov` to the layers of a master's copy: to the layers it names, and passed on to nested
 /// instances for the layers inside them (an outer override wins over the nested instance's own).
-fn apply(layers: &mut [Value], ov: &BTreeMap<String, Value>, document: &Value, depth: usize) {
+/// Each override handed to a nested instance costs [`OVERRIDE_COST`] units of `budget`; once it is spent, the
+/// rest aren't handed on.
+fn apply(
+    layers: &mut [Value],
+    ov: &BTreeMap<String, Value>,
+    nested: &BTreeMap<&str, Vec<(&str, &Value)>>,
+    shared: &Shared,
+    depth: usize,
+    budget: &mut u64,
+) {
     if depth > 64 || ov.is_empty() {
         return;
     }
@@ -188,14 +244,12 @@ fn apply(layers: &mut [Value], ov: &BTreeMap<String, Value>, document: &Value, d
                     Some(other) => l["symbolID"] = json!(other),
                     None => {}
                 }
-                let prefix = format!("{id}/");
-                let inner: Vec<Value> = ov
-                    .iter()
-                    .filter_map(|(k, v)| k.strip_prefix(&prefix).map(|rest| json!({"_class": "overrideValue", "overrideName": rest, "value": v})))
-                    .collect();
-                if !inner.is_empty() {
+                let inner = nested.get(id.as_str()).map(Vec::as_slice).unwrap_or_default();
+                let take = usize::try_from(*budget / OVERRIDE_COST).unwrap_or(usize::MAX).min(inner.len());
+                *budget -= take as u64 * OVERRIDE_COST;
+                if take > 0 {
                     let mut own = l.get("overrideValues").and_then(Value::as_array).cloned().unwrap_or_default();
-                    own.extend(inner);
+                    own.extend(inner.iter().take(take).map(|(rest, v)| json!({"_class": "overrideValue", "overrideName": rest, "value": v})));
                     l["overrideValues"] = Value::Array(own);
                 }
                 continue;
@@ -212,24 +266,29 @@ fn apply(layers: &mut [Value], ov: &BTreeMap<String, Value>, document: &Value, d
             }
             _ => {}
         }
-        for (prop, list) in [("layerStyle", "layerStyles"), ("textStyle", "layerTextStyles")] {
+        for (prop, text) in [("layerStyle", false), ("textStyle", true)] {
             let sid = get(prop).and_then(Value::as_str);
-            if let Some((sid, style)) = sid.and_then(|sid| Some((sid, shared_style(document, list, sid)?))) {
-                l["style"] = style.clone();
+            // Shared styles that aren't objects are junk: left alone.
+            let Some((sid, style)) = sid.and_then(|sid| Some((sid, shared.style(text, sid).filter(|s| s.is_object())?))) else { continue };
+            let mut style = style.clone();
+            if let Some(m) = style.as_object_mut() {
                 // The layer now uses that shared style: it links to it.
-                l["style"]["sharedObjectID"] = json!(sid);
-                if prop == "textStyle"
-                    && let Some(enc) = style.get("textStyle").and_then(|t| t.get("encodedAttributes"))
-                    && let Some(runs) = l.get_mut("attributedString").and_then(|a| a.get_mut("attributes")).and_then(Value::as_array_mut)
-                {
-                    for r in runs {
-                        r["attributes"] = enc.clone();
-                    }
+                m.insert("sharedObjectID".into(), json!(sid));
+            }
+            if text
+                && let Some(enc) = style.get("textStyle").and_then(|t| t.get("encodedAttributes"))
+                && let Some(runs) = l.get_mut("attributedString").and_then(|a| a.get_mut("attributes")).and_then(Value::as_array_mut)
+            {
+                for r in runs.iter_mut().filter_map(Value::as_object_mut) {
+                    r.insert("attributes".into(), enc.clone());
                 }
+            }
+            if let Some(m) = l.as_object_mut() {
+                m.insert("style".into(), style);
             }
         }
         if let Some(kids) = l.get_mut("layers").and_then(Value::as_array_mut) {
-            apply(kids, ov, document, depth + 1);
+            apply(kids, ov, nested, shared, depth + 1, budget);
         }
     }
 }
@@ -241,26 +300,14 @@ fn set_string(l: &mut Value, s: &str) {
     let Some(a) = l.get_mut("attributedString").and_then(Value::as_object_mut) else { return };
     a.insert("string".into(), json!(s));
     let runs = match first {
-        Some(mut r) => {
-            r["location"] = json!(0);
-            r["length"] = json!(units);
-            vec![r]
+        Some(Value::Object(mut r)) => {
+            r.insert("location".into(), json!(0));
+            r.insert("length".into(), json!(units));
+            vec![Value::Object(r)]
         }
-        None => Vec::new(),
+        _ => Vec::new(),
     };
     a.insert("attributes".into(), Value::Array(runs));
-}
-
-/// The style of shared style `id` from the document's `list` (local) or its library copies.
-pub(crate) fn shared_style<'v>(document: &'v Value, list: &str, id: &str) -> Option<&'v Value> {
-    let local = document.get(list).and_then(|c| c.get("objects")).and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
-    let foreign_key = if list == "layerStyles" { "foreignLayerStyles" } else { "foreignTextStyles" };
-    let foreign = document.get(foreign_key).and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
-    local
-        .iter()
-        .find(|s| str_field(s, "do_objectID") == Some(id))
-        .or_else(|| foreign.iter().filter_map(|f| f.get("localSharedStyle")).find(|s| str_field(s, "do_objectID") == Some(id)))
-        .and_then(|s| s.get("value"))
 }
 
 /// Make the ids of an instance's layers its own (`<instance>;<layer>`): the master's layers keep

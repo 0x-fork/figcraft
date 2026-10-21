@@ -7,7 +7,7 @@
 //! none. Layers link to them by `style.sharedObjectID`. Swatches (Color Variables, Sketch 69+)
 //! become colour variables in one collection; colours name theirs by `swatchID`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map as JsonMap, Value, json};
 
@@ -25,6 +25,9 @@ pub(crate) struct Shared {
     /// `(id, name, style)` of layer styles, then text styles.
     layer: Vec<(String, String, Value)>,
     text: Vec<(String, String, Value)>,
+    /// Positions in `layer` and `text` by id.
+    layer_index: BTreeMap<String, usize>,
+    text_index: BTreeMap<String, usize>,
     swatches: BTreeMap<String, (String, Value)>,
 }
 
@@ -44,10 +47,16 @@ impl Shared {
             ))
         };
         for o in objects("layerStyles").iter().chain(&foreign("foreignLayerStyles", "localSharedStyle")).take(MAX_SHARED) {
-            s.layer.extend(entry(o));
+            if let Some(e) = entry(o).filter(|e| !s.layer_index.contains_key(&e.0)) {
+                s.layer_index.insert(e.0.clone(), s.layer.len());
+                s.layer.push(e);
+            }
         }
         for o in objects("layerTextStyles").iter().chain(&foreign("foreignTextStyles", "localSharedStyle")).take(MAX_SHARED) {
-            s.text.extend(entry(o));
+            if let Some(e) = entry(o).filter(|e| !s.text_index.contains_key(&e.0)) {
+                s.text_index.insert(e.0.clone(), s.text.len());
+                s.text.push(e);
+            }
         }
         let foreign_swatches = [foreign("foreignSwatches", "localSwatch"), foreign("foreignSwatches", "localSharedSwatch")].concat();
         for o in objects("sharedSwatches").iter().chain(&foreign_swatches).take(MAX_SHARED) {
@@ -58,6 +67,12 @@ impl Shared {
             }
         }
         s
+    }
+
+    /// The style of shared text (`text`) or layer style `id`.
+    pub(crate) fn style(&self, text: bool, id: &str) -> Option<&Value> {
+        let (index, list) = if text { (&self.text_index, &self.text) } else { (&self.layer_index, &self.layer) };
+        list.get(*index.get(id)?).map(|e| &e.2)
     }
 
     pub(crate) fn has_swatch(&self, id: &str) -> bool {
@@ -95,13 +110,13 @@ impl Shared {
     }
 
     /// Link `node` (layer `l`) to the styles made from its shared style.
-    pub(crate) fn link(&self, cx_defs: &[String], l: &Value, node: &mut JsonMap<String, Value>) {
+    pub(crate) fn link(&self, cx_defs: &BTreeSet<String>, l: &Value, node: &mut JsonMap<String, Value>) {
         let Some(sid) = l.get("style").and_then(|s| str_field(s, "sharedObjectID")) else { return };
         let mut refs = JsonMap::new();
         let is_text = str_field(l, "_class") == Some("text");
-        if is_text && self.text.iter().any(|(id, _, _)| id == sid) {
+        if is_text && self.text_index.contains_key(sid) {
             refs.insert("text".into(), json!(sid));
-        } else if self.layer.iter().any(|(id, _, _)| id == sid) {
+        } else if self.layer_index.contains_key(sid) {
             for slot in ["fill", "stroke", "effect"] {
                 let id = format!("{sid}:{slot}");
                 if cx_defs.contains(&id) {

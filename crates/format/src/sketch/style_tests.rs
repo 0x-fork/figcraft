@@ -283,3 +283,15 @@ fn masked_icon_keeps_its_geometry() {
     assert!((b.x0 - 164.0).abs() < 1e-6 && (b.y0 - 41.0).abs() < 1e-6 && (b.width() - 45.0).abs() < 1e-6, "body {b:?}");
     assert!(matches!(node(&doc, "Circle").kind, NodeKind::Ellipse { .. }));
 }
+
+#[test]
+fn two_styled_masks_each_draw() {
+    let fill = json!([solid_fill(0.5, 0.5, 0.5, 1.0)]);
+    let m1 = styled(with(r("Mask1"), "hasClippingMask", json!(true)), "fills", fill.clone());
+    let m2 = styled(with(rect("Mask2", 200.0, 0.0, 100.0, 50.0), "hasClippingMask", json!(true)), "fills", fill);
+    let (doc, _) = open(vec![group("G", 0.0, 0.0, 300.0, 50.0, vec![m1, r("A"), m2, rect("B", 200.0, 0.0, 10.0, 10.0)])]);
+    // The drawn copy of the second mask isn't inside the first mask's group.
+    let copy = doc.nodes().find(|n| n.name == "Mask2 (drawn)").unwrap();
+    let first_group = node(&doc, "Mask1").parent.unwrap();
+    assert_ne!(copy.parent, Some(first_group));
+}

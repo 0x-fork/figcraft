@@ -179,3 +179,55 @@ fn sketch_2025_frames_and_graphics() {
     assert!(!node(&doc, "Frame").clip);
     assert!(matches!(node(&doc, "Graphic").kind, NodeKind::Group));
 }
+
+#[test]
+fn many_distinct_warnings_are_capped() {
+    let layers: Vec<Value> = (0..5000)
+        .map(|i| {
+            let mut l = rect(&format!("R{i}"), 0.0, 0.0, 1.0, 1.0);
+            l["_class"] = json!(format!("MSOdd{i}"));
+            l
+        })
+        .collect();
+    let (_, warnings) = open(vec![artboard("A", "Board", 0.0, 0.0, 100.0, 100.0, layers)]);
+    assert!(warnings.len() <= 250, "{}", warnings.len());
+}
+
+#[test]
+fn bomb_pages_are_skipped() {
+    // 64 MB of `[0,0,…]` packs into a few hundred kilobytes.
+    let bomb = format!("{{\"_class\":\"page\",\"do_objectID\":\"B\",\"name\":\"Bomb\",\"layers\":[],\"junk\":[{}0]}}", "0,".repeat(32 * 1024 * 1024));
+    let mut out = Vec::new();
+    {
+        use std::io::Write;
+        let mut z = zip::ZipWriter::new(std::io::Cursor::new(&mut out));
+        let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        z.start_file("document.json", o).unwrap();
+        z.write_all(document(&["B", "P"]).to_string().as_bytes()).unwrap();
+        z.start_file("meta.json", o).unwrap();
+        z.write_all(json!({"app": "com.bohemiancoding.sketch3", "appVersion": "50.2", "version": 103}).to_string().as_bytes()).unwrap();
+        z.start_file("pages/B.json", o).unwrap();
+        z.write_all(bomb.as_bytes()).unwrap();
+        z.start_file("pages/P.json", o).unwrap();
+        z.write_all(page("P", "Fine", vec![]).to_string().as_bytes()).unwrap();
+        z.finish().unwrap();
+    }
+    let (doc, warnings) = import(&out, "f").unwrap();
+    let names: Vec<String> = doc.pages.iter().map(|p| doc.node(*p).unwrap().name.clone()).collect();
+    assert!(!names.contains(&"Bomb".to_string()) && names.contains(&"Fine".to_string()), "{names:?}");
+    assert!(warnings.iter().any(|w| w.contains("too large")), "{warnings:?}");
+}
+
+#[test]
+fn deep_document_json_still_opens_the_pages() {
+    let mut deep = json!({"_class": "symbolMaster"});
+    for _ in 0..150 {
+        deep = json!({"_class": "group", "layers": [deep]});
+    }
+    let mut d = document(&["P"]);
+    d["foreignSymbols"] = json!([{"symbolMaster": deep}]);
+    let z = sketch_zip("50.2", 103, d, &[page("P", "Kept", vec![])], &[]);
+    let (doc, warnings) = import(&z, "f").unwrap();
+    assert!(doc.pages.iter().any(|p| doc.node(*p).unwrap().name == "Kept"));
+    assert!(!warnings.is_empty());
+}

@@ -163,3 +163,57 @@ fn resized_instance_follows_constraints() {
     let b = doc.world_bounds(tag.id).unwrap();
     assert!((b.x0 - 180.0).abs() < 1e-6 && (b.width() - 20.0).abs() < 1e-6, "{b:?}");
 }
+
+/// Overrides pointing at junk (a shared style that isn't an object, text runs that aren't) never
+/// panic.
+#[test]
+fn override_application_survives_junk() {
+    let mut d = document(&["P", "S"]);
+    d["layerStyles"]["objects"] = json!([{"_class": "sharedStyle", "do_objectID": "S1", "name": "Junk", "value": 5}]);
+    d["layerTextStyles"]["objects"] =
+        json!([{"_class": "sharedStyle", "do_objectID": "T1", "name": "Junk text", "value": {"textStyle": {"encodedAttributes": {}}}}]);
+    let mut t = text("Label", 0.0, 0.0, 50.0, 20.0, "x", &[(0, 1, "Helvetica", 9.0, BLACK)]);
+    t["attributedString"]["attributes"] = json!([5, "x", null]);
+    let m = master("M", "S", "Junk master", 50.0, 20.0, vec![rect("C", 0.0, 0.0, 10.0, 10.0), t]);
+    let inst = instance(
+        "I1",
+        "S",
+        0.0,
+        0.0,
+        50.0,
+        20.0,
+        &[("C_layerStyle", json!("S1")), ("Label_textStyle", json!("T1")), ("Label_stringValue", json!("y"))],
+    );
+    let z = sketch_zip("50.2", 103, d, &[page("P", "Page", vec![inst]), page("S", "Symbols", vec![m])], &[]);
+    assert!(import(&z, "f").is_ok());
+}
+
+/// A huge master expanded by many instances stops at the file's work budget.
+#[test]
+fn expansion_work_is_bounded() {
+    let long = "x".repeat(200_000);
+    let m = master("M", "S", "Heavy", 50.0, 20.0, vec![text("Long", 0.0, 0.0, 50.0, 20.0, &long, &[(0, 200_000, "Helvetica", 9.0, BLACK)])]);
+    let many: Vec<Value> = (0..3000).map(|i| instance(&format!("I{i}"), "S", 0.0, 0.0, 50.0, 20.0, &[])).collect();
+    let z = sketch_zip("50.2", 103, document(&["P", "S"]), &[page("P", "Page", many), page("S", "Symbols", vec![m])], &[]);
+    let (_, warnings) = import(&z, "f").unwrap();
+    assert!(warnings.iter().any(|w| w.contains("expand")), "{warnings:?}");
+}
+
+/// Outer overrides fanned out to many nested instances stop at the work budget.
+#[test]
+fn override_fan_out_is_bounded() {
+    let inner = master("MB", "SB", "Cell", 10.0, 10.0, vec![text("T", 0.0, 0.0, 10.0, 10.0, "1", &[(0, 1, "Helvetica", 9.0, BLACK)])]);
+    let cells: Vec<Value> = (0..3000).map(|_| instance("X", "SB", 0.0, 0.0, 10.0, 10.0, &[])).collect();
+    let grid = master("MA", "SA", "Grid", 100.0, 100.0, cells);
+    let overrides: Vec<(String, Value)> = (0..3000).map(|i| (format!("X/N{i}_stringValue"), json!("v"))).collect();
+    let refs: Vec<(&str, Value)> = overrides.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+    let z = sketch_zip(
+        "50.2",
+        103,
+        document(&["P", "S"]),
+        &[page("P", "Page", vec![instance("I", "SA", 0.0, 0.0, 100.0, 100.0, &refs)]), page("S", "Symbols", vec![inner, grid])],
+        &[],
+    );
+    let (_, warnings) = import(&z, "f").unwrap();
+    assert!(warnings.iter().any(|w| w.contains("expand")), "{warnings:?}");
+}

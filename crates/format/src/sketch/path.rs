@@ -12,6 +12,8 @@ use serde_json::{Map as JsonMap, Value, json};
 
 use super::tree::{Cx, base, layer, layers, local, size};
 
+/// Farthest a point or handle may be from its layer (the REST importer's own range).
+const MAX_COORD: f64 = 1e7;
 /// Most points read from one path.
 const MAX_POINTS: usize = 100_000;
 
@@ -36,7 +38,9 @@ pub(crate) fn network(cx: &mut Cx, l: &Value, w: f64, h: f64) -> Option<VectorNe
     if pts.len() > MAX_POINTS {
         cx.warn(format!("paths with more than {MAX_POINTS} points were cut"));
     }
-    let at = |p: &Value, key: &str| p.get(key).and_then(Value::as_str).and_then(parse_point).map(|(x, y)| (x * w, y * h));
+    // Far points stay within the importer's coordinate range (a product could overflow).
+    let fit = |v: f64| if v.is_finite() { v.clamp(-MAX_COORD, MAX_COORD) } else { 0.0 };
+    let at = |p: &Value, key: &str| p.get(key).and_then(Value::as_str).and_then(parse_point).map(|(x, y)| (fit(x * w), fit(y * h)));
     let mut vertices = Vec::new();
     // Per vertex: its handles (relative to it) when it has them.
     let mut handles: Vec<((f64, f64), (f64, f64))> = Vec::new();
