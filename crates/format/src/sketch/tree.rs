@@ -247,6 +247,12 @@ pub(crate) fn children(cx: &mut Cx, l: &Value, world: Affine, size: (f64, f64), 
             let breaks = bool_field(c, "shouldBreakMaskChain") == Some(true) || bool_field(c, "hasClippingMask") == Some(true);
             layer(cx, c, world, depth + 1, root).map(|n| (breaks, n))
         })
+        .flat_map(|(breaks, n)| match drawn_mask(&n) {
+            // Sketch also draws a mask with its own style, under what it clips; a FigCraft mask
+            // only clips, so a plain copy of it goes underneath.
+            Some(copy) => vec![(false, copy), (breaks, n)],
+            None => vec![(breaks, n)],
+        })
         .collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -276,6 +282,26 @@ pub(crate) fn children(cx: &mut Cx, l: &Value, world: Affine, size: (f64, f64), 
         i = end;
     }
     out
+}
+
+/// A plain copy of mask `n` when its style shows something (fills, borders or effects).
+fn drawn_mask(n: &Value) -> Option<Value> {
+    if n.get("isMask").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let shows =
+        |key: &str| n.get(key).and_then(Value::as_array).is_some_and(|l| l.iter().any(|p| p.get("visible").and_then(Value::as_bool) != Some(false)));
+    if !(shows("fills") || shows("strokes") || shows("effects")) {
+        return None;
+    }
+    let mut copy = n.clone();
+    let m = copy.as_object_mut()?;
+    m.remove("isMask");
+    m.remove("maskType");
+    m.remove("id");
+    let name = m.get("name").and_then(Value::as_str).unwrap_or("Mask").to_string();
+    m.insert("name".into(), json!(format!("{name} (drawn)")));
+    Some(copy)
 }
 
 /// A text layer whose string is a binary property list (Sketch 43–47).

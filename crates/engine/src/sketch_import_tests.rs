@@ -10,6 +10,11 @@ use crate::Session;
 
 /// A minimal `.sketch` zip with one page per `(id, name)`, saved by `app_version`.
 fn sketch(app_version: &str, pages: &[(&str, &str)]) -> Vec<u8> {
+    sketch_with(app_version, pages, &[])
+}
+
+/// [`sketch`] with `layers` on the first page.
+fn sketch_with(app_version: &str, pages: &[(&str, &str)], layers: &[Value]) -> Vec<u8> {
     let refs: Vec<Value> = pages.iter().map(|(id, _)| json!({"_class": "MSJSONFileReference", "_ref": format!("pages/{id}")})).collect();
     let mut out = Vec::new();
     {
@@ -19,9 +24,10 @@ fn sketch(app_version: &str, pages: &[(&str, &str)]) -> Vec<u8> {
         z.write_all(json!({"_class": "document", "pages": refs}).to_string().as_bytes()).unwrap();
         z.start_file("meta.json", o).unwrap();
         z.write_all(json!({"app": "com.bohemiancoding.sketch3", "appVersion": app_version, "version": 103}).to_string().as_bytes()).unwrap();
-        for (id, name) in pages {
+        for (i, (id, name)) in pages.iter().enumerate() {
+            let ls = if i == 0 { layers.to_vec() } else { Vec::new() };
             z.start_file(format!("pages/{id}.json"), o).unwrap();
-            z.write_all(json!({"_class": "page", "do_objectID": id, "name": name, "layers": []}).to_string().as_bytes()).unwrap();
+            z.write_all(json!({"_class": "page", "do_objectID": id, "name": name, "layers": ls}).to_string().as_bytes()).unwrap();
         }
         z.finish().unwrap();
     }
@@ -86,4 +92,45 @@ fn old_and_damaged_sketch_files_fail_cleanly() {
     std::fs::write(&path, &broken).unwrap();
     assert!(s.execute("file.open", &json!({"path": path.to_string_lossy()})).is_err());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn shape(class: &str, name: &str, frame: [f64; 4], extra: Value) -> Value {
+    let mut l = json!({"_class": class, "do_objectID": name, "name": name, "isVisible": true, "resizingConstraint": 63,
+        "frame": {"x": frame[0], "y": frame[1], "width": frame[2], "height": frame[3]}, "style": {"fills": []}});
+    for (k, v) in extra.as_object().unwrap() {
+        l[k] = v.clone();
+    }
+    l
+}
+
+fn fill(grey: f64) -> Value {
+    json!({"style": {"fills": [{"isEnabled": true, "fillType": 0, "color": {"red": grey, "green": grey, "blue": grey, "alpha": 1}}]}})
+}
+
+/// Sketch draws a mask's own fill under what it clips; the clipped layers show inside it.
+#[test]
+fn sketch_masks_show_their_content() {
+    let oval = shape("oval", "Ring", [0.0, 0.0, 60.0, 60.0], json!({"booleanOperation": -1, "points": []}));
+    let mut mask = shape("shapeGroup", "Circle", [0.0, 0.0, 60.0, 60.0], fill(0.8));
+    mask["hasClippingMask"] = json!(true);
+    mask["layers"] = json!([oval]);
+    let pts = ["{0, 0}", "{1, 0}", "{1, 1}", "{0, 1}"].map(|p| json!({"point": p, "curveFrom": p, "curveTo": p, "curveMode": 1}));
+    let body = shape("shapePath", "Square", [0.0, 0.0, 20.0, 20.0], json!({"points": pts, "isClosed": true, "booleanOperation": -1}));
+    let mut content = shape("shapeGroup", "Body", [20.0, 20.0, 20.0, 20.0], fill(0.2));
+    content["layers"] = json!([body]);
+    let icon = shape("group", "Icon", [0.0, 0.0, 60.0, 60.0], json!({"layers": [mask, content]}));
+    let data = base64::engine::general_purpose::STANDARD.encode(sketch_with("50.2", &[("A", "Page")], &[icon]));
+    let mut s = Session::new();
+    s.execute("file.open", &json!({"data": data, "name": "x.sketch"})).unwrap();
+    let doc = s.doc().unwrap();
+    let icon = doc.nodes().find(|n| n.name == "Icon").unwrap().id;
+    let pix = figcraft_render::render_node(doc, icon, 1.0).unwrap();
+    let px = |x: u32, y: u32| pix.pixel(x, y).unwrap();
+    // The square in the middle, dark grey.
+    let c = px(30, 30);
+    assert!(c.alpha() > 200 && c.red() < 100, "content: {c:?}");
+    // The mask's own fill around it, light grey; outside the circle nothing.
+    let m = px(30, 8);
+    assert!(m.alpha() > 200 && m.red() > 150, "mask fill: {m:?}");
+    assert!(px(2, 2).alpha() < 50);
 }

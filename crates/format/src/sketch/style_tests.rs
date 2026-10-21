@@ -248,3 +248,38 @@ fn shape_group_masks_clip() {
     let kids: Vec<&str> = holder.children.iter().map(|c| doc.node(*c).unwrap().name.as_str()).collect();
     assert_eq!(kids, ["Card", "A"]);
 }
+
+#[test]
+fn masked_icon_keeps_its_geometry() {
+    let oval = {
+        let mut o = with(rect("Path", 0.0, 0.0, 67.0, 67.0), "booleanOperation", json!(-1));
+        o["_class"] = json!("oval");
+        o
+    };
+    let mask = styled(
+        with(shape_group("Circle", 0.0, 0.0, 67.0, 67.0, vec![oval]), "hasClippingMask", json!(true)),
+        "fills",
+        json!([solid_fill(0.9, 0.9, 0.9, 1.0)]),
+    );
+    let p = |id: &str, x: f64, y: f64, w: f64, h: f64, op: i64| {
+        with(shape_path(id, x, y, w, h, &[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)], true), "booleanOperation", json!(op))
+    };
+    let content = styled(
+        shape_group(
+            "Body",
+            12.0,
+            12.0,
+            45.0,
+            62.0,
+            vec![p("P1", 9.0, 9.0, 22.0, 22.0, -1), p("P2", 25.0, 15.0, 20.0, 15.0, 0), p("P3", 0.0, 17.0, 31.0, 45.0, 0)],
+        ),
+        "fills",
+        json!([solid_fill(0.5, 0.5, 0.5, 1.0)]),
+    );
+    let (doc, _) = open(vec![group("Icon", 152.0, 20.0, 67.0, 67.0, vec![mask, content])]);
+    let b = doc.world_bounds(node(&doc, "Circle").id).unwrap();
+    assert_eq!((b.x0, b.y0, b.width(), b.height()), (152.0, 20.0, 67.0, 67.0), "mask");
+    let b = doc.world_bounds(node(&doc, "Body").id).unwrap();
+    assert!((b.x0 - 164.0).abs() < 1e-6 && (b.y0 - 41.0).abs() < 1e-6 && (b.width() - 45.0).abs() < 1e-6, "body {b:?}");
+    assert!(matches!(node(&doc, "Circle").kind, NodeKind::Ellipse { .. }));
+}
