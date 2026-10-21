@@ -294,7 +294,8 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
 fn fade(cx: &mut Cx, l: &Value, node: JsonMap<String, Value>, world: Affine, w: f64, h: f64) -> Value {
     let ctx = l.get("style").and_then(|s| s.get("contextSettings"));
     let gradient = ctx.filter(|c| c.get("isProgressive").and_then(Value::as_bool) == Some(true)).and_then(|c| c.get("gradient"));
-    let Some(gradient) = gradient else { return Value::Object(node) };
+    // A mask stays as it is: its group would stop masking the layers above it.
+    let Some(gradient) = gradient.filter(|_| node.get("isMask").and_then(Value::as_bool) != Some(true)) else { return Value::Object(node) };
     let fill = json!({"_class": "fill", "isEnabled": true, "fillType": 1, "gradient": gradient});
     let fills = super::style::fills(cx, &json!({"fills": [fill]}), w, h);
     if fills.is_empty() {
@@ -304,18 +305,20 @@ fn fade(cx: &mut Cx, l: &Value, node: JsonMap<String, Value>, world: Affine, w: 
     let identity = json!([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
     let bb = world.transform_rect_bbox(Rect::new(0.0, 0.0, w, h));
     let abs = json!({"x": bb.x0, "y": bb.y0, "width": bb.width(), "height": bb.height()});
-    let mut inner = node.clone();
+    // The group takes the layer's id (stacks, links and overrides find it), the layer a new one.
+    let mut inner = node;
     let mut group = JsonMap::new();
     for k in ["relativeTransform", "absoluteBoundingBox", "constraints", "visible", "locked"] {
-        if let Some(v) = node.get(k) {
+        if let Some(v) = inner.get(k) {
             group.insert(k.into(), v.clone());
         }
     }
     group.insert("type".into(), json!("GROUP"));
-    group.insert("id".into(), json!(format!("{id}-fade")));
-    group.insert("name".into(), node.get("name").cloned().unwrap_or_else(|| json!("Fade")));
+    group.insert("id".into(), json!(id));
+    group.insert("name".into(), inner.get("name").cloned().unwrap_or_else(|| json!("Fade")));
     group.insert("size".into(), json!({"x": w, "y": h}));
     group.insert("absoluteBoundingBox".into(), abs.clone());
+    inner.insert("id".into(), json!(format!("{id}-faded")));
     inner.insert("relativeTransform".into(), identity.clone());
     inner.insert("absoluteBoundingBox".into(), abs.clone());
     inner.insert("visible".into(), json!(true));

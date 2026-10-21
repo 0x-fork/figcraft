@@ -101,21 +101,36 @@ fn junk_values_never_panic() {
     let mut icon = master("MI", "SI", "Icon", 24.0, 24.0, vec![dot.clone()]);
     icon["groupBehavior"] = json!(2);
     icon["style"]["fills"] = json!([tint]);
-    let mut chip = stack(master("MC", "SC", "Chip", 60.0, 24.0, vec![text_layer.clone(), instance("N", "SI", 0.0, 0.0, 24.0, 24.0, &[])]), 0, 1, 1, 6.0, [8.0, 4.0, 10.0, 4.0]);
+    let mut chip = stack(
+        master("MC", "SC", "Chip", 60.0, 24.0, vec![text_layer.clone(), instance("N", "SI", 0.0, 0.0, 24.0, 24.0, &[])]),
+        0,
+        1,
+        1,
+        6.0,
+        [8.0, 4.0, 10.0, 4.0],
+    );
     chip["style"]["corners"] = json!({"_class": "MSImmutableStyleCorners", "radii": [12], "style": 2, "smoothing": 0.6});
-    let over = [("T_stringValue", json!("Longer")), ("N_fillColor", color(0.0, 1.0, 0.0, 1.0)), ("T_textColor", color(0.0, 0.0, 1.0, 1.0)), ("N_isVisible", json!("0"))];
+    let over = [
+        ("T_stringValue", json!("Longer")),
+        ("N_fillColor", color(0.0, 1.0, 0.0, 1.0)),
+        ("T_textColor", color(0.0, 0.0, 1.0, 1.0)),
+        ("N_isVisible", json!("0")),
+    ];
     let inst = instance("I", "SC", 0.0, 100.0, 200.0, 24.0, &over);
     let grad = json!({"_class": "fill", "isEnabled": true, "fillType": 1, "color": color(0.0, 0.0, 0.0, 1.0),
         "gradient": {"_class": "gradient", "gradientType": 0, "from": "{0, 0}", "to": "{1, 1}", "stops": [
             {"_class": "gradientStop", "position": 0, "color": color(0.0, 0.0, 0.0, 1.0)}, {"_class": "gradientStop", "position": 1, "color": color(1.0, 1.0, 1.0, 0.0)}]}});
     let mut faded = styled(rect("Faded", 0.0, 0.0, 30.0, 30.0), "fills", json!([grad.clone()]));
-    faded["style"]["contextSettings"] = json!({"_class": "graphicsContextSettings", "opacity": 1, "isProgressive": true, "gradient": grad["gradient"].clone()});
-    let mask = with(with(styled(rect("Mask", 0.0, 0.0, 30.0, 30.0), "fills", json!([grad])), "hasClippingMask", json!(true)), "clippingMaskMode", json!(1));
+    faded["style"]["contextSettings"] =
+        json!({"_class": "graphicsContextSettings", "opacity": 1, "isProgressive": true, "gradient": grad["gradient"].clone()});
+    let mask =
+        with(with(styled(rect("Mask", 0.0, 0.0, 30.0, 30.0), "fills", json!([grad])), "hasClippingMask", json!(true)), "clippingMaskMode", json!(1));
     let path = shape_path("P", 0.0, 0.0, 20.0, 20.0, &[(0.0, 0.0), (1.0, 0.0), (0.5, 1.0)], true);
     let mut g = group("G", 0.0, 0.0, 100.0, 100.0, vec![mask, faded, path, dot, text_layer]);
     g["style"] = json!({"_class": "style", "fills": [tint_fill()]});
     let mut frame = stack(frame_group("F", 0.0, 0.0, 300.0, 300.0, vec![g, inst]), 1, 0, 3, 8.0, [0.0; 4]);
-    frame["layout"] = json!({"_class": "layoutGrid", "isEnabled": true, "columnWidth": 20, "gutterWidth": 10, "numberOfColumns": 4, "drawVertical": true});
+    frame["layout"] =
+        json!({"_class": "layoutGrid", "isEnabled": true, "columnWidth": 20, "gutterWidth": 10, "numberOfColumns": 4, "drawVertical": true});
     let pages = [page("P", "Page", vec![frame]), page("S", "Symbols", vec![icon, chip])];
     // Every value's path, with each junk value in turn (a deterministic sample keeps it quick).
     fn paths(v: &serde_json::Value, at: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
@@ -149,7 +164,7 @@ fn junk_values_never_panic() {
                 v = match v {
                     serde_json::Value::Object(m) => m.get_mut(k).unwrap(),
                     serde_json::Value::Array(a) => &mut a[k.parse::<usize>().unwrap()],
-                    _ => unreachable!(),
+                    _ => panic!("a path only runs through objects and arrays"),
                 };
             }
             *v = junk[n % junk.len()].clone();

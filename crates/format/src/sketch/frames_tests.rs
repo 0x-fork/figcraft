@@ -426,3 +426,18 @@ fn nested_tints_are_budgeted() {
     let (_, warnings) = open(vec![l]);
     assert!(warnings.iter().any(|w| w.contains("tint")), "{warnings:?}");
 }
+
+/// A faded layer in a stack keeps its place in the stack: the group the fade makes takes the
+/// layer's id, and with it its sizing.
+#[test]
+fn faded_stack_items_keep_their_sizing() {
+    let fade = json!({"_class": "graphicsContextSettings", "opacity": 1, "isProgressive": true,
+        "gradient": {"_class": "gradient", "gradientType": 0, "from": "{0.5, 0}", "to": "{0.5, 1}", "stops": [
+            {"_class": "gradientStop", "position": 0, "color": color(0.0, 0.0, 0.0, 1.0)}, {"_class": "gradientStop", "position": 1, "color": color(0.0, 0.0, 0.0, 0.0)}]}});
+    let mut item = styled(rect("Item", 0.0, 0.0, 50.0, 20.0), "contextSettings", fade);
+    item["horizontalSizing"] = json!(2);
+    let (doc, _) = open(vec![stack(frame_group("Row", 0.0, 0.0, 200.0, 20.0, vec![item]), 0, 0, 0, 0.0, [0.0; 4])]);
+    let row = node(&doc, "Row");
+    let wrap = doc.node(row.children[0]).unwrap();
+    assert_eq!(format!("{:?}", wrap.child_layout.sizing_h), "Fill", "{:?}", wrap.child_layout);
+}

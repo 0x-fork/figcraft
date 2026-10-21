@@ -720,6 +720,9 @@ fn sketch_line_heights(doc: &mut Document) {
     };
     let ids: Vec<NodeId> = doc.nodes().filter(|n| matches!(n.kind, NodeKind::Text(_))).map(|n| n.id).collect();
     for id in ids {
+        // An auto layout places its texts itself (its next pass would take a move back).
+        let laid_out =
+            doc.node(id).is_some_and(|n| !n.child_layout.absolute && n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some()));
         let Some(n) = doc.node_mut(id) else { continue };
         let NodeKind::Text(td) = &mut n.kind else { continue };
         let down = set(&mut td.style);
@@ -727,7 +730,7 @@ fn sketch_line_heights(doc: &mut Document) {
             set(&mut r.style);
         }
         // Down in the layer's own frame (a rotated text moves along its own axis).
-        if down.is_finite() && down != 0.0 {
+        if !laid_out && down.is_finite() && down != 0.0 {
             n.transform *= figcraft_doc::geom::Affine::translate((0.0, down));
         }
     }

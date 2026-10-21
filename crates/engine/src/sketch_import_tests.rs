@@ -441,3 +441,38 @@ fn sketch_text_gets_sketchs_natural_line() {
     let figcraft_doc::LineHeight::Percent(p) = td.style.line_height else { panic!("{:?}", td.style.line_height) };
     assert!((p - 116.0).abs() < 1e-9, "{p}");
 }
+
+/// A text an auto layout places isn't moved to Sketch's baseline (the next layout pass would take
+/// the move back): laying the stack out again leaves it where the import put it.
+#[test]
+fn sketch_text_in_a_stack_stays_put() {
+    if !std::path::Path::new("/System/Library/Fonts/Helvetica.ttc").exists() {
+        return;
+    }
+    figcraft_text::fontdb::scan_system_fonts();
+    let font = json!({"name": "Helvetica", "size": 40});
+    let run = json!({"location": 0, "length": 2, "attributes": {"MSAttributedStringFontAttribute": {"attributes": font}}});
+    let label = shape(
+        "text",
+        "Label",
+        [10.0, 10.0, 50.0, 48.0],
+        json!({"attributedString": {"string": "Hi", "attributes": [run]}, "horizontalSizing": 1, "verticalSizing": 1}),
+    );
+    let layout = json!({"_class": "MSImmutableFlexGroupLayout", "flexDirection": 1, "justifyContent": 0, "alignItems": 0, "allGuttersGap": 0, "stackingOrder": 0});
+    let stack = shape(
+        "group",
+        "Stack",
+        [0.0, 0.0, 200.0, 68.0],
+        json!({"groupBehavior": 1, "groupLayout": layout, "leftPadding": 10, "topPadding": 10, "rightPadding": 10, "bottomPadding": 10, "layers": [label]}),
+    );
+    let data = base64::engine::general_purpose::STANDARD.encode(sketch_with("2026.3.1", &[("A", "Page")], &[stack]));
+    let mut s = Session::new();
+    s.execute("file.open", &json!({"data": data, "name": "x.sketch"})).unwrap();
+    let mut doc = s.doc().unwrap().clone();
+    let stack = doc.nodes().find(|n| n.name == "Stack").unwrap().id;
+    let label = doc.nodes().find(|n| n.name == "Label").unwrap().id;
+    let before = doc.world_bounds(label).unwrap();
+    figcraft_layout::layout_frame(&mut doc, stack, &crate::measure::TextMeasure);
+    let after = doc.world_bounds(label).unwrap();
+    assert!((before.y0 - after.y0).abs() < 1e-6, "{before:?} → {after:?}");
+}

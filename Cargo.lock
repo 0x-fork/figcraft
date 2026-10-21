@@ -1587,7 +1587,6 @@ name = "figcraft-format"
 version = "0.9.0"
 dependencies = [
  "figcraft-doc",
- "figcraft-layout",
  "figcraft-pathops",
  "flate2",
  "image",
