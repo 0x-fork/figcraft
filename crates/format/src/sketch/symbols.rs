@@ -209,8 +209,11 @@ fn apply(layers: &mut [Value], ov: &BTreeMap<String, Value>, document: &Value, d
             _ => {}
         }
         for (prop, list) in [("layerStyle", "layerStyles"), ("textStyle", "layerTextStyles")] {
-            if let Some(style) = get(prop).and_then(Value::as_str).and_then(|sid| shared_style(document, list, sid)) {
+            let sid = get(prop).and_then(Value::as_str);
+            if let Some((sid, style)) = sid.and_then(|sid| Some((sid, shared_style(document, list, sid)?))) {
                 l["style"] = style.clone();
+                // The layer now uses that shared style: it links to it.
+                l["style"]["sharedObjectID"] = json!(sid);
                 if prop == "textStyle"
                     && let Some(enc) = style.get("textStyle").and_then(|t| t.get("encodedAttributes"))
                     && let Some(runs) = l.get_mut("attributedString").and_then(|a| a.get_mut("attributes")).and_then(Value::as_array_mut)

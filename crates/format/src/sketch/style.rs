@@ -17,7 +17,7 @@ const MAX_LIST: usize = 64;
 /// Write the paints, strokes, effects, opacity and blend mode of `style` into `node`, a layer of
 /// `w`×`h`. Lists the style doesn't have are left as they are.
 pub(crate) fn apply(cx: &mut Cx, style: &Value, w: f64, h: f64, node: &mut JsonMap<String, Value>) {
-    let fills: Vec<Value> = list(style, "fills").iter().filter_map(|f| paint(cx, f, w, h)).collect();
+    let fills = fills(cx, style, w, h);
     if !fills.is_empty() {
         node.insert("fills".into(), Value::Array(fills));
     }
@@ -34,6 +34,16 @@ pub(crate) fn apply(cx: &mut Cx, style: &Value, w: f64, h: f64, node: &mut JsonM
             node.insert("blendMode".into(), json!(b));
         }
     }
+}
+
+/// A style's fills as REST paints.
+pub(crate) fn fills(cx: &mut Cx, style: &Value, w: f64, h: f64) -> Vec<Value> {
+    list(style, "fills").iter().filter_map(|f| paint(cx, f, w, h)).collect()
+}
+
+/// A style's borders as REST paints.
+pub(crate) fn border_paints(cx: &mut Cx, style: &Value, w: f64, h: f64) -> Vec<Value> {
+    list(style, "borders").iter().filter_map(|b| paint(cx, b, w, h)).collect()
 }
 
 /// Remove what [`apply`] writes, so another style can take its place.
@@ -91,6 +101,9 @@ fn paint(cx: &mut Cx, f: &Value, w: f64, h: f64) -> Option<Value> {
         }
     };
     p["visible"] = json!(f.get("isEnabled").and_then(Value::as_bool).unwrap_or(true));
+    if let Some(var) = swatch(cx, f.get("color")) {
+        p["boundVariables"] = var;
+    }
     if let Some(ctx) = f.get("contextSettings") {
         if let Some(o) = num(ctx, "opacity") {
             p["opacity"] = json!(o.clamp(0.0, 1.0));
@@ -131,7 +144,7 @@ fn pt((x, y): (f64, f64)) -> Value {
 /// Borders → stroke paints, and the first enabled border's thickness and position.
 fn borders(cx: &mut Cx, style: &Value, w: f64, h: f64, node: &mut JsonMap<String, Value>) {
     let list = list(style, "borders");
-    let strokes: Vec<Value> = list.iter().filter_map(|b| paint(cx, b, w, h)).collect();
+    let strokes = border_paints(cx, style, w, h);
     if strokes.is_empty() {
         return;
     }
@@ -201,7 +214,7 @@ fn borders(cx: &mut Cx, style: &Value, w: f64, h: f64, node: &mut JsonMap<String
 }
 
 /// Shadows, inner shadows and the blur as REST effects.
-fn effects(cx: &mut Cx, style: &Value) -> Vec<Value> {
+pub(crate) fn effects(cx: &mut Cx, style: &Value) -> Vec<Value> {
     let mut out = Vec::new();
     for (key, ty) in [("shadows", "DROP_SHADOW"), ("innerShadows", "INNER_SHADOW")] {
         for s in list(style, key) {
@@ -228,6 +241,12 @@ fn effects(cx: &mut Cx, style: &Value) -> Vec<Value> {
     }
     out.truncate(MAX_LIST);
     out
+}
+
+/// The variable binding of a colour that names a swatch the file has (`{color: alias}`).
+pub(crate) fn swatch(cx: &Cx, c: Option<&Value>) -> Option<Value> {
+    let id = c?.get("swatchID").and_then(Value::as_str).filter(|id| cx.shared.has_swatch(id))?;
+    Some(json!({"color": {"type": "VARIABLE_ALIAS", "id": id}}))
 }
 
 /// Sketch's blend modes (0 normal … 17 plus lighter) by REST name.

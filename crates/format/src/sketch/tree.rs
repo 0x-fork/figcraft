@@ -27,6 +27,9 @@ pub(crate) struct Cx<'a> {
     /// `document.json`: shared styles and library copies.
     pub document: &'a Value,
     pub symbols: super::symbols::Symbols,
+    pub shared: super::shared::Shared,
+    /// Ids of the styles made from the shared styles.
+    pub style_defs: Vec<String>,
     /// The symbols being expanded, outermost first (a symbol inside itself stops there).
     pub chain: Vec<String>,
     pub warnings: Vec<String>,
@@ -49,9 +52,12 @@ impl Cx<'_> {
 /// Map the pages of `archive` to a REST file JSON named `name`.
 pub(crate) fn to_rest(archive: &Archive, name: &str, max_nodes: usize) -> Map {
     let symbols = super::symbols::Symbols::read(&archive.document, &archive.pages);
+    let shared = super::shared::Shared::read(&archive.document);
     let mut cx = Cx {
         document: &archive.document,
         symbols,
+        shared,
+        style_defs: Vec::new(),
         chain: Vec::new(),
         warnings: Vec::new(),
         networks: Vec::new(),
@@ -59,6 +65,8 @@ pub(crate) fn to_rest(archive: &Archive, name: &str, max_nodes: usize) -> Map {
         nodes: 0,
         max_nodes,
     };
+    let defs = super::shared::Shared::definitions(&mut cx);
+    cx.style_defs = defs.iter().filter_map(|d| d.get("id").and_then(Value::as_str).map(str::to_string)).collect();
     let mut canvases = Vec::new();
     for (id, page) in &archive.pages {
         let mut node = JsonMap::new();
@@ -75,7 +83,11 @@ pub(crate) fn to_rest(archive: &Archive, name: &str, max_nodes: usize) -> Map {
         let libraries = cx.symbols.libraries.join(", ");
         cx.warn(format!("symbols from the libraries {libraries} became local components on the page Library symbols"));
     }
-    let json = json!({"name": name, "document": {"type": "DOCUMENT", "id": "0:0", "children": canvases}});
+    let mut json = json!({"name": name, "document": {"type": "DOCUMENT", "id": "0:0", "children": canvases}, "styleDefinitions": defs});
+    if let Some((collections, variables)) = cx.shared.variables() {
+        json["variableCollections"] = collections;
+        json["variables"] = variables;
+    }
     Map { json, warnings: cx.warnings, networks: cx.networks, too_old: cx.too_old }
 }
 
@@ -147,14 +159,20 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
         },
         _ => {}
     }
-    if let Some(st) = l.get("style") {
-        super::style::apply(cx, st, w, h, &mut node);
-    }
+    styles(cx, l, w, h, &mut node);
     if matches!(ty, "FRAME" | "GROUP") {
         let kids = children(cx, l, world, (w, h), depth, false);
         node.insert("children".into(), Value::Array(kids));
     }
     Some(Value::Object(node))
+}
+
+/// Layer `l`'s style into `node`, and its links to the styles made from its shared style.
+pub(crate) fn styles(cx: &mut Cx, l: &Value, w: f64, h: f64, node: &mut JsonMap<String, Value>) {
+    if let Some(st) = l.get("style") {
+        super::style::apply(cx, st, w, h, node);
+    }
+    cx.shared.link(&cx.style_defs, l, node);
 }
 
 /// A clipping mask's flag and kind (outline or alpha).

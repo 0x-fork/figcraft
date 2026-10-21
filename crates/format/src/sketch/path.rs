@@ -139,9 +139,10 @@ pub(crate) fn shape_group(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, 
             }
             let visible = group.get("visible").and_then(Value::as_bool).unwrap_or(true) && m.get("visible").and_then(Value::as_bool).unwrap_or(true);
             m.insert("visible".into(), json!(visible));
-            if let Some(st) = l.get("style") {
+            if l.get("style").is_some() {
                 super::style::clear(m);
-                super::style::apply(cx, st, cw, ch, m);
+                m.remove("styles");
+                super::tree::styles(cx, l, cw, ch, m);
             }
             super::tree::mask(l, m);
         }
@@ -168,9 +169,7 @@ pub(crate) fn shape_group(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, 
     node.insert("booleanOperation".into(), json!(op));
     node.insert("children".into(), Value::Array(chain));
     super::tree::mask(l, &mut node);
-    if let Some(st) = l.get("style") {
-        super::style::apply(cx, st, w, h, &mut node);
-    }
+    super::tree::styles(cx, l, w, h, &mut node);
     Some(Value::Object(node))
 }
 

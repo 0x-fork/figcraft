@@ -94,7 +94,7 @@ pub(crate) fn node(cx: &mut Cx, l: &Value, node: &mut JsonMap<String, Value>) {
 }
 
 /// A run's attributes as a REST type style (with its colour as `fills`).
-fn type_style(cx: &mut Cx, a: &Value) -> Value {
+pub(crate) fn type_style(cx: &mut Cx, a: &Value) -> Value {
     let font = a.get("MSAttributedStringFontAttribute").and_then(|f| f.get("attributes"));
     let ps = font.and_then(|f| f.get("name")).and_then(Value::as_str).unwrap_or("");
     let size = font.and_then(|f| f.get("size")).and_then(Value::as_f64).filter(|s| s.is_finite() && *s > 0.0).unwrap_or(12.0);
@@ -126,7 +126,11 @@ fn type_style(cx: &mut Cx, a: &Value) -> Value {
         _ => "ORIGINAL",
     });
     let c = a.get("MSAttributedStringColorAttribute").and_then(color).unwrap_or_else(|| json!({"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0}));
-    s["fills"] = json!([{"type": "SOLID", "color": c}]);
+    let mut paint = json!({"type": "SOLID", "color": c});
+    if let Some(var) = super::style::swatch(cx, a.get("MSAttributedStringColorAttribute")) {
+        paint["boundVariables"] = var;
+    }
+    s["fills"] = json!([paint]);
     s
 }
 
