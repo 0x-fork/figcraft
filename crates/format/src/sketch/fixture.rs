@@ -118,3 +118,17 @@ pub(crate) fn with(mut l: Value, key: &str, value: Value) -> Value {
     }
     l
 }
+
+/// A `shapePath` through `points` (`(x, y)` in 0–1 of its frame), straight segments.
+pub(crate) fn shape_path(id: &str, x: f64, y: f64, w: f64, h: f64, points: &[(f64, f64)], closed: bool) -> Value {
+    let pts: Vec<Value> = points.iter().map(|(px, py)| point(*px, *py)).collect();
+    let mut l = with(layer("shapePath", id, id, x, y, w, h), "points", Value::Array(pts));
+    l["isClosed"] = json!(closed);
+    l["booleanOperation"] = json!(-1);
+    l
+}
+
+/// A `shapeGroup` (Sketch 51 and older wrap every shape in one) holding `layers`.
+pub(crate) fn shape_group(id: &str, x: f64, y: f64, w: f64, h: f64, layers: Vec<Value>) -> Value {
+    with(layer("shapeGroup", id, id, x, y, w, h), "layers", Value::Array(layers))
+}

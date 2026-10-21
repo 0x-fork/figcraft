@@ -13,6 +13,9 @@
 
 #[cfg(test)]
 mod fixture;
+mod path;
+#[cfg(test)]
+mod path_tests;
 #[cfg(test)]
 mod tests;
 mod tree;

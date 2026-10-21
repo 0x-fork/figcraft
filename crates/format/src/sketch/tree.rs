@@ -70,43 +70,31 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
         return None;
     }
     let class = str_field(l, "_class")?;
+    if class == "shapeGroup" {
+        return count(cx).then(|| super::path::shape_group(cx, l, parent, depth, root)).flatten();
+    }
     let ty = match class {
         "artboard" | "frame" => "FRAME",
         "group" | "graphic" => "GROUP",
         "rectangle" | "bitmap" => "RECTANGLE",
         "oval" => "ELLIPSE",
         "slice" => "SLICE",
+        "shapePath" | "star" | "polygon" | "triangle" => "VECTOR",
         other => {
             cx.warn(format!("Sketch {} layers are not supported yet and were skipped", clip(other)));
             return None;
         }
     };
-    if cx.nodes >= cx.max_nodes {
-        cx.warn(format!("the file has more than {} layers; the rest were skipped", cx.max_nodes));
+    if !count(cx) {
         return None;
     }
-    cx.nodes += 1;
     let (w, h) = size(l);
     let world = parent * local(l, w, h);
-    let mut node = JsonMap::new();
-    node.insert("type".into(), json!(ty));
-    if let Some(id) = str_field(l, "do_objectID") {
-        node.insert("id".into(), json!(id));
+    let mut node = base(l, ty, parent, world, w, h, root);
+    if ty == "VECTOR" {
+        let shape = super::path::shape(cx, l, w, h)?;
+        super::path::put_shape(cx, shape, &mut node);
     }
-    node.insert("name".into(), json!(str_field(l, "name").unwrap_or(class)));
-    node.insert("visible".into(), json!(bool_field(l, "isVisible").unwrap_or(true)));
-    node.insert("locked".into(), json!(bool_field(l, "isLocked").unwrap_or(false)));
-    node.insert("size".into(), json!({"x": w, "y": h}));
-    let rel = parent.inverse() * world;
-    let [a, b, c, d, e, f] = rel.as_coeffs();
-    node.insert("relativeTransform".into(), json!([[a, c, e], [b, d, f]]));
-    // The page places top-level layers by their transform; deeper ones also say where they end up,
-    // which tells the importer their transform is relative to their group.
-    if !root {
-        let bb = world.transform_rect_bbox(Rect::new(0.0, 0.0, w, h));
-        node.insert("absoluteBoundingBox".into(), json!({"x": bb.x0, "y": bb.y0, "width": bb.width(), "height": bb.height()}));
-    }
-    node.insert("constraints".into(), constraints(l.get("resizingConstraint").and_then(Value::as_i64).unwrap_or(63)));
     match class {
         "artboard" | "frame" => {
             let clips = if class == "artboard" { true } else { bool_field(l, "clipsContent").unwrap_or(true) };
@@ -134,8 +122,43 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
     Some(Value::Object(node))
 }
 
+/// Count one more layer; false (with a warning) once the file's budget is spent.
+fn count(cx: &mut Cx) -> bool {
+    if cx.nodes >= cx.max_nodes {
+        cx.warn(format!("the file has more than {} layers; the rest were skipped", cx.max_nodes));
+        return false;
+    }
+    cx.nodes += 1;
+    true
+}
+
+/// The properties every REST node of layer `l` has: its type, id, name, visibility, lock, size,
+/// place (`world`, relative to `parent`) and constraints.
+pub(crate) fn base(l: &Value, ty: &str, parent: Affine, world: Affine, w: f64, h: f64, root: bool) -> JsonMap<String, Value> {
+    let mut node = JsonMap::new();
+    node.insert("type".into(), json!(ty));
+    if let Some(id) = str_field(l, "do_objectID") {
+        node.insert("id".into(), json!(id));
+    }
+    let class = str_field(l, "_class").unwrap_or("Layer");
+    node.insert("name".into(), json!(str_field(l, "name").unwrap_or(class)));
+    node.insert("visible".into(), json!(bool_field(l, "isVisible").unwrap_or(true)));
+    node.insert("locked".into(), json!(bool_field(l, "isLocked").unwrap_or(false)));
+    node.insert("size".into(), json!({"x": w, "y": h}));
+    let [a, b, c, d, e, f] = (parent.inverse() * world).as_coeffs();
+    node.insert("relativeTransform".into(), json!([[a, c, e], [b, d, f]]));
+    // The page places top-level layers by their transform; deeper ones also say where they end up,
+    // which tells the importer their transform is relative to their group.
+    if !root {
+        let bb = world.transform_rect_bbox(Rect::new(0.0, 0.0, w, h));
+        node.insert("absoluteBoundingBox".into(), json!({"x": bb.x0, "y": bb.y0, "width": bb.width(), "height": bb.height()}));
+    }
+    node.insert("constraints".into(), constraints(l.get("resizingConstraint").and_then(Value::as_i64).unwrap_or(63)));
+    node
+}
+
 /// A layer's size from its `frame` (finite, not negative, at most [`MAX_SIZE`]).
-fn size(l: &Value) -> (f64, f64) {
+pub(crate) fn size(l: &Value) -> (f64, f64) {
     let f = l.get("frame");
     let n = |k: &str| f.and_then(|f| f.get(k)).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0).clamp(0.0, MAX_SIZE);
     (n("width"), n("height"))
@@ -143,7 +166,7 @@ fn size(l: &Value) -> (f64, f64) {
 
 /// A layer's transform within its parent: its frame's position, then its rotation (degrees,
 /// counter-clockwise on screen) and flips about its centre.
-fn local(l: &Value, w: f64, h: f64) -> Affine {
+pub(crate) fn local(l: &Value, w: f64, h: f64) -> Affine {
     let f = l.get("frame");
     let n = |k: &str| f.and_then(|f| f.get(k)).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0).clamp(-MAX_COORD, MAX_COORD);
     let rot = l.get("rotation").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0) % 360.0;
