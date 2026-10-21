@@ -51,7 +51,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.saveAs",
             "Save as",
-            "{path} (no extension adds .figcraft); a .fig path writes an experimental export copy of the shown document with `warnings`, keeping the native path, unsaved changes and version preview",
+            "{path | data: true (no path: returns the file as base64 `data` with its `name`, for a download)} (no extension adds .figcraft); a .fig path writes an experimental export copy of the shown document with `warnings`, keeping the native path, unsaved changes and version preview",
             false,
             save_as
         ),
@@ -843,37 +843,53 @@ fn color_profile(s: &mut Session, p: &Value) -> Result<Value> {
 pub(crate) fn save_ends_preview(s: &Session, cmd: &str, p: &Value) -> bool {
     let path =
         string(p, "path").or_else(|| if cmd == "file.save" { s.docs.get(crate::branches::file_tab(s)).and_then(|ds| ds.path.clone()) } else { None });
-    path.is_some_and(|path| ext(&path) != "fig")
+    path.is_some_and(|path| ext(&path) != "fig") || (cmd == "file.saveAs" && wants_data(p))
+}
+
+/// `file.saveAs` asked for the file's bytes instead of a path to write (the browser's download).
+fn wants_data(p: &Value) -> bool {
+    p.get("data").and_then(Value::as_bool) == Some(true)
 }
 
 /// Save the file of the active tab (the main file for a branch tab, with its branches), or export
 /// the active document as an experimental `.fig` copy without changing its native save state.
-fn save_to(s: &mut Session, path: String) -> Result<Value> {
-    if ext(&path) == "fig" {
+/// Without a path the file comes back as base64 `data` for the caller to deliver (#969).
+fn save_to(s: &mut Session, path: Option<String>) -> Result<Value> {
+    if let Some(path) = path.as_deref().filter(|p| ext(p) == "fig") {
         return export_fig(s, &json!({"path": path}));
     }
     let i = crate::branches::file_tab(s);
     let ds = s.docs.get_mut(i).ok_or(EngineError::NoDocument)?;
     let mut snapshot = FileSnapshot::of(ds);
     let follows_path = ds.path.as_deref().map_or(ds.doc.name == "Untitled", |old| ds.doc.name == file_stem(old));
-    if follows_path && ds.path.as_deref() != Some(path.as_str()) {
-        Arc::make_mut(&mut snapshot.doc).name = file_stem(&path);
+    if let Some(path) = path.as_deref()
+        && follows_path
+        && ds.path.as_deref() != Some(path)
+    {
+        Arc::make_mut(&mut snapshot.doc).name = file_stem(path);
     }
     let bytes = snapshot.encode()?;
-    write(&path, &bytes)?;
+    if let Some(path) = &path {
+        write(path, &bytes)?;
+    }
     ds.doc = snapshot.doc;
-    ds.path = Some(path.clone());
+    if path.is_some() {
+        ds.path.clone_from(&path);
+    }
     ds.mark_saved();
     ds.revision += 1;
-    let uid = ds.uid;
+    let (uid, name) = (ds.uid, format!("{}.figcraft", ds.doc.name));
     branch_tabs_saved(s, uid);
+    let Some(path) = path else {
+        return Ok(json!({"name": name, "bytes": bytes.len(), "data": base64::engine::general_purpose::STANDARD.encode(&bytes)}));
+    };
     remember(s, &path);
     Ok(json!({"path": path, "bytes": bytes.len()}))
 }
 
 fn save(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(path) = string(p, "path") {
-        return save_to(s, path);
+        return save_to(s, Some(path));
     }
     match s.docs.get(crate::branches::file_tab(s)).ok_or(EngineError::NoDocument)?.path.clone() {
         // Earlier builds wrote native data under a .fig name: never overwrite that file with an export.
@@ -881,7 +897,7 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
             s.request_ui("dialog.saveAs", json!({}));
             Err(EngineError::Disabled("file.save".into(), "the saved path ends in .fig: choose Save as or pass `path`".into()))
         }
-        Some(path) => save_to(s, path),
+        Some(path) => save_to(s, Some(path)),
         None => {
             s.request_ui("dialog.saveAs", json!({}));
             Err(EngineError::Disabled("file.save".into(), "the file has no path yet: pass `path`".into()))
@@ -895,8 +911,9 @@ fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
             if ext(&path).is_empty() {
                 path.push_str(".figcraft");
             }
-            save_to(s, path)
+            save_to(s, Some(path))
         }
+        None if wants_data(p) => save_to(s, None),
         None => {
             s.request_ui("dialog.saveAs", json!({}));
             Err(EngineError::Disabled("file.saveAs".into(), "pass `path`".into()))
@@ -1561,6 +1578,23 @@ mod rest_import_tests {
         assert!(s.execute("file.open", &json!({"data": data})).is_err(), "the name tells the format");
         assert!(s.execute("file.open", &json!({"data": "not base64!", "name": "x.svg"})).is_err());
         assert_eq!(s.docs.len(), open, "a refused open adds nothing");
+    }
+
+    #[test]
+    fn save_as_data_hands_back_the_file_and_marks_it_saved() {
+        // The browser has no paths: Save as returns the file for a download (#969).
+        let mut s = Session::new();
+        s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
+        assert!(s.execute("file.saveAs", &json!({})).is_err(), "no path and no data: still asks for a path");
+        let recent = s.prefs.recent_files.clone();
+        let r = s.execute("file.saveAs", &json!({"data": true})).unwrap();
+        assert_eq!(r["name"], "Untitled.figcraft");
+        assert!(!s.ds().unwrap().is_dirty());
+        assert_eq!(s.ds().unwrap().path, None, "still no path to save over");
+        assert_eq!(s.prefs.recent_files, recent, "nothing on disk to remember");
+        let mut t = Session::new();
+        t.execute("file.open", &json!({"data": r["data"], "name": r["name"]})).unwrap();
+        assert!(t.doc().unwrap().nodes().any(|n| matches!(n.kind, NodeKind::Rectangle)), "the bytes reopen");
     }
 
     #[test]

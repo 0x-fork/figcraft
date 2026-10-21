@@ -10,6 +10,7 @@ status = "draft — needs native review"
 [ui]
 "Compatibility notes" = "Notas de compatibilidad"
 "Couldn't download the variables" = "No se pudieron descargar las variables"
+"Couldn't download {name}" = "No se pudo descargar {name}"
 
 "% of all commits" = "% del total de commits"
 "(no longer published)" = "(ya no publicado)"
