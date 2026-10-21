@@ -102,6 +102,7 @@ pub(crate) fn component(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, ro
     if let Some(f) = master_fills(l) {
         node.insert("fills".into(), f);
     }
+    super::tree::extras(cx, l, h, &mut node);
     let sid = str_field(l, "symbolID").unwrap_or("").to_string();
     cx.chain.push(sid);
     let kids = children(cx, l, world, (w, h), depth, false);
@@ -139,6 +140,9 @@ pub(crate) fn instance(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, roo
     if let Some(st) = l.get("style") {
         super::style::apply(cx, st, w, h, &mut node);
     }
+    super::tree::extras(cx, l, h, &mut node);
+    // An instance shows its master's grids (else they'd differ, and count as an override).
+    super::proto::layout_grids(&m, h, &mut node);
     let overrides = overrides(l);
     let mut copy = m;
     if let Some(layers) = copy.get_mut("layers").and_then(Value::as_array_mut) {

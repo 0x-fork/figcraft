@@ -143,6 +143,7 @@ pub(crate) fn shape_group(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, 
                 super::style::clear(m);
                 m.remove("styles");
                 super::tree::styles(cx, l, cw, ch, m);
+                super::tree::extras(cx, l, ch, m);
             }
             super::tree::mask(l, m);
         }
@@ -170,6 +171,7 @@ pub(crate) fn shape_group(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, 
     node.insert("children".into(), Value::Array(chain));
     super::tree::mask(l, &mut node);
     super::tree::styles(cx, l, w, h, &mut node);
+    super::tree::extras(cx, l, h, &mut node);
     Some(Value::Object(node))
 }
 

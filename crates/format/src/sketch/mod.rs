@@ -16,6 +16,9 @@ mod fixture;
 mod path;
 #[cfg(test)]
 mod path_tests;
+mod proto;
+#[cfg(test)]
+mod proto_tests;
 mod shared;
 #[cfg(test)]
 mod shared_tests;

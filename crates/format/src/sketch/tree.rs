@@ -75,6 +75,10 @@ pub(crate) fn to_rest(archive: &Archive, name: &str, max_nodes: usize) -> Map {
         node.insert("name".into(), json!(str_field(page, "name").unwrap_or("Page")));
         let kids = children(&mut cx, page, Affine::IDENTITY, (0.0, 0.0), 0, true);
         node.insert("children".into(), Value::Array(kids));
+        let starts = super::proto::starting_points(page);
+        if !starts.is_empty() {
+            node.insert("flowStartingPoints".into(), Value::Array(starts));
+        }
         canvases.push(Value::Object(node));
     }
     let foreign = std::mem::take(&mut cx.symbols.foreign);
@@ -120,6 +124,7 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
         "slice" => "SLICE",
         "shapePath" | "star" | "polygon" | "triangle" => "VECTOR",
         "text" => "TEXT",
+        "MSImmutableHotspotLayer" | "hotspot" => "FRAME",
         other => {
             cx.warn(format!("Sketch {} layers are not supported yet and were skipped", clip(other)));
             return None;
@@ -160,6 +165,11 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
         _ => {}
     }
     styles(cx, l, w, h, &mut node);
+    extras(cx, l, h, &mut node);
+    if class == "MSImmutableHotspotLayer" || class == "hotspot" {
+        node.insert("clipsContent".into(), json!(false));
+        node.remove("fills");
+    }
     if matches!(ty, "FRAME" | "GROUP") {
         let kids = children(cx, l, world, (w, h), depth, false);
         node.insert("children".into(), Value::Array(kids));
@@ -173,6 +183,16 @@ pub(crate) fn styles(cx: &mut Cx, l: &Value, w: f64, h: f64, node: &mut JsonMap<
         super::style::apply(cx, st, w, h, node);
     }
     cx.shared.link(&cx.style_defs, l, node);
+}
+
+/// Layer `l`'s prototype link, export settings, layout grids (frames) and notes.
+pub(crate) fn extras(cx: &mut Cx, l: &Value, h: f64, node: &mut JsonMap<String, Value>) {
+    super::proto::interactions(l, node);
+    super::proto::export_settings(cx, l, node);
+    if matches!(node.get("type").and_then(Value::as_str), Some("FRAME" | "COMPONENT" | "INSTANCE")) {
+        super::proto::layout_grids(l, h, node);
+    }
+    super::proto::notes(cx, l);
 }
 
 /// A clipping mask's flag and kind (outline or alpha).
