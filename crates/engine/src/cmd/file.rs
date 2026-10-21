@@ -65,7 +65,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.exportLayers",
             "Export layers",
-            "{ids? (default the selection, else every layer on the page with export settings), assets? (true: the Inspect tab's assets in and under them instead: layers with export settings, icons as SVG, images as PNG), dir? (folder to write into; else each file comes back as base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options): for every PDF instead of each setting's own}  every layer once per export setting, named `<layer><suffix>.<format>` (\"@2x\" when a scaled export has no suffix; repeats get \" 2\"; slashes in a layer name make folders). Returns {files: [{name, id, bytes, path | data}], skipped (layers without settings)}",
+            "{ids? (default the selection, else every layer on the page with export settings), assets? (true: the Inspect tab's assets in and under them instead: layers with export settings, icons as SVG, images as PNG), dir? (folder to write into; else each file comes back as base64 `data`), zip? (no dir: the files come back together as one base64 zip `data` instead), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options): for every PDF instead of each setting's own}  every layer once per export setting, named `<layer><suffix>.<format>` (\"@2x\" when a scaled export has no suffix; repeats get \" 2\"; slashes in a layer name make folders). Returns {files: [{name, id, bytes, path | data}], skipped (layers without settings), data? (zip)}",
             false,
             export_layers
         ),
@@ -1209,6 +1209,9 @@ fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Disabled(cmd.into(), "no export settings (add one with export.add)".into()));
     }
     let dir = string(p, "dir");
+    // The browser saves one download at a time: several files go as one zip (#969).
+    let zip = dir.is_none() && boolean(p, "zip").unwrap_or(false);
+    let mut members = Vec::new();
     // Print options passed here stand in for every PDF setting's own.
     let print = has_print_param(p).then(|| print_param(cmd, p, PrintSettings::default())).transpose()?;
     let mut files = Vec::with_capacity(jobs.len());
@@ -1228,12 +1231,18 @@ fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
                 write(&path, &bytes)?;
                 f["path"] = json!(path);
             }
+            None if zip => members.push((job.file.as_str(), bytes)),
             None => f["data"] = json!(base64::engine::general_purpose::STANDARD.encode(&bytes)),
         }
         files.push(f);
     }
     let with_settings: std::collections::BTreeSet<NodeId> = jobs.iter().map(|j| j.id).collect();
-    Ok(json!({"files": files, "skipped": ids.len().saturating_sub(with_settings.len())}))
+    let mut r = json!({"files": files, "skipped": ids.len().saturating_sub(with_settings.len())});
+    if zip {
+        let archive = figcraft_format::zip_files(members.iter().map(|(n, b)| (*n, b.as_slice()))).map_err(|e| EngineError::Other(e.to_string()))?;
+        r["data"] = json!(base64::engine::general_purpose::STANDARD.encode(&archive));
+    }
+    Ok(r)
 }
 
 /// A PDF with one page per group of layers (an sRGB document), titled after the file; `area`

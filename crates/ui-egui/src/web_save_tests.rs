@@ -53,3 +53,19 @@ fn a_refused_download_says_so() {
     assert_eq!(got.lock().unwrap().len(), 1);
     assert_eq!(toast(&app), "Couldn't download Untitled.figcraft");
 }
+
+#[test]
+fn several_layers_download_as_one_zip() {
+    // The browser lets a page start one download at a time: two downloads lost the second.
+    let (mut app, got, a) = browser(true);
+    let r = app.session.execute("shape.rectangle", &json!({"x": 20, "y": 0, "width": 10, "height": 10})).unwrap();
+    let b: NodeId = serde_json::from_value(r["id"].clone()).unwrap();
+    app.session.execute("export.add", &json!({"ids": [a, b]})).unwrap();
+    crate::export_panel::export_layers(&mut app, &[a, b], false);
+    let got = got.lock().unwrap();
+    let [(name, bytes)] = got.as_slice() else { panic!("one download, got {}", got.len()) };
+    assert_eq!(name, "Untitled.zip");
+    assert!(bytes.starts_with(b"PK\x03\x04"));
+    assert!(bytes.windows(15).any(|w| w == b"Rectangle 2.png"), "both layers are in the zip");
+    assert_eq!(toast(&app), "Exported 2 files");
+}

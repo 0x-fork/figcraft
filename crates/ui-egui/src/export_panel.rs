@@ -320,13 +320,14 @@ pub(crate) fn export_layers(app: &mut FigApp, ids: &[NodeId], assets: bool) {
         [] => {}
         // The suggested name keeps only the file's own name (a layer's folders apply to folders).
         [one] => save_one(app, &[one.id], &one.setting, one.file.rsplit('/').next().unwrap_or(&one.file)),
-        // No folders in the browser: each file arrives as its own download (#969).
+        // No folders in the browser, and it lets a page start one download at a time: the files
+        // arrive together as one zip (#969).
         _ if app.services.downloads() => {
-            let Some(r) = app.run("file.exportLayers", json!({"ids": ids, "assets": assets})) else { return };
-            let files = r["files"].as_array().map_or(&[][..], Vec::as_slice);
-            let n = files.iter().filter(|f| app.download(f["name"].as_str().unwrap_or_default(), f)).count();
-            if n > 0 {
-                app.toast(trn("Exported {n} files", n, &[]));
+            let name = format!("{}.zip", app.session.doc().map_or("Export", |d| d.name.as_str()));
+            if let Some(r) = app.run("file.exportLayers", json!({"ids": ids, "assets": assets, "zip": true}))
+                && app.download(&name, &r)
+            {
+                app.toast(trn("Exported {n} files", r["files"].as_array().map_or(0, Vec::len), &[]));
             }
         }
         _ => {
