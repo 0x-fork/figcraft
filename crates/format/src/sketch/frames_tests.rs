@@ -397,3 +397,32 @@ fn junk_tints_and_colour_overrides() {
     let m = master("M", "S", "Odd", 10.0, 10.0, vec![odd]);
     let _ = open_symbols(vec![instance("I", "S", 0.0, 0.0, 10.0, 10.0, &[("L_fillColor", color(1.0, 0.0, 0.0, 1.0))])], vec![m]);
 }
+
+/// Tinting copies a group's layers: the copies count against the import's work budget, so nested
+/// tinted groups of large layers can't make the import copy without end; past the budget, tints
+/// are skipped with a note.
+#[test]
+fn nested_tints_are_budgeted() {
+    // Text that doesn't compress, so the page stays within the archive's size checks.
+    let mut seed = 0x2545_f491_u32;
+    let big: String = (0..1_000_000)
+        .map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            char::from(b'a' + (seed % 26) as u8)
+        })
+        .collect();
+    let mut l = styled(rect("Leaf", 0.0, 0.0, 10.0, 10.0), "fills", json!([solid_fill(0.0, 0.0, 0.0, 1.0)]));
+    for i in 0..35 {
+        let mut pad = rect(&big, 0.0, 0.0, 1.0, 1.0);
+        pad["do_objectID"] = json!(format!("pad{i}"));
+        let mut g = group(&format!("G{i}"), 0.0, 0.0, 10.0, 10.0, vec![l, pad]);
+        let mut t = solid_fill(1.0, 0.0, 0.0, 1.0);
+        t["layeringType"] = json!(1);
+        g["style"] = json!({"_class": "style", "fills": [t]});
+        l = g;
+    }
+    let (_, warnings) = open(vec![l]);
+    assert!(warnings.iter().any(|w| w.contains("tint")), "{warnings:?}");
+}

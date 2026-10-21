@@ -80,7 +80,7 @@ impl Symbols {
 }
 
 /// What copying and mapping `v` costs, in work units: one per JSON value, one per 8 bytes of text.
-fn weight(v: &Value, depth: usize) -> u64 {
+pub(crate) fn weight(v: &Value, depth: usize) -> u64 {
     if depth > 256 {
         return 1;
     }
@@ -141,7 +141,7 @@ pub(crate) fn component(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, ro
     let sid = str_field(l, "symbolID").unwrap_or("").to_string();
     // A graphic's fill tints its layers.
     let tinted;
-    let l = match super::style::tint_of(l.get("style"), false) {
+    let l = match super::style::tint_of(l.get("style"), false).filter(|_| super::tree::spend_on_tint(cx, l)) {
         Some(t) => {
             let mut c = l.clone();
             if let Some(kids) = c.get_mut("layers").and_then(Value::as_array_mut) {
@@ -342,8 +342,8 @@ fn nested(ov: &BTreeMap<String, Value>) -> BTreeMap<&str, Vec<(&str, &Value)>> {
 
 /// Apply `ov` to the layers of a master's copy: to the layers it names, and passed on to nested
 /// instances for the layers inside them (an outer override wins over the nested instance's own).
-/// Each override handed to a nested instance costs [`OVERRIDE_COST`] units of `budget`; once it is spent, the
-/// rest aren't handed on.
+/// Each override handed to a nested instance costs [`OVERRIDE_COST`] units of `budget` plus its
+/// value's [`weight`]; once it is spent, the rest aren't handed on.
 fn apply(
     layers: &mut [Value],
     ov: &BTreeMap<String, Value>,
@@ -368,8 +368,16 @@ fn apply(
                     _ => {}
                 }
                 let inner = nested.get(id.as_str()).map(Vec::as_slice).unwrap_or_default();
-                let take = usize::try_from(*budget / OVERRIDE_COST).unwrap_or(usize::MAX).min(inner.len());
-                *budget -= take as u64 * OVERRIDE_COST;
+                // Each costs its copy's size: deep chains of large overrides use up the budget.
+                let mut take = 0;
+                for (_, v) in inner {
+                    let cost = OVERRIDE_COST + weight(v, 0);
+                    if cost > *budget {
+                        break;
+                    }
+                    *budget -= cost;
+                    take += 1;
+                }
                 if take > 0 {
                     let mut own = l.get("overrideValues").and_then(Value::as_array).cloned().unwrap_or_default();
                     own.extend(inner.iter().take(take).map(|(rest, v)| json!({"_class": "overrideValue", "overrideName": rest, "value": v})));

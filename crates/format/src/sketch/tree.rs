@@ -87,9 +87,25 @@ impl Cx {
         true
     }
 
+    /// Spend `n` units of the work budget on tinting; false (with a note, once) when it would run
+    /// out.
+    pub(crate) fn spend_on_tint(&mut self, n: u64) -> bool {
+        if self.work.saturating_add(n) > self.max_work {
+            self.warn("tints past what the import handles were skipped; those layers keep their own colours");
+            return false;
+        }
+        self.work += n;
+        true
+    }
+
     pub(crate) fn work_left(&self) -> u64 {
         self.max_work.saturating_sub(self.work)
     }
+}
+
+/// Charge the copy tinting layer `l` makes against the work budget: whether it may be tinted.
+pub(crate) fn spend_on_tint(cx: &mut Cx, l: &Value) -> bool {
+    cx.spend_on_tint(super::symbols::weight(l, 0))
 }
 
 /// Map the pages of `archive` to a REST file JSON named `name`.
@@ -247,8 +263,9 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
     // A group's or graphic's fill tints its layers (a frame's is its background).
     let tinted;
     let gb = l.get("groupBehavior").and_then(Value::as_i64);
-    let l = match (class, super::style::tint_of(l.get("style"), gb != Some(1))) {
-        ("group", Some(t)) => {
+    let tint = if class == "group" { super::style::tint_of(l.get("style"), gb != Some(1)) } else { None };
+    let l = match tint.filter(|_| spend_on_tint(cx, l)) {
+        Some(t) => {
             // A plain group's legacy fill is all tint; a frame keeps its background fills.
             if gb != Some(1) {
                 node.remove("fills");
