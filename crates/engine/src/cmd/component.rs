@@ -336,6 +336,14 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"id": target}))
 }
 
+/// The name a new component set takes from its first variant: the path before the last '/'
+/// ("Button/State=Hover" → "Button"), or a plain name as is ("Button"). A bare "prop=value" name
+/// ("State=Default, Size=Small") names no set.
+fn set_name_from(variant: &str) -> Option<String> {
+    let base = variant.rsplit_once('/').map_or(variant, |(path, _)| path).trim();
+    (!base.is_empty() && !base.contains('=')).then(|| base.to_string())
+}
+
 /// Wrap components in a new component set (named after the first) placed around them.
 fn wrap_in_set(cmd: &str, doc: &mut Document, ids: &[NodeId]) -> Result<NodeId> {
     let top = *ids.last().ok_or_else(|| bad(cmd, "nothing selected"))?;
@@ -346,12 +354,7 @@ fn wrap_in_set(cmd: &str, doc: &mut Document, ids: &[NodeId]) -> Result<NodeId> 
     let bounds = doc.bounds_of(ids).unwrap_or_default();
     let pw = doc.world_transform(parent);
     let local = figcraft_geom::transform_rect_bbox(pw.inverse(), bounds.inflate(20.0, 20.0));
-    let base = ids
-        .first()
-        .and_then(|i| doc.node(*i))
-        .map(|n| n.name.split(['/', '=']).next().unwrap_or("Component").trim().to_string())
-        .filter(|n| !n.is_empty() && !n.contains(','))
-        .unwrap_or_else(|| "Component".into());
+    let base = ids.first().and_then(|i| doc.node(*i)).and_then(|n| set_name_from(&n.name)).unwrap_or_else(|| doc.next_name("Component"));
     let set = doc.alloc_id();
     let mut n = Node::new(set, NodeKind::ComponentSet { description: String::new() }, base, local.width(), local.height());
     n.transform = figcraft_geom::Affine::translate((local.x0, local.y0));
