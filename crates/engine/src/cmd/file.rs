@@ -564,8 +564,47 @@ fn load_sketch(bytes: &[u8], name: &str) -> Option<Result<figcraft_format::Loade
         match_font_families(&mut doc);
         platform_tracking(&mut doc);
         link_instances(&mut doc);
+        reflow_overridden_text(&mut doc);
         figcraft_format::Loaded { issues: warnings, ..doc.into() }
     }))
+}
+
+/// Instances of a stack sized apart from their main are laid out at their size, and texts in
+/// instances whose string an override changed are measured again with the auto layout around them
+/// re-flowing (Sketch saves layouts measured with the master's string). The rest keeps the layout
+/// Sketch saved.
+fn reflow_overridden_text(doc: &mut Document) {
+    let changed: Vec<NodeId> = doc
+        .nodes()
+        .filter(|n| match (&n.kind, n.source.and_then(|s| doc.node(s)).map(|s| &s.kind)) {
+            (NodeKind::Text(t), Some(NodeKind::Text(main))) => t.characters != main.characters,
+            _ => false,
+        })
+        .map(|n| n.id)
+        .collect();
+    let m = crate::measure::TextMeasure;
+    // Instances of a stack at another size than their main: the stack at their size, innermost first.
+    let mut resized: Vec<(usize, NodeId)> = doc
+        .nodes()
+        .filter(|n| n.layout.is_some())
+        .filter(|n| match &n.kind {
+            NodeKind::Instance { component, .. } => {
+                doc.node(*component).is_some_and(|c| (c.width - n.width).abs() > 1e-6 || (c.height - n.height).abs() > 1e-6)
+            }
+            _ => false,
+        })
+        .map(|n| (doc.ancestors(n.id).len(), n.id))
+        .collect();
+    resized.sort_by_key(|r| std::cmp::Reverse(r.0));
+    for (_, id) in resized {
+        figcraft_layout::layout_frame(doc, id, &m);
+    }
+    for id in changed {
+        if let Some((w, h)) = doc.node(id).and_then(figcraft_text::auto_size) {
+            figcraft_layout::set_size(doc, id, w, h);
+        }
+        figcraft_layout::layout_up(doc, id, &m);
+    }
 }
 
 /// Font families a `.sketch` import guessed from PostScript names ("Ping Fang SC" from

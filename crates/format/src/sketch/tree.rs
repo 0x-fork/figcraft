@@ -151,6 +151,15 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
         cx.too_old = true;
         return None;
     }
+    // A rectangle with angled or inside corners is a path of that outline.
+    let outlined;
+    let l = match super::path::cut_corners(l) {
+        Some(p) => {
+            outlined = p;
+            &outlined
+        }
+        None => l,
+    };
     let class = str_field(l, "_class")?;
     if class == "shapeGroup" {
         return count(cx).then(|| super::path::shape_group(cx, l, parent, depth, root)).flatten();
@@ -163,6 +172,8 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
     }
     let ty = match class {
         "artboard" | "frame" => "FRAME",
+        // Sketch 2025 and newer: a group that behaves as a frame (1) or a graphic (2), or clips.
+        "group" if is_frame(l) => "FRAME",
         "group" | "graphic" => "GROUP",
         // Shapes whose points were moved are paths.
         "rectangle" | "oval" if bool_field(l, "edited") == Some(true) => "VECTOR",
@@ -204,6 +215,10 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
                 node.insert("fills".into(), json!([{"type": "SOLID", "color": c}]));
             }
         }
+        "group" if ty == "FRAME" => {
+            // `clippingBehavior`: 0 the default (frames clip), 1 clip, 2 don't.
+            node.insert("clipsContent".into(), json!(l.get("clippingBehavior").and_then(Value::as_i64) != Some(2)));
+        }
         "rectangle" => corner_radii(l, &mut node),
         "bitmap" => match l.get("image").and_then(|i| str_field(i, "_ref")) {
             Some(r) => {
@@ -219,15 +234,78 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
     }
     styles(cx, l, w, h, &mut node);
     extras(cx, l, h, &mut node);
+    style_corners(l, &mut node);
     if class == "MSImmutableHotspotLayer" || class == "hotspot" {
         node.insert("clipsContent".into(), json!(false));
         node.remove("fills");
     }
+    // A group's or graphic's fill tints its layers (a frame's is its background).
+    let tinted;
+    let gb = l.get("groupBehavior").and_then(Value::as_i64);
+    let l = match (class, super::style::tint_of(l.get("style"), gb != Some(1))) {
+        ("group", Some(t)) => {
+            // A plain group's legacy fill is all tint; a frame keeps its background fills.
+            if gb != Some(1) {
+                node.remove("fills");
+            }
+            let mut c = l.clone();
+            if let Some(kids) = c.get_mut("layers").and_then(Value::as_array_mut) {
+                super::style::tint_layers(kids, &t, 0);
+            }
+            tinted = c;
+            &tinted
+        }
+        _ => l,
+    };
     if matches!(ty, "FRAME" | "GROUP") {
         let kids = children(cx, l, world, (w, h), depth, false);
         node.insert("children".into(), Value::Array(kids));
+        super::stack::apply(l, &mut node);
     }
     Some(Value::Object(node))
+}
+
+/// A Sketch 2025+ group that is a frame: it behaves as a frame or a graphic, or clips.
+pub(crate) fn is_frame(l: &Value) -> bool {
+    matches!(l.get("groupBehavior").and_then(Value::as_i64), Some(1 | 2)) || l.get("clippingBehavior").and_then(Value::as_i64) == Some(1)
+}
+
+/// Corners kept in the style (Sketch 2025+: one radius for all, or one per corner from the top
+/// left, clockwise) on shapes and frames that have corners; smooth corners keep their smoothing.
+pub(crate) fn style_corners(l: &Value, node: &mut JsonMap<String, Value>) {
+    let Some(c) = l.get("style").and_then(|s| s.get("corners")) else { return };
+    if !matches!(node.get("type").and_then(Value::as_str), Some("RECTANGLE" | "FRAME" | "COMPONENT" | "INSTANCE")) {
+        return;
+    }
+    let radii: Vec<f64> = c
+        .get("radii")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(Value::as_f64)
+        .filter(|r| r.is_finite())
+        .map(|r| r.clamp(0.0, MAX_SIZE))
+        .take(4)
+        .collect();
+    match radii.as_slice() {
+        [] => return,
+        [r] => {
+            node.insert("cornerRadius".into(), json!(r));
+            node.remove("rectangleCornerRadii");
+        }
+        more => {
+            // Values repeat to fill the four corners.
+            let all: Vec<f64> = (0..4).map(|i| more.get(i % more.len()).copied().unwrap_or(0.0)).collect();
+            node.insert("rectangleCornerRadii".into(), json!(all));
+        }
+    }
+    // Style 1 is smooth: its smoothing applies.
+    if c.get("style").and_then(Value::as_i64) == Some(1)
+        && let Some(sm) = c.get("smoothing").and_then(Value::as_f64).filter(|v| v.is_finite())
+    {
+        node.insert("cornerSmoothing".into(), json!(sm.clamp(0.0, 1.0)));
+    }
 }
 
 /// Layer `l`'s style into `node`, and its links to the styles made from its shared style.
@@ -291,7 +369,7 @@ pub(crate) fn base(l: &Value, ty: &str, parent: Affine, world: Affine, w: f64, h
         let bb = world.transform_rect_bbox(Rect::new(0.0, 0.0, w, h));
         node.insert("absoluteBoundingBox".into(), json!({"x": bb.x0, "y": bb.y0, "width": bb.width(), "height": bb.height()}));
     }
-    node.insert("constraints".into(), constraints(l.get("resizingConstraint").and_then(Value::as_i64).unwrap_or(63)));
+    node.insert("constraints".into(), constraints(pin_mask(l)));
     node
 }
 
@@ -315,6 +393,33 @@ pub(crate) fn local(l: &Value, w: f64, h: f64) -> Affine {
         * Affine::scale_non_uniform(sx, sy)
         * Affine::rotate(-rot.to_radians())
         * Affine::translate((-w / 2.0, -h / 2.0))
+}
+
+/// A layer's pins as a `resizingConstraint` mask. Sketch 2025 and newer keep them in
+/// `horizontalPins`/`verticalPins` (bits: 1 the start, 4 the end) and `horizontalSizing`/
+/// `verticalSizing` (fixed and fit keep the size; fill and relative don't), with
+/// `resizingConstraint` left at 63.
+pub(crate) fn pin_mask(l: &Value) -> i64 {
+    if l.get("horizontalPins").is_none() && l.get("horizontalSizing").is_none() {
+        return l.get("resizingConstraint").and_then(Value::as_i64).unwrap_or(63);
+    }
+    let int = |k: &str| l.get(k).and_then(Value::as_i64).unwrap_or(0);
+    let fixed = |k: &str| matches!(int(k), 0 | 1);
+    let mut mask = 63;
+    // A cleared bit pins: right 1, width 2, left 4, bottom 8, height 16, top 32.
+    for (on, bit) in [
+        (int("horizontalPins") & 1 != 0, 4),
+        (int("horizontalPins") & 4 != 0, 1),
+        (fixed("horizontalSizing"), 2),
+        (int("verticalPins") & 1 != 0, 32),
+        (int("verticalPins") & 4 != 0, 8),
+        (fixed("verticalSizing"), 16),
+    ] {
+        if on {
+            mask &= !bit;
+        }
+    }
+    mask
 }
 
 /// REST constraints from Sketch's `resizingConstraint`: six bits, a cleared bit pins that side or

@@ -326,3 +326,78 @@ fn sketch_text_keeps_the_platform_tracking() {
     let ls = td.style.letter_spacing.resolve(13.0);
     assert!((ls - (-12.0 * 13.0 / 2048.0)).abs() < 1e-6, "{ls}");
 }
+
+/// A text an override changed is measured again, and the stack around it re-flows: a hugging chip
+/// grows to its new label.
+#[test]
+fn sketch_overridden_text_reflows_its_stack() {
+    let font = json!({"name": "Helvetica", "size": 12});
+    let run = json!({"location": 0, "length": 2, "attributes": {"MSAttributedStringFontAttribute": {"attributes": font}}});
+    let label = shape(
+        "text",
+        "Label",
+        [20.0, 4.0, 14.0, 16.0],
+        json!({"attributedString": {"string": "Go", "attributes": [run]}, "horizontalSizing": 1, "verticalSizing": 1}),
+    );
+    let dot = shape("oval", "Dot", [8.0, 9.0, 6.0, 6.0], json!({"points": []}));
+    let layout = json!({"_class": "MSImmutableFlexGroupLayout", "flexDirection": 0, "justifyContent": 0, "alignItems": 1, "allGuttersGap": 6, "stackingOrder": 0});
+    let master = shape(
+        "symbolMaster",
+        "Chip",
+        [0.0, 0.0, 44.0, 24.0],
+        json!({"symbolID": "S", "groupBehavior": 1, "groupLayout": layout, "horizontalSizing": 1, "verticalSizing": 1,
+            "leftPadding": 8, "rightPadding": 10, "topPadding": 4, "bottomPadding": 4, "layers": [label, dot]}),
+    );
+    let ov = json!([{"_class": "overrideValue", "overrideName": "Label_stringValue", "value": "A much longer label here"}]);
+    let inst = shape(
+        "symbolInstance",
+        "Long",
+        [0.0, 100.0, 160.0, 24.0],
+        json!({"symbolID": "S", "overrideValues": ov, "horizontalSizing": 1, "verticalSizing": 1}),
+    );
+    let data = base64::engine::general_purpose::STANDARD.encode(sketch_with("2026.3.1", &[("A", "Page")], &[master, inst]));
+    let mut s = Session::new();
+    s.execute("file.open", &json!({"data": data, "name": "x.sketch"})).unwrap();
+    let doc = s.doc().unwrap();
+    let inst = doc.nodes().find(|n| n.name == "Long").unwrap().id;
+    let label = doc.subtree(inst).into_iter().find(|id| doc.node(*id).is_some_and(|n| n.name == "Label")).unwrap();
+    let dot = doc.subtree(inst).into_iter().find(|id| doc.node(*id).is_some_and(|n| n.name == "Dot")).unwrap();
+    let (i, l, d) = (doc.world_bounds(inst).unwrap(), doc.world_bounds(label).unwrap(), doc.world_bounds(dot).unwrap());
+    assert!(l.x1 - l.x0 > 60.0, "the label was measured: {l:?}");
+    assert!((d.x0 - i.x0 - 8.0).abs() < 0.5, "the dot after the padding: {d:?} in {i:?}");
+    assert!((l.x0 - d.x1 - 6.0).abs() < 0.5, "the label after the gap: {l:?}");
+    assert!((i.x1 - l.x1 - 10.0).abs() < 0.5, "the chip hugs: {i:?} {l:?}");
+}
+
+/// An instance sized apart from its master lays its master's stack out at its own size: a wide
+/// button keeps its label and icon together in the middle.
+#[test]
+fn sketch_resized_stack_instances_reflow() {
+    let a = shape("rectangle", "A", [22.0, 12.0, 40.0, 20.0], json!({"points": []}));
+    let b = shape("rectangle", "B", [70.0, 12.0, 20.0, 20.0], json!({"points": []}));
+    let layout = json!({"_class": "MSImmutableFlexGroupLayout", "flexDirection": 0, "justifyContent": 1, "alignItems": 1, "allGuttersGap": 8, "stackingOrder": 0});
+    let master = shape(
+        "symbolMaster",
+        "Button",
+        [0.0, 0.0, 112.0, 44.0],
+        json!({"symbolID": "S", "groupBehavior": 1, "groupLayout": layout, "horizontalSizing": 1, "verticalSizing": 1,
+            "leftPadding": 22, "rightPadding": 22, "topPadding": 12, "bottomPadding": 12, "layers": [b, a]}),
+    );
+    let inst = shape(
+        "symbolInstance",
+        "Wide",
+        [0.0, 100.0, 342.0, 44.0],
+        json!({"symbolID": "S", "overrideValues": [], "horizontalSizing": 0, "verticalSizing": 1}),
+    );
+    let data = base64::engine::general_purpose::STANDARD.encode(sketch_with("2026.3.1", &[("A", "Page")], &[master, inst]));
+    let mut s = Session::new();
+    s.execute("file.open", &json!({"data": data, "name": "x.sketch"})).unwrap();
+    let doc = s.doc().unwrap();
+    let inst = doc.nodes().find(|n| n.name == "Wide").unwrap().id;
+    let at = |name: &str| doc.world_bounds(doc.subtree(inst).into_iter().find(|id| doc.node(*id).is_some_and(|n| n.name == name)).unwrap()).unwrap();
+    let (a, b) = (at("A"), at("B"));
+    // 40 + 8 + 20 = 68 wide, centred in 342: from 137.
+    assert!((a.x0 - 137.0).abs() < 0.5, "{a:?}");
+    assert!((b.x0 - a.x1 - 8.0).abs() < 0.5, "{a:?} {b:?}");
+    assert!((doc.world_bounds(inst).unwrap().x1 - 342.0).abs() < 1e-6);
+}

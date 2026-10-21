@@ -38,7 +38,8 @@ pub(crate) fn apply(cx: &mut Cx, style: &Value, w: f64, h: f64, node: &mut JsonM
 
 /// A style's fills as REST paints.
 pub(crate) fn fills(cx: &mut Cx, style: &Value, w: f64, h: f64) -> Vec<Value> {
-    list(style, "fills").iter().filter_map(|f| paint(cx, f, w, h)).collect()
+    // Tints (`layeringType` 1) colour the layers inside; they aren't paints of the layer.
+    list(style, "fills").iter().filter(|f| f.get("layeringType").and_then(Value::as_i64) != Some(1)).filter_map(|f| paint(cx, f, w, h)).collect()
 }
 
 /// A style's borders as REST paints.
@@ -101,7 +102,10 @@ fn paint(cx: &mut Cx, f: &Value, w: f64, h: f64) -> Option<Value> {
         }
     };
     p["visible"] = json!(f.get("isEnabled").and_then(Value::as_bool).unwrap_or(true));
-    if let Some(var) = swatch(cx, f.get("color")) {
+    // A colour variable binds a plain colour (a gradient's or image's `color` is unused).
+    if f.get("fillType").and_then(Value::as_i64).unwrap_or(0) == 0
+        && let Some(var) = swatch(cx, f.get("color"))
+    {
         p["boundVariables"] = var;
     }
     if let Some(ctx) = f.get("contextSettings") {
@@ -131,7 +135,8 @@ fn gradient(g: &Value, w: f64, h: f64) -> Option<Value> {
             let across = if w > 0.0 && h > 0.0 { (from.0 - dy * e / w, from.1 + dx * e / h) } else { from };
             ("GRADIENT_RADIAL", json!([pt(from), pt(to), pt(across)]))
         }
-        2 => ("GRADIENT_ANGULAR", json!([pt((0.5, 0.5)), pt((0.5, 0.0))])),
+        // Sketch starts on the right and turns clockwise; from/to don't change it.
+        2 => ("GRADIENT_ANGULAR", json!([pt((0.5, 0.5)), pt((1.0, 0.5)), pt((0.5, 1.0))])),
         _ => ("GRADIENT_LINEAR", json!([pt(from), pt(to)])),
     };
     Some(json!({"type": ty, "gradientHandlePositions": handles, "gradientStops": stops}))
@@ -167,6 +172,18 @@ fn borders(cx: &mut Cx, style: &Value, w: f64, h: f64, node: &mut JsonMap<String
         );
     }
     node.insert("strokes".into(), Value::Array(strokes));
+    // Per-side thickness (Sketch 2025+): a side is as thick as the border less its inset.
+    let first = list.iter().find(|b| b.get("isEnabled").and_then(Value::as_bool) != Some(false));
+    if let Some(b) = first
+        && let Some(sides) = b.get("sides")
+    {
+        let t = num(b, "thickness").unwrap_or(1.0).clamp(0.0, 1e6);
+        let side = |k: &str| (t - num(sides, k).unwrap_or(0.0)).clamp(0.0, 1e6);
+        node.insert(
+            "individualStrokeWeights".into(),
+            json!({"top": side("topInset"), "right": side("rightInset"), "bottom": side("bottomInset"), "left": side("leftInset")}),
+        );
+    }
     if let Some(o) = style.get("borderOptions") {
         let dashes: Vec<f64> = o
             .get("dashPattern")
@@ -218,6 +235,8 @@ pub(crate) fn effects(cx: &mut Cx, style: &Value) -> Vec<Value> {
     let mut out = Vec::new();
     for (key, ty) in [("shadows", "DROP_SHADOW"), ("innerShadows", "INNER_SHADOW")] {
         for s in list(style, key) {
+            // Sketch 2025 and newer keep inner shadows in the one list, marked.
+            let ty = if s.get("isInnerShadow").and_then(Value::as_bool) == Some(true) { "INNER_SHADOW" } else { ty };
             let mut c = s.get("color").and_then(color).unwrap_or_else(|| json!({"r": 0.0, "g": 0.0, "b": 0.0, "a": 0.5}));
             let o = s.get("contextSettings").and_then(|c| num(c, "opacity")).unwrap_or(1.0).clamp(0.0, 1.0);
             c["a"] = json!(c["a"].as_f64().unwrap_or(1.0) * o);
@@ -231,16 +250,52 @@ pub(crate) fn effects(cx: &mut Cx, style: &Value) -> Vec<Value> {
             }));
         }
     }
-    if let Some(b) = style.get("blur").filter(|b| b.get("isEnabled").and_then(Value::as_bool) == Some(true)) {
+    // One `blur` (older files) or a list of `blurs` (Sketch 2025 and newer).
+    let one = style.get("blur").into_iter();
+    let many = style.get("blurs").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default().iter().take(MAX_LIST);
+    for b in one.chain(many).filter(|b| b.get("isEnabled").and_then(Value::as_bool) == Some(true)) {
         let radius = num(b, "radius").unwrap_or(0.0).clamp(0.0, 1e6);
         match b.get("type").and_then(Value::as_i64).unwrap_or(0) {
             0 => out.push(json!({"type": "LAYER_BLUR", "visible": true, "radius": radius})),
-            3 => out.push(json!({"type": "BACKGROUND_BLUR", "visible": true, "radius": radius})),
-            _ => cx.warn("motion and zoom blurs were skipped"),
+            3 => out.push(background_blur(b, radius)),
+            4 => out.push(json!({
+                "type": "GLASS",
+                "visible": true,
+                "radius": radius,
+                "refraction": num(b, "distortion").unwrap_or(0.5).clamp(0.0, 1.0),
+                "depth": num(b, "depth").unwrap_or(0.5).clamp(0.0, 1.0),
+            })),
+            _ => {
+                // Motion and zoom blurs: a plain blur of half the radius softens about as much.
+                cx.warn("motion and zoom blurs were drawn as plain blurs");
+                out.push(json!({"type": "LAYER_BLUR", "visible": true, "radius": radius / 2.0}));
+            }
         }
     }
     out.truncate(MAX_LIST);
     out
+}
+
+/// A background blur; a progressive one (`isProgressive`) ramps along its gradient, whose stops'
+/// opacity scales the radius at each end.
+fn background_blur(b: &Value, radius: f64) -> Value {
+    let g = b.get("gradient").filter(|_| b.get("isProgressive").and_then(Value::as_bool) == Some(true));
+    let Some(g) = g else { return json!({"type": "BACKGROUND_BLUR", "visible": true, "radius": radius}) };
+    let stops = g.get("stops").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    let at = |s: Option<&Value>| s.and_then(|s| s.get("color")).and_then(|c| num(c, "alpha")).unwrap_or(1.0).clamp(0.0, 1.0) * radius;
+    let end = |k: &str, d: (f64, f64)| {
+        let (x, y) = g.get(k).and_then(Value::as_str).and_then(super::path::parse_point).unwrap_or(d);
+        json!({"x": x.clamp(-1e3, 1e3), "y": y.clamp(-1e3, 1e3)})
+    };
+    json!({
+        "type": "BACKGROUND_BLUR",
+        "visible": true,
+        "blurType": "PROGRESSIVE",
+        "startRadius": at(stops.first()),
+        "radius": at(stops.last()),
+        "startOffset": end("from", (0.5, 0.0)),
+        "endOffset": end("to", (0.5, 1.0)),
+    })
 }
 
 /// A bitmap's colour adjustments (`colorControls`: saturation and contrast 0–2 with 1 neutral,
@@ -262,6 +317,79 @@ pub(crate) fn color_controls(cx: &mut Cx, style: Option<&Value>) -> Option<Value
 pub(crate) fn swatch(cx: &Cx, c: Option<&Value>) -> Option<Value> {
     let id = c?.get("swatchID").and_then(Value::as_str).filter(|id| cx.shared.has_swatch(id))?;
     Some(json!({"color": {"type": "VARIABLE_ALIAS", "id": id}}))
+}
+
+/// The tint a style gives the layers inside: its first enabled plain fill with `layeringType` 1
+/// (Sketch 2025 and newer), or with no `layeringType` when `legacy` (older files: a group's or
+/// instance's fill was its tint). Sketch draws a tint as the colour of everything inside.
+pub(crate) fn tint_of(style: Option<&Value>, legacy: bool) -> Option<Value> {
+    let fills = style?.get("fills")?.as_array()?;
+    let f = fills.iter().filter(|f| f.get("isEnabled").and_then(Value::as_bool) != Some(false)).find(|f| {
+        match f.get("layeringType").and_then(Value::as_i64) {
+            Some(t) => t == 1,
+            None => legacy,
+        }
+    })?;
+    (f.get("fillType").and_then(Value::as_i64).unwrap_or(0) == 0).then(|| f.get("color").cloned()).flatten()
+}
+
+/// Recolour `layers` (Sketch JSON) with tint `color`: every enabled fill and border takes it,
+/// text takes it, nested instances take it as their own tint. Opacity stays as it was.
+pub(crate) fn tint_layers(layers: &mut [Value], color: &Value, depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    for l in layers {
+        if let Some(st) = l.get_mut("style").and_then(Value::as_object_mut) {
+            for key in ["fills", "borders"] {
+                for p in st.get_mut(key).and_then(Value::as_array_mut).into_iter().flatten() {
+                    if let Some(m) = p.as_object_mut()
+                        && m.get("isEnabled").and_then(Value::as_bool) != Some(false)
+                        && !matches!(m.get("fillType").and_then(Value::as_i64), Some(4))
+                    {
+                        let c = tinted(m.get("color"), color);
+                        m.insert("fillType".into(), json!(0));
+                        m.insert("color".into(), c);
+                    }
+                }
+            }
+            if let Some(enc) = st.get_mut("textStyle").and_then(|t| t.get_mut("encodedAttributes")).and_then(Value::as_object_mut) {
+                let c = tinted(enc.get("MSAttributedStringColorAttribute"), color);
+                enc.insert("MSAttributedStringColorAttribute".into(), c);
+            }
+        }
+        if let Some(runs) = l.get_mut("attributedString").and_then(|a| a.get_mut("attributes")).and_then(Value::as_array_mut) {
+            for r in runs.iter_mut().filter_map(|r| r.get_mut("attributes")).filter_map(Value::as_object_mut) {
+                let c = tinted(r.get("MSAttributedStringColorAttribute"), color);
+                r.insert("MSAttributedStringColorAttribute".into(), c);
+            }
+        }
+        if l.get("_class").and_then(Value::as_str) == Some("symbolInstance") {
+            set_tint(l, color);
+        }
+        if let Some(kids) = l.get_mut("layers").and_then(Value::as_array_mut) {
+            tint_layers(kids, color, depth + 1);
+        }
+    }
+}
+
+/// Colour `old` (Sketch JSON) tinted with `tint`: the tint's colour, with both opacities.
+fn tinted(old: Option<&Value>, tint: &Value) -> Value {
+    let alpha = |c: Option<&Value>| c.and_then(|c| num(c, "alpha")).unwrap_or(1.0).clamp(0.0, 1.0);
+    let mut c = tint.clone();
+    c["alpha"] = json!(alpha(Some(tint)) * alpha(old));
+    c
+}
+
+/// Give layer `l` (Sketch JSON) tint `color`: as its one fill.
+pub(crate) fn set_tint(l: &mut Value, color: &Value) {
+    let fill = json!({"_class": "fill", "isEnabled": true, "fillType": 0, "color": color});
+    if let Some(m) = l.as_object_mut() {
+        let st = m.entry("style").or_insert_with(|| json!({"_class": "style"}));
+        if let Some(st) = st.as_object_mut() {
+            st.insert("fills".into(), json!([fill]));
+        }
+    }
 }
 
 /// Sketch's blend modes (0 normal … 17 plus lighter) by REST name.

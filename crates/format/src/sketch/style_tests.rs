@@ -78,7 +78,10 @@ fn gradients() {
     assert_eq!(lin.stops.len(), 2);
     assert_eq!(lin.stops[1].color.b, 1.0);
     assert_eq!(g("Radial").kind, GradientKind::Radial);
-    assert_eq!(g("Angular").kind, GradientKind::Angular);
+    // Sketch starts an angular gradient on the right and turns clockwise, whatever its from/to.
+    let ang = g("Angular");
+    assert_eq!(ang.kind, GradientKind::Angular);
+    assert_eq!((ang.from, ang.to, ang.width), ((0.5, 0.5), (1.0, 0.5), (0.5, 1.0)));
     // The radial gradient's width handle: half the length, across the main axis (in pixels).
     let rad = g("Radial");
     let (dx, dy) = ((rad.width.0 - rad.from.0) * 100.0, (rad.width.1 - rad.from.1) * 50.0);
@@ -160,7 +163,8 @@ fn shadows_and_blurs() {
     assert!(matches!(fx[2].kind, EffectKind::InnerShadow(_)));
     assert!(matches!(node(&doc, "Blurred").effects[0].kind, EffectKind::LayerBlur(_)));
     assert!(matches!(node(&doc, "Frosted").effects[0].kind, EffectKind::BackgroundBlur(_)));
-    assert!(node(&doc, "Moving").effects.is_empty());
+    // Motion blur: drawn as a plain blur of half the radius.
+    assert!(matches!(node(&doc, "Moving").effects[0].kind, EffectKind::LayerBlur(_)));
     assert!(warnings.iter().any(|w| w.contains("motion")), "{warnings:?}");
 }
 

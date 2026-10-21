@@ -13,6 +13,8 @@
 
 #[cfg(test)]
 mod fixture;
+#[cfg(test)]
+mod frames_tests;
 mod path;
 #[cfg(test)]
 mod path_tests;
@@ -22,6 +24,7 @@ mod proto_tests;
 mod shared;
 #[cfg(test)]
 mod shared_tests;
+mod stack;
 mod style;
 #[cfg(test)]
 mod style_tests;

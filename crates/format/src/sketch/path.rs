@@ -100,6 +100,65 @@ pub(crate) fn network(cx: &mut Cx, l: &Value, w: f64, h: f64, fill_open: bool) -
     Some(VectorNetwork { vertices, segments, regions })
 }
 
+/// Rectangle `l` with angled (corner style 2), inside-square (3) or inside-arc (4) corners in its
+/// style (Sketch 2025 and newer) as an edited rectangle whose points draw that outline, the
+/// corners' `radii` (top left, top right, bottom right, bottom left; repeating) being how far
+/// each cut reaches along both edges. `None` for any other layer.
+pub(crate) fn cut_corners(l: &Value) -> Option<Value> {
+    if l.get("_class").and_then(Value::as_str) != Some("rectangle") || l.get("edited").and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    let c = l.get("style")?.get("corners")?;
+    let style = c.get("style").and_then(Value::as_i64).filter(|s| (2..=4).contains(s))?;
+    let radii: Vec<f64> = c.get("radii")?.as_array()?.iter().filter_map(Value::as_f64).filter(|r| r.is_finite()).take(4).collect();
+    if radii.iter().all(|r| *r <= 0.0) {
+        return None;
+    }
+    let (w, h) = size(l);
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    // Arc handles: a quarter circle's.
+    const K: f64 = 0.552_284_749_8;
+    let fmt = |(x, y): (f64, f64)| format!("{{{}, {}}}", x / w, y / h);
+    let curve = |p: (f64, f64), from: Option<(f64, f64)>, to: Option<(f64, f64)>| {
+        json!({"_class": "curvePoint", "cornerRadius": 0, "point": fmt(p), "curveMode": if from.or(to).is_some() { 4 } else { 1 },
+            "hasCurveFrom": from.is_some(), "hasCurveTo": to.is_some(), "curveFrom": fmt(from.unwrap_or(p)), "curveTo": fmt(to.unwrap_or(p))})
+    };
+    // Corners clockwise from the top left, each with the directions to the edge before and after.
+    let corners = [
+        ((0.0, 0.0), (0.0, 1.0), (1.0, 0.0)),
+        ((w, 0.0), (-1.0, 0.0), (0.0, 1.0)),
+        ((w, h), (0.0, -1.0), (-1.0, 0.0)),
+        ((0.0, h), (1.0, 0.0), (0.0, -1.0)),
+    ];
+    let mut points = Vec::new();
+    for (i, ((cx, cy), (px, py), (nx, ny))) in corners.into_iter().enumerate() {
+        let r = radii.get(i % radii.len()).copied().unwrap_or(0.0).clamp(0.0, w.min(h) / 2.0);
+        if r <= 0.0 {
+            points.push(curve((cx, cy), None, None));
+            continue;
+        }
+        let a = (cx + r * px, cy + r * py);
+        let b = (cx + r * nx, cy + r * ny);
+        match style {
+            2 => points.extend([curve(a, None, None), curve(b, None, None)]),
+            3 => points.extend([curve(a, None, None), curve((cx + r * (px + nx), cy + r * (py + ny)), None, None), curve(b, None, None)]),
+            // A quarter circle about the corner, bulging into the shape.
+            _ => points
+                .extend([curve(a, Some((a.0 + K * r * nx, a.1 + K * r * ny)), None), curve(b, None, Some((b.0 + K * r * px, b.1 + K * r * py)))]),
+        }
+    }
+    let mut out = l.clone();
+    out["edited"] = json!(true);
+    out["isClosed"] = json!(true);
+    out["points"] = Value::Array(points);
+    if let Some(st) = out.get_mut("style").and_then(Value::as_object_mut) {
+        st.remove("corners");
+    }
+    Some(out)
+}
+
 /// A path, star, polygon or triangle layer: a star or polygon while its points are still the
 /// generated ones (same as FigCraft's, within half a percent), else an editable vector.
 pub(crate) fn shape(cx: &mut Cx, l: &Value, w: f64, h: f64) -> Option<Shape> {

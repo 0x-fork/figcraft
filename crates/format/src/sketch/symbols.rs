@@ -114,21 +114,49 @@ pub(crate) fn master_fills(m: &Value) -> Option<Value> {
     Some(json!([{"type": "SOLID", "color": c}]))
 }
 
+/// What a master shows as a frame (its instances the same): clipping, and in Sketch 2025 and newer
+/// its style (fills, borders, effects) and corners.
+fn frame_look(cx: &mut Cx, m: &Value, w: f64, h: f64, node: &mut JsonMap<String, Value>) {
+    // `clippingBehavior` 2 doesn't clip.
+    node.insert("clipsContent".into(), json!(m.get("clippingBehavior").and_then(Value::as_i64) != Some(2)));
+    if m.get("groupBehavior").is_some()
+        && let Some(st) = m.get("style")
+    {
+        // Tint fills aren't painted (see `style::fills`).
+        super::style::apply(cx, st, w, h, node);
+    }
+    super::tree::style_corners(m, node);
+}
+
 /// A symbol master as a COMPONENT node.
 pub(crate) fn component(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: bool) -> Option<Value> {
     let (w, h) = size(l);
     let world = parent * local(l, w, h);
     let mut node = base(l, "COMPONENT", parent, world, w, h, root);
-    node.insert("clipsContent".into(), json!(true));
+    frame_look(cx, l, w, h, &mut node);
     if let Some(f) = master_fills(l) {
         node.insert("fills".into(), f);
     }
     super::tree::extras(cx, l, h, &mut node);
     let sid = str_field(l, "symbolID").unwrap_or("").to_string();
+    // A graphic's fill tints its layers.
+    let tinted;
+    let l = match super::style::tint_of(l.get("style"), false) {
+        Some(t) => {
+            let mut c = l.clone();
+            if let Some(kids) = c.get_mut("layers").and_then(Value::as_array_mut) {
+                super::style::tint_layers(kids, &t, 0);
+            }
+            tinted = c;
+            &tinted
+        }
+        _ => l,
+    };
     cx.chain.push(sid);
     let kids = children(cx, l, world, (w, h), depth, false);
     cx.chain.pop();
     node.insert("children".into(), Value::Array(kids));
+    super::stack::apply(l, &mut node);
     Some(Value::Object(node))
 }
 
@@ -161,15 +189,20 @@ pub(crate) fn instance(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, roo
     }
     let mut node = base(l, "INSTANCE", parent, world, w, h, root);
     node.insert("componentId".into(), json!(str_field(&m, "do_objectID").unwrap_or(sid)));
-    node.insert("clipsContent".into(), json!(true));
+    frame_look(cx, &m, w, h, &mut node);
     // Instances show the master's background only when it says so.
     if bool_field(&m, "includeBackgroundColorInInstance") == Some(true)
         && let Some(f) = master_fills(&m)
     {
         node.insert("fills".into(), f);
     }
+    // An instance's fill is a tint for its layers, not a paint of its own.
     if let Some(st) = l.get("style") {
-        super::style::apply(cx, st, w, h, &mut node);
+        let mut st = st.clone();
+        if let Some(o) = st.as_object_mut() {
+            o.remove("fills");
+        }
+        super::style::apply(cx, &st, w, h, &mut node);
     }
     super::tree::extras(cx, l, h, &mut node);
     // An instance shows its master's grids (else they'd differ, and count as an override).
@@ -187,21 +220,45 @@ pub(crate) fn instance(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, roo
         // The budget ran out handing overrides on: noted.
         cx.spend(1);
     }
-    // The master's layers laid out for the instance's size, as Sketch does it.
-    let (mw, mh) = size(&copy);
-    if ((mw - w).abs() > 1e-9 || (mh - h).abs() > 1e-9)
+    // The tint: the instance's own (a colour override on it, or its fill), else a graphic master's.
+    let own = str_field(l, "do_objectID").map(|id| format!("{id}_fillColor"));
+    let tint = own
+        .and_then(|k| overrides.get(&k).filter(|c| c.is_object()).cloned())
+        .or_else(|| super::style::tint_of(l.get("style"), true))
+        .or_else(|| super::style::tint_of(copy.get("style"), false));
+    if let Some(t) = tint
         && let Some(layers) = copy.get_mut("layers").and_then(Value::as_array_mut)
     {
-        resize(layers, (mw, mh), (w, h), cx.legacy_resize, 0);
+        super::style::tint_layers(layers, &t, 0);
+    }
+    // The master's layers laid out for the instance's size, as Sketch does it.
+    let (mw, mh) = size(&copy);
+    // A graphic's layers resize in proportion, whatever their pins.
+    let graphic = copy.get("groupBehavior").and_then(Value::as_i64) == Some(2);
+    // A stack's layers are placed by its auto layout (when the file is opened), not by their pins.
+    let stacked = !graphic && super::stack::is_stack(&copy);
+    if ((mw - w).abs() > 1e-9 || (mh - h).abs() > 1e-9)
+        && !stacked
+        && let Some(layers) = copy.get_mut("layers").and_then(Value::as_array_mut)
+    {
+        resize(layers, (mw, mh), (w, h), cx.legacy_resize || graphic, 0);
     }
     cx.chain.push(sid.to_string());
     let mut kids = children(cx, &copy, world, (w, h), depth, false);
     cx.chain.pop();
+    node.insert("children".into(), Value::Array(std::mem::take(&mut kids)));
+    // The master's stack lays the instance out too (matched by the master's layer ids), sized as
+    // the instance says.
+    for k in ["horizontalSizing", "verticalSizing"] {
+        if let Some(v) = l.get(k) {
+            copy[k] = v.clone();
+        }
+    }
+    super::stack::apply(&copy, &mut node);
     let prefix = str_field(l, "do_objectID").unwrap_or("I").to_string();
-    for k in &mut kids {
+    for k in node.get_mut("children").and_then(Value::as_array_mut).into_iter().flatten() {
         prefix_ids(k, &prefix, 0);
     }
-    node.insert("children".into(), Value::Array(kids));
     Some(Value::Object(node))
 }
 
@@ -213,7 +270,7 @@ fn resize(layers: &mut [Value], old: (f64, f64), new: (f64, f64), legacy: bool, 
         return;
     }
     for l in layers {
-        let mask = if legacy { 63 } else { l.get("resizingConstraint").and_then(Value::as_i64).unwrap_or(63) };
+        let mask = if legacy { 63 } else { super::tree::pin_mask(l) };
         let Some(f) = l.get_mut("frame").and_then(Value::as_object_mut) else { continue };
         let n = |k: &str| f.get(k).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0);
         let (x, y, w, h) = (n("x"), n("y"), n("width").max(0.0), n("height").max(0.0));
@@ -224,8 +281,10 @@ fn resize(layers: &mut [Value], old: (f64, f64), new: (f64, f64), legacy: bool, 
         for (k, v) in [("x", nx), ("y", ny), ("width", nw), ("height", nh)] {
             f.insert(k.into(), json!(v));
         }
+        // A graphic's layers resize in proportion, whatever their pins.
+        let graphic = l.get("groupBehavior").and_then(Value::as_i64) == Some(2);
         if let Some(kids) = l.get_mut("layers").and_then(Value::as_array_mut) {
-            resize(kids, (w, h), (nw, nh), legacy, depth + 1);
+            resize(kids, (w, h), (nw, nh), legacy || graphic, depth + 1);
         }
     }
 }
@@ -316,19 +375,46 @@ fn apply(
                     own.extend(inner.iter().take(take).map(|(rest, v)| json!({"_class": "overrideValue", "overrideName": rest, "value": v})));
                     l["overrideValues"] = Value::Array(own);
                 }
+                if let Some(v) = get("isVisible") {
+                    l["isVisible"] = json!(visible(v));
+                }
+                // A colour override on an instance is its tint.
+                if let Some(c) = get("fillColor").filter(|c| c.is_object()) {
+                    super::style::set_tint(l, c);
+                }
                 continue;
             }
             Some("text") => {
+                if let Some(v) = get("isVisible") {
+                    l["isVisible"] = json!(visible(v));
+                }
                 if let Some(s) = get("stringValue").and_then(Value::as_str) {
                     set_string(l, s);
                 }
+                if let Some(c) = get("textColor").filter(|c| c.is_object()) {
+                    super::style::tint_layers(std::slice::from_mut(l), c, 0);
+                }
             }
             Some("bitmap") => {
+                if let Some(v) = get("isVisible") {
+                    l["isVisible"] = json!(visible(v));
+                }
                 if let Some(img) = get("image").filter(|v| v.get("_ref").is_some()) {
                     l["image"] = img.clone();
                 }
             }
-            _ => {}
+            _ => {
+                if let Some(v) = get("isVisible") {
+                    l["isVisible"] = json!(visible(v));
+                }
+                // A colour override on a shape or group: its first fill's colour.
+                if let Some(c) = get("fillColor").filter(|c| c.is_object())
+                    && let Some(f) = l.get_mut("style").and_then(|s| s.get_mut("fills")).and_then(Value::as_array_mut).and_then(|f| f.first_mut())
+                {
+                    f["fillType"] = json!(0);
+                    f["color"] = c.clone();
+                }
+            }
         }
         for (prop, text) in [("layerStyle", false), ("textStyle", true)] {
             let sid = get(prop).and_then(Value::as_str);
@@ -355,6 +441,11 @@ fn apply(
             apply(kids, ov, nested, shared, symbols, depth + 1, budget);
         }
     }
+}
+
+/// A visibility override's value: "0", 0 or false hide.
+fn visible(v: &Value) -> bool {
+    !matches!(v, Value::Bool(false)) && v.as_str() != Some("0") && v.as_i64() != Some(0)
 }
 
 /// A text layer's string replaced, in the style of its first run.

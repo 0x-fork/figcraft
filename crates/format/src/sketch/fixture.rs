@@ -186,3 +186,21 @@ pub(crate) fn instance(id: &str, symbol_id: &str, x: f64, y: f64, w: f64, h: f64
         Value::Array(overrides.iter().map(|(name, value)| json!({"_class": "overrideValue", "overrideName": name, "value": value})).collect());
     l
 }
+
+/// A Sketch 2025+ frame (a group that behaves as a frame) holding `layers`.
+pub(crate) fn frame_group(id: &str, x: f64, y: f64, w: f64, h: f64, layers: Vec<Value>) -> Value {
+    let mut l = group(id, x, y, w, h, layers);
+    l["groupBehavior"] = json!(1);
+    l["clippingBehavior"] = json!(0);
+    l
+}
+
+/// `l` as a stack (Sketch 2025+): `direction` 0 row, 1 column.
+pub(crate) fn stack(mut l: Value, direction: i64, justify: i64, align: i64, gap: f64, padding: [f64; 4]) -> Value {
+    l["groupLayout"] = json!({"_class": "MSImmutableFlexGroupLayout", "flexDirection": direction, "justifyContent": justify, "alignItems": align,
+        "allGuttersGap": gap, "crossAxisGutterGap": 0, "wrappingEnabled": false, "alignContent": 0, "stackingOrder": 0, "bordersAffectLayout": false});
+    for (k, v) in ["leftPadding", "topPadding", "rightPadding", "bottomPadding"].iter().zip(padding) {
+        l[*k] = json!(v);
+    }
+    l
+}

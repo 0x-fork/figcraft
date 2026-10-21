@@ -104,11 +104,12 @@ pub(crate) fn layout_grids(l: &Value, h: f64, node: &mut JsonMap<String, Value>)
     }
 }
 
-/// Notes about what the layer has that FigCraft keeps only as laid out: Smart Layout and Stacks,
+/// Notes about what the layer has that FigCraft keeps only as laid out: Smart Layout,
 /// and overrides a master locks.
 pub(crate) fn notes(cx: &mut Cx, l: &Value) {
-    if l.get("groupLayout").and_then(|g| str_field(g, "_class")).is_some_and(|c| c != "MSImmutableFreeformGroupLayout") {
-        cx.warn("Smart Layout and stacks were imported as laid out; they don't resize with their content");
+    // Stacks become auto layout; the older Smart Layout doesn't.
+    if l.get("groupLayout").and_then(|g| str_field(g, "_class")) == Some("MSImmutableInferredGroupLayout") {
+        cx.warn("Smart Layout was imported as laid out; it doesn't resize with its content");
     }
     let locked = l.get("overrideProperties").and_then(Value::as_array).is_some_and(|p| p.iter().any(|o| bool_field(o, "canOverride") == Some(false)));
     if locked {

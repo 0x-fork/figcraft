@@ -60,14 +60,17 @@ pub(crate) fn node(cx: &mut Cx, l: &Value, node: &mut JsonMap<String, Value>) {
                 _ => "TOP",
             }),
         );
-        m.insert(
-            "textAutoResize".into(),
-            json!(match l.get("textBehaviour").and_then(Value::as_i64) {
-                Some(1) => "HEIGHT",
-                Some(2) => "NONE",
-                _ => "WIDTH_AND_HEIGHT",
-            }),
-        );
+        // Sketch 2025 and newer size text by `horizontalSizing`/`verticalSizing` (1 fits).
+        let fits = |k: &str| l.get(k).and_then(Value::as_i64) == Some(1);
+        let resize = match l.get("textBehaviour").and_then(Value::as_i64) {
+            Some(1) => "HEIGHT",
+            Some(2) => "NONE",
+            Some(_) => "WIDTH_AND_HEIGHT",
+            None if l.get("horizontalSizing").is_none() || fits("horizontalSizing") => "WIDTH_AND_HEIGHT",
+            None if fits("verticalSizing") => "HEIGHT",
+            None => "NONE",
+        };
+        m.insert("textAutoResize".into(), json!(resize));
     }
     node.insert("characters".into(), json!(string));
     node.insert("style".into(), style);
