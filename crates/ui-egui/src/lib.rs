@@ -497,6 +497,8 @@ pub struct UiState {
     pub page_filter: String,
     /// The height asked for the pages list (`None`: a share of the panel).
     pub pages_height: Option<f32>,
+    /// The document and active page last drawn in the pages list.
+    pub pages_seen_page: Option<(u64, NodeId)>,
     pub expanded: BTreeSet<NodeId>,
     /// The layer being renamed in the layers panel.
     pub rename: Option<layers::Rename>,
@@ -669,6 +671,7 @@ impl Default for UiState {
             page_search: false,
             page_filter: String::new(),
             pages_height: None,
+            pages_seen_page: None,
             expanded: BTreeSet::new(),
             rename: None,
             rename_page: None,
