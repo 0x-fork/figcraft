@@ -104,6 +104,27 @@ fn instances_of_a_main_the_cap_kept_out_say_so() {
 }
 
 #[test]
+fn swap_defaults_the_cap_kept_out_say_so() {
+    // A kept main's instance swap default names a main with no instances, which comes after
+    // enough layers to be skipped at the cap.
+    let swap = o(vec![
+        ("id", g(70)),
+        ("name", Kv::Str("Icon".into())),
+        ("type", Kv::Enum("INSTANCE_SWAP")),
+        ("initialValue", o(vec![("guidValue", g(900))])),
+    ]);
+    let mut nodes = vec![node(1, None, "DOCUMENT", "Document", vec![]), node(2, Some(1), "CANVAS", "Page", vec![])];
+    nodes.push(node(50, Some(2), "SYMBOL", "Card", vec![("size", xy(10.0, 10.0)), ("componentPropDefs", Kv::Array(vec![swap]))]));
+    nodes.extend(main(60, 2, "Filler", 40));
+    nodes.extend(main(900, 2, "Icon main", 10));
+    let (doc, warnings) = import_at(&o(vec![("nodeChanges", Kv::Array(nodes))]), 30);
+    assert!(doc.nodes().any(|n| n.name == "Card"));
+    assert!(!doc.nodes().any(|n| n.name == "Icon main"));
+    assert!(warnings.iter().any(|w| w.starts_with("instance swap properties whose default component was past the layer limit")), "{warnings:?}");
+    assert!(!warnings.iter().any(|w| w.contains("isn't in the file")), "{warnings:?}");
+}
+
+#[test]
 fn a_whole_file_past_the_cap_keeps_its_library_links_and_says_so_once() {
     // A 1 001-layer library main used 210 times: about 210 000 layers in a file far too small to
     // lift the cap above the REST import's 200 000.

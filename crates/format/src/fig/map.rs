@@ -45,7 +45,7 @@ pub(super) fn to_rest(msg: &Kv, name: &str, max_nodes: usize) -> (Value, Vec<Str
     // Mains in the file that the layer cap kept out: their instances are told apart from those of
     // components the file doesn't have (#981).
     if m.count >= m.max_nodes {
-        let capped: Vec<Value> = m.instance_mains.difference(&m.mapped_mains).map(|id| json!(id)).collect();
+        let capped: Vec<Value> = m.referenced_mains.difference(&m.mapped_mains).map(|id| json!(id)).collect();
         if !capped.is_empty() {
             out[crate::rest::FIG_CAPPED_MAINS_FIELD] = Value::Array(capped);
         }
@@ -397,9 +397,9 @@ struct Mapper<'a> {
     library_scan_count: usize,
     warnings: Vec<String>,
     count: usize,
-    /// The mains in the file that instances name, and the mains mapped as layers: the difference
-    /// is what the layer cap kept out.
-    instance_mains: BTreeSet<String>,
+    /// The mains in the file that instances or instance swap defaults name, and the mains mapped
+    /// as layers: the difference is what the layer cap kept out.
+    referenced_mains: BTreeSet<String>,
     mapped_mains: BTreeSet<String>,
     /// Most layers produced or scanned, instance expansion included; the one place the cap comes
     /// from (see [`super::layer_budget`]).
@@ -478,7 +478,7 @@ impl<'a> Mapper<'a> {
             library_scan_count: 0,
             warnings: Vec::new(),
             count: 0,
-            instance_mains: BTreeSet::new(),
+            referenced_mains: BTreeSet::new(),
             mapped_mains: BTreeSet::new(),
             max_nodes,
             networks: Vec::new(),
@@ -1869,7 +1869,12 @@ impl<'a> Mapper<'a> {
                 "BOOL" => json!({"type": "BOOLEAN", "defaultValue": init.and_then(|i| i.get("boolValue")).and_then(Kv::bool).unwrap_or(true)}),
                 "TEXT" => json!({"type": "TEXT", "defaultValue": init.and_then(prop_text).unwrap_or("")}),
                 "INSTANCE_SWAP" => match init.and_then(|i| i.get("guidValue")).and_then(guid) {
-                    Some(g) => json!({"type": "INSTANCE_SWAP", "defaultValue": g}),
+                    Some(g) => {
+                        if self.nodes.contains_key(&g) {
+                            self.referenced_mains.insert(g.clone());
+                        }
+                        json!({"type": "INSTANCE_SWAP", "defaultValue": g})
+                    }
                     None => continue,
                 },
                 "VARIANT" => json!({"type": "VARIANT"}),
@@ -2013,8 +2018,8 @@ impl<'a> Mapper<'a> {
             self.warn("instances of components that aren't in the file show no layers");
             return None;
         }
-        if !self.instance_mains.contains(&sym) {
-            self.instance_mains.insert(sym.clone());
+        if !self.referenced_mains.contains(&sym) {
+            self.referenced_mains.insert(sym.clone());
         }
         if outer.is_some_and(|i| i.symbols.contains(&sym)) {
             return None;
