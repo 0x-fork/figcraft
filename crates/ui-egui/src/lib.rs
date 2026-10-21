@@ -187,6 +187,8 @@ mod present_tests;
 #[cfg(test)]
 mod present_view_tests;
 #[cfg(test)]
+mod property_menu_tests;
+#[cfg(test)]
 mod proto_editor_tests;
 #[cfg(test)]
 mod proto_reorder_tests;

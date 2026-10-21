@@ -253,6 +253,15 @@ pub fn context_popup(resp: &egui::Response) -> egui::Popup<'static> {
     egui::Popup::context_menu(resp).width(MENU_MIN_W).style(menu_style)
 }
 
+/// A context menu for a property row: a secondary click anywhere over `rect` opens it, even over
+/// the row's fields (which would otherwise take the click), like the incumbent's row menus.
+fn row_context_menu(ui: &Ui, rect: Rect, id: Id) -> egui::Popup<'static> {
+    let resp = ui.interact(rect, id, Sense::hover());
+    let open = ui.rect_contains_pointer(rect) && ui.input(|i| i.pointer.secondary_clicked());
+    let at_pointer = egui::Popup::menu(&resp).width(MENU_MIN_W).style(menu_style).at_pointer_fixed();
+    at_pointer.open_memory(open.then_some(egui::SetOpenCommand::Bool(true)))
+}
+
 pub fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
     menu_row(ui, label, shortcut, 0.0, |_, _, _| {}).clicked()
 }
@@ -1098,12 +1107,15 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
     let title = if fills { tr("Fill") } else { tr("Stroke") };
     let empty = list.as_ref().is_none_or(|l| l.is_empty());
     let slot = if fills { StyleSlot::Fill } else { StyleSlot::Stroke };
-    if let Some(i) = widgets::section_header(
+    // The section's right-click menu adds the copied paint (`fill.paste` / `stroke.paste`).
+    let paste = if fills { tr("Paste fill") } else { tr("Paste stroke") };
+    let (clicked, header) = widgets::section_header_resp(
         ui,
         title,
         &[(Icon::Styles, tr("Styles")), (Icon::Plus, if fills { tr("Add fill") } else { tr("Add stroke") })],
         empty,
-    ) {
+    );
+    if let Some(i) = clicked {
         if i == 1 {
             // The new paint goes on top; open its picker. A mixed selection has no one index to edit.
             if app.run(if fills { "fill.add" } else { "stroke.add" }, json!({"ids": ids})).is_some()
@@ -1115,6 +1127,12 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
             style_picker::open(app, ui, &ids, slot);
         }
     }
+    context_popup(&header).show(|ui| {
+        if app.session.clipboard.paint.as_ref().is_some_and(|(f, _)| *f == fills) && menu_item(ui, paste, "") {
+            app.run(if fills { "fill.paste" } else { "stroke.paste" }, json!({"ids": ids}));
+            ui.close();
+        }
+    });
     style_picker::chip(app, ui, doc, &ids, slot);
     match &list {
         None => widgets::note(ui, tr("Click + to replace mixed content"), t.text_secondary),
@@ -1536,7 +1554,7 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
     let t = Tokens::get(ui.ctx());
     let ids = ids.to_vec();
     let cmd = if fills { "fill.set" } else { "stroke.set" };
-    row_rect(ui, 32.0, |ui| {
+    let r = row_rect(ui, 32.0, |ui| {
         let w = ui.available_width() - 56.0;
         let (r, _) = ui.allocate_exact_size(vec2(w, FIELD_H), Sense::hover());
         ui.painter().rect_filled(r, CornerRadius::same(5), t.field);
@@ -1619,7 +1637,21 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
                 None => app.ui.picker = None,
             }
         }
-    })
+    });
+    let copy = if fills { tr("Copy fill") } else { tr("Copy stroke") };
+    let paste = if fills { tr("Paste fill") } else { tr("Paste stroke") };
+    let can_paste = app.session.clipboard.paint.as_ref().is_some_and(|(f, _)| *f == fills);
+    row_context_menu(ui, r, Id::new(("paint_menu", fills, i))).show(|ui| {
+        if menu_item(ui, copy, "") {
+            app.run(if fills { "fill.copy" } else { "stroke.copy" }, json!({"ids": ids, "index": i}));
+            ui.close();
+        }
+        if can_paste && menu_item(ui, paste, "") {
+            app.run(if fills { "fill.paste" } else { "stroke.paste" }, json!({"ids": ids, "index": i}));
+            ui.close();
+        }
+    });
+    r
 }
 
 /// A paint row's label (also what a drag of it carries): its colour, gradient kind or "Image".
@@ -1637,13 +1669,20 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let ids = sel.to_vec();
     let list = common(doc, sel, |n| n.effects.clone());
     let empty = list.as_ref().is_none_or(|l| l.is_empty());
-    if let Some(i) = widgets::section_header(ui, tr("Effects"), &[(Icon::Styles, tr("Styles")), (Icon::Plus, tr("Add effect"))], empty) {
+    let (clicked, header) = widgets::section_header_resp(ui, tr("Effects"), &[(Icon::Styles, tr("Styles")), (Icon::Plus, tr("Add effect"))], empty);
+    if let Some(i) = clicked {
         if i == 1 {
             app.run("effect.add", json!({"ids": ids, "type": "dropShadow"}));
         } else {
             style_picker::open(app, ui, &ids, StyleSlot::Effect);
         }
     }
+    context_popup(&header).show(|ui| {
+        if app.session.clipboard.effect.is_some() && menu_item(ui, tr("Paste effect"), "") {
+            app.run("effect.paste", json!({"ids": ids}));
+            ui.close();
+        }
+    });
     style_picker::chip(app, ui, doc, &ids, StyleSlot::Effect);
     let Some(list) = list else { return };
     let mut drag = ListDrag::new(ui, "effects");
@@ -1676,6 +1715,17 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
                 && app.run("effect.remove", json!({"ids": ids, "index": i})).is_some()
             {
                 removed = Some(i);
+            }
+        });
+        let can_paste = app.session.clipboard.effect.is_some();
+        row_context_menu(ui, header, Id::new(("effect_menu", i))).show(|ui| {
+            if menu_item(ui, tr("Copy effect"), "") {
+                app.run("effect.copy", json!({"ids": ids, "index": i}));
+                ui.close();
+            }
+            if can_paste && menu_item(ui, tr("Paste effect"), "") {
+                app.run("effect.paste", json!({"ids": ids, "index": i}));
+                ui.close();
             }
         });
         if open {
