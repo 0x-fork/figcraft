@@ -175,3 +175,47 @@ fn sketch_instances_stay_live() {
     let b = doc.world_bounds(inst_tag).unwrap();
     assert!((b.x0 - 180.0).abs() < 1e-6, "{b:?}");
 }
+
+/// Local only (`FIGCRAFT_SKETCH_SAMPLES` names a folder of `.sketch` files): each opens (Sketch 48
+/// and newer) with its instances linked and finite geometry, or is refused as too old.
+#[test]
+fn local_sketch_samples_open() {
+    let Ok(dir) = std::env::var("FIGCRAFT_SKETCH_SAMPLES") else { return };
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).collect();
+    files.retain(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("sketch")));
+    files.sort();
+    assert!(!files.is_empty(), "no .sketch files in {dir}");
+    for path in files {
+        let started = std::time::Instant::now();
+        let mut s = Session::new();
+        match s.execute("file.open", &json!({"path": path.to_string_lossy()})) {
+            Err(e) => {
+                let e = e.to_string();
+                assert!(e.contains("older than 48"), "{}: {e}", path.display());
+                eprintln!("{}: refused as too old", path.display());
+            }
+            Ok(r) => {
+                let doc = s.doc().unwrap();
+                let (mut layers, mut instances, mut unlinked) = (0, 0, 0);
+                for n in doc.nodes() {
+                    layers += 1;
+                    assert!(
+                        n.width.is_finite() && n.height.is_finite() && n.transform.as_coeffs().iter().all(|c| c.is_finite()),
+                        "{}: {}",
+                        path.display(),
+                        n.name
+                    );
+                    if let NodeKind::Instance { component, .. } = n.kind {
+                        instances += 1;
+                        if !doc.contains(component) {
+                            unlinked += 1;
+                        }
+                    }
+                }
+                assert_eq!(unlinked, 0, "{}", path.display());
+                let notes = r.get("warnings").and_then(|w| w.as_array()).map_or(0, Vec::len);
+                eprintln!("{}: {layers} layers, {instances} instances, {notes} notes, {:?}", path.display(), started.elapsed());
+            }
+        }
+    }
+}
