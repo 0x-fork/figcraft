@@ -88,7 +88,6 @@ pub(crate) fn page(id: &str, name: &str, layers: Vec<Value>) -> Value {
     with(layer("page", id, name, 0.0, 0.0, 0.0, 0.0), "layers", Value::Array(layers))
 }
 
-#[allow(dead_code)] // used by the layer tree tests
 pub(crate) fn artboard(id: &str, name: &str, x: f64, y: f64, w: f64, h: f64, layers: Vec<Value>) -> Value {
     with(layer("artboard", id, name, x, y, w, h), "layers", Value::Array(layers))
 }

@@ -16,6 +16,8 @@ mod fixture;
 #[cfg(test)]
 mod tests;
 mod tree;
+#[cfg(test)]
+mod tree_tests;
 
 use std::collections::BTreeSet;
 
@@ -67,7 +69,7 @@ pub(crate) fn import_within(bytes: &[u8], name: &str, max_member: u64) -> Result
     }
     let archive = Archive::open(bytes, max_member)?;
     let max_nodes = crate::fig::layer_budget(bytes.len());
-    let map = tree::to_rest(&archive, name);
+    let map = tree::to_rest(&archive, name, max_nodes);
     if map.too_old {
         return Err(FormatError::Io(TOO_OLD.into()));
     }
