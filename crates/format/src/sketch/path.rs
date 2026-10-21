@@ -4,7 +4,10 @@
 //! and `curveTo` (the handle arriving at it) are `"{x, y}"` strings in 0–1 of the layer's frame;
 //! values outside that range are allowed. Sketch 51 and older wrap every shape in a `shapeGroup`
 //! that carries the style; its children combine left to right, each with its own
-//! `booleanOperation` (−1 none and 0 union, 1 subtract, 2 intersect, 3 difference).
+//! `booleanOperation` (0 union, 1 subtract, 2 intersect, 3 difference). Children with −1 (none)
+//! don't combine: they join the path before them into one compound path, filled by the winding
+//! rule (`windingRule` on the layer, 1 even-odd: inner paths are holes). Sketch fills an open path
+//! as if it were closed.
 
 use figcraft_doc::geom::{Affine, polygon_points, star_points};
 use figcraft_doc::{Region, Segment, VectorNetwork, Vertex, WindingRule};
@@ -32,8 +35,26 @@ pub(crate) fn parse_point(s: &str) -> Option<(f64, f64)> {
     Some((n(x)?, n(y)?))
 }
 
-/// The network of a path layer of `w`×`h` (`None` when it has no usable points).
-pub(crate) fn network(cx: &mut Cx, l: &Value, w: f64, h: f64) -> Option<VectorNetwork> {
+/// A layer's winding rule: on the layer (Sketch 51 and older), else in its style.
+pub(crate) fn winding(l: &Value) -> WindingRule {
+    let rule = l.get("windingRule").or_else(|| l.get("style").and_then(|s| s.get("windingRule")));
+    match rule.and_then(Value::as_i64) {
+        Some(1) => WindingRule::EvenOdd,
+        _ => WindingRule::NonZero,
+    }
+}
+
+/// Whether a style shows any fill or border.
+fn shows(style: Option<&Value>, key: &str) -> bool {
+    style
+        .and_then(|s| s.get(key))
+        .and_then(Value::as_array)
+        .is_some_and(|l| l.iter().any(|f| f.get("isEnabled").and_then(Value::as_bool) != Some(false)))
+}
+
+/// The network of a path layer of `w`×`h` (`None` when it has no usable points). `fill_open`: an
+/// open path gets a closing segment and a fill region, as Sketch fills it.
+pub(crate) fn network(cx: &mut Cx, l: &Value, w: f64, h: f64, fill_open: bool) -> Option<VectorNetwork> {
     let pts = l.get("points").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     if pts.len() > MAX_POINTS {
         cx.warn(format!("paths with more than {MAX_POINTS} points were cut"));
@@ -61,20 +82,20 @@ pub(crate) fn network(cx: &mut Cx, l: &Value, w: f64, h: f64) -> Option<VectorNe
     if n == 0 {
         return None;
     }
-    let closed = l.get("isClosed").and_then(Value::as_bool).unwrap_or(false) && n > 1;
+    let open = !l.get("isClosed").and_then(Value::as_bool).unwrap_or(false);
+    let closed = n > 1 && (!open || (fill_open && n > 2));
     let count = if closed { n } else { n - 1 };
     let segments: Vec<Segment> = (0..count)
         .map(|i| {
             let j = (i + 1) % n;
-            let ta = handles.get(i).map_or((0.0, 0.0), |h| h.0);
-            let tb = handles.get(j).map_or((0.0, 0.0), |h| h.1);
+            // The edge that closes an open path for its fill is straight.
+            let closing = open && j == 0;
+            let ta = if closing { (0.0, 0.0) } else { handles.get(i).map_or((0.0, 0.0), |h| h.0) };
+            let tb = if closing { (0.0, 0.0) } else { handles.get(j).map_or((0.0, 0.0), |h| h.1) };
             Segment { a: i, b: j, ta, tb }
         })
         .collect();
-    let winding = match l.get("style").and_then(|s| s.get("windingRule")).and_then(Value::as_i64) {
-        Some(1) => WindingRule::EvenOdd,
-        _ => WindingRule::NonZero,
-    };
+    let winding = winding(l);
     let regions = if closed { vec![Region { loops: vec![(0..segments.len()).collect()], winding }] } else { Vec::new() };
     Some(VectorNetwork { vertices, segments, regions })
 }
@@ -82,7 +103,14 @@ pub(crate) fn network(cx: &mut Cx, l: &Value, w: f64, h: f64) -> Option<VectorNe
 /// A path, star, polygon or triangle layer: a star or polygon while its points are still the
 /// generated ones (same as FigCraft's, within half a percent), else an editable vector.
 pub(crate) fn shape(cx: &mut Cx, l: &Value, w: f64, h: f64) -> Option<Shape> {
-    let net = network(cx, l, w, h)?;
+    // Inside a shape group the group's fill decides; a shape of its own, its style.
+    let style = l.get("style");
+    let filled = cx.operand_fill.unwrap_or_else(|| shows(style, "fills"));
+    let open = !l.get("isClosed").and_then(Value::as_bool).unwrap_or(false);
+    if open && filled && (shows(style, "borders") || cx.operand_border) {
+        cx.warn("open paths with both a fill and a border were closed; the border runs along the closing edge too");
+    }
+    let net = network(cx, l, w, h, filled)?;
     let class = l.get("_class").and_then(Value::as_str).unwrap_or("");
     let count = l.get("numberOfPoints").and_then(Value::as_u64).filter(|c| (3..=120).contains(c)).and_then(|c| u32::try_from(c).ok());
     let plain = net.vertices.iter().all(|v| v.radius == 0.0) && net.segments.iter().all(|s| s.ta == (0.0, 0.0) && s.tb == (0.0, 0.0));
@@ -123,41 +151,98 @@ pub(crate) fn put_shape(cx: &mut Cx, shape: Shape, node: &mut JsonMap<String, Va
     }
 }
 
-/// A `shapeGroup`: its only child carrying the group's place, name and style, or its children
-/// combined by boolean operations (mixed operations nest from the left).
+/// A `shapeGroup`: its only child carrying the group's place, name and style; its children joined
+/// into one compound path when none of them combines; else boolean operations over runs of
+/// children (a run: a child with an operation and the ones without that follow it), mixed
+/// operations nesting from the left.
 pub(crate) fn shape_group(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: bool) -> Option<Value> {
     let (w, h) = size(l);
     let world = parent * local(l, w, h);
     let kids = layers(l);
-    if let [only] = kids {
-        let mut node = layer(cx, only, world, depth + 1, false)?;
-        let (cw, ch) = size(only);
-        let child_world = world * local(only, cw, ch);
-        let group = base(l, "GROUP", parent, child_world, cw, ch, root);
-        if let Some(m) = node.as_object_mut() {
-            for key in ["id", "name", "relativeTransform", "absoluteBoundingBox", "constraints", "locked"] {
-                match group.get(key) {
-                    Some(v) => m.insert(key.into(), v.clone()),
-                    None => m.remove(key),
-                };
-            }
-            let visible = group.get("visible").and_then(Value::as_bool).unwrap_or(true) && m.get("visible").and_then(Value::as_bool).unwrap_or(true);
-            m.insert("visible".into(), json!(visible));
-            if l.get("style").is_some() {
-                super::style::clear(m);
-                m.remove("styles");
-                super::tree::styles(cx, l, cw, ch, m);
-                super::tree::extras(cx, l, ch, m);
-            }
-            super::tree::mask(l, m);
+    let saved = (cx.operand_fill, cx.operand_border);
+    cx.operand_border = shows(l.get("style"), "borders");
+    let out = if let [only] = kids {
+        cx.operand_fill = Some(shows(l.get("style"), "fills"));
+        single(cx, l, only, parent, world, depth, root)
+    } else {
+        // Operands of a boolean operation (or a compound path) give area: open ones close.
+        cx.operand_fill = Some(true);
+        combined(cx, l, kids, parent, world, (w, h), depth, root)
+    };
+    (cx.operand_fill, cx.operand_border) = saved;
+    out
+}
+
+/// A shape group of one shape: that shape in the group's place, with its name and style.
+fn single(cx: &mut Cx, l: &Value, only: &Value, parent: Affine, world: Affine, depth: usize, root: bool) -> Option<Value> {
+    let mut node = layer(cx, only, world, depth + 1, false)?;
+    let (cw, ch) = size(only);
+    let child_world = world * local(only, cw, ch);
+    let group = base(l, "GROUP", parent, child_world, cw, ch, root);
+    if let Some(m) = node.as_object_mut() {
+        for key in ["id", "name", "relativeTransform", "absoluteBoundingBox", "constraints", "locked"] {
+            match group.get(key) {
+                Some(v) => m.insert(key.into(), v.clone()),
+                None => m.remove(key),
+            };
         }
-        return Some(node);
+        let visible = group.get("visible").and_then(Value::as_bool).unwrap_or(true) && m.get("visible").and_then(Value::as_bool).unwrap_or(true);
+        m.insert("visible".into(), json!(visible));
+        if l.get("style").is_some() {
+            super::style::clear(m);
+            m.remove("styles");
+            super::tree::styles(cx, l, cw, ch, m);
+            super::tree::extras(cx, l, ch, m);
+        }
+        super::tree::mask(l, m);
+    }
+    Some(node)
+}
+
+/// A shape group of several shapes: one compound path, or boolean operations over runs.
+fn combined(cx: &mut Cx, l: &Value, kids: &[Value], parent: Affine, world: Affine, (w, h): (f64, f64), depth: usize, root: bool) -> Option<Value> {
+    // Runs: a child with an operation starts one, children without (−1) join it.
+    let mut runs: Vec<Vec<&Value>> = Vec::new();
+    for (i, c) in kids.iter().enumerate() {
+        match runs.last_mut() {
+            Some(run) if i > 0 && c.get("booleanOperation").and_then(Value::as_i64).unwrap_or(-1) < 0 => run.push(c),
+            _ => runs.push(vec![c]),
+        }
+    }
+    let winding = winding(l);
+    if let [run] = runs.as_slice()
+        && let Some(net) = compound(cx, run, winding)
+    {
+        // No operations at all: the group is one path.
+        let mut node = base(l, "VECTOR", parent, world, w, h, root);
+        node.insert("vectorNetworkRef".into(), json!(cx.networks.len()));
+        cx.networks.push(Some(net));
+        super::tree::mask(l, &mut node);
+        super::tree::styles(cx, l, w, h, &mut node);
+        super::tree::extras(cx, l, h, &mut node);
+        return Some(Value::Object(node));
     }
     let mut chain: Vec<Value> = Vec::new();
     let mut op = "UNION";
-    for (i, c) in kids.iter().enumerate() {
-        let Some(child) = layer(cx, c, world, depth + 2, false) else { continue };
-        let this = boolean_op(c);
+    for (i, run) in runs.iter().enumerate() {
+        let operands: Vec<Value> = match run.as_slice() {
+            [one] => layer(cx, one, world, depth + 2, false).into_iter().collect(),
+            more => match compound(cx, more, winding) {
+                Some(net) => {
+                    let mut node = base(more.first().copied().unwrap_or(l), "VECTOR", world, world, w, h, false);
+                    node.remove("id");
+                    node.insert("vectorNetworkRef".into(), json!(cx.networks.len()));
+                    cx.networks.push(Some(net));
+                    vec![Value::Object(node)]
+                }
+                // Not all paths: each one an operand of its own.
+                None => more.iter().filter_map(|c| layer(cx, c, world, depth + 2, false)).collect(),
+            },
+        };
+        if operands.is_empty() {
+            continue;
+        }
+        let this = run.first().map_or("UNION", |c| boolean_op(c));
         if i > 0 && this != op && chain.len() > 1 {
             let inner = synthetic(l, op, parent, world, w, h, std::mem::take(&mut chain));
             chain.push(inner);
@@ -165,7 +250,7 @@ pub(crate) fn shape_group(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, 
         if i > 0 {
             op = this;
         }
-        chain.push(child);
+        chain.extend(operands);
     }
     if chain.is_empty() {
         return None;
@@ -177,6 +262,42 @@ pub(crate) fn shape_group(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, 
     super::tree::styles(cx, l, w, h, &mut node);
     super::tree::extras(cx, l, h, &mut node);
     Some(Value::Object(node))
+}
+
+/// The paths `run` as one network in their group's space, filled by `winding`; `None` when one of
+/// them isn't a path (a group, text, …).
+fn compound(cx: &mut Cx, run: &[&Value], winding: WindingRule) -> Option<VectorNetwork> {
+    const PATHS: [&str; 6] = ["shapePath", "rectangle", "oval", "star", "polygon", "triangle"];
+    if run.iter().any(|c| !c.get("_class").and_then(Value::as_str).is_some_and(|k| PATHS.contains(&k))) {
+        return None;
+    }
+    let mut out = VectorNetwork::default();
+    let mut loops = Vec::new();
+    for c in run {
+        let (cw, ch) = size(c);
+        let Some(net) = network(cx, c, cw, ch, true) else { continue };
+        let xf = local(c, cw, ch);
+        let [a, b, cc, d, _, _] = xf.as_coeffs();
+        let lin = |(x, y): (f64, f64)| (a * x + cc * y, b * x + d * y);
+        let (v0, s0) = (out.vertices.len(), out.segments.len());
+        for v in net.vertices {
+            let p = xf * figcraft_doc::geom::Point::new(v.x, v.y);
+            out.vertices.push(Vertex { x: p.x, y: p.y, ..v });
+        }
+        for sg in net.segments {
+            out.segments.push(Segment { a: sg.a + v0, b: sg.b + v0, ta: lin(sg.ta), tb: lin(sg.tb) });
+        }
+        for r in net.regions {
+            loops.extend(r.loops.into_iter().map(|lp| lp.into_iter().map(|i| i + s0).collect::<Vec<_>>()));
+        }
+    }
+    if out.vertices.is_empty() {
+        return None;
+    }
+    if !loops.is_empty() {
+        out.regions.push(Region { loops, winding });
+    }
+    Some(out)
 }
 
 /// A boolean operation the shape group doesn't have as a layer of its own: placed like the group.

@@ -165,3 +165,71 @@ fn huge_points_stay_finite() {
         assert!(network.segments.iter().all(|s| [s.ta.0, s.ta.1, s.tb.0, s.tb.1].iter().all(|c| c.is_finite())));
     }
 }
+
+/// Sketch 51 and older: a shape group whose children have no operation (−1) is one compound path,
+/// filled by the group's winding rule (stored on the layer itself).
+#[test]
+fn compound_shape_group_has_holes() {
+    let outer = with_op(rect("Outer", 0.0, 0.0, 100.0, 100.0), -1);
+    let inner = with_op(rect("Inner", 25.0, 25.0, 50.0, 50.0), -1);
+    let mut g = shape_group("Ring", 10.0, 10.0, 100.0, 100.0, vec![outer, inner]);
+    g["windingRule"] = json!(1);
+    let doc = open(vec![g]);
+    let n = node(&doc, "Ring");
+    let NodeKind::Vector { network } = &n.kind else { panic!("not one vector: {:?}", n.kind) };
+    assert_eq!(network.regions.len(), 1);
+    assert_eq!(network.regions[0].loops.len(), 2);
+    assert_eq!(network.regions[0].winding, figcraft_doc::WindingRule::EvenOdd);
+    let b = doc.world_bounds(n.id).unwrap();
+    assert_eq!((b.x0, b.y0, b.width(), b.height()), (10.0, 10.0, 100.0, 100.0));
+}
+
+#[test]
+fn compound_runs_are_boolean_operands() {
+    let a = with_op(rect("A", 0.0, 0.0, 50.0, 50.0), -1);
+    let b = with_op(rect("B", 60.0, 0.0, 20.0, 20.0), -1);
+    let c = with_op(rect("C", 10.0, 10.0, 10.0, 10.0), 1);
+    let doc = open(vec![shape_group("Mixed", 0.0, 0.0, 80.0, 50.0, vec![a, b, c])]);
+    let n = node(&doc, "Mixed");
+    assert!(matches!(n.kind, NodeKind::BooleanOp { op: BoolOp::Subtract }), "{:?}", n.kind);
+    let first = doc.node(n.children[0]).unwrap();
+    let NodeKind::Vector { network } = &first.kind else { panic!("first operand isn't the compound path") };
+    assert_eq!(network.regions[0].loops.len(), 2);
+}
+
+#[test]
+fn layer_winding_rule_counts() {
+    let mut p = shape_path("Wound", 0.0, 0.0, 10.0, 10.0, &[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)], true);
+    p["windingRule"] = json!(1);
+    let doc = open(vec![p]);
+    let NodeKind::Vector { network } = &node(&doc, "Wound").kind else { panic!("not a vector") };
+    assert_eq!(network.regions[0].winding, figcraft_doc::WindingRule::EvenOdd);
+}
+
+/// Sketch fills an open path as if it were closed.
+#[test]
+fn filled_open_paths_are_closed() {
+    let open_path = shape_path("Lid", 0.0, 0.0, 40.0, 20.0, &[(0.0, 1.0), (0.5, 0.0), (1.0, 1.0)], false);
+    let filled = styled(shape_group("Filled", 0.0, 0.0, 40.0, 20.0, vec![open_path.clone()]), "fills", json!([solid_fill(0.0, 0.0, 0.0, 1.0)]));
+    let stroked = styled(
+        shape_group("Stroked", 0.0, 50.0, 40.0, 20.0, vec![open_path]),
+        "borders",
+        json!([{"_class": "border", "isEnabled": true, "fillType": 0, "color": color(0.0, 0.0, 0.0, 1.0), "position": 0, "thickness": 1}]),
+    );
+    let doc = open(vec![filled, stroked]);
+    let NodeKind::Vector { network } = &node(&doc, "Filled").kind else { panic!("not a vector") };
+    assert_eq!(network.regions.len(), 1);
+    assert_eq!(network.segments.len(), 3);
+    let NodeKind::Vector { network } = &node(&doc, "Stroked").kind else { panic!("not a vector") };
+    assert!(network.regions.is_empty());
+    assert_eq!(network.segments.len(), 2);
+}
+
+#[test]
+fn open_operands_of_booleans_are_closed() {
+    let a = with_op(rect("A", 0.0, 0.0, 50.0, 50.0), -1);
+    let b = with_op(shape_path("Snout", 40.0, 10.0, 30.0, 20.0, &[(0.0, 0.0), (1.0, 0.5), (0.0, 1.0)], false), 0);
+    let doc = open(vec![styled(shape_group("Head", 0.0, 0.0, 70.0, 50.0, vec![a, b]), "fills", json!([solid_fill(0.0, 0.0, 0.0, 1.0)]))]);
+    let NodeKind::Vector { network } = &node(&doc, "Snout").kind else { panic!("not a vector") };
+    assert_eq!(network.regions.len(), 1);
+}

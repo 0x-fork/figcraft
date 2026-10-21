@@ -187,3 +187,23 @@ fn embedded_fonts_are_reported() {
     let w = warnings.iter().find(|w| w.contains("embedded")).expect("a note about embedded fonts");
     assert!(w.contains("IBM Plex Mono") && w.contains("IBM Plex Sans"), "{w}");
 }
+
+/// Where Sketch puts a line's extra height: above the text (`lineSpacingBehaviour` 0), below it
+/// (1) or around it (2, like FigCraft); the text layer moves by the difference.
+#[test]
+fn line_spacing_behaviour_moves_text() {
+    let mk = |name: &str, beh: i64| {
+        let mut t = text(name, 0.0, 100.0, 100.0, 30.0, "Hg", &[(0, 2, "Helvetica", 14.0, BLACK)]);
+        t["lineSpacingBehaviour"] = json!(beh);
+        let a = &mut t["attributedString"]["attributes"][0]["attributes"]["paragraphStyle"];
+        a["maximumLineHeight"] = json!(30);
+        a["minimumLineHeight"] = json!(30);
+        t
+    };
+    let (doc, _) = open(vec![mk("B0", 0), mk("B1", 1), mk("B2", 2)]);
+    let y = |n: &str| doc.world_transform(doc.nodes().find(|x| x.name == n).unwrap().id).as_coeffs()[5];
+    // Extra height: 30 − 14 × 1.2 = 13.2; half of it either way.
+    assert!((y("B2") - 100.0).abs() < 1e-6, "{}", y("B2"));
+    assert!((y("B0") - 106.6).abs() < 1e-6, "{}", y("B0"));
+    assert!((y("B1") - 93.4).abs() < 1e-6, "{}", y("B1"));
+}

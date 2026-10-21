@@ -219,3 +219,88 @@ fn local_sketch_samples_open() {
         }
     }
 }
+
+/// Local only (`FIGCRAFT_SKETCH_SAMPLES` and `FIGCRAFT_SKETCHTOOL`, the path of Sketch's
+/// `sketchtool`): every artboard of each sample (Sketch 48 and newer) drawn by FigCraft is compared
+/// with Sketch's own export of it. Prints the share of pixels that differ per artboard (a channel
+/// off by more than 40, on white); fails past 10% (a broken artboard, not antialiasing or fonts).
+#[test]
+fn local_sketch_samples_match_sketch() {
+    let (Ok(dir), Ok(tool)) = (std::env::var("FIGCRAFT_SKETCH_SAMPLES"), std::env::var("FIGCRAFT_SKETCHTOOL")) else { return };
+    // Text draws in the fonts Sketch uses only once the system fonts are known.
+    figcraft_text::fontdb::scan_system_fonts();
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).collect();
+    files.retain(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("sketch")));
+    files.sort();
+    let mut worst: Vec<(f64, String)> = Vec::new();
+    for path in files {
+        let mut s = Session::new();
+        if s.execute("file.open", &json!({"path": path.to_string_lossy()})).is_err() {
+            continue;
+        }
+        let out = std::env::temp_dir().join(format!("figcraft-sketch-ref-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&out);
+        let status = std::process::Command::new(&tool)
+            .args(["export", "artboards"])
+            .arg(&path)
+            .arg(format!("--output={}", out.display()))
+            .args(["--formats=png", "--scales=1", "--use-id-for-name=YES", "--include-symbols=NO"])
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "sketchtool failed on {}", path.display());
+        // Artboards by page and order, from the file itself.
+        let archive = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+        let mut archive = archive;
+        let mut read = |name: &str| -> Value {
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut archive.by_name(name).unwrap(), &mut s).unwrap();
+            serde_json::from_str(&s).unwrap()
+        };
+        let document = read("document.json");
+        let doc = s.doc().unwrap();
+        let refs: Vec<String> = document["pages"].as_array().unwrap().iter().map(|r| r["_ref"].as_str().unwrap().to_string()).collect();
+        for (page_ref, page_id) in refs.iter().zip(doc.pages.iter()) {
+            let page = read(&format!("{page_ref}.json"));
+            let boards: Vec<String> = page["layers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|l| l["_class"] == "artboard")
+                .map(|l| l["do_objectID"].as_str().unwrap().to_string())
+                .collect();
+            let frames: Vec<figcraft_doc::NodeId> =
+                doc.node(*page_id).unwrap().children.iter().copied().filter(|c| matches!(doc.node(*c).unwrap().kind, NodeKind::Frame)).collect();
+            assert_eq!(boards.len(), frames.len(), "{}: artboards of {page_ref}", path.display());
+            for (id, frame) in boards.iter().zip(frames) {
+                let Ok(reference) = image::open(out.join(format!("{id}.png"))) else { continue };
+                let reference = reference.to_rgba8();
+                let ours = figcraft_render::render_node(doc, frame, 1.0).unwrap();
+                let (w, h) = (reference.width().min(ours.width()), reference.height().min(ours.height()));
+                let ours_rgba = figcraft_render::to_rgba8(&ours);
+                // Both on white, straight alpha.
+                let on_white = |c: &[u8], i: usize| {
+                    let a = f64::from(c[3]) / 255.0;
+                    f64::from(c[i]) * a + 255.0 * (1.0 - a)
+                };
+                let mut bad = 0u64;
+                for y in 0..h {
+                    for x in 0..w {
+                        let r = reference.get_pixel(x, y).0;
+                        let at = ((y * ours.width() + x) * 4) as usize;
+                        let Some(o) = ours_rgba.get(at..at + 4) else { continue };
+                        if (0..3).any(|i| (on_white(&r, i) - on_white(o, i)).abs() > 40.0) {
+                            bad += 1;
+                        }
+                    }
+                }
+                let share = bad as f64 * 100.0 / (f64::from(w) * f64::from(h)).max(1.0);
+                let name = doc.node(frame).unwrap().name.clone();
+                eprintln!("{share:6.2}%  {}  {name}", path.file_name().unwrap().to_string_lossy());
+                worst.push((share, format!("{}: {name}", path.display())));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&out);
+    }
+    worst.sort_by(|a, b| b.0.total_cmp(&a.0));
+    assert!(worst.first().is_none_or(|w| w.0 < 10.0), "{worst:?}");
+}

@@ -155,7 +155,8 @@ pub(crate) fn instance(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, roo
         cx.warn(format!("symbol {name} contains itself; the inner copy was left out"));
         return None;
     }
-    if l.get("scale").and_then(Value::as_f64).is_some_and(|s| s.is_finite() && (s - 1.0).abs() > 1e-9) {
+    // Sketch 50 stores "not scaled" as 0.
+    if l.get("scale").and_then(Value::as_f64).is_some_and(|s| s.is_finite() && s != 0.0 && (s - 1.0).abs() > 1e-9) {
         cx.warn("scaled symbol instances were imported at their size, unscaled");
     }
     let mut node = base(l, "INSTANCE", parent, world, w, h, root);

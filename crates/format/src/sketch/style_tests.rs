@@ -295,3 +295,22 @@ fn two_styled_masks_each_draw() {
     let first_group = node(&doc, "Mask1").parent.unwrap();
     assert_ne!(copy.parent, Some(first_group));
 }
+
+#[test]
+fn bitmap_color_controls_become_filters() {
+    let png = {
+        let mut out = Vec::new();
+        image::RgbaImage::new(2, 2).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+        out
+    };
+    let mut bitmap = r("Photo");
+    bitmap["_class"] = json!("bitmap");
+    bitmap["image"] = json!({"_class": "MSJSONFileReference", "_ref": "images/a.png"});
+    bitmap["style"]["colorControls"] =
+        json!({"_class": "colorControls", "isEnabled": true, "brightness": 0, "contrast": 1, "hue": 0.5, "saturation": 0});
+    let (doc, warnings) = open_doc(document(&["P"]), vec![bitmap], &[("images/a.png", &png)]);
+    let PaintKind::Image(img) = &node(&doc, "Photo").fills[0].kind else { panic!("no image") };
+    assert_eq!(img.filters.saturation, -1.0);
+    assert_eq!(img.filters.contrast, 0.0);
+    assert!(warnings.iter().any(|w| w.contains("hue")), "{warnings:?}");
+}

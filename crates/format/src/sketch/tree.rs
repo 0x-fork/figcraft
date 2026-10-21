@@ -43,6 +43,10 @@ pub(crate) struct Cx {
     pub max_work: u64,
     /// Notes given so far (each once).
     pub seen: std::collections::BTreeSet<String>,
+    /// Inside a shape group: whether its shapes are filled (open ones then close) and whether the
+    /// group has a border. Outside one: `None` / false (a shape's own style decides).
+    pub operand_fill: Option<bool>,
+    pub operand_border: bool,
     /// The symbols being expanded, outermost first (a symbol inside itself stops there).
     pub chain: Vec<String>,
     pub warnings: Vec<String>,
@@ -93,6 +97,8 @@ pub(crate) fn to_rest(archive: &Archive, name: &str, max_nodes: usize) -> Map {
         work: 0,
         max_work: MAX_WORK,
         seen: std::collections::BTreeSet::new(),
+        operand_fill: None,
+        operand_border: false,
         chain: Vec::new(),
         warnings: Vec::new(),
         networks: Vec::new(),
@@ -154,6 +160,8 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
     let ty = match class {
         "artboard" | "frame" => "FRAME",
         "group" | "graphic" => "GROUP",
+        // Shapes whose points were moved are paths.
+        "rectangle" | "oval" if bool_field(l, "edited") == Some(true) => "VECTOR",
         "rectangle" | "bitmap" => "RECTANGLE",
         "oval" => "ELLIPSE",
         "slice" => "SLICE",
@@ -169,7 +177,10 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
         return None;
     }
     let (w, h) = size(l);
-    let world = parent * local(l, w, h);
+    let mut world = parent * local(l, w, h);
+    if ty == "TEXT" {
+        world *= Affine::translate((0.0, super::text::baseline_shift(l)));
+    }
     let mut node = base(l, ty, parent, world, w, h, root);
     if ty == "TEXT" {
         super::text::node(cx, l, &mut node);
@@ -192,7 +203,10 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
         "rectangle" => corner_radii(l, &mut node),
         "bitmap" => match l.get("image").and_then(|i| str_field(i, "_ref")) {
             Some(r) => {
-                let paint = json!({"type": "IMAGE", "scaleMode": "STRETCH", "imageRef": r, "imageTransform": [[1, 0, 0], [0, 1, 0]]});
+                let mut paint = json!({"type": "IMAGE", "scaleMode": "STRETCH", "imageRef": r, "imageTransform": [[1, 0, 0], [0, 1, 0]]});
+                if let Some(f) = super::style::color_controls(cx, l.get("style")) {
+                    paint["filters"] = f;
+                }
                 node.insert("fills".into(), json!([paint]));
             }
             None => cx.warn("images stored inside the JSON were skipped"),
@@ -281,7 +295,8 @@ pub(crate) fn size(l: &Value) -> (f64, f64) {
 }
 
 /// A layer's transform within its parent: its frame's position, then its rotation (degrees,
-/// counter-clockwise on screen) and flips about its centre.
+/// counter-clockwise on screen) and flips about its centre. Sketch flips on screen, after rotating
+/// (a quarter-turned layer flipped left to right mirrors its own up and down).
 pub(crate) fn local(l: &Value, w: f64, h: f64) -> Affine {
     let f = l.get("frame");
     let n = |k: &str| f.and_then(|f| f.get(k)).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0).clamp(-MAX_COORD, MAX_COORD);
@@ -289,8 +304,8 @@ pub(crate) fn local(l: &Value, w: f64, h: f64) -> Affine {
     let sx = if bool_field(l, "isFlippedHorizontal") == Some(true) { -1.0 } else { 1.0 };
     let sy = if bool_field(l, "isFlippedVertical") == Some(true) { -1.0 } else { 1.0 };
     Affine::translate((n("x") + w / 2.0, n("y") + h / 2.0))
-        * Affine::rotate(-rot.to_radians())
         * Affine::scale_non_uniform(sx, sy)
+        * Affine::rotate(-rot.to_radians())
         * Affine::translate((-w / 2.0, -h / 2.0))
 }
 

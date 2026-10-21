@@ -243,6 +243,21 @@ pub(crate) fn effects(cx: &mut Cx, style: &Value) -> Vec<Value> {
     out
 }
 
+/// A bitmap's colour adjustments (`colorControls`: saturation and contrast 0–2 with 1 neutral,
+/// brightness −1–1, hue in radians) as REST image filters; hue has no filter (a note).
+pub(crate) fn color_controls(cx: &mut Cx, style: Option<&Value>) -> Option<Value> {
+    let c = style?.get("colorControls").filter(|c| c.get("isEnabled").and_then(Value::as_bool) == Some(true))?;
+    let get = |k: &str, neutral: f64| num(c, k).unwrap_or(neutral);
+    if get("hue", 0.0).abs() > 1e-6 {
+        cx.warn("hue changes of bitmaps were skipped");
+    }
+    Some(json!({
+        "saturation": (get("saturation", 1.0) - 1.0).clamp(-1.0, 1.0),
+        "contrast": (get("contrast", 1.0) - 1.0).clamp(-1.0, 1.0),
+        "exposure": get("brightness", 0.0).clamp(-1.0, 1.0),
+    }))
+}
+
 /// The variable binding of a colour that names a swatch the file has (`{color: alias}`).
 pub(crate) fn swatch(cx: &Cx, c: Option<&Value>) -> Option<Value> {
     let id = c?.get("swatchID").and_then(Value::as_str).filter(|id| cx.shared.has_swatch(id))?;

@@ -217,3 +217,12 @@ fn override_fan_out_is_bounded() {
     let (_, warnings) = import(&z, "f").unwrap();
     assert!(warnings.iter().any(|w| w.contains("expand")), "{warnings:?}");
 }
+
+/// Sketch 50 stores "not scaled" as `scale: 0`.
+#[test]
+fn scale_zero_is_unscaled() {
+    let mut i = instance("I1", "S1", 0.0, 0.0, 100.0, 40.0, &[]);
+    i["scale"] = json!(0);
+    let (_, warnings) = open(vec![i], vec![button()]);
+    assert!(!warnings.iter().any(|w| w.contains("scaled")), "{warnings:?}");
+}

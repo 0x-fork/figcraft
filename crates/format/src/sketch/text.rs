@@ -93,6 +93,29 @@ pub(crate) fn node(cx: &mut Cx, l: &Value, node: &mut JsonMap<String, Value>) {
     }
 }
 
+/// How far a text layer moves so its lines sit where Sketch draws them. With a fixed line height,
+/// Sketch puts a line's extra height (line height − the font's own, taken as 1.2 × its size) above
+/// the text (`lineSpacingBehaviour` 0) or below it (1); FigCraft, like Sketch's default (2), puts
+/// half on each side. Every line gets the same extra, so the whole layer moves.
+pub(crate) fn baseline_shift(l: &Value) -> f64 {
+    let first = l
+        .get("attributedString")
+        .and_then(|a| a.get("attributes"))
+        .and_then(Value::as_array)
+        .and_then(|r| r.first())
+        .and_then(|r| r.get("attributes"));
+    let Some(a) = first else { return 0.0 };
+    let size = a.get("MSAttributedStringFontAttribute").and_then(|f| f.get("attributes")).and_then(|f| f.get("size")).and_then(Value::as_f64);
+    let line = a.get("paragraphStyle").and_then(|p| p.get("maximumLineHeight").or_else(|| p.get("minimumLineHeight"))).and_then(Value::as_f64);
+    let (Some(size), Some(line)) = (size.filter(|s| s.is_finite() && *s > 0.0), line.filter(|v| v.is_finite() && *v > 0.0)) else { return 0.0 };
+    let extra = (line - size * 1.2).clamp(-1e4, 1e4);
+    match l.get("lineSpacingBehaviour").and_then(Value::as_i64) {
+        Some(0) => extra / 2.0,
+        Some(1) => -extra / 2.0,
+        _ => 0.0,
+    }
+}
+
 /// A run's attributes as a REST type style (with its colour as `fills`).
 pub(crate) fn type_style(cx: &mut Cx, a: &Value) -> Value {
     let font = a.get("MSAttributedStringFontAttribute").and_then(|f| f.get("attributes"));

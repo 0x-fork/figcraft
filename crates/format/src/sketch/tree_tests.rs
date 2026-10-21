@@ -231,3 +231,28 @@ fn deep_document_json_still_opens_the_pages() {
     assert!(doc.pages.iter().any(|p| doc.node(*p).unwrap().name == "Kept"));
     assert!(!warnings.is_empty());
 }
+
+/// Sketch flips a rotated layer on screen, after rotating it.
+#[test]
+fn flip_applies_after_rotation() {
+    let r = with(with(rect("Turned", 0.0, 0.0, 40.0, 20.0), "rotation", json!(90)), "isFlippedHorizontal", json!(true));
+    let (doc, _) = open(vec![artboard("A", "Board", 0.0, 0.0, 300.0, 300.0, vec![r])]);
+    let t = doc.world_transform(node(&doc, "Turned").id).as_coeffs();
+    // Rotated a quarter turn counter-clockwise (x → up, y → right), then mirrored left to right.
+    assert!(t[0].abs() < 1e-9 && (t[1] + 1.0).abs() < 1e-9 && (t[2] + 1.0).abs() < 1e-9 && t[3].abs() < 1e-9, "{t:?}");
+}
+
+#[test]
+fn edited_shapes_keep_their_points() {
+    let mut drop = rect("Drop", 0.0, 0.0, 20.0, 30.0);
+    drop["_class"] = json!("oval");
+    drop["edited"] = json!(true);
+    drop["points"] = json!([point(0.5, 0.0), point(1.0, 0.7), point(0.5, 1.0), point(0.0, 0.7)]);
+    let mut box_ = rect("Slanted", 50.0, 0.0, 20.0, 20.0);
+    box_["edited"] = json!(true);
+    box_["points"][1]["point"] = json!("{1, 0.3}");
+    let (doc, _) = open(vec![artboard("A", "Board", 0.0, 0.0, 300.0, 300.0, vec![drop, box_])]);
+    let NodeKind::Vector { network } = &node(&doc, "Drop").kind else { panic!("not a vector") };
+    assert_eq!((network.vertices[0].x, network.vertices[0].y), (10.0, 0.0));
+    assert!(matches!(node(&doc, "Slanted").kind, NodeKind::Vector { .. }));
+}
