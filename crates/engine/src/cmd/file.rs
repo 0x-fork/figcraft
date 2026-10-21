@@ -558,9 +558,44 @@ fn load_with(
 fn load_sketch(bytes: &[u8], name: &str) -> Option<Result<figcraft_format::Loaded>> {
     let r = figcraft_format::sketch::try_import(bytes, name)?;
     Some(r.map_err(|e| EngineError::Other(e.to_string())).map(|(mut doc, warnings)| {
+        match_font_families(&mut doc);
         link_instances(&mut doc);
         figcraft_format::Loaded { issues: warnings, ..doc.into() }
     }))
+}
+
+/// Font families a `.sketch` import guessed from PostScript names ("Ping Fang SC" from
+/// "PingFangSC-Semibold") take the installed family's name when they differ only in spaces and
+/// case.
+fn match_font_families(doc: &mut Document) {
+    let installed = figcraft_text::fontdb::family_names();
+    let mut cache: std::collections::BTreeMap<String, Option<String>> = std::collections::BTreeMap::new();
+    let mut fix = |style: &mut figcraft_doc::TextStyle| {
+        let found = cache.entry(style.font_family.clone()).or_insert_with(|| installed_family(&style.font_family, &installed));
+        if let Some(f) = found {
+            style.font_family = f.clone();
+        }
+    };
+    let ids: Vec<NodeId> = doc.nodes().filter(|n| matches!(n.kind, NodeKind::Text(_))).map(|n| n.id).collect();
+    for id in ids {
+        if let Some(NodeKind::Text(td)) = doc.node_mut(id).map(|n| &mut n.kind) {
+            fix(&mut td.style);
+            for r in &mut td.runs {
+                fix(&mut r.style);
+            }
+        }
+    }
+}
+
+/// The installed family `family` means when it isn't installed under that exact name: the one
+/// whose name is the same without spaces, ignoring case.
+pub(crate) fn installed_family(family: &str, installed: &[String]) -> Option<String> {
+    let key = |s: &str| s.chars().filter(|c| !c.is_whitespace()).flat_map(char::to_lowercase).collect::<String>();
+    if installed.iter().any(|f| f.eq_ignore_ascii_case(family)) {
+        return None;
+    }
+    let want = key(family);
+    installed.iter().find(|f| key(f) == want).cloned()
 }
 
 /// Gives `None` when `bytes` are not a `.fig` file. Then other readers can try.

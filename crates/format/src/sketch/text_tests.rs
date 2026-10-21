@@ -1,0 +1,188 @@
+//! Sketch text layers → text with styled runs; font PostScript names → family and style.
+
+use figcraft_doc::color::PaintKind;
+use figcraft_doc::{Document, LetterSpacing, LineHeight, NodeKind, TextAlignH, TextAlignV, TextAutoResize, TextCase, TextData, TextDecoration};
+use serde_json::{Value, json};
+
+use super::fixture::*;
+use super::import;
+use super::text::font_name;
+
+const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
+const RED: [f64; 4] = [1.0, 0.0, 0.0, 1.0];
+
+fn open(layers: Vec<Value>) -> (Document, Vec<String>) {
+    let z = sketch_zip("50.2", 103, document(&["P"]), &[page("P", "Page", vec![artboard("A", "Board", 0.0, 0.0, 400.0, 400.0, layers)])], &[]);
+    import(&z, "f").unwrap()
+}
+
+fn data<'d>(doc: &'d Document, name: &str) -> &'d TextData {
+    match &doc.nodes().find(|n| n.name == name).unwrap().kind {
+        NodeKind::Text(td) => td,
+        other => panic!("{name}: {other:?}"),
+    }
+}
+
+fn red(fills: &Option<Vec<figcraft_doc::color::Paint>>) -> bool {
+    fills.as_ref().is_some_and(|f| f.iter().any(|p| matches!(p.kind, PaintKind::Solid { color } if color.r == 1.0 && color.g == 0.0)))
+}
+
+#[test]
+fn two_runs() {
+    let t = text("Hi", 0.0, 0.0, 200.0, 20.0, "Hello world", &[(0, 5, "HelveticaNeue-Bold", 16.0, RED), (5, 6, "HelveticaNeue", 12.0, BLACK)]);
+    let (doc, _) = open(vec![t]);
+    let td = data(&doc, "Hi");
+    assert_eq!(td.characters, "Hello world");
+    let style_at = |i: usize| td.runs.iter().find(|r| r.start <= i && i < r.end).map_or(&td.style, |r| &r.style);
+    let (a, b) = (style_at(0), style_at(7));
+    assert_eq!((a.font_family.as_str(), a.font_style.as_str(), a.font_size), ("Helvetica Neue", "Bold", 16.0));
+    assert_eq!((b.font_family.as_str(), b.font_style.as_str(), b.font_size), ("Helvetica Neue", "Regular", 12.0));
+    let node = doc.nodes().find(|n| n.name == "Hi").unwrap();
+    assert!(red(&a.fills) || (red(&Some(node.fills.clone())) && !red(&b.fills)));
+}
+
+#[test]
+fn utf16_ranges() {
+    // "a😀b": the emoji takes two UTF-16 units.
+    let t = text(
+        "Emoji",
+        0.0,
+        0.0,
+        200.0,
+        20.0,
+        "a😀b",
+        &[(0, 1, "Helvetica", 10.0, BLACK), (1, 2, "Helvetica", 20.0, BLACK), (3, 1, "Helvetica", 30.0, BLACK)],
+    );
+    let (doc, _) = open(vec![t]);
+    let td = data(&doc, "Emoji");
+    let size_at = |i: usize| td.runs.iter().find(|r| r.start <= i && i < r.end).map_or(td.style.font_size, |r| r.style.font_size);
+    assert_eq!((size_at(0), size_at(1), size_at(2)), (10.0, 20.0, 30.0));
+    // A range splitting the emoji and one past the end: no panic, the text stays whole.
+    let t = text(
+        "Split",
+        0.0,
+        50.0,
+        200.0,
+        20.0,
+        "a😀b",
+        &[(0, 2, "Helvetica", 10.0, BLACK), (2, 99, "Helvetica", 20.0, BLACK), (500, 3, "Helvetica", 5.0, BLACK)],
+    );
+    let (doc, _) = open(vec![t]);
+    assert_eq!(data(&doc, "Split").characters, "a😀b");
+}
+
+#[test]
+fn paragraph_and_spacing() {
+    let mut t = text("Para", 0.0, 0.0, 200.0, 40.0, "Centered", &[(0, 8, "Helvetica", 14.0, BLACK)]);
+    let a = &mut t["attributedString"]["attributes"][0]["attributes"];
+    a["paragraphStyle"] =
+        json!({"_class": "paragraphStyle", "alignment": 2, "maximumLineHeight": 24, "minimumLineHeight": 24, "paragraphSpacing": 8});
+    a["kerning"] = json!(0.5);
+    let (doc, _) = open(vec![t]);
+    let td = data(&doc, "Para");
+    assert_eq!(td.align_h, TextAlignH::Center);
+    assert_eq!(td.style.line_height, LineHeight::Pixels(24.0));
+    assert_eq!(td.paragraph_spacing, 8.0);
+    assert_eq!(td.style.letter_spacing, LetterSpacing::Pixels(0.5));
+    for (code, want) in [(0, TextAlignH::Left), (1, TextAlignH::Right), (3, TextAlignH::Justified), (4, TextAlignH::Left)] {
+        let mut t = text("A", 0.0, 0.0, 100.0, 20.0, "x", &[(0, 1, "Helvetica", 14.0, BLACK)]);
+        t["attributedString"]["attributes"][0]["attributes"]["paragraphStyle"]["alignment"] = json!(code);
+        let (doc, _) = open(vec![t]);
+        assert_eq!(data(&doc, "A").align_h, want, "alignment {code}");
+    }
+}
+
+#[test]
+fn behaviour_and_vertical_alignment() {
+    let cases = [(0, TextAutoResize::WidthAndHeight), (1, TextAutoResize::Height), (2, TextAutoResize::None)];
+    for (b, want) in cases {
+        let mut t = text("T", 0.0, 0.0, 100.0, 20.0, "x", &[(0, 1, "Helvetica", 14.0, BLACK)]);
+        t["textBehaviour"] = json!(b);
+        let (doc, _) = open(vec![t]);
+        assert_eq!(data(&doc, "T").auto_resize, want, "behaviour {b}");
+    }
+    for (v, want) in [(0, TextAlignV::Top), (1, TextAlignV::Middle), (2, TextAlignV::Bottom)] {
+        let mut t = text("V", 0.0, 0.0, 100.0, 60.0, "x", &[(0, 1, "Helvetica", 14.0, BLACK)]);
+        t["textBehaviour"] = json!(2);
+        t["style"]["textStyle"] = json!({"_class": "textStyle", "verticalAlignment": v, "encodedAttributes": {}});
+        let (doc, _) = open(vec![t]);
+        assert_eq!(data(&doc, "V").align_v, want, "vertical {v}");
+    }
+}
+
+#[test]
+fn decorations_and_case() {
+    let mut t = text(
+        "Deco",
+        0.0,
+        0.0,
+        200.0,
+        20.0,
+        "abcdef",
+        &[(0, 2, "Helvetica", 14.0, BLACK), (2, 2, "Helvetica", 14.0, BLACK), (4, 2, "Helvetica", 14.0, BLACK)],
+    );
+    t["attributedString"]["attributes"][0]["attributes"]["underlineStyle"] = json!(1);
+    t["attributedString"]["attributes"][1]["attributes"]["strikethroughStyle"] = json!(1);
+    t["attributedString"]["attributes"][2]["attributes"]["MSAttributedStringTextTransformAttribute"] = json!(1);
+    let (doc, _) = open(vec![t]);
+    let td = data(&doc, "Deco");
+    let at = |i: usize| td.runs.iter().find(|r| r.start <= i && i < r.end).map_or(&td.style, |r| &r.style);
+    assert_eq!(at(0).decoration, TextDecoration::Underline);
+    assert_eq!(at(2).decoration, TextDecoration::Strikethrough);
+    assert_eq!(at(4).case, TextCase::Upper);
+}
+
+#[test]
+fn text_layer_fill_wins_over_run_colour() {
+    let t = styled(text("Filled", 0.0, 0.0, 100.0, 20.0, "x", &[(0, 1, "Helvetica", 14.0, BLACK)]), "fills", json!([solid_fill(1.0, 0.0, 0.0, 1.0)]));
+    let (doc, _) = open(vec![t]);
+    let n = doc.nodes().find(|n| n.name == "Filled").unwrap();
+    assert!(red(&Some(n.fills.clone())));
+}
+
+#[test]
+fn font_names() {
+    let cases = [
+        ("HelveticaNeue-Bold", "Helvetica Neue", "Bold"),
+        ("HelveticaNeue", "Helvetica Neue", "Regular"),
+        ("HelveticaNeue-Medium", "Helvetica Neue", "Medium"),
+        ("PingFangSC-Semibold", "Ping Fang SC", "Semi Bold"),
+        (".SFNSText", "SF Pro Text", "Regular"),
+        (".SFNSDisplay-Bold", "SF Pro Display", "Bold"),
+        ("SanFranciscoText-Semibold", "SF Pro Text", "Semi Bold"),
+        ("Impact", "Impact", "Regular"),
+        ("IBMPlexSans-MediumItalic", "IBM Plex Sans", "Medium Italic"),
+        ("Roboto-Italic", "Roboto", "Italic"),
+        ("", "Helvetica", "Regular"),
+    ];
+    for (ps, family, style) in cases {
+        assert_eq!(font_name(ps), (family.to_string(), style.to_string()), "{ps}");
+    }
+}
+
+#[test]
+fn long_and_odd_text_is_safe() {
+    let long = "x".repeat(10_000);
+    let t = text("Long", 0.0, 0.0, 100.0, 20.0, &long, &[(0, usize::MAX >> 1, "Helvetica", 14.0, BLACK)]);
+    let mut odd = text("Odd", 0.0, 0.0, 100.0, 20.0, "abc", &[(0, 3, "Helvetica", -5.0, BLACK)]);
+    odd["attributedString"]["attributes"][0]["attributes"]["MSAttributedStringFontAttribute"] = json!("junk");
+    let mut empty = text("Empty", 0.0, 0.0, 100.0, 20.0, "", &[]);
+    empty["attributedString"]["string"] = json!(5);
+    let (doc, _) = open(vec![t, odd, empty]);
+    assert_eq!(data(&doc, "Long").characters.len(), 10_000);
+    assert!(data(&doc, "Odd").style.font_size > 0.0);
+}
+
+#[test]
+fn embedded_fonts_are_reported() {
+    let mut d = document(&["P"]);
+    d["fontReferences"] = json!([
+        {"_class": "fontReference", "fontFamilyName": "IBM Plex Sans", "fontFileName": "IBMPlexSans-Regular.otf", "fontData": {"_ref": "fonts/abc"}},
+        {"_class": "fontReference", "fontFamilyName": "IBM Plex Sans", "fontFileName": "IBMPlexSans-Bold.otf", "fontData": {"_ref": "fonts/def"}},
+        {"_class": "fontReference", "fontFamilyName": "IBM Plex Mono", "fontData": {"_ref": "fonts/ghi"}},
+    ]);
+    let z = sketch_zip("83.2", 139, d, &[page("P", "Page", vec![])], &[("fonts/abc", b"x")]);
+    let (_, warnings) = import(&z, "f").unwrap();
+    let w = warnings.iter().find(|w| w.contains("embedded")).expect("a note about embedded fonts");
+    assert!(w.contains("IBM Plex Mono") && w.contains("IBM Plex Sans"), "{w}");
+}

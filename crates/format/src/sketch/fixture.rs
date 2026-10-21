@@ -149,3 +149,22 @@ pub(crate) fn styled(mut l: Value, key: &str, value: Value) -> Value {
     l["style"][key] = value;
     l
 }
+
+/// A text layer showing `string`, one run per `(location, length, font, size, rgba)`; locations and
+/// lengths count UTF-16 code units, as Sketch does.
+pub(crate) fn text(id: &str, x: f64, y: f64, w: f64, h: f64, string: &str, runs: &[(usize, usize, &str, f64, [f64; 4])]) -> Value {
+    let attrs: Vec<Value> = runs
+        .iter()
+        .map(|(loc, len, font, size, [r, g, b, a])| {
+            json!({"_class": "stringAttribute", "location": loc, "length": len, "attributes": {
+                "MSAttributedStringFontAttribute": {"_class": "fontDescriptor", "attributes": {"name": font, "size": size}},
+                "MSAttributedStringColorAttribute": color(*r, *g, *b, *a),
+                "paragraphStyle": {"_class": "paragraphStyle", "alignment": 0},
+            }})
+        })
+        .collect();
+    let mut l = layer("text", id, id, x, y, w, h);
+    l["attributedString"] = json!({"_class": "attributedString", "string": string, "attributes": attrs});
+    l["textBehaviour"] = json!(1);
+    l
+}

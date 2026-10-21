@@ -80,6 +80,7 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
         "oval" => "ELLIPSE",
         "slice" => "SLICE",
         "shapePath" | "star" | "polygon" | "triangle" => "VECTOR",
+        "text" => "TEXT",
         other => {
             cx.warn(format!("Sketch {} layers are not supported yet and were skipped", clip(other)));
             return None;
@@ -91,6 +92,9 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
     let (w, h) = size(l);
     let world = parent * local(l, w, h);
     let mut node = base(l, ty, parent, world, w, h, root);
+    if ty == "TEXT" {
+        super::text::node(cx, l, &mut node);
+    }
     if ty == "VECTOR" {
         let shape = super::path::shape(cx, l, w, h)?;
         super::path::put_shape(cx, shape, &mut node);

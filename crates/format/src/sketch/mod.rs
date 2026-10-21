@@ -21,6 +21,9 @@ mod style;
 mod style_tests;
 #[cfg(test)]
 mod tests;
+mod text;
+#[cfg(test)]
+mod text_tests;
 mod tree;
 #[cfg(test)]
 mod tree_tests;
@@ -81,6 +84,9 @@ pub(crate) fn import_within(bytes: &[u8], name: &str, max_member: u64) -> Result
     }
     let mut warnings = archive.warnings.clone();
     warnings.extend(map.warnings);
+    if let Some(note) = embedded_fonts(&archive.document) {
+        warnings.push(note);
+    }
     let images = |r: &str| archive.image(r);
     let (mut doc, more) = crate::rest::import_with_networks_plain(&map.json, &images, map.networks, max_nodes)?;
     if archive.document.get("colorSpace").and_then(Value::as_i64) == Some(2) {
@@ -88,6 +94,19 @@ pub(crate) fn import_within(bytes: &[u8], name: &str, max_member: u64) -> Result
     }
     warnings.extend(more);
     Ok((doc, warnings))
+}
+
+/// The note about fonts the file carries (Sketch 7x and newer can embed them): FigCraft doesn't
+/// use fonts from inside documents, so their text shows in installed fonts.
+fn embedded_fonts(document: &Value) -> Option<String> {
+    let refs = document.get("fontReferences").and_then(Value::as_array)?;
+    let families: BTreeSet<String> =
+        refs.iter().filter_map(|r| r.get("fontFamilyName").and_then(Value::as_str)).map(|f| f.chars().take(64).collect()).take(20).collect();
+    if families.is_empty() {
+        return None;
+    }
+    let list: Vec<&str> = families.iter().map(String::as_str).collect();
+    Some(format!("the file has embedded fonts FigCraft doesn't use ({}); install them to see the text as designed", list.join(", ")))
 }
 
 fn corrupt(msg: impl Into<String>) -> FormatError {

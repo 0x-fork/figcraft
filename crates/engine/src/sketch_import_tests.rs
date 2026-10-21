@@ -134,3 +134,14 @@ fn sketch_masks_show_their_content() {
     assert!(m.alpha() > 200 && m.red() > 150, "mask fill: {m:?}");
     assert!(px(2, 2).alpha() < 50);
 }
+
+/// Family names guessed from PostScript names find the installed family whatever its spaces.
+#[test]
+fn sketch_font_families_match_installed_ones() {
+    let installed = ["PingFang SC".to_string(), "Helvetica Neue".to_string(), "IBM Plex Sans".to_string()];
+    let m = |f: &str| crate::cmd::file::installed_family(f, &installed);
+    assert_eq!(m("Ping Fang SC").as_deref(), Some("PingFang SC"));
+    assert_eq!(m("Helvetica Neue"), None, "already right");
+    assert_eq!(m("IBMPlex Sans").as_deref(), Some("IBM Plex Sans"));
+    assert_eq!(m("Comic Sans"), None);
+}
