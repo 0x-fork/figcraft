@@ -558,7 +558,11 @@ fn load_with(
 fn load_sketch(bytes: &[u8], name: &str) -> Option<Result<figcraft_format::Loaded>> {
     let r = figcraft_format::sketch::try_import(bytes, name)?;
     Some(r.map_err(|e| EngineError::Other(e.to_string())).map(|(mut doc, warnings)| {
+        // Both read the installed fonts: the system's must be known first (the desktop app scans
+        // them in the background; this waits for that scan).
+        figcraft_text::fontdb::scan_system_fonts();
         match_font_families(&mut doc);
+        platform_tracking(&mut doc);
         link_instances(&mut doc);
         figcraft_format::Loaded { issues: warnings, ..doc.into() }
     }))
@@ -582,6 +586,41 @@ fn match_font_families(doc: &mut Document) {
             fix(&mut td.style);
             for r in &mut td.runs {
                 fix(&mut r.style);
+            }
+        }
+    }
+}
+
+/// Sketch draws text with the tracking a font's `trak` table gives at its size (Apple's text engine
+/// adds it; FigCraft's, like Figma's, doesn't): the imported text keeps it as letter spacing, so
+/// lines measure and break as they did there.
+fn platform_tracking(doc: &mut Document) {
+    let mut cache: std::collections::BTreeMap<(String, String), Option<std::sync::Arc<figcraft_text::fontdb::Face>>> =
+        std::collections::BTreeMap::new();
+    let mut face = |style: &figcraft_doc::TextStyle| {
+        cache
+            .entry((style.font_family.clone(), style.font_style.clone()))
+            .or_insert_with(|| {
+                figcraft_text::fontdb::has_family(&style.font_family)
+                    .then(|| figcraft_text::fontdb::find_face(&style.font_family, &style.font_style))
+                    .flatten()
+            })
+            .clone()
+    };
+    let mut track = |style: &mut figcraft_doc::TextStyle| {
+        let Some(f) = face(style) else { return };
+        let t = f.tracking(style.font_size);
+        if t != 0.0 && t.is_finite() {
+            let px = style.letter_spacing.resolve(style.font_size);
+            style.letter_spacing = figcraft_doc::LetterSpacing::Pixels(px + t);
+        }
+    };
+    let ids: Vec<NodeId> = doc.nodes().filter(|n| matches!(n.kind, NodeKind::Text(_))).map(|n| n.id).collect();
+    for id in ids {
+        if let Some(NodeKind::Text(td)) = doc.node_mut(id).map(|n| &mut n.kind) {
+            track(&mut td.style);
+            for r in &mut td.runs {
+                track(&mut r.style);
             }
         }
     }

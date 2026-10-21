@@ -120,7 +120,6 @@ fn import_parts(bytes: &[u8], name: &str, max_member: u64, max_nodes: usize) -> 
     if archive.document.get("colorSpace").and_then(Value::as_i64) == Some(2) {
         doc.color_profile = figcraft_doc::color::ColorProfile::DisplayP3;
     }
-    fit_instances(&mut doc);
     warnings.extend(more);
     Ok((doc, warnings))
 }
@@ -138,25 +137,6 @@ fn embedded_fonts(document: &Value) -> Option<String> {
     Some(format!("the file has embedded fonts FigCraft doesn't use ({}); install them to see the text as designed", list.join(", ")))
 }
 
-/// Instances come in with their master's layers laid out at the master's size; resized ones lay
-/// them out for their own size by their constraints, innermost first.
-fn fit_instances(doc: &mut Document) {
-    let mut insts: Vec<(usize, figcraft_doc::NodeId, f64, f64)> = doc
-        .nodes()
-        .filter_map(|n| match n.kind {
-            figcraft_doc::NodeKind::Instance { component, .. } => {
-                let c = doc.node(component)?;
-                Some((doc.ancestors(n.id).len(), n.id, c.width, c.height))
-            }
-            _ => None,
-        })
-        .collect();
-    insts.sort_by_key(|i| std::cmp::Reverse(i.0));
-    for (_, id, w, h) in insts {
-        figcraft_layout::apply_constraints(doc, id, w, h);
-    }
-}
-
 fn corrupt(msg: impl Into<String>) -> FormatError {
     FormatError::Corrupt(format!("Sketch file: {}", msg.into()))
 }
@@ -164,6 +144,8 @@ fn corrupt(msg: impl Into<String>) -> FormatError {
 /// The parts of a `.sketch` archive: the document, the pages in document order and the images.
 pub(crate) struct Archive<'b> {
     pub document: Value,
+    /// `meta.json`'s format version (0 when missing).
+    pub version: u64,
     /// `(id, page JSON)` in the document's order.
     pub pages: Vec<(String, Value)>,
     /// Problems met while reading (pages skipped).
@@ -220,7 +202,8 @@ impl<'b> Archive<'b> {
         if refs.len() > MAX_PAGES {
             warnings.push(format!("the file has more than {MAX_PAGES} pages; the rest were skipped"));
         }
-        Ok(Archive { document, pages, warnings, zip: z })
+        let version = meta.get("version").and_then(Value::as_u64).unwrap_or(0);
+        Ok(Archive { document, version, pages, warnings, zip: z })
     }
 
     /// The bytes of the image a layer references (`images/<name>`).

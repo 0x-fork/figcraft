@@ -14,6 +14,12 @@ fn open_doc(doc_json: Value, layers: Vec<Value>, masters: Vec<Value>) -> (Docume
     import(&z, "f").unwrap()
 }
 
+/// [`open`] for a file saved by another Sketch.
+fn open_version(app: &str, version: u64, layers: Vec<Value>, masters: Vec<Value>) -> (Document, Vec<String>) {
+    let z = sketch_zip(app, version, document(&["P", "S"]), &[page("P", "Page", layers), page("S", "Symbols", masters)], &[]);
+    import(&z, "f").unwrap()
+}
+
 fn open(layers: Vec<Value>, masters: Vec<Value>) -> (Document, Vec<String>) {
     let mut d = document(&["P", "S"]);
     d["do_objectID"] = json!("DOC");
@@ -154,10 +160,10 @@ fn instance_explosion_is_bounded() {
 
 #[test]
 fn resized_instance_follows_constraints() {
-    // Pinned right with a fixed width (bits 1 and 2 cleared).
+    // Pinned right with a fixed width (bits 1 and 2 cleared); a Sketch 64 file.
     let pinned = with(rect("Tag", 80.0, 0.0, 20.0, 40.0), "resizingConstraint", json!(60));
     let m = master("M", "S", "Bar", 100.0, 40.0, vec![pinned]);
-    let (doc, _) = open(vec![instance("Wide", "S", 0.0, 0.0, 200.0, 40.0, &[])], vec![m]);
+    let (doc, _) = open_version("64", 125, vec![instance("Wide", "S", 0.0, 0.0, 200.0, 40.0, &[])], vec![m]);
     let (inst, _) = instance_of(&doc, "Wide");
     let tag = inside(&doc, inst, "Tag");
     let b = doc.world_bounds(tag.id).unwrap();
@@ -225,4 +231,73 @@ fn scale_zero_is_unscaled() {
     i["scale"] = json!(0);
     let (_, warnings) = open(vec![i], vec![button()]);
     assert!(!warnings.iter().any(|w| w.contains("scaled")), "{warnings:?}");
+}
+
+/// A master's background shows in its instances only when Sketch says so.
+#[test]
+fn master_background_in_instances_only_when_included() {
+    let bg = |id: &str, sid: &str, include: bool| {
+        let mut m = master(id, sid, id, 20.0, 20.0, vec![]);
+        m["hasBackgroundColor"] = json!(true);
+        m["backgroundColor"] = json!({"_class": "color", "red": 0, "green": 0, "blue": 0, "alpha": 1});
+        m["includeBackgroundColorInInstance"] = json!(include);
+        m
+    };
+    let (doc, _) = open(
+        vec![instance("Hidden", "SH", 0.0, 0.0, 20.0, 20.0, &[]), instance("Shown", "SS", 50.0, 0.0, 20.0, 20.0, &[])],
+        vec![bg("MH", "SH", false), bg("MS", "SS", true)],
+    );
+    let (hidden, main) = instance_of(&doc, "Hidden");
+    assert!(hidden.fills.is_empty(), "{:?}", hidden.fills);
+    assert_eq!(main.fills.len(), 1, "the master shows its background");
+    assert_eq!(instance_of(&doc, "Shown").0.fills.len(), 1);
+}
+
+/// How Sketch lays out a resized instance's layers, measured on its renders: a master of 200×100
+/// with a 100×40 rectangle at (20, 30), shown at 320×60.
+#[test]
+fn resized_instances_lay_out_like_sketch() {
+    let case = |mask: i64, version: u64| {
+        let r = with(rect("R", 20.0, 30.0, 100.0, 40.0), "resizingConstraint", json!(mask));
+        let m = master("M", "S", "Box", 200.0, 100.0, vec![r]);
+        let (doc, _) = open_version("64", version, vec![instance("I", "S", 0.0, 0.0, 320.0, 60.0, &[])], vec![m]);
+        let (inst, _) = instance_of(&doc, "I");
+        let b = doc.world_bounds(inside(&doc, inst, "R").id).unwrap();
+        (b.x0, b.y0, b.width(), b.height())
+    };
+    let near = |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)| {
+        (a.0 - b.0).abs() < 0.5 && (a.1 - b.1).abs() < 0.5 && (a.2 - b.2).abs() < 0.5 && (a.3 - b.3).abs() < 0.5
+    };
+    // Sketch 52 and newer (format 110+).
+    for (mask, want) in [
+        (63, (32.0, 18.0, 160.0, 24.0)),
+        (59, (20.0, 18.0, 166.67, 24.0)),
+        (62, (40.0, 18.0, 200.0, 24.0)),
+        (61, (62.0, 18.0, 100.0, 24.0)),
+        (58, (20.0, 18.0, 220.0, 24.0)),
+        (57, (20.0, 18.0, 100.0, 24.0)),
+        (60, (140.0, 18.0, 100.0, 24.0)),
+        (54, (40.0, 12.86, 200.0, 17.14)),
+        (0, (32.0, 18.0, 160.0, 24.0)),
+        (47, (32.0, 10.0, 160.0, 40.0)),
+    ] {
+        let got = case(mask, 125);
+        assert!(near(got, want), "mask {mask}: {got:?} vs {want:?}");
+    }
+    // Older files: everything scales.
+    for mask in [59, 62, 61, 0] {
+        let got = case(mask, 103);
+        assert!(near(got, (32.0, 18.0, 160.0, 24.0)), "legacy mask {mask}: {got:?}");
+    }
+}
+
+/// A nested swap to a symbol the file doesn't have keeps the original, as Sketch shows it.
+#[test]
+fn swap_to_a_missing_symbol_keeps_the_original() {
+    let icon = master("MA", "SA", "Icon A", 20.0, 20.0, vec![rect("Dot A", 0.0, 0.0, 20.0, 20.0)]);
+    let card = master("MC", "SC", "Card", 100.0, 40.0, vec![instance("N", "SA", 0.0, 0.0, 20.0, 20.0, &[])]);
+    let (doc, warnings) = open(vec![instance("I", "SC", 0.0, 0.0, 100.0, 40.0, &[("N_symbolID", json!("GONE"))])], vec![icon, card]);
+    let (inst, _) = instance_of(&doc, "I");
+    assert!(doc.subtree(inst.id).into_iter().filter_map(|i| doc.node(i)).any(|n| n.name == "Dot A"));
+    assert!(!warnings.iter().any(|w| w.contains("empty frames")), "{warnings:?}");
 }

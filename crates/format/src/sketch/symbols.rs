@@ -162,7 +162,10 @@ pub(crate) fn instance(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, roo
     let mut node = base(l, "INSTANCE", parent, world, w, h, root);
     node.insert("componentId".into(), json!(str_field(&m, "do_objectID").unwrap_or(sid)));
     node.insert("clipsContent".into(), json!(true));
-    if let Some(f) = master_fills(&m) {
+    // Instances show the master's background only when it says so.
+    if bool_field(&m, "includeBackgroundColorInInstance") == Some(true)
+        && let Some(f) = master_fills(&m)
+    {
         node.insert("fills".into(), f);
     }
     if let Some(st) = l.get("style") {
@@ -176,7 +179,7 @@ pub(crate) fn instance(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, roo
     let mut copy = m;
     let mut budget = cx.work_left();
     if let Some(layers) = copy.get_mut("layers").and_then(Value::as_array_mut) {
-        apply(layers, &overrides, &nested, &cx.shared, 0, &mut budget);
+        apply(layers, &overrides, &nested, &cx.shared, &cx.symbols, 0, &mut budget);
     }
     let used = cx.work_left().saturating_sub(budget);
     cx.spend(used);
@@ -184,9 +187,15 @@ pub(crate) fn instance(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, roo
         // The budget ran out handing overrides on: noted.
         cx.spend(1);
     }
+    // The master's layers laid out for the instance's size, as Sketch does it.
     let (mw, mh) = size(&copy);
+    if ((mw - w).abs() > 1e-9 || (mh - h).abs() > 1e-9)
+        && let Some(layers) = copy.get_mut("layers").and_then(Value::as_array_mut)
+    {
+        resize(layers, (mw, mh), (w, h), cx.legacy_resize, 0);
+    }
     cx.chain.push(sid.to_string());
-    let mut kids = children(cx, &copy, world, (mw, mh), depth, false);
+    let mut kids = children(cx, &copy, world, (w, h), depth, false);
     cx.chain.pop();
     let prefix = str_field(l, "do_objectID").unwrap_or("I").to_string();
     for k in &mut kids {
@@ -194,6 +203,58 @@ pub(crate) fn instance(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, roo
     }
     node.insert("children".into(), Value::Array(kids));
     Some(Value::Object(node))
+}
+
+/// Lay `layers` (the children of a box of `old` size) out for the box at `new` size, the way Sketch
+/// resizes a symbol instance's layers: groups pass the change on to their own layers. Files older
+/// than format 110 scale everything; newer ones follow each layer's `resizingConstraint`.
+fn resize(layers: &mut [Value], old: (f64, f64), new: (f64, f64), legacy: bool, depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    for l in layers {
+        let mask = if legacy { 63 } else { l.get("resizingConstraint").and_then(Value::as_i64).unwrap_or(63) };
+        let Some(f) = l.get_mut("frame").and_then(Value::as_object_mut) else { continue };
+        let n = |k: &str| f.get(k).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0);
+        let (x, y, w, h) = (n("x"), n("y"), n("width").max(0.0), n("height").max(0.0));
+        // A cleared bit pins: right 1, width 2, left 4, bottom 8, height 16, top 32.
+        let pinned = |bit: i64| mask & bit == 0;
+        let (nx, nw) = resize_axis(x, w, old.0, new.0, (pinned(4), pinned(2), pinned(1)));
+        let (ny, nh) = resize_axis(y, h, old.1, new.1, (pinned(32), pinned(16), pinned(8)));
+        for (k, v) in [("x", nx), ("y", ny), ("width", nw), ("height", nh)] {
+            f.insert(k.into(), json!(v));
+        }
+        if let Some(kids) = l.get_mut("layers").and_then(Value::as_array_mut) {
+            resize(kids, (w, h), (nw, nh), legacy, depth + 1);
+        }
+    }
+}
+
+/// One axis of [`resize`]: a layer at `pos` of `size` in a parent going from `old` to `new`, with
+/// its start, size and end pinned or not. Nothing pinned (or everything): it scales. One side
+/// pinned: the size and the free side share the change, in proportion to their lengths. Only the
+/// size fixed: its centre scales. Both sides pinned: the size takes the change.
+fn resize_axis(pos: f64, size: f64, old: f64, new: f64, (start, fixed, end): (bool, bool, bool)) -> (f64, f64) {
+    if old <= 1e-9 || !new.is_finite() {
+        return (pos, size);
+    }
+    let k = new / old;
+    let d = new - old;
+    let far = old - pos - size;
+    let share = |part: f64, other: f64| if part + other > 1e-9 { d * part / (part + other) } else { d };
+    let (p, s) = match (start, fixed, end) {
+        (true, false, false) => (pos, size + share(size, far)),
+        (false, false, true) => {
+            let s = size + share(size, pos);
+            (new - far - s, s)
+        }
+        (false, true, false) => ((pos + size / 2.0) * k - size / 2.0, size),
+        (true, false, true) => (pos, size + d),
+        (true, true, false) => (pos, size),
+        (false, true, true) => (new - far - size, size),
+        _ => (pos * k, size * k),
+    };
+    (if p.is_finite() { p } else { pos }, if s.is_finite() { s.max(0.0) } else { size })
 }
 
 /// An instance's overrides by name (`<path>_<property>` → value).
@@ -229,6 +290,7 @@ fn apply(
     ov: &BTreeMap<String, Value>,
     nested: &BTreeMap<&str, Vec<(&str, &Value)>>,
     shared: &Shared,
+    symbols: &Symbols,
     depth: usize,
     budget: &mut u64,
 ) {
@@ -242,8 +304,9 @@ fn apply(
             Some("symbolInstance") => {
                 match get("symbolID").map(|v| v.as_str().unwrap_or("")) {
                     Some("") => l["isVisible"] = json!(false),
-                    Some(other) => l["symbolID"] = json!(other),
-                    None => {}
+                    // A swap to a symbol the file doesn't have keeps the original, as in Sketch.
+                    Some(other) if symbols.master(other).is_some() => l["symbolID"] = json!(other),
+                    _ => {}
                 }
                 let inner = nested.get(id.as_str()).map(Vec::as_slice).unwrap_or_default();
                 let take = usize::try_from(*budget / OVERRIDE_COST).unwrap_or(usize::MAX).min(inner.len());
@@ -289,7 +352,7 @@ fn apply(
             }
         }
         if let Some(kids) = l.get_mut("layers").and_then(Value::as_array_mut) {
-            apply(kids, ov, nested, shared, depth + 1, budget);
+            apply(kids, ov, nested, shared, symbols, depth + 1, budget);
         }
     }
 }

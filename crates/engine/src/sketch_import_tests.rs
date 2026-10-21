@@ -25,7 +25,9 @@ fn sketch_with(app_version: &str, pages: &[(&str, &str)], layers: &[Value]) -> V
         z.start_file("document.json", o).unwrap();
         z.write_all(json!({"_class": "document", "pages": refs}).to_string().as_bytes()).unwrap();
         z.start_file("meta.json", o).unwrap();
-        z.write_all(json!({"app": "com.bohemiancoding.sketch3", "appVersion": app_version, "version": 103}).to_string().as_bytes()).unwrap();
+        // The format version that Sketch writes (103 for 50; 110 and up from 52).
+        let version = if app_version.split('.').next().and_then(|v| v.parse::<u32>().ok()).is_some_and(|v| v >= 52) { 125 } else { 103 };
+        z.write_all(json!({"app": "com.bohemiancoding.sketch3", "appVersion": app_version, "version": version}).to_string().as_bytes()).unwrap();
         for (i, (id, name)) in pages.iter().enumerate() {
             let ls = if i == 0 { layers.to_vec() } else { Vec::new() };
             z.start_file(format!("pages/{id}.json"), o).unwrap();
@@ -154,7 +156,7 @@ fn sketch_instances_stay_live() {
     let tag = shape("rectangle", "Tag", [80.0, 0.0, 20.0, 40.0], json!({"resizingConstraint": 60, "points": []}));
     let master = shape("symbolMaster", "Bar", [0.0, 0.0, 100.0, 40.0], json!({"symbolID": "S", "layers": [tag]}));
     let inst = shape("symbolInstance", "Wide", [0.0, 100.0, 200.0, 40.0], json!({"symbolID": "S", "overrideValues": []}));
-    let data = base64::engine::general_purpose::STANDARD.encode(sketch_with("50.2", &[("A", "Page")], &[master, inst]));
+    let data = base64::engine::general_purpose::STANDARD.encode(sketch_with("64", &[("A", "Page")], &[master, inst]));
     let mut s = Session::new();
     s.execute("file.open", &json!({"data": data, "name": "x.sketch"})).unwrap();
     let find = |s: &Session, inst: bool| {
@@ -303,4 +305,24 @@ fn local_sketch_samples_match_sketch() {
     }
     worst.sort_by(|a, b| b.0.total_cmp(&a.0));
     assert!(worst.first().is_none_or(|w| w.0 < 10.0), "{worst:?}");
+}
+
+/// Sketch draws Apple's fonts with the tracking their `trak` table gives at each size (the
+/// platform does it on its own); the imported text carries it as letter spacing (macOS only).
+#[test]
+fn sketch_text_keeps_the_platform_tracking() {
+    if !std::path::Path::new("/System/Library/Fonts/SFNS.ttf").exists() {
+        return;
+    }
+    figcraft_text::fontdb::scan_system_fonts();
+    let font = json!({"name": "SFUIText-Regular", "size": 13});
+    let run = json!({"location": 0, "length": 2, "attributes": {"MSAttributedStringFontAttribute": {"attributes": font}}});
+    let t = shape("text", "Label", [0.0, 0.0, 100.0, 20.0], json!({"attributedString": {"string": "Hi", "attributes": [run]}, "textBehaviour": 0}));
+    let data = base64::engine::general_purpose::STANDARD.encode(sketch_with("64", &[("A", "Page")], &[t]));
+    let mut s = Session::new();
+    s.execute("file.open", &json!({"data": data, "name": "x.sketch"})).unwrap();
+    let doc = s.doc().unwrap();
+    let NodeKind::Text(td) = &doc.nodes().find(|n| n.name == "Label").unwrap().kind else { panic!("not text") };
+    let ls = td.style.letter_spacing.resolve(13.0);
+    assert!((ls - (-12.0 * 13.0 / 2048.0)).abs() < 1e-6, "{ls}");
 }

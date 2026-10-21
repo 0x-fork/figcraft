@@ -170,6 +170,8 @@ pub(crate) fn font_name(ps: &str) -> (String, String) {
         ".SFNSDisplay" | ".SFUIDisplay" | "SanFranciscoDisplay" | ".SFProDisplay" => "SF Pro Display".into(),
         // Apple's CJK families whose names don't split at case changes.
         "PingFangSC" | "PingFangTC" | "PingFangHK" => format!("PingFang {}", family.get(8..).unwrap_or("")),
+        // Apple's SF families: "SF" and then words ("SFUIText" → "SF UI Text").
+        f if f.starts_with("SF") && f.chars().nth(2).is_some_and(char::is_uppercase) => format!("SF {}", words(f.get(2..).unwrap_or(""))),
         f => words(f.trim_start_matches('.')),
     };
     (family, style)

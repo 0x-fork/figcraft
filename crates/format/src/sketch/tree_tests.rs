@@ -82,7 +82,8 @@ fn resizing_constraint_bits() {
         (63 - 8 - 32, H::Scale, V::TopBottom),
         (63 - 2 - 16, H::Center, V::Center),
         (63 - 1 - 2, H::Right, V::Scale),
-        (0, H::LeftRight, V::TopBottom),
+        // Everything pinned is over-constrained: Sketch scales it.
+        (0, H::Scale, V::Scale),
     ];
     let layers: Vec<Value> = cases
         .iter()
@@ -255,4 +256,19 @@ fn edited_shapes_keep_their_points() {
     let NodeKind::Vector { network } = &node(&doc, "Drop").kind else { panic!("not a vector") };
     assert_eq!((network.vertices[0].x, network.vertices[0].y), (10.0, 0.0));
     assert!(matches!(node(&doc, "Slanted").kind, NodeKind::Vector { .. }));
+}
+
+/// Sketch draws an artboard's background colour only; a style it may carry (borders, shadows) isn't
+/// drawn. Sketch 2025 frames do draw theirs.
+#[test]
+fn artboards_ignore_their_style() {
+    let border = json!([{"_class": "border", "isEnabled": true, "fillType": 0, "color": {"_class": "color", "red": 0, "green": 0, "blue": 0, "alpha": 1}, "position": 2, "thickness": 1}]);
+    let mut a = artboard("A", "Board", 0.0, 0.0, 100.0, 100.0, vec![]);
+    a["style"]["borders"] = border.clone();
+    let mut f = artboard("F", "Frame", 200.0, 0.0, 100.0, 100.0, vec![]);
+    f["_class"] = json!("frame");
+    f["style"]["borders"] = border;
+    let (doc, _) = open(vec![a, f]);
+    assert!(node(&doc, "Board").strokes.is_empty());
+    assert_eq!(node(&doc, "Frame").strokes.len(), 1);
 }

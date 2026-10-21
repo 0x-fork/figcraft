@@ -47,6 +47,9 @@ pub(crate) struct Cx {
     /// group has a border. Outside one: `None` / false (a shape's own style decides).
     pub operand_fill: Option<bool>,
     pub operand_border: bool,
+    /// The file is older than format 110 (Sketch 52): Sketch scales a resized instance's layers
+    /// instead of following their pins.
+    pub legacy_resize: bool,
     /// The symbols being expanded, outermost first (a symbol inside itself stops there).
     pub chain: Vec<String>,
     pub warnings: Vec<String>,
@@ -99,6 +102,7 @@ pub(crate) fn to_rest(archive: &Archive, name: &str, max_nodes: usize) -> Map {
         seen: std::collections::BTreeSet::new(),
         operand_fill: None,
         operand_border: false,
+        legacy_resize: archive.version > 0 && archive.version < 110,
         chain: Vec::new(),
         warnings: Vec::new(),
         networks: Vec::new(),
@@ -228,6 +232,10 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
 
 /// Layer `l`'s style into `node`, and its links to the styles made from its shared style.
 pub(crate) fn styles(cx: &mut Cx, l: &Value, w: f64, h: f64, node: &mut JsonMap<String, Value>) {
+    // An artboard shows its background colour only; Sketch doesn't draw a style it carries.
+    if str_field(l, "_class") == Some("artboard") {
+        return;
+    }
     if let Some(st) = l.get("style") {
         super::style::apply(cx, st, w, h, node);
     }
@@ -315,6 +323,8 @@ pub(crate) fn local(l: &Value, w: f64, h: f64) -> Affine {
 fn constraints(mask: i64) -> Value {
     let pinned = |bit: i64| mask & bit == 0;
     let axis = |low: i64, size: i64, high: i64, low_name: &str, high_name: &str, both: &str| match (pinned(low), pinned(high)) {
+        // Both sides and the size pinned can't all hold: Sketch scales such a layer.
+        (true, true) if pinned(size) => "SCALE".into(),
         (true, true) => both.to_string(),
         (true, false) => low_name.to_string(),
         (false, true) => high_name.to_string(),
