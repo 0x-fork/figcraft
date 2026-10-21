@@ -132,8 +132,8 @@ fn type_style(cx: &mut Cx, a: &Value) -> Value {
 
 /// Family and style of a font from its PostScript name: "HelveticaNeue-Bold" → ("Helvetica Neue",
 /// "Bold"). Words of the family are split at case changes, which can't always match the real name
-/// ("PingFangSC" → "Ping Fang SC"); the engine matches families against the installed fonts ignoring
-/// spaces. Apple's system fonts take the SF Pro names.
+/// (a CJK family would split as "Ping Fang SC"); the engine matches families against the installed
+/// fonts ignoring spaces. Apple's system fonts take the SF Pro names, PingFang its own.
 pub(crate) fn font_name(ps: &str) -> (String, String) {
     let (family, style) = ps.split_once('-').unwrap_or((ps, ""));
     let style = if style.is_empty() { "Regular".to_string() } else { crate::fig::style_name(style) };
@@ -141,6 +141,8 @@ pub(crate) fn font_name(ps: &str) -> (String, String) {
         "" => "Helvetica".to_string(),
         ".SFNSText" | ".SFUIText" | "SanFranciscoText" | ".SFProText" => "SF Pro Text".into(),
         ".SFNSDisplay" | ".SFUIDisplay" | "SanFranciscoDisplay" | ".SFProDisplay" => "SF Pro Display".into(),
+        // Apple's CJK families whose names don't split at case changes.
+        "PingFangSC" | "PingFangTC" | "PingFangHK" => format!("PingFang {}", family.get(8..).unwrap_or("")),
         f => words(f.trim_start_matches('.')),
     };
     (family, style)
