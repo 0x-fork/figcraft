@@ -50,7 +50,7 @@ pub(crate) fn to_rest(archive: &Archive, name: &str, max_nodes: usize) -> Map {
         node.insert("type".into(), json!("CANVAS"));
         node.insert("id".into(), json!(id));
         node.insert("name".into(), json!(str_field(page, "name").unwrap_or("Page")));
-        let kids: Vec<Value> = layers(page).iter().filter_map(|l| layer(&mut cx, l, Affine::IDENTITY, 0, true)).collect();
+        let kids = children(&mut cx, page, Affine::IDENTITY, (0.0, 0.0), 0, true);
         node.insert("children".into(), Value::Array(kids));
         canvases.push(Value::Object(node));
     }
@@ -95,6 +95,10 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
         let shape = super::path::shape(cx, l, w, h)?;
         super::path::put_shape(cx, shape, &mut node);
     }
+    if bool_field(l, "hasClippingMask") == Some(true) {
+        node.insert("isMask".into(), json!(true));
+        node.insert("maskType".into(), json!(if l.get("clippingMaskMode").and_then(Value::as_i64) == Some(1) { "ALPHA" } else { "VECTOR" }));
+    }
     match class {
         "artboard" | "frame" => {
             let clips = if class == "artboard" { true } else { bool_field(l, "clipsContent").unwrap_or(true) };
@@ -115,8 +119,11 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
         },
         _ => {}
     }
+    if let Some(st) = l.get("style") {
+        super::style::apply(cx, st, w, h, &mut node);
+    }
     if matches!(ty, "FRAME" | "GROUP") {
-        let kids: Vec<Value> = layers(l).iter().filter_map(|c| layer(cx, c, world, depth + 1, false)).collect();
+        let kids = children(cx, l, world, (w, h), depth, false);
         node.insert("children".into(), Value::Array(kids));
     }
     Some(Value::Object(node))
@@ -222,6 +229,48 @@ pub(crate) fn bool_field(v: &Value, key: &str) -> Option<bool> {
 /// At most 64 characters of a name read from the file, for warnings.
 fn clip(s: &str) -> String {
     s.chars().take(64).collect()
+}
+
+/// The child layers of `l` (placed at `world`, `size`) as REST nodes. A clipping mask clips the
+/// layers after it up to one that breaks the chain (or the next mask); when that happens before
+/// the end, the mask and what it clips are wrapped in a group of their own, since a FigCraft mask
+/// clips everything above it.
+pub(crate) fn children(cx: &mut Cx, l: &Value, world: Affine, size: (f64, f64), depth: usize, root: bool) -> Vec<Value> {
+    let built: Vec<(bool, Value)> = layers(l)
+        .iter()
+        .filter_map(|c| {
+            let breaks = bool_field(c, "shouldBreakMaskChain") == Some(true) || bool_field(c, "hasClippingMask") == Some(true);
+            layer(cx, c, world, depth + 1, root).map(|n| (breaks, n))
+        })
+        .collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some((_, n)) = built.get(i) {
+        let end = if n.get("isMask").and_then(Value::as_bool) == Some(true) {
+            built.iter().skip(i + 1).position(|(b, _)| *b).map(|k| i + 1 + k)
+        } else {
+            None
+        };
+        let Some(end) = end else {
+            out.push(n.clone());
+            i += 1;
+            continue;
+        };
+        let masked: Vec<Value> = built.get(i..end).unwrap_or_default().iter().map(|(_, n)| n.clone()).collect();
+        let mut g = JsonMap::new();
+        g.insert("type".into(), json!("GROUP"));
+        g.insert("name".into(), json!("Mask group"));
+        g.insert("relativeTransform".into(), json!([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]));
+        g.insert("size".into(), json!({"x": size.0, "y": size.1}));
+        if !root {
+            let bb = world.transform_rect_bbox(Rect::new(0.0, 0.0, size.0, size.1));
+            g.insert("absoluteBoundingBox".into(), json!({"x": bb.x0, "y": bb.y0, "width": bb.width(), "height": bb.height()}));
+        }
+        g.insert("children".into(), Value::Array(masked));
+        out.push(Value::Object(g));
+        i = end;
+    }
+    out
 }
 
 /// A text layer whose string is a binary property list (Sketch 43–47).

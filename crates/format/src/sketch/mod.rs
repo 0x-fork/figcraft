@@ -16,6 +16,9 @@ mod fixture;
 mod path;
 #[cfg(test)]
 mod path_tests;
+mod style;
+#[cfg(test)]
+mod style_tests;
 #[cfg(test)]
 mod tests;
 mod tree;
@@ -79,7 +82,10 @@ pub(crate) fn import_within(bytes: &[u8], name: &str, max_member: u64) -> Result
     let mut warnings = archive.warnings.clone();
     warnings.extend(map.warnings);
     let images = |r: &str| archive.image(r);
-    let (doc, more) = crate::rest::import_with_networks_plain(&map.json, &images, map.networks, max_nodes)?;
+    let (mut doc, more) = crate::rest::import_with_networks_plain(&map.json, &images, map.networks, max_nodes)?;
+    if archive.document.get("colorSpace").and_then(Value::as_i64) == Some(2) {
+        doc.color_profile = figcraft_doc::color::ColorProfile::DisplayP3;
+    }
     warnings.extend(more);
     Ok((doc, warnings))
 }
@@ -88,8 +94,9 @@ fn corrupt(msg: impl Into<String>) -> FormatError {
     FormatError::Corrupt(format!("Sketch file: {}", msg.into()))
 }
 
-/// The parts of a `.sketch` archive: the pages in document order and the images.
+/// The parts of a `.sketch` archive: the document, the pages in document order and the images.
 pub(crate) struct Archive<'b> {
+    pub document: Value,
     /// `(id, page JSON)` in the document's order.
     pub pages: Vec<(String, Value)>,
     /// Problems met while reading (pages skipped).
@@ -132,7 +139,7 @@ impl<'b> Archive<'b> {
         if refs.len() > MAX_PAGES {
             warnings.push(format!("the file has more than {MAX_PAGES} pages; the rest were skipped"));
         }
-        Ok(Archive { pages, warnings, zip: z })
+        Ok(Archive { document, pages, warnings, zip: z })
     }
 
     /// The bytes of the image a layer references (`images/<name>`).

@@ -132,3 +132,20 @@ pub(crate) fn shape_path(id: &str, x: f64, y: f64, w: f64, h: f64, points: &[(f6
 pub(crate) fn shape_group(id: &str, x: f64, y: f64, w: f64, h: f64, layers: Vec<Value>) -> Value {
     with(layer("shapeGroup", id, id, x, y, w, h), "layers", Value::Array(layers))
 }
+
+/// A Sketch colour.
+pub(crate) fn color(r: f64, g: f64, b: f64, a: f64) -> Value {
+    json!({"_class": "color", "red": r, "green": g, "blue": b, "alpha": a})
+}
+
+/// An enabled solid fill.
+pub(crate) fn solid_fill(r: f64, g: f64, b: f64, a: f64) -> Value {
+    json!({"_class": "fill", "isEnabled": true, "fillType": 0, "color": color(r, g, b, a),
+           "contextSettings": {"_class": "graphicsContextSettings", "blendMode": 0, "opacity": 1}})
+}
+
+/// `l` with `style.<key>` set to `value`.
+pub(crate) fn styled(mut l: Value, key: &str, value: Value) -> Value {
+    l["style"][key] = value;
+    l
+}
