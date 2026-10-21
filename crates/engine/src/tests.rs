@@ -416,6 +416,9 @@ fn every_command_survives_junk_params() {
         // Online files: ids, servers, refreshes, actions and names as junk.
         json!({"file": [1], "server": 7, "refresh": "maybe", "action": "share", "name": {"x": 1}}),
         json!({"file": "../x", "server": "wss://\u{0}", "refresh": true, "action": "unshare", "name": 5}),
+        // Files as base64 data: a damaged `.sketch` (zip magic, then junk) and an old one (SQLite).
+        json!({"data": "UEsDBBQAAAAIAP////8=", "name": "x.sketch"}),
+        json!({"data": "U1FMaXRlIGZvcm1hdCAzAA==", "name": "x.sketch", "path": null}),
         // Selection color slots: malformed indexes, ranges and paints.
         json!({"targets": [{"id": 2, "fills": true, "index": -1, "range": [0, 1e308]}], "paint": {"type": "solid", "color": "invalid"}}),
         json!({"targets": [{"id": 2, "fills": "yes", "index": 0, "range": [4, 1]}], "style": 5}),
