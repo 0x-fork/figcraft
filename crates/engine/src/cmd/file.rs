@@ -56,6 +56,13 @@ pub fn specs() -> Vec<CommandSpec> {
             save_as
         ),
         spec!(
+            "file.markSaved",
+            "Mark saved",
+            "{}  clears the unsaved changes of the active tab's file and its branch tabs: run it once the file from `file.saveAs {data: true}` was delivered (a refused download keeps them)",
+            false,
+            mark_saved
+        ),
+        spec!(
             "file.export",
             "Export",
             "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp, or fig: the whole file as .fig, experimental, with `warnings` for what was left out; other apps may not open every file), scale? (default 1) | size? (2x|512w|512h or {by: scale|width|height, value}: a scale, or a width or height in pixels), path? (else returns base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options)}",
@@ -869,22 +876,28 @@ fn save_to(s: &mut Session, path: Option<String>) -> Result<Value> {
         Arc::make_mut(&mut snapshot.doc).name = file_stem(path);
     }
     let bytes = snapshot.encode()?;
-    if let Some(path) = &path {
-        write(path, &bytes)?;
-    }
-    ds.doc = snapshot.doc;
-    if path.is_some() {
-        ds.path.clone_from(&path);
-    }
-    ds.mark_saved();
-    ds.revision += 1;
-    let (uid, name) = (ds.uid, format!("{}.figcraft", ds.doc.name));
-    branch_tabs_saved(s, uid);
     let Some(path) = path else {
+        // The download can still be refused: the caller marks the file saved once it was delivered.
+        let name = format!("{}.figcraft", ds.doc.name);
         return Ok(json!({"name": name, "bytes": bytes.len(), "data": base64::engine::general_purpose::STANDARD.encode(&bytes)}));
     };
+    write(&path, &bytes)?;
+    ds.doc = snapshot.doc;
+    ds.path = Some(path.clone());
+    mark_saved(s, &json!({}))?;
     remember(s, &path);
     Ok(json!({"path": path, "bytes": bytes.len()}))
+}
+
+/// The file of the active tab (with its branch tabs) now matches what was written or delivered.
+fn mark_saved(s: &mut Session, _: &Value) -> Result<Value> {
+    let i = crate::branches::file_tab(s);
+    let ds = s.docs.get_mut(i).ok_or(EngineError::NoDocument)?;
+    ds.mark_saved();
+    ds.revision += 1;
+    let uid = ds.uid;
+    branch_tabs_saved(s, uid);
+    Ok(json!({"saved": true}))
 }
 
 fn save(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1590,7 +1603,7 @@ mod rest_import_tests {
     }
 
     #[test]
-    fn save_as_data_hands_back_the_file_and_marks_it_saved() {
+    fn save_as_data_hands_back_the_file_and_marks_it_saved_once_delivered() {
         // The browser has no paths: Save as returns the file for a download (#969).
         let mut s = Session::new();
         s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
@@ -1598,6 +1611,8 @@ mod rest_import_tests {
         let recent = s.prefs.recent_files.clone();
         let r = s.execute("file.saveAs", &json!({"data": true})).unwrap();
         assert_eq!(r["name"], "Untitled.figcraft");
+        assert!(s.ds().unwrap().is_dirty(), "not delivered yet: a refused download must not lose the edits");
+        s.execute("file.markSaved", &json!({})).unwrap();
         assert!(!s.ds().unwrap().is_dirty());
         assert_eq!(s.ds().unwrap().path, None, "still no path to save over");
         assert_eq!(s.prefs.recent_files, recent, "nothing on disk to remember");

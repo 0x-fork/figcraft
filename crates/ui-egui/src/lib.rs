@@ -1146,6 +1146,7 @@ impl FigApp {
             if let Some(r) = self.run("file.saveAs", json!({"data": true}))
                 && self.download(r["name"].as_str().unwrap_or_default(), &r)
             {
+                self.run("file.markSaved", json!({}));
                 dialogs::file_saved(self, &r);
             }
             return;

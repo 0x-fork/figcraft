@@ -52,6 +52,7 @@ fn a_refused_download_says_so() {
     app.save_as_dialog();
     assert_eq!(got.lock().unwrap().len(), 1);
     assert_eq!(toast(&app), "Couldn't download Untitled.figcraft");
+    assert!(app.session.ds().unwrap().is_dirty(), "no file arrived: closing must still warn about the edits");
 }
 
 #[test]
