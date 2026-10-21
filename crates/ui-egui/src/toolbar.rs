@@ -9,7 +9,19 @@ use crate::FigApp;
 use crate::a11y::{self, Nav, Region, Tip};
 use crate::i18n::{tr, tr_noop, trf};
 use crate::icons::{self, Icon};
-use crate::theme::{ACCENT, Tokens, regular};
+use crate::theme::{Tokens, regular};
+
+/// Every mark in the toolbar row is painted in a box this size, so they share one optical size
+/// and one stroke width (#737, #738).
+const GLYPH: f32 = 18.0;
+/// The flyout carets: smaller than the marks, but on a box whose stroke rounds to the same width
+/// as theirs at 1×, 1.5× and 2× (a 10-point box drew them one physical pixel thinner).
+const CARET: f32 = 14.0;
+
+/// `GLYPH`'s box centred in `r`.
+fn glyph_rect(r: Rect) -> Rect {
+    Rect::from_center_size(r.center(), vec2(GLYPH, GLYPH))
+}
 
 struct Group {
     key: &'static str,
@@ -57,6 +69,7 @@ fn remembered(ui: &Ui, key: &str, default: ToolId) -> ToolId {
 pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let canvas = app.canvas.rect;
+    app.ui.actions_rect = None;
     // A file you can't edit now (view only, or on its way to a server): moving around only.
     if let Some(why) = app.session.active_read_only() {
         view_only_toolbar(app, ui, why);
@@ -72,10 +85,21 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         builder_toolbar(app, ui);
         return;
     }
-    let cell = 32.0;
-    let gap = 4.0;
-    let width = GROUPS.len() as f32 * (cell + 4.0) + 4.0 * 10.0 + 2.0 * (cell + 4.0) + 16.0 + 4.0 * 34.0 + 24.0;
-    let rect = pill(ui, &mut app.ui.nav, canvas, width, &t);
+    main_toolbar(app, ui, canvas, &t);
+}
+
+/// The main toolbar pill's width: the Actions palette matches it so the two read as one bar.
+pub(crate) fn main_width() -> f32 {
+    let (cell, gap) = (32.0, 4.0);
+    GROUPS.len() as f32 * (cell + gap) + gap * 10.0 + 2.0 * (cell + gap) + 16.0 + 4.0 * 34.0 + 24.0
+}
+
+/// The main toolbar pill: the tool groups with their flyouts, Resources and Actions, then the
+/// Draw · Design · Prototype · Inspect mode switcher.
+fn main_toolbar(app: &mut FigApp, ui: &mut Ui, canvas: Rect, t: &Tokens) {
+    let (cell, gap) = (32.0, 4.0);
+    let width = main_width();
+    let rect = pill(ui, &mut app.ui.nav, canvas, width, t);
     let current = app.session.tool.tool;
     let mut x = rect.min.x + 8.0;
     let cy = rect.center().y;
@@ -84,7 +108,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         let shown = if in_group { current } else { remembered(ui, g.key, g.tools.first().map(|x| x.0).unwrap_or(ToolId::Move)) };
         let icon = g.tools.iter().find(|(tid, _)| *tid == shown).map(|(_, i)| *i).unwrap_or(Icon::Move);
         let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
-        let resp = tool_cell(ui, &t, r, ("tool", g.key), icon, in_group, &format!("{}  {}", tr(shown.label()), pretty_shortcut(shown.shortcut())));
+        let resp = tool_cell(ui, t, r, ("tool", g.key), icon, in_group, &format!("{}  {}", tr(shown.label()), pretty_shortcut(shown.shortcut())));
         if in_group {
             a11y::prefer(&mut app.ui.nav, Region::Toolbar, resp.id);
         }
@@ -111,7 +135,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             if cresp.hovered() {
                 ui.painter().rect_filled(cr, CornerRadius::same(4), t.hover);
             }
-            icons::paint(ui.painter(), Rect::from_center_size(cr.center(), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
+            icons::paint(ui.painter(), Rect::from_center_size(cr.center(), vec2(CARET, CARET)), Icon::Chevron, t.icon_secondary);
             if cresp.clicked() {
                 app.ui.tool_flyout = if app.ui.tool_flyout == Some(g.key) { None } else { Some(g.key) };
             }
@@ -129,21 +153,27 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     ] {
         let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
         let resp = ui.interact(r, ui.id().with(id), Sense::click()).tip(tip);
-        if resp.hovered() {
+        if id == "actions" {
+            app.ui.actions_rect = Some(r);
+        }
+        // The Actions button reads on while its panel is open; clicking it again closes it.
+        let actions_open = id == "actions" && app.ui.palette.is_some();
+        if actions_open {
+            ui.painter().rect_filled(r, CornerRadius::same(5), t.accent);
+        } else if resp.hovered() {
             ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
         }
-        icons::paint(ui.painter(), r.shrink(7.0), icon, t.icon);
+        icons::paint(ui.painter(), glyph_rect(r), icon, if actions_open { t.accent_on } else { t.icon });
         if resp.clicked() {
             if id == "actions" {
-                app.ui.palette = Some(String::new());
+                crate::menus::toggle_palette(&mut app.ui);
             } else {
-                app.ui.left_tab = crate::LeftTab::Assets;
-                app.ui.left_collapsed = false;
+                app.run("view.assets", json!({}));
             }
         }
         x += cell + 4.0;
     }
-    divider(ui, &t, x, cy);
+    divider(ui, t, x, cy);
     x += 8.0;
     // Mode switcher: Draw · Design · Prototype · Inspect (code).
     let modes = [(Icon::Pencil, tr("Draw")), (Icon::Frame, tr("Design")), (Icon::Prototype, tr("Prototype")), (Icon::Code, tr("Inspect"))];
@@ -165,7 +195,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         } else if resp.hovered() {
             ui.painter().rect_filled(r, CornerRadius::same(6), t.hover);
         }
-        icons::paint(ui.painter(), r.shrink(9.0), *icon, if i == active { t.accent_text } else { t.icon_secondary });
+        icons::paint(ui.painter(), glyph_rect(r), *icon, if i == active { t.accent_text } else { t.icon_secondary });
         if resp.clicked() {
             match i {
                 0 => {
@@ -325,10 +355,15 @@ fn builder_toolbar(app: &mut FigApp, ui: &mut Ui) {
     }
 }
 
+/// Where a toolbar pill `width` wide sits: centred 12 px above the canvas's bottom edge.
+pub(crate) fn pill_rect(canvas: Rect, width: f32) -> Rect {
+    Rect::from_center_size(pos2(canvas.center().x, canvas.max.y - 12.0 - 24.0), vec2(width, 48.0))
+}
+
 /// The floating pill (shadow, panel, border) `width` wide at the bottom centre of the canvas: the
 /// toolbar region keyboard navigation moves through.
 fn pill(ui: &Ui, nav: &mut Nav, canvas: Rect, width: f32, t: &Tokens) -> Rect {
-    let rect = Rect::from_center_size(pos2(canvas.center().x, canvas.max.y - 12.0 - 24.0), vec2(width, 48.0));
+    let rect = pill_rect(canvas, width);
     // The pill takes the press and the drag over it: its buttons sense clicks only, and egui gives
     // a drag the canvas under them would sense to the canvas, so the pen placed an anchor there.
     // Not focusable: the keyboard walks the buttons, not the pill.
@@ -351,14 +386,14 @@ fn tool_cell(ui: &mut Ui, t: &Tokens, r: Rect, id: impl egui::AsIdSalt, icon: Ic
     });
     a11y::toggle(&resp, tip, active);
     let bg = if active {
-        ACCENT
+        t.accent
     } else if resp.hovered() {
         t.hover
     } else {
         Color32::TRANSPARENT
     };
     ui.painter().rect_filled(r, CornerRadius::same(5), bg);
-    icons::paint(ui.painter(), r.shrink(7.0), icon, if active { Color32::WHITE } else { t.icon });
+    icons::paint(ui.painter(), glyph_rect(r), icon, if active { t.accent_on } else { t.icon });
     resp
 }
 
@@ -374,8 +409,8 @@ fn done_button(ui: &mut Ui, t: &Tokens, x: f32, cy: f32, tip: &str) -> bool {
     divider(ui, t, x, cy);
     let done = Rect::from_min_size(pos2(x + 12.0, cy - 14.0), vec2(DONE_W, 28.0));
     let resp = ui.interact(done, ui.id().with("tool_done"), Sense::click()).tip(tip);
-    ui.painter().rect_filled(done, CornerRadius::same(6), if resp.hovered() { t.accent_hover } else { ACCENT });
-    ui.painter().text(done.center(), Align2::CENTER_CENTER, tr("Done"), crate::theme::semibold(11.5), Color32::WHITE);
+    ui.painter().rect_filled(done, CornerRadius::same(6), if resp.hovered() { t.accent_hover } else { t.accent });
+    ui.painter().text(done.center(), Align2::CENTER_CENTER, tr("Done"), crate::theme::semibold(11.5), t.accent_on);
     resp.clicked()
 }
 
@@ -430,4 +465,53 @@ fn flyout_id(key: &str) -> egui::Id {
 /// "Shift+Cmd+K" → "⇧⌘K" on macOS, "Ctrl+Shift+K" elsewhere.
 pub fn pretty_shortcut(s: &str) -> String {
     figcraft_engine::keymap::display(s, crate::shortcuts::platform())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::Shape;
+
+    /// The stroke widths `icon` paints with in a `size` box at `ppp` pixels per point.
+    fn widths(ppp: f32, icon: Icon, size: f32) -> Vec<f32> {
+        let ctx = egui::Context::default();
+        let input = || {
+            let mut i = egui::RawInput::default();
+            i.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(ppp);
+            i
+        };
+        ctx.run_ui(input(), |_| {}).textures_delta.clear();
+        let mut out =
+            ctx.run_ui(input(), |ui| icons::paint(ui.painter(), Rect::from_center_size(pos2(50.0, 50.0), vec2(size, size)), icon, Color32::WHITE));
+        out.textures_delta.clear();
+        assert_eq!(ctx.pixels_per_point(), ppp);
+        let mut w: Vec<f32> = out
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                Shape::LineSegment { stroke, .. } => Some(stroke.width),
+                Shape::Path(p) => Some(p.stroke.width),
+                Shape::Rect(r) => Some(r.stroke.width),
+                _ => None,
+            })
+            .filter(|w| *w > 0.0)
+            .collect();
+        w.dedup();
+        w
+    }
+
+    /// The flyout carets and the marks beside them draw with one stroke width (#737), and the
+    /// mode switcher's marks are the tool marks' size (#738).
+    #[test]
+    fn toolbar_marks_share_one_stroke_width() {
+        for ppp in [1.0, 1.5, 2.0] {
+            let mark = widths(ppp, Icon::Rectangle, GLYPH);
+            assert_eq!(mark.len(), 1, "one width at {ppp}×: {mark:?}");
+            assert_eq!(widths(ppp, Icon::Chevron, CARET), mark, "caret at {ppp}×");
+            assert_eq!(widths(ppp, Icon::Code, GLYPH), mark, "mode mark at {ppp}×");
+            for icon in [Icon::Frame, Icon::Text] {
+                assert_eq!(widths(ppp, icon, GLYPH), mark, "{icon:?} at {ppp}×");
+            }
+        }
+    }
 }

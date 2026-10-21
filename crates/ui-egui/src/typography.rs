@@ -186,9 +186,10 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
                 remember_family(ui.ctx(), &f);
                 apply_style(app, "fontFamily", json!(f));
                 ui.close();
-            } else if let Some(f) = pick.highlighted {
-                // The canvas shows the family the arrow keys are on.
-                app.preview_text(ui.ctx(), "text.style", text_style_params(ids, range, json!({"fontFamily": f})));
+            } else if let Some(h) = pick.hovered.or(pick.highlighted) {
+                // The canvas shows the hovered family (or the one the arrow keys are on);
+                // closing without picking ends the preview.
+                app.preview_text(ui.ctx(), "text.style", text_style_params(ids, range, json!({"fontFamily": h})));
             }
         });
     });
@@ -586,7 +587,7 @@ fn decoration_details(app: &mut FigApp, ui: &mut Ui, styles: &[TextStyle], apply
             if !auto
                 && ui
                     .add(
-                        egui::Label::new(egui::RichText::new(tr("Auto")).font(regular(11.0)).color(Tokens::get(ui.ctx()).accent))
+                        egui::Label::new(egui::RichText::new(tr("Auto")).font(regular(11.0)).color(Tokens::get(ui.ctx()).accent_text))
                             .sense(Sense::click()),
                     )
                     .on_hover_text(tip)
@@ -712,7 +713,7 @@ fn variable_axes(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextSt
     }
     if styles.iter().any(|s| !s.variations.is_empty()) {
         ui.add_space(8.0);
-        let r = ui.add(egui::Label::new(egui::RichText::new(tr("Reset to style")).font(regular(11.0)).color(t.accent)).sense(Sense::click()));
+        let r = ui.add(egui::Label::new(egui::RichText::new(tr("Reset to style")).font(regular(11.0)).color(t.accent_text)).sense(Sense::click()));
         if r.on_hover_text(tr("Back to the values the font style implies")).clicked() {
             app.run("text.setVariations", json!({"ids": ids, "variations": {}, "replace": true}));
         }
@@ -788,7 +789,7 @@ fn axis_slider(ui: &mut Ui, id: Id, axis: &figcraft_text::Axis, value: Option<f6
         let x = x_of(v);
         p.rect_filled(Rect::from_min_max(track.min, pos2(x, track.max.y)), CornerRadius::same(2), t.accent);
         p.circle_filled(pos2(x, track.center().y), 6.0, Color32::WHITE);
-        let ring = if resp.hovered() || resp.dragged() { t.accent } else { t.border_strong };
+        let ring = if resp.hovered() || resp.dragged() { crate::theme::ACCENT } else { t.border_strong };
         p.circle_stroke(pos2(x, track.center().y), 6.0, Stroke::new(1.0, ring));
     }
     if resp.double_clicked() {
@@ -898,14 +899,14 @@ fn feature_row(ui: &mut Ui, tag: &str, label: &str, on: Option<bool>, supported:
     match on {
         Some(true) => {
             ui.painter().rect_filled(b, CornerRadius::same(3), t.accent);
-            icons::paint(ui.painter(), b.shrink(1.5), Icon::Check, Color32::WHITE);
+            icons::paint(ui.painter(), b.shrink(1.5), Icon::Check, t.accent_on);
         }
         Some(false) => {
             ui.painter().rect_stroke(b, CornerRadius::same(3), Stroke::new(1.0, t.border_strong), StrokeKind::Inside);
         }
         None => {
             ui.painter().rect_filled(b, CornerRadius::same(3), t.accent);
-            ui.painter().line_segment([pos2(b.min.x + 3.5, b.center().y), pos2(b.max.x - 3.5, b.center().y)], Stroke::new(1.5, Color32::WHITE));
+            ui.painter().line_segment([pos2(b.min.x + 3.5, b.center().y), pos2(b.max.x - 3.5, b.center().y)], Stroke::new(1.5, t.accent_on));
         }
     }
     let col = if supported { t.text } else { t.text_tertiary };
@@ -1024,7 +1025,7 @@ fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, ti
     crate::a11y::text(&resp, tip, value);
     ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
     if editing.is_some() {
-        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.accent), StrokeKind::Inside);
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, crate::theme::ACCENT), StrokeKind::Inside);
     } else if resp.hovered() {
         ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
     }
@@ -1161,9 +1162,12 @@ pub(crate) struct FontPick {
     pub picked: Option<String>,
     /// The family Up and Down are on (Enter picks it).
     pub highlighted: Option<String>,
+    /// The family the pointer is over (the caller previews it on the canvas).
+    pub hovered: Option<String>,
 }
 
 /// The searchable family list: click a family, or step through it with Up and Down and press Enter.
+/// Hovering a family previews it on the canvas (closing without picking restores the original).
 pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool) -> FontPick {
     let t = Tokens::get(ui.ctx());
     let q_id = Id::new("font_query");
@@ -1248,10 +1252,11 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
             PickRow::Family(f) => Some(f.clone()),
             PickRow::Header(_) => None,
         });
-        return FontPick { picked: hi.and_then(family).or(first), highlighted: None };
+        return FontPick { picked: hi.and_then(family).or(first), highlighted: None, hovered: None };
     }
     let mut budget = 4;
     let mut picked = None;
+    let mut hovered_family = None;
     let mut area = egui::ScrollArea::vertical().max_height(LIST_HEIGHT).auto_shrink([false, true]);
     if let Some(y) = offset {
         area = area.vertical_scroll_offset(y);
@@ -1269,7 +1274,7 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
                     if hovered {
                         ui.painter().rect_filled(rect, CornerRadius::same(5), t.accent);
                     }
-                    let col = if hovered { Color32::WHITE } else { t.text };
+                    let col = if hovered { t.accent_on } else { t.text };
                     if current.is_some_and(|c| c.eq_ignore_ascii_case(f)) {
                         icons::paint(
                             ui.painter(),
@@ -1297,12 +1302,15 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
                     if resp.clicked() {
                         picked = Some(f.clone());
                     }
+                    if resp.hovered() {
+                        hovered_family = Some(f.clone());
+                    }
                 }
             }
         }
     });
     ui.data_mut(|d| d.insert_temp(hi_id.with("view"), (shown.state.offset.y, shown.inner_rect.height())));
-    FontPick { highlighted: hi.and_then(family), picked }
+    FontPick { highlighted: hi.and_then(family), picked, hovered: hovered_family }
 }
 
 #[cfg(test)]
