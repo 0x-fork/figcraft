@@ -1,0 +1,165 @@
+//! Sketch symbols → components and instances with overrides.
+
+use figcraft_doc::{Document, Node, NodeKind};
+use serde_json::{Value, json};
+
+use super::fixture::*;
+use super::{import, import_within_nodes};
+
+const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
+
+/// One page with `layers`, one "Symbols" page with `masters`, and `document` changes.
+fn open_doc(doc_json: Value, layers: Vec<Value>, masters: Vec<Value>) -> (Document, Vec<String>) {
+    let z = sketch_zip("50.2", 103, doc_json, &[page("P", "Page", layers), page("S", "Symbols", masters)], &[]);
+    import(&z, "f").unwrap()
+}
+
+fn open(layers: Vec<Value>, masters: Vec<Value>) -> (Document, Vec<String>) {
+    let mut d = document(&["P", "S"]);
+    d["do_objectID"] = json!("DOC");
+    open_doc(d, layers, masters)
+}
+
+fn named<'d>(doc: &'d Document, name: &str) -> Vec<&'d Node> {
+    doc.nodes().filter(|n| n.name == name).collect()
+}
+
+fn inside<'d>(doc: &'d Document, root: &Node, name: &str) -> &'d Node {
+    doc.subtree(root.id).into_iter().filter_map(|id| doc.node(id)).find(|n| n.name == name).unwrap_or_else(|| panic!("no {name}"))
+}
+
+fn chars(n: &Node) -> &str {
+    match &n.kind {
+        NodeKind::Text(td) => &td.characters,
+        other => panic!("{other:?}"),
+    }
+}
+
+fn instance_of<'d>(doc: &'d Document, name: &str) -> (&'d Node, &'d Node) {
+    let inst = named(doc, name).into_iter().find(|n| matches!(n.kind, NodeKind::Instance { .. })).unwrap_or_else(|| panic!("no instance {name}"));
+    let NodeKind::Instance { component, .. } = inst.kind else { panic!("not an instance") };
+    (inst, doc.node(component).unwrap())
+}
+
+fn button() -> Value {
+    master("M1", "S1", "Button", 100.0, 40.0, vec![text("Label", 10.0, 10.0, 80.0, 20.0, "Go", &[(0, 2, "Helvetica", 14.0, BLACK)])])
+}
+
+#[test]
+fn master_is_component_instance_links() {
+    let (doc, _) = open(vec![instance("I1", "S1", 0.0, 0.0, 100.0, 40.0, &[])], vec![button()]);
+    let (inst, main) = instance_of(&doc, "I1");
+    assert!(matches!(main.kind, NodeKind::Component { .. }));
+    assert_eq!(main.name, "Button");
+    assert_eq!(chars(inside(&doc, inst, "Label")), "Go");
+}
+
+#[test]
+fn string_override() {
+    let (doc, _) = open(vec![instance("I1", "S1", 0.0, 0.0, 100.0, 40.0, &[("Label_stringValue", json!("OK"))])], vec![button()]);
+    let (inst, main) = instance_of(&doc, "I1");
+    assert_eq!(chars(inside(&doc, inst, "Label")), "OK");
+    assert_eq!(chars(inside(&doc, main, "Label")), "Go");
+}
+
+#[test]
+fn nested_symbol_swap_and_hide() {
+    let icon_a = master("MA", "SA", "Icon A", 20.0, 20.0, vec![rect("Dot A", 0.0, 0.0, 20.0, 20.0)]);
+    let icon_b = master("MB", "SB", "Icon B", 20.0, 20.0, vec![rect("Dot B", 0.0, 0.0, 20.0, 20.0)]);
+    let card = master("MC", "SC", "Card", 100.0, 40.0, vec![instance("N", "SA", 0.0, 0.0, 20.0, 20.0, &[])]);
+    let swapped = instance("Swapped", "SC", 0.0, 0.0, 100.0, 40.0, &[("N_symbolID", json!("SB"))]);
+    let hidden = instance("Hidden", "SC", 0.0, 100.0, 100.0, 40.0, &[("N_symbolID", json!(""))]);
+    let (doc, _) = open(vec![swapped, hidden], vec![icon_a, icon_b, card]);
+    let (sw, _) = instance_of(&doc, "Swapped");
+    assert!(doc.subtree(sw.id).into_iter().filter_map(|i| doc.node(i)).any(|n| n.name == "Dot B"));
+    assert!(!doc.subtree(sw.id).into_iter().filter_map(|i| doc.node(i)).any(|n| n.name == "Dot A"));
+    let (hd, _) = instance_of(&doc, "Hidden");
+    let nested = doc.node(hd.children[0]).unwrap();
+    assert!(!nested.visible);
+}
+
+#[test]
+fn nested_path_override() {
+    let inner = master("MB", "SB", "Badge", 50.0, 20.0, vec![text("Count", 0.0, 0.0, 50.0, 20.0, "1", &[(0, 1, "Helvetica", 12.0, BLACK)])]);
+    let outer = master("MA", "SA", "Row", 100.0, 20.0, vec![instance("N", "SB", 50.0, 0.0, 50.0, 20.0, &[])]);
+    let (doc, _) = open(vec![instance("I1", "SA", 0.0, 0.0, 100.0, 20.0, &[("N/Count_stringValue", json!("42"))])], vec![inner, outer]);
+    let (inst, _) = instance_of(&doc, "I1");
+    assert_eq!(chars(inside(&doc, inst, "Count")), "42");
+}
+
+#[test]
+fn image_override() {
+    let mut bitmap = rect("Photo", 0.0, 0.0, 40.0, 40.0);
+    bitmap["_class"] = json!("bitmap");
+    bitmap["image"] = json!({"_class": "MSJSONFileReference", "_ref": "images/a.png"});
+    let m = master("M", "S", "Avatar", 40.0, 40.0, vec![bitmap]);
+    let png = {
+        let mut out = Vec::new();
+        image::RgbaImage::new(1, 1).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+        out
+    };
+    let mut png2 = Vec::new();
+    image::RgbaImage::new(2, 1).write_to(&mut std::io::Cursor::new(&mut png2), image::ImageFormat::Png).unwrap();
+    let inst = instance("I1", "S", 0.0, 0.0, 40.0, 40.0, &[("Photo_image", json!({"_class": "MSJSONFileReference", "_ref": "images/b.png"}))]);
+    let z = sketch_zip(
+        "50.2",
+        103,
+        document(&["P", "S"]),
+        &[page("P", "Page", vec![inst]), page("S", "Symbols", vec![m])],
+        &[("images/a.png", &png), ("images/b.png", &png2)],
+    );
+    let (doc, _) = import(&z, "f").unwrap();
+    assert_eq!(doc.images.len(), 2);
+}
+
+#[test]
+fn foreign_symbols_are_components() {
+    let mut d = document(&["P", "S"]);
+    d["foreignSymbols"] = json!([{"_class": "MSImmutableForeignSymbol", "sourceLibraryName": "Kit", "symbolMaster": button()}]);
+    let (doc, warnings) = open_doc(d, vec![instance("I1", "S1", 0.0, 0.0, 100.0, 40.0, &[])], vec![]);
+    let (_, main) = instance_of(&doc, "I1");
+    assert_eq!(main.name, "Button");
+    let page = doc.pages.iter().copied().find(|p| doc.is_ancestor(*p, main.id)).unwrap();
+    assert_eq!(doc.node(page).unwrap().name, "Library symbols");
+    assert!(warnings.iter().any(|w| w.contains("Kit")), "{warnings:?}");
+}
+
+#[test]
+fn missing_master_warns() {
+    let (doc, warnings) = open(vec![instance("Lost", "NOPE", 0.0, 0.0, 30.0, 30.0, &[])], vec![]);
+    let n = named(&doc, "Lost")[0];
+    assert!(matches!(n.kind, NodeKind::Frame));
+    assert_eq!((n.width, n.height), (30.0, 30.0));
+    assert!(warnings.iter().any(|w| w.contains("symbol")), "{warnings:?}");
+}
+
+#[test]
+fn self_containing_master_stops() {
+    let a = master("MA", "SA", "Loop A", 50.0, 50.0, vec![instance("Self", "SA", 0.0, 0.0, 10.0, 10.0, &[])]);
+    let b = master("MB", "SB", "Loop B", 50.0, 50.0, vec![instance("ToC", "SC", 0.0, 0.0, 10.0, 10.0, &[])]);
+    let c = master("MC", "SC", "Loop C", 50.0, 50.0, vec![instance("ToB", "SB", 0.0, 0.0, 10.0, 10.0, &[])]);
+    let (_, warnings) = open(vec![instance("I1", "SA", 0.0, 0.0, 50.0, 50.0, &[]), instance("I2", "SB", 100.0, 0.0, 50.0, 50.0, &[])], vec![a, b, c]);
+    assert!(warnings.iter().any(|w| w.contains("contains itself")), "{warnings:?}");
+}
+
+#[test]
+fn instance_explosion_is_bounded() {
+    let big = master("M", "S", "Big", 100.0, 100.0, (0..1000).map(|i| rect(&format!("R{i}"), 0.0, 0.0, 1.0, 1.0)).collect());
+    let many: Vec<Value> = (0..1000).map(|i| instance(&format!("I{i}"), "S", 0.0, 0.0, 100.0, 100.0, &[])).collect();
+    let z = sketch_zip("50.2", 103, document(&["P", "S"]), &[page("P", "Page", many), page("S", "Symbols", vec![big])], &[]);
+    let (doc, warnings) = import_within_nodes(&z, "f", 20_000).unwrap();
+    assert!(doc.nodes().count() <= 20_100);
+    assert!(warnings.iter().any(|w| w.contains("more than")), "{warnings:?}");
+}
+
+#[test]
+fn resized_instance_follows_constraints() {
+    // Pinned right with a fixed width (bits 1 and 2 cleared).
+    let pinned = with(rect("Tag", 80.0, 0.0, 20.0, 40.0), "resizingConstraint", json!(60));
+    let m = master("M", "S", "Bar", 100.0, 40.0, vec![pinned]);
+    let (doc, _) = open(vec![instance("Wide", "S", 0.0, 0.0, 200.0, 40.0, &[])], vec![m]);
+    let (inst, _) = instance_of(&doc, "Wide");
+    let tag = inside(&doc, inst, "Tag");
+    let b = doc.world_bounds(tag.id).unwrap();
+    assert!((b.x0 - 180.0).abs() < 1e-6 && (b.width() - 20.0).abs() < 1e-6, "{b:?}");
+}

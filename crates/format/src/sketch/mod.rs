@@ -19,6 +19,9 @@ mod path_tests;
 mod style;
 #[cfg(test)]
 mod style_tests;
+mod symbols;
+#[cfg(test)]
+mod symbols_tests;
 #[cfg(test)]
 mod tests;
 mod text;
@@ -68,16 +71,26 @@ pub fn try_import(bytes: &[u8], name: &str) -> Option<Result<(Document, Vec<Stri
 /// Build a document from a `.sketch` file. Returns it with the warnings about what was skipped or
 /// approximated. `name`: the document name.
 pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), FormatError> {
-    import_within(bytes, name, MAX_JSON_MEMBER)
+    import_parts(bytes, name, MAX_JSON_MEMBER, crate::fig::layer_budget(bytes.len()))
 }
 
 /// [`import`] reading pages of at most `max_member` bytes of JSON each.
+#[cfg(test)]
 pub(crate) fn import_within(bytes: &[u8], name: &str, max_member: u64) -> Result<(Document, Vec<String>), FormatError> {
+    import_parts(bytes, name, max_member, crate::fig::layer_budget(bytes.len()))
+}
+
+/// [`import`] with at most `max_nodes` layers.
+#[cfg(test)]
+pub(crate) fn import_within_nodes(bytes: &[u8], name: &str, max_nodes: usize) -> Result<(Document, Vec<String>), FormatError> {
+    import_parts(bytes, name, MAX_JSON_MEMBER, max_nodes)
+}
+
+fn import_parts(bytes: &[u8], name: &str, max_member: u64, max_nodes: usize) -> Result<(Document, Vec<String>), FormatError> {
     if bytes.starts_with(b"SQLite format 3\0") {
         return Err(FormatError::Io(TOO_OLD.into()));
     }
     let archive = Archive::open(bytes, max_member)?;
-    let max_nodes = crate::fig::layer_budget(bytes.len());
     let map = tree::to_rest(&archive, name, max_nodes);
     if map.too_old {
         return Err(FormatError::Io(TOO_OLD.into()));
@@ -92,6 +105,7 @@ pub(crate) fn import_within(bytes: &[u8], name: &str, max_member: u64) -> Result
     if archive.document.get("colorSpace").and_then(Value::as_i64) == Some(2) {
         doc.color_profile = figcraft_doc::color::ColorProfile::DisplayP3;
     }
+    fit_instances(&mut doc);
     warnings.extend(more);
     Ok((doc, warnings))
 }
@@ -107,6 +121,25 @@ fn embedded_fonts(document: &Value) -> Option<String> {
     }
     let list: Vec<&str> = families.iter().map(String::as_str).collect();
     Some(format!("the file has embedded fonts FigCraft doesn't use ({}); install them to see the text as designed", list.join(", ")))
+}
+
+/// Instances come in with their master's layers laid out at the master's size; resized ones lay
+/// them out for their own size by their constraints, innermost first.
+fn fit_instances(doc: &mut Document) {
+    let mut insts: Vec<(usize, figcraft_doc::NodeId, f64, f64)> = doc
+        .nodes()
+        .filter_map(|n| match n.kind {
+            figcraft_doc::NodeKind::Instance { component, .. } => {
+                let c = doc.node(component)?;
+                Some((doc.ancestors(n.id).len(), n.id, c.width, c.height))
+            }
+            _ => None,
+        })
+        .collect();
+    insts.sort_by_key(|i| std::cmp::Reverse(i.0));
+    for (_, id, w, h) in insts {
+        figcraft_layout::apply_constraints(doc, id, w, h);
+    }
 }
 
 fn corrupt(msg: impl Into<String>) -> FormatError {

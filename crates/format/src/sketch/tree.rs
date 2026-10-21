@@ -23,7 +23,12 @@ pub(crate) struct Map {
 }
 
 /// The mapping's state while walking the file.
-pub(crate) struct Cx {
+pub(crate) struct Cx<'a> {
+    /// `document.json`: shared styles and library copies.
+    pub document: &'a Value,
+    pub symbols: super::symbols::Symbols,
+    /// The symbols being expanded, outermost first (a symbol inside itself stops there).
+    pub chain: Vec<String>,
     pub warnings: Vec<String>,
     pub networks: Vec<Option<VectorNetwork>>,
     pub too_old: bool,
@@ -32,7 +37,7 @@ pub(crate) struct Cx {
     pub max_nodes: usize,
 }
 
-impl Cx {
+impl Cx<'_> {
     pub(crate) fn warn(&mut self, msg: impl Into<String>) {
         let msg = msg.into();
         if !self.warnings.contains(&msg) {
@@ -43,7 +48,17 @@ impl Cx {
 
 /// Map the pages of `archive` to a REST file JSON named `name`.
 pub(crate) fn to_rest(archive: &Archive, name: &str, max_nodes: usize) -> Map {
-    let mut cx = Cx { warnings: Vec::new(), networks: Vec::new(), too_old: false, nodes: 0, max_nodes };
+    let symbols = super::symbols::Symbols::read(&archive.document, &archive.pages);
+    let mut cx = Cx {
+        document: &archive.document,
+        symbols,
+        chain: Vec::new(),
+        warnings: Vec::new(),
+        networks: Vec::new(),
+        too_old: false,
+        nodes: 0,
+        max_nodes,
+    };
     let mut canvases = Vec::new();
     for (id, page) in &archive.pages {
         let mut node = JsonMap::new();
@@ -53,6 +68,12 @@ pub(crate) fn to_rest(archive: &Archive, name: &str, max_nodes: usize) -> Map {
         let kids = children(&mut cx, page, Affine::IDENTITY, (0.0, 0.0), 0, true);
         node.insert("children".into(), Value::Array(kids));
         canvases.push(Value::Object(node));
+    }
+    let foreign = std::mem::take(&mut cx.symbols.foreign);
+    if !foreign.is_empty() {
+        canvases.push(super::symbols::library_page(&mut cx, &foreign));
+        let libraries = cx.symbols.libraries.join(", ");
+        cx.warn(format!("symbols from the libraries {libraries} became local components on the page Library symbols"));
     }
     let json = json!({"name": name, "document": {"type": "DOCUMENT", "id": "0:0", "children": canvases}});
     Map { json, warnings: cx.warnings, networks: cx.networks, too_old: cx.too_old }
@@ -72,6 +93,12 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
     let class = str_field(l, "_class")?;
     if class == "shapeGroup" {
         return count(cx).then(|| super::path::shape_group(cx, l, parent, depth, root)).flatten();
+    }
+    if class == "symbolMaster" {
+        return count(cx).then(|| super::symbols::component(cx, l, parent, depth, root)).flatten();
+    }
+    if class == "symbolInstance" {
+        return count(cx).then(|| super::symbols::instance(cx, l, parent, depth, root)).flatten();
     }
     let ty = match class {
         "artboard" | "frame" => "FRAME",

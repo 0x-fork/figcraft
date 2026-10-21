@@ -6,6 +6,8 @@ use std::io::Write;
 use base64::Engine;
 use serde_json::{Value, json};
 
+use figcraft_doc::NodeKind;
+
 use crate::Session;
 
 /// A minimal `.sketch` zip with one page per `(id, name)`, saved by `app_version`.
@@ -144,4 +146,32 @@ fn sketch_font_families_match_installed_ones() {
     assert_eq!(m("Helvetica Neue"), None, "already right");
     assert_eq!(m("IBMPlex Sans").as_deref(), Some("IBM Plex Sans"));
     assert_eq!(m("Comic Sans"), None);
+}
+
+/// Editing a master changes its instances, and a resized instance's layout isn't an override.
+#[test]
+fn sketch_instances_stay_live() {
+    let tag = shape("rectangle", "Tag", [80.0, 0.0, 20.0, 40.0], json!({"resizingConstraint": 60, "points": []}));
+    let master = shape("symbolMaster", "Bar", [0.0, 0.0, 100.0, 40.0], json!({"symbolID": "S", "layers": [tag]}));
+    let inst = shape("symbolInstance", "Wide", [0.0, 100.0, 200.0, 40.0], json!({"symbolID": "S", "overrideValues": []}));
+    let data = base64::engine::general_purpose::STANDARD.encode(sketch_with("50.2", &[("A", "Page")], &[master, inst]));
+    let mut s = Session::new();
+    s.execute("file.open", &json!({"data": data, "name": "x.sketch"})).unwrap();
+    let find = |s: &Session, inst: bool| {
+        let doc = s.doc().unwrap();
+        let root = doc
+            .nodes()
+            .find(|n| if inst { matches!(n.kind, NodeKind::Instance { .. }) } else { matches!(n.kind, NodeKind::Component { .. }) })
+            .unwrap()
+            .id;
+        doc.subtree(root).into_iter().find(|id| doc.node(*id).is_some_and(|n| n.name == "Tag")).unwrap()
+    };
+    let (main_tag, inst_tag) = (find(&s, false), find(&s, true));
+    assert!(s.doc().unwrap().node(inst_tag).unwrap().overrides.is_empty(), "{:?}", s.doc().unwrap().node(inst_tag).unwrap().overrides);
+    s.execute("node.set", &json!({"id": main_tag, "props": {"fill": "#ff0000"}})).unwrap();
+    let doc = s.doc().unwrap();
+    let fill = &doc.node(inst_tag).unwrap().fills;
+    assert!(fill.iter().any(|p| matches!(p.kind, figcraft_doc::color::PaintKind::Solid { color } if color.r > 0.99 && color.g < 0.01)), "{fill:?}");
+    let b = doc.world_bounds(inst_tag).unwrap();
+    assert!((b.x0 - 180.0).abs() < 1e-6, "{b:?}");
 }

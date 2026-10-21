@@ -168,3 +168,21 @@ pub(crate) fn text(id: &str, x: f64, y: f64, w: f64, h: f64, string: &str, runs:
     l["textBehaviour"] = json!(1);
     l
 }
+
+/// A symbol master `symbol_id` holding `layers`.
+pub(crate) fn master(id: &str, symbol_id: &str, name: &str, w: f64, h: f64, layers: Vec<Value>) -> Value {
+    let mut l = artboard(id, name, 0.0, 0.0, w, h, layers);
+    l["_class"] = json!("symbolMaster");
+    l["symbolID"] = json!(symbol_id);
+    l
+}
+
+/// An instance of symbol `symbol_id` with `overrides` (`overrideName`, value).
+pub(crate) fn instance(id: &str, symbol_id: &str, x: f64, y: f64, w: f64, h: f64, overrides: &[(&str, Value)]) -> Value {
+    let mut l = layer("symbolInstance", id, id, x, y, w, h);
+    l["symbolID"] = json!(symbol_id);
+    l["scale"] = json!(1);
+    l["overrideValues"] =
+        Value::Array(overrides.iter().map(|(name, value)| json!({"_class": "overrideValue", "overrideName": name, "value": value})).collect());
+    l
+}
