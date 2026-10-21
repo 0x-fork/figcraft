@@ -149,7 +149,8 @@ fn import_parts(
 
 /// The note about fonts the file carries (Sketch 7x and newer can embed them, as `fontReferences`
 /// with `fontData`): FigCraft doesn't use fonts from inside documents, so their text shows in
-/// installed fonts.
+/// installed fonts. To do once `.figcraft` documents can carry fonts (loading them only for the
+/// session would lose them on the first save and reopen).
 fn embedded_fonts(document: &Value) -> Option<String> {
     let refs = document.get("fontReferences").and_then(Value::as_array)?;
     // A reference without font data only names a font the document uses.
