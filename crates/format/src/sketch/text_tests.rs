@@ -211,3 +211,27 @@ fn line_spacing_behaviour_moves_text() {
     assert!((y("B0") - 106.6).abs() < 1e-6, "{}", y("B0"));
     assert!((y("B1") - 93.4).abs() < 1e-6, "{}", y("B1"));
 }
+
+/// A variable font's axes (Sketch keys them by the tag as a number: 2003265652 is `wght`).
+#[test]
+fn font_variations() {
+    let mut t = text("Wide", 0.0, 0.0, 200.0, 50.0, "Orbit", &[(0, 5, "Skia", 40.0, BLACK)]);
+    t["attributedString"]["attributes"][0]["attributes"]["MSAttributedStringFontAttribute"]["attributes"]["variation"] =
+        json!({"2003265652": 3, "2003072104": 0.65, "junk": 1, "1": "x"});
+    let (doc, _) = open(vec![t]);
+    let v = &data(&doc, "Wide").style.variations;
+    assert_eq!(v.get("wght"), Some(&3.0));
+    assert_eq!(v.get("wdth"), Some(&0.65));
+    assert_eq!(v.len(), 2, "{v:?}");
+}
+
+/// Font references without font data are only the fonts the document uses: no note.
+#[test]
+fn font_references_without_data_are_no_embedded_fonts() {
+    let mut d = document(&["P"]);
+    d["fontReferences"] =
+        json!([{"_class": "fontReference", "fontFamilyName": "Skia", "fontFileName": "Skia.ttf", "postscriptNames": ["Skia-Regular"]}]);
+    let z = sketch_zip("2026.3.1", 196, d, &[page("P", "Page", vec![])], &[]);
+    let (_, warnings) = import(&z, "f").unwrap();
+    assert!(!warnings.iter().any(|w| w.contains("embedded")), "{warnings:?}");
+}

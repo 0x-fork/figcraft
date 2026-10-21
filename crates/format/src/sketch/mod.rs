@@ -127,12 +127,19 @@ fn import_parts(bytes: &[u8], name: &str, max_member: u64, max_nodes: usize) -> 
     Ok((doc, warnings))
 }
 
-/// The note about fonts the file carries (Sketch 7x and newer can embed them): FigCraft doesn't
-/// use fonts from inside documents, so their text shows in installed fonts.
+/// The note about fonts the file carries (Sketch 7x and newer can embed them, as `fontReferences`
+/// with `fontData`): FigCraft doesn't use fonts from inside documents, so their text shows in
+/// installed fonts.
 fn embedded_fonts(document: &Value) -> Option<String> {
     let refs = document.get("fontReferences").and_then(Value::as_array)?;
-    let families: BTreeSet<String> =
-        refs.iter().filter_map(|r| r.get("fontFamilyName").and_then(Value::as_str)).map(|f| f.chars().take(64).collect()).take(20).collect();
+    // A reference without font data only names a font the document uses.
+    let families: BTreeSet<String> = refs
+        .iter()
+        .filter(|r| r.get("fontData").is_some())
+        .filter_map(|r| r.get("fontFamilyName").and_then(Value::as_str))
+        .map(|f| f.chars().take(64).collect())
+        .take(20)
+        .collect();
     if families.is_empty() {
         return None;
     }

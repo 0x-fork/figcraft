@@ -129,6 +129,9 @@ pub(crate) fn type_style(cx: &mut Cx, a: &Value) -> Value {
         cx.warn("text without a font uses Helvetica");
     }
     let mut s = json!({"fontFamily": family, "fontStyle": style, "fontSize": size.min(10_000.0)});
+    if let Some(v) = font.and_then(|f| f.get("variation")).and_then(variations) {
+        s["fontVariations"] = v;
+    }
     let p = a.get("paragraphStyle");
     let line = |k: &str| p.and_then(|p| p.get(k)).and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0);
     if let Some(lh) = line("maximumLineHeight").or_else(|| line("minimumLineHeight")) {
@@ -158,6 +161,23 @@ pub(crate) fn type_style(cx: &mut Cx, a: &Value) -> Value {
     }
     s["fills"] = json!([paint]);
     s
+}
+
+/// A font's `variation` (axis values keyed by the axis tag read as a big-endian number, as Apple's
+/// text engine keys them: 2003265652 is `wght`) as `{tag: value}`; `None` when it has none.
+fn variations(v: &Value) -> Option<Value> {
+    let axes: JsonMap<String, Value> = v
+        .as_object()?
+        .iter()
+        .take(64)
+        .filter_map(|(k, val)| {
+            let tag = u32::try_from(k.parse::<u64>().ok()?).ok()?.to_be_bytes();
+            let tag = std::str::from_utf8(&tag).ok().filter(|t| t.chars().all(|c| c.is_ascii_graphic()))?.to_string();
+            let val = val.as_f64().filter(|x| x.is_finite())?;
+            Some((tag, json!(val.clamp(-1e5, 1e5))))
+        })
+        .collect();
+    (!axes.is_empty()).then_some(Value::Object(axes))
 }
 
 /// Family and style of a font from its PostScript name: "HelveticaNeue-Bold" → ("Helvetica Neue",
