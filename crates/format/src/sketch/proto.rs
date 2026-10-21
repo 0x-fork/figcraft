@@ -74,7 +74,8 @@ pub(crate) fn export_settings(cx: &mut Cx, l: &Value, node: &mut JsonMap<String,
     }
 }
 
-/// An artboard's layout grid (columns, rows) and square grid as REST `layoutGrids`.
+/// An artboard's layout grid (columns, rows) and square grid as REST `layoutGrids`, hidden: Sketch
+/// shows them only while its layout (or grid) view is turned on.
 pub(crate) fn layout_grids(l: &Value, h: f64, node: &mut JsonMap<String, Value>) {
     let mut out = Vec::new();
     if let Some(g) = l.get("layout").filter(|g| bool_field(g, "isEnabled") != Some(false)) {
@@ -83,21 +84,21 @@ pub(crate) fn layout_grids(l: &Value, h: f64, node: &mut JsonMap<String, Value>)
             && let (Some(count), Some(width)) = (num("numberOfColumns"), num("columnWidth"))
         {
             out.push(json!({"pattern": "COLUMNS", "alignment": "MIN", "count": count.min(1000.0), "sectionSize": width.min(1e5),
-                "gutterSize": num("gutterWidth").unwrap_or(0.0).min(1e5), "offset": num("horizontalOffset").unwrap_or(0.0).min(1e5), "visible": true}));
+                "gutterSize": num("gutterWidth").unwrap_or(0.0).min(1e5), "offset": num("horizontalOffset").unwrap_or(0.0).min(1e5), "visible": false}));
         }
         if bool_field(g, "drawHorizontal") == Some(true) {
             let gutter = num("gutterHeight").unwrap_or(0.0).min(1e5);
             let section = (gutter * num("rowHeightMultiplication").unwrap_or(1.0)).min(1e5);
             if section > 0.0 {
                 let count = (h / (section + gutter)).floor().clamp(1.0, 1000.0);
-                out.push(json!({"pattern": "ROWS", "alignment": "MIN", "count": count, "sectionSize": section, "gutterSize": gutter, "offset": 0, "visible": true}));
+                out.push(json!({"pattern": "ROWS", "alignment": "MIN", "count": count, "sectionSize": section, "gutterSize": gutter, "offset": 0, "visible": false}));
             }
         }
     }
     if let Some(g) = l.get("grid").filter(|g| bool_field(g, "isEnabled") != Some(false))
         && let Some(size) = g.get("gridSize").and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0)
     {
-        out.push(json!({"pattern": "GRID", "sectionSize": size.min(1e5), "visible": true}));
+        out.push(json!({"pattern": "GRID", "sectionSize": size.min(1e5), "visible": false}));
     }
     if !out.is_empty() {
         node.insert("layoutGrids".into(), Value::Array(out));

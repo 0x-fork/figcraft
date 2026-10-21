@@ -101,6 +101,8 @@ fn layout_and_square_grids() {
     let grids = format!("{:?}", node(&doc, "Board").grids);
     assert_eq!(node(&doc, "Board").grids.len(), 2, "{grids}");
     assert!(grids.contains("12") && grids.contains("16"), "{grids}");
+    // Hidden, as Sketch shows them only when its layout view is on.
+    assert!(node(&doc, "Board").grids.iter().all(|g| !g.visible), "{grids}");
 }
 
 #[test]
