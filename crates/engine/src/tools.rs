@@ -1892,7 +1892,17 @@ impl Session {
             self.tool.overlay.marquee = None;
             self.cancel_interaction()?;
         }
-        let Some(leaf) = self.hit(&doc, page, ev.p(), ev.tol() * 2.0) else { return Ok(()) };
+        let hit_here = self.hit(&doc, page, ev.p(), ev.tol() * 2.0);
+        // A double-click anywhere on the one selected shape edits its points, like Enter: also
+        // inside a hollow (unfilled) shape, where the hit test finds nothing under the pointer.
+        if let [id] = sel[..]
+            && doc.node(id).is_some_and(|n| n.kind.is_shape())
+            && doc.world_bounds(id).is_some_and(|b| b.contains(ev.p()))
+            && hit_here.is_none_or(|h| h == id || doc.is_ancestor(id, h))
+        {
+            return crate::vectoredit::begin_many(self, &[id]);
+        }
+        let Some(leaf) = hit_here else { return Ok(()) };
         let target = select_target(&doc, leaf, &sel, true);
         // Text: edit at the click.
         if doc.node(target).is_some_and(|n| matches!(n.kind, NodeKind::Text(_)))
@@ -1910,8 +1920,11 @@ impl Session {
             return Ok(());
         }
         // Shapes and vectors: enter vector edit mode (every selected shape, the clicked one active).
-        if doc.node(target).is_some_and(|n| n.kind.is_shape()) && sel.contains(&target) {
-            let mut ids = crate::vectoredit::enter_targets(&doc, &sel).unwrap_or_default();
+        // A shape clicked on its own edits even when the click that selects it and the double-click
+        // arrived in one frame (a press and a release the canvas took together), so no selection was
+        // made yet; another layer's shapes are reached one level at a time, as below.
+        if doc.node(target).is_some_and(|n| n.kind.is_shape()) && (sel.contains(&target) || select_target(&doc, leaf, &sel, false) == target) {
+            let mut ids = if sel.contains(&target) { crate::vectoredit::enter_targets(&doc, &sel).unwrap_or_default() } else { vec![target] };
             ids.retain(|i| *i != target);
             ids.insert(0, target);
             return crate::vectoredit::begin_many(self, &ids);

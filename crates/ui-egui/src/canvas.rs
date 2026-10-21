@@ -604,7 +604,11 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
         open_context_menu(app, pos, mods.command);
         return true;
     }
-    if resp.double_clicked() {
+    // A third quick click is counted as a triple, not a double (a click elsewhere in between still
+    // leaves its time in the sequence): it means the same here — edit, enter, open — unless a
+    // vector or text is being edited, where a triple already has its own meaning.
+    let editing = app.session.ds().is_ok_and(|d| d.vector_edit.is_some() || d.text_edit.is_some());
+    if resp.double_clicked() || (resp.triple_clicked() && !editing) {
         let ev = pointer_event(app, PointerKind::DoubleClick, pos, &mods);
         if let Err(e) = app.session.pointer(&ev) {
             app.toast(e.to_string());
@@ -654,6 +658,13 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
     }
     if let Some(k) = kind {
         send(app, k, pos, &mods);
+        // The pointer also let go within this frame (a quick click, or a slow frame): the tools get
+        // the release too, so the press's gesture ends — a quick click with a shape tool still
+        // draws and returns to Move, and a double-click right after drawing finds the Move tool.
+        if matches!(k, PointerKind::Down) && primary_released {
+            app.canvas.dragging = false;
+            send(app, PointerKind::Up, pos, &mods);
+        }
     }
     true
 }
