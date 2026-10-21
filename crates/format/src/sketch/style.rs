@@ -335,7 +335,7 @@ pub(crate) fn tint_of(style: Option<&Value>, legacy: bool) -> Option<Value> {
             None => legacy,
         }
     })?;
-    (f.get("fillType").and_then(Value::as_i64).unwrap_or(0) == 0).then(|| f.get("color").cloned()).flatten()
+    (f.get("fillType").and_then(Value::as_i64).unwrap_or(0) == 0).then(|| f.get("color").filter(|c| c.is_object()).cloned()).flatten()
 }
 
 /// Recolour `layers` (Sketch JSON) with tint `color`: every enabled fill and border takes it,
@@ -382,7 +382,9 @@ pub(crate) fn tint_layers(layers: &mut [Value], color: &Value, depth: usize) {
 fn tinted(old: Option<&Value>, tint: &Value) -> Value {
     let alpha = |c: Option<&Value>| c.and_then(|c| num(c, "alpha")).unwrap_or(1.0).clamp(0.0, 1.0);
     let mut c = tint.clone();
-    c["alpha"] = json!(alpha(Some(tint)) * alpha(old));
+    if let Some(m) = c.as_object_mut() {
+        m.insert("alpha".into(), json!(alpha(Some(tint)) * alpha(old)));
+    }
     c
 }
 

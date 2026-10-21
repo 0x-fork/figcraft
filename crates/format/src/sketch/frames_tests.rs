@@ -383,3 +383,17 @@ fn cut_corners_become_paths() {
     assert_eq!(arc.vertices.len(), 8);
     assert!(arc.segments.iter().any(|g| g.ta != (0.0, 0.0)), "the corners are arcs");
 }
+
+/// Tints and colour overrides that aren't colours, and fills that aren't objects, are junk: left
+/// alone, never a panic.
+#[test]
+fn junk_tints_and_colour_overrides() {
+    let child = styled(rect("Child", 0.0, 0.0, 10.0, 10.0), "fills", json!([solid_fill(0.0, 0.0, 0.0, 1.0)]));
+    let mut g = group("G", 0.0, 0.0, 10.0, 10.0, vec![child.clone()]);
+    g["style"] = json!({"_class": "style", "fills": [{"_class": "fill", "isEnabled": true, "fillType": 0, "layeringType": 1, "color": 5}]});
+    let (_, _) = open(vec![g]);
+    let mut odd = rect("L", 0.0, 0.0, 10.0, 10.0);
+    odd["style"]["fills"] = json!([true]);
+    let m = master("M", "S", "Odd", 10.0, 10.0, vec![odd]);
+    let _ = open_symbols(vec![instance("I", "S", 0.0, 0.0, 10.0, 10.0, &[("L_fillColor", color(1.0, 0.0, 0.0, 1.0))])], vec![m]);
+}

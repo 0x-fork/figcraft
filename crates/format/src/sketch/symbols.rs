@@ -409,10 +409,15 @@ fn apply(
                 }
                 // A colour override on a shape or group: its first fill's colour.
                 if let Some(c) = get("fillColor").filter(|c| c.is_object())
-                    && let Some(f) = l.get_mut("style").and_then(|s| s.get_mut("fills")).and_then(Value::as_array_mut).and_then(|f| f.first_mut())
+                    && let Some(f) = l
+                        .get_mut("style")
+                        .and_then(|s| s.get_mut("fills"))
+                        .and_then(Value::as_array_mut)
+                        .and_then(|f| f.first_mut())
+                        .and_then(Value::as_object_mut)
                 {
-                    f["fillType"] = json!(0);
-                    f["color"] = c.clone();
+                    f.insert("fillType".into(), json!(0));
+                    f.insert("color".into(), c.clone());
                 }
             }
         }

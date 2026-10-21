@@ -89,6 +89,81 @@ fn junk_never_panics() {
     let _ = import(&raw_zip(&document(&["P"]), &json!("x"), &[], &[]), "f");
 }
 
+/// A file using most of what the importer reads (Sketch 2025 frames and stacks, tints, symbols
+/// with overrides, text, paths, gradients, masks, fades, grids) with each of its values in turn
+/// replaced by a value of another type: every import ends without a panic.
+#[test]
+fn junk_values_never_panic() {
+    let text_layer = text("T", 0.0, 0.0, 80.0, 20.0, "Go", &[(0, 2, "Helvetica", 14.0, [0.0, 0.0, 0.0, 1.0])]);
+    let dot = styled(rect("Dot", 0.0, 0.0, 10.0, 10.0), "fills", json!([solid_fill(0.0, 0.0, 0.0, 1.0)]));
+    let mut tint = solid_fill(1.0, 0.0, 0.0, 1.0);
+    tint["layeringType"] = json!(1);
+    let mut icon = master("MI", "SI", "Icon", 24.0, 24.0, vec![dot.clone()]);
+    icon["groupBehavior"] = json!(2);
+    icon["style"]["fills"] = json!([tint]);
+    let mut chip = stack(master("MC", "SC", "Chip", 60.0, 24.0, vec![text_layer.clone(), instance("N", "SI", 0.0, 0.0, 24.0, 24.0, &[])]), 0, 1, 1, 6.0, [8.0, 4.0, 10.0, 4.0]);
+    chip["style"]["corners"] = json!({"_class": "MSImmutableStyleCorners", "radii": [12], "style": 2, "smoothing": 0.6});
+    let over = [("T_stringValue", json!("Longer")), ("N_fillColor", color(0.0, 1.0, 0.0, 1.0)), ("T_textColor", color(0.0, 0.0, 1.0, 1.0)), ("N_isVisible", json!("0"))];
+    let inst = instance("I", "SC", 0.0, 100.0, 200.0, 24.0, &over);
+    let grad = json!({"_class": "fill", "isEnabled": true, "fillType": 1, "color": color(0.0, 0.0, 0.0, 1.0),
+        "gradient": {"_class": "gradient", "gradientType": 0, "from": "{0, 0}", "to": "{1, 1}", "stops": [
+            {"_class": "gradientStop", "position": 0, "color": color(0.0, 0.0, 0.0, 1.0)}, {"_class": "gradientStop", "position": 1, "color": color(1.0, 1.0, 1.0, 0.0)}]}});
+    let mut faded = styled(rect("Faded", 0.0, 0.0, 30.0, 30.0), "fills", json!([grad.clone()]));
+    faded["style"]["contextSettings"] = json!({"_class": "graphicsContextSettings", "opacity": 1, "isProgressive": true, "gradient": grad["gradient"].clone()});
+    let mask = with(with(styled(rect("Mask", 0.0, 0.0, 30.0, 30.0), "fills", json!([grad])), "hasClippingMask", json!(true)), "clippingMaskMode", json!(1));
+    let path = shape_path("P", 0.0, 0.0, 20.0, 20.0, &[(0.0, 0.0), (1.0, 0.0), (0.5, 1.0)], true);
+    let mut g = group("G", 0.0, 0.0, 100.0, 100.0, vec![mask, faded, path, dot, text_layer]);
+    g["style"] = json!({"_class": "style", "fills": [tint_fill()]});
+    let mut frame = stack(frame_group("F", 0.0, 0.0, 300.0, 300.0, vec![g, inst]), 1, 0, 3, 8.0, [0.0; 4]);
+    frame["layout"] = json!({"_class": "layoutGrid", "isEnabled": true, "columnWidth": 20, "gutterWidth": 10, "numberOfColumns": 4, "drawVertical": true});
+    let pages = [page("P", "Page", vec![frame]), page("S", "Symbols", vec![icon, chip])];
+    // Every value's path, with each junk value in turn (a deterministic sample keeps it quick).
+    fn paths(v: &serde_json::Value, at: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+        out.push(at.clone());
+        match v {
+            serde_json::Value::Object(m) => {
+                for (k, c) in m {
+                    at.push(k.clone());
+                    paths(c, at, out);
+                    at.pop();
+                }
+            }
+            serde_json::Value::Array(a) => {
+                for (i, c) in a.iter().enumerate() {
+                    at.push(i.to_string());
+                    paths(c, at, out);
+                    at.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+    let junk = [json!(null), json!(5), json!(-1e300), json!("x"), json!(true), json!([]), json!({}), json!([1, "a"])];
+    for (pi, p) in pages.iter().enumerate() {
+        let mut all = Vec::new();
+        paths(p, &mut Vec::new(), &mut all);
+        for (n, at) in all.iter().enumerate().skip(1) {
+            let mut changed = pages.clone();
+            let mut v = &mut changed[pi];
+            for k in at {
+                v = match v {
+                    serde_json::Value::Object(m) => m.get_mut(k).unwrap(),
+                    serde_json::Value::Array(a) => &mut a[k.parse::<usize>().unwrap()],
+                    _ => unreachable!(),
+                };
+            }
+            *v = junk[n % junk.len()].clone();
+            let _ = import(&sketch_zip("2026.3.1", 196, document(&["P", "S"]), &changed, &[]), "f");
+        }
+    }
+}
+
+fn tint_fill() -> serde_json::Value {
+    let mut f = solid_fill(0.0, 0.0, 1.0, 1.0);
+    f["layeringType"] = json!(1);
+    f
+}
+
 #[test]
 fn deep_nesting_does_not_fail_the_file() {
     let mut deep = rect("R", 0.0, 0.0, 1.0, 1.0);
