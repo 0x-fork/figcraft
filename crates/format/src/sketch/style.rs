@@ -137,7 +137,12 @@ fn gradient(g: &Value, w: f64, h: f64) -> Option<Value> {
         }
         // Sketch starts on the right and turns clockwise; from/to don't change it.
         2 => ("GRADIENT_ANGULAR", json!([pt((0.5, 0.5)), pt((1.0, 0.5)), pt((0.5, 1.0))])),
-        _ => ("GRADIENT_LINEAR", json!([pt(from), pt(to)])),
+        // Square to the line in pixels, as Sketch draws it (FigCraft's default is square in 0–1).
+        _ => {
+            let (dx, dy) = ((to.0 - from.0) * w, (to.1 - from.1) * h);
+            let across = if w > 0.0 && h > 0.0 { (from.0 - dy / w, from.1 + dx / h) } else { (from.0 - (to.1 - from.1), from.1 + (to.0 - from.0)) };
+            ("GRADIENT_LINEAR", json!([pt(from), pt(to), pt(across)]))
+        }
     };
     Some(json!({"type": ty, "gradientHandlePositions": handles, "gradientStops": stops}))
 }

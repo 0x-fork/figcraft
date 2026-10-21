@@ -318,3 +318,49 @@ fn bitmap_color_controls_become_filters() {
     assert_eq!(img.filters.contrast, 0.0);
     assert!(warnings.iter().any(|w| w.contains("hue")), "{warnings:?}");
 }
+
+/// An alpha mask (`clippingMaskMode` 1) only masks: Sketch doesn't draw its fill under the content.
+#[test]
+fn alpha_masks_draw_no_copy() {
+    let fill = json!([solid_fill(0.0, 0.0, 0.0, 1.0)]);
+    let m = styled(with(with(r("Fade"), "hasClippingMask", json!(true)), "clippingMaskMode", json!(1)), "fills", fill);
+    let (doc, _) = open(vec![group("G", 0.0, 0.0, 100.0, 50.0, vec![m, r("Photo")])]);
+    assert!(!doc.nodes().any(|n| n.name == "Fade (drawn)"));
+    assert_eq!(node(&doc, "Fade").mask_type, figcraft_doc::MaskType::Alpha);
+}
+
+/// A progressive opacity (Fade: `contextSettings.isProgressive` with a gradient) becomes an alpha
+/// mask of that gradient over the layer, in a group in the layer's place.
+#[test]
+fn fades_become_alpha_masks() {
+    let fade = json!({"_class": "graphicsContextSettings", "blendMode": 0, "opacity": 1, "isProgressive": true,
+        "gradient": {"_class": "gradient", "gradientType": 0, "from": "{0.5, 0}", "to": "{0.5, 1}", "stops": [
+            {"_class": "gradientStop", "position": 0, "color": color(0.0, 0.0, 0.0, 1.0)}, {"_class": "gradientStop", "position": 1, "color": color(0.0, 0.0, 0.0, 0.0)}]}});
+    let l = styled(rect("Photo", 30.0, 40.0, 100.0, 50.0), "contextSettings", fade);
+    let (doc, _) = open(vec![group("G", 0.0, 0.0, 200.0, 200.0, vec![l])]);
+    // The group takes the layer's name too.
+    let photo = doc.nodes().find(|n| n.name == "Photo" && matches!(n.kind, NodeKind::Rectangle)).unwrap();
+    let wrap = doc.node(photo.parent.unwrap()).unwrap();
+    assert_eq!(wrap.name, "Photo");
+    assert!(matches!(wrap.kind, NodeKind::Group), "{:?}", wrap.kind);
+    let mask = doc.node(wrap.children[0]).unwrap();
+    assert!(mask.is_mask && mask.mask_type == figcraft_doc::MaskType::Alpha);
+    assert!(matches!(mask.fills[0].kind, PaintKind::Gradient(_)));
+    assert_eq!(doc.world_bounds(mask.id), doc.world_bounds(photo.id));
+    let b = doc.world_bounds(photo.id).unwrap();
+    assert_eq!((b.x0, b.y0, b.width(), b.height()), (30.0, 40.0, 100.0, 50.0));
+}
+
+/// Sketch's linear gradients run square in pixels: on a 200×100 layer, from the top left to the
+/// bottom right, the stripes are at right angles to that line in pixels, not in the layer's 0–1.
+#[test]
+fn linear_gradients_are_square_in_pixels() {
+    let g = json!({"_class": "fill", "isEnabled": true, "fillType": 1, "color": color(0.0, 0.0, 0.0, 1.0),
+        "gradient": {"_class": "gradient", "gradientType": 0, "from": "{0, 0}", "to": "{1, 1}", "stops": [
+            {"_class": "gradientStop", "position": 0, "color": color(0.0, 0.0, 0.0, 1.0)}, {"_class": "gradientStop", "position": 1, "color": color(1.0, 1.0, 1.0, 1.0)}]}});
+    let (doc, _) = open(vec![styled(rect("Wide", 0.0, 0.0, 200.0, 100.0), "fills", json!([g]))]);
+    let PaintKind::Gradient(g) = &node(&doc, "Wide").fills[0].kind else { panic!("not a gradient") };
+    // The line runs (200, 100) in pixels; square to it, (−100, 200), is (−0.5, 2) in 0–1.
+    let (wx, wy) = ((g.width.0 - g.from.0) * 200.0, (g.width.1 - g.from.1) * 100.0);
+    assert!((wx * 200.0 + wy * 100.0).abs() < 1e-6, "{g:?}");
+}

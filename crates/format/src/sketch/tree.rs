@@ -267,7 +267,45 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
         node.insert("children".into(), Value::Array(kids));
         super::stack::apply(l, &mut node);
     }
-    Some(Value::Object(node))
+    Some(fade(cx, l, node, world, w, h))
+}
+
+/// Layer `node` with a progressive opacity (Fade: the style's `contextSettings` with
+/// `isProgressive` and a gradient whose stops' opacity is the layer's) as a group in its place
+/// holding an alpha mask of that gradient over it; FigCraft has no progressive opacity. Other
+/// layers as they are.
+fn fade(cx: &mut Cx, l: &Value, node: JsonMap<String, Value>, world: Affine, w: f64, h: f64) -> Value {
+    let ctx = l.get("style").and_then(|s| s.get("contextSettings"));
+    let gradient = ctx.filter(|c| c.get("isProgressive").and_then(Value::as_bool) == Some(true)).and_then(|c| c.get("gradient"));
+    let Some(gradient) = gradient else { return Value::Object(node) };
+    let fill = json!({"_class": "fill", "isEnabled": true, "fillType": 1, "gradient": gradient});
+    let fills = super::style::fills(cx, &json!({"fills": [fill]}), w, h);
+    if fills.is_empty() {
+        return Value::Object(node);
+    }
+    let id = str_field(l, "do_objectID").unwrap_or("layer");
+    let identity = json!([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+    let bb = world.transform_rect_bbox(Rect::new(0.0, 0.0, w, h));
+    let abs = json!({"x": bb.x0, "y": bb.y0, "width": bb.width(), "height": bb.height()});
+    let mut inner = node.clone();
+    let mut group = JsonMap::new();
+    for k in ["relativeTransform", "absoluteBoundingBox", "constraints", "visible", "locked"] {
+        if let Some(v) = node.get(k) {
+            group.insert(k.into(), v.clone());
+        }
+    }
+    group.insert("type".into(), json!("GROUP"));
+    group.insert("id".into(), json!(format!("{id}-fade")));
+    group.insert("name".into(), node.get("name").cloned().unwrap_or_else(|| json!("Fade")));
+    group.insert("size".into(), json!({"x": w, "y": h}));
+    group.insert("absoluteBoundingBox".into(), abs.clone());
+    inner.insert("relativeTransform".into(), identity.clone());
+    inner.insert("absoluteBoundingBox".into(), abs.clone());
+    inner.insert("visible".into(), json!(true));
+    let mask = json!({"type": "RECTANGLE", "id": format!("{id}-fade-mask"), "name": "Fade", "visible": true, "size": {"x": w, "y": h},
+        "relativeTransform": identity, "absoluteBoundingBox": abs, "fills": fills, "isMask": true, "maskType": "ALPHA"});
+    group.insert("children".into(), json!([mask, Value::Object(inner)]));
+    Value::Object(group)
 }
 
 /// A Sketch 2025+ group that is a frame: it behaves as a frame or a graphic, or clips.
@@ -524,9 +562,10 @@ pub(crate) fn children(cx: &mut Cx, l: &Value, world: Affine, size: (f64, f64), 
     out
 }
 
-/// A plain copy of mask `n` when its style shows something (fills, borders or effects).
+/// A plain copy of outline mask `n` when its style shows something (fills, borders or effects).
+/// An alpha mask only masks.
 fn drawn_mask(n: &Value) -> Option<Value> {
-    if n.get("isMask").and_then(Value::as_bool) != Some(true) {
+    if n.get("isMask").and_then(Value::as_bool) != Some(true) || n.get("maskType").and_then(Value::as_str) == Some("ALPHA") {
         return None;
     }
     let shows =
