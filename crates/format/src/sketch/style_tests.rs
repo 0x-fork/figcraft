@@ -233,3 +233,18 @@ fn style_on_frames_and_text_kinds_untouched() {
     assert!(matches!(node(&doc, "Board").kind, NodeKind::Frame));
     assert_eq!(node(&doc, "Board").fills.len(), 1);
 }
+
+#[test]
+fn shape_group_masks_clip() {
+    // Sketch 51 and older: the mask is a shape group.
+    let inner = with(r("Outline"), "booleanOperation", json!(-1));
+    let mask = with(shape_group("Card", 0.0, 0.0, 100.0, 50.0, vec![inner]), "hasClippingMask", json!(true));
+    let a = rect("A", 0.0, 0.0, 300.0, 300.0);
+    let b = with(r("B"), "shouldBreakMaskChain", json!(true));
+    let (doc, _) = open(vec![group("G", 0.0, 0.0, 300.0, 300.0, vec![mask, a, b])]);
+    let m = node(&doc, "Card");
+    assert!(m.is_mask);
+    let holder = doc.node(m.parent.unwrap()).unwrap();
+    let kids: Vec<&str> = holder.children.iter().map(|c| doc.node(*c).unwrap().name.as_str()).collect();
+    assert_eq!(kids, ["Card", "A"]);
+}

@@ -143,6 +143,7 @@ pub(crate) fn shape_group(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, 
                 super::style::clear(m);
                 super::style::apply(cx, st, cw, ch, m);
             }
+            super::tree::mask(l, m);
         }
         return Some(node);
     }
@@ -166,6 +167,7 @@ pub(crate) fn shape_group(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, 
     let mut node = base(l, "BOOLEAN_OPERATION", parent, world, w, h, root);
     node.insert("booleanOperation".into(), json!(op));
     node.insert("children".into(), Value::Array(chain));
+    super::tree::mask(l, &mut node);
     if let Some(st) = l.get("style") {
         super::style::apply(cx, st, w, h, &mut node);
     }

@@ -95,10 +95,7 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
         let shape = super::path::shape(cx, l, w, h)?;
         super::path::put_shape(cx, shape, &mut node);
     }
-    if bool_field(l, "hasClippingMask") == Some(true) {
-        node.insert("isMask".into(), json!(true));
-        node.insert("maskType".into(), json!(if l.get("clippingMaskMode").and_then(Value::as_i64) == Some(1) { "ALPHA" } else { "VECTOR" }));
-    }
+    mask(l, &mut node);
     match class {
         "artboard" | "frame" => {
             let clips = if class == "artboard" { true } else { bool_field(l, "clipsContent").unwrap_or(true) };
@@ -127,6 +124,14 @@ pub(crate) fn layer(cx: &mut Cx, l: &Value, parent: Affine, depth: usize, root: 
         node.insert("children".into(), Value::Array(kids));
     }
     Some(Value::Object(node))
+}
+
+/// A clipping mask's flag and kind (outline or alpha).
+pub(crate) fn mask(l: &Value, node: &mut JsonMap<String, Value>) {
+    if bool_field(l, "hasClippingMask") == Some(true) {
+        node.insert("isMask".into(), json!(true));
+        node.insert("maskType".into(), json!(if l.get("clippingMaskMode").and_then(Value::as_i64) == Some(1) { "ALPHA" } else { "VECTOR" }));
+    }
 }
 
 /// Count one more layer; false (with a warning) once the file's budget is spent.
