@@ -1191,11 +1191,21 @@ impl Session {
                     .node(leaf)
                     .is_some_and(|n| n.parent == Some(page) && n.kind.is_frame_like() && !n.children.is_empty() && !crate::widgets::is_widget(n))
         };
-        let target = label_at(&doc, page, &self.tool.labels, ev.p()).or_else(|| {
+        let label = label_at(&doc, page, &self.tool.labels, ev.p());
+        let target = label.or_else(|| {
             self.hit(&doc, page, ev.p(), ev.tol() * 2.0)
                 .filter(|leaf| ev.cmd || !board_background(*leaf))
                 .map(|leaf| select_target(&doc, leaf, &sel, ev.cmd))
         });
+        // A press inside the selection's box that reaches nothing above it (an unfilled shape's
+        // inside, or the frame or canvas behind it) drags the selection.
+        let behind_sel = |t: Option<NodeId>| t.is_none_or(|t| sel.iter().any(|s| *s != t && doc.is_ancestor(t, *s)));
+        let target = match sel.iter().copied().find(|s| !locked_in(&doc, *s)) {
+            Some(first) if label.is_none() && !ev.shift && behind_sel(target) && doc.bounds_of(&sel).is_some_and(|b| b.contains(ev.p())) => {
+                Some(first)
+            }
+            _ => target,
+        };
         match target {
             Some(target) => {
                 // Clicking inside the current selection's box keeps it (drag them all).
