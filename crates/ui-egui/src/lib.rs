@@ -831,9 +831,17 @@ impl FigApp {
         }
     }
 
+    /// Dismiss the composer after a successful switch away from the Comment tool.
+    pub(crate) fn clear_comment_draft_after_tool_set(&mut self, id: &str, succeeded: bool) {
+        if id == "tool.set" && succeeded && self.session.tool.tool != figcraft_engine::tools::ToolId::Comment {
+            self.ui.comments.draft = None;
+        }
+    }
+
     /// Run a command, surfacing errors as a toast. Returns the result.
     pub fn run(&mut self, id: &str, params: Value) -> Option<Value> {
         let r = self.session.execute(id, &params);
+        self.clear_comment_draft_after_tool_set(id, r.is_ok());
         self.handle_ui_requests();
         r.map_err(|e| self.failed(id, &e)).ok()
     }
