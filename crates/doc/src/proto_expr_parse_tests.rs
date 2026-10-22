@@ -195,3 +195,25 @@ fn names_that_look_like_literals_read_back_as_variables() {
     assert_eq!(parse("1"), n(1.0));
     assert_eq!(parse("\"q\""), Expr::Value(VariableValue::String("q".into())));
 }
+
+#[test]
+fn literal_true_false_survive_variables_named_true_false() {
+    use ExprOp::*;
+    let lit = |x: bool| Expr::Value(VariableValue::Boolean(x));
+    for name in ["true", "false", "TRUE"] {
+        let mut v = vars();
+        if let Some(var) = v.variables.iter_mut().find(|x| x.id == "b") {
+            var.name = name.into();
+        }
+        for e in [
+            Expr::op(Equals, vec![Expr::var("b"), lit(true)]),
+            Expr::op(Equals, vec![Expr::var("b"), lit(false)]),
+            Expr::op(Not, vec![lit(false)]),
+            Expr::var("b"),
+        ] {
+            let shown = e.display(&v);
+            assert_eq!(Expr::parse(&shown, &v), Ok(e.clone()), "{name:?} shown as {shown:?}");
+        }
+        assert_eq!(Expr::parse(&format!("{{{name}}}"), &v), Ok(Expr::var("b")));
+    }
+}
