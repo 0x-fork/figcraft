@@ -313,3 +313,29 @@ fn edits_confirmed_after_a_compaction_cut_short_survive_a_restart() {
     let name = page_name(&restored);
     assert!(at(&name) >= at(&confirmed), "restored {name:?}, confirmed {confirmed:?}");
 }
+
+#[test]
+fn every_leftover_temporary_file_is_removed_at_startup() {
+    let dir = TempDir::new("leftovers");
+    let id = {
+        let mut store = Store::open(dir.path(), cfg(dir.path())).unwrap();
+        let id = publish(&mut store, "A").0;
+        store.flush();
+        id
+    };
+    let folder = dir.path().join(FILES).join(&id);
+    let leftovers = [
+        dir.path().join("blocked.json.tmp"),
+        dir.path().join("reports.json.tmp"),
+        dir.path().join("server.key.tmp"),
+        folder.join("usage.json.tmp"),
+        folder.join("library-1.bin.tmp"),
+    ];
+    for path in &leftovers {
+        fs::write(path, b"half").unwrap();
+    }
+    let _store = Store::open(dir.path(), cfg(dir.path())).unwrap();
+    for path in &leftovers {
+        assert!(!path.exists(), "leftover not cleaned at startup: {}", path.display());
+    }
+}
