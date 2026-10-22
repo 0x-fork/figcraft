@@ -1878,4 +1878,7 @@ pub(crate) fn drop_overlay(ctx: &egui::Context, rect: egui::Rect, label: &str) {
 mod selection_spacing_tests;
 
 #[cfg(test)]
+mod type_settings_tests;
+
+#[cfg(test)]
 mod typography_scrub_tests;
