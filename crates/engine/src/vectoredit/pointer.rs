@@ -262,7 +262,7 @@ impl Session {
     }
 
     /// Every edited layer's selected points (segment ends included) other than the active one's.
-    fn others_moving(doc: &Document, ve: &VectorEdit) -> Vec<(NodeId, Vec<usize>)> {
+    pub(super) fn others_moving(doc: &Document, ve: &VectorEdit) -> Vec<(NodeId, Vec<usize>)> {
         ve.others
             .iter()
             .filter_map(|o| {
@@ -310,7 +310,7 @@ impl Session {
         let Some(b) = transform::shown_box(&doc, ve) else { return Ok(()) };
         match bh {
             BoxHit::Inside => {
-                let g = self.points_gesture(ve.id, ev.p(), b.points, vec![], None, true)?;
+                let g = self.points_gesture(ve.id, ev.p(), b.points, b.others, None, true)?;
                 self.begin_interaction("Move points")?;
                 self.vgesture(g);
             }
@@ -320,7 +320,7 @@ impl Session {
                 self.vgesture(VGesture::BoxRotate { b, start_angle, angle: 0.0 });
             }
             BoxHit::Handle(handle) => {
-                let targets = Arc::new(point_snap::targets(&doc, page, Some(ve.id), &b.points, &[]));
+                let targets = Arc::new(point_snap::targets_moving(&doc, page, Some(ve.id), &b.points, &[], &b.others));
                 self.begin_interaction("Scale points")?;
                 self.vgesture(VGesture::BoxScale { b, handle, targets, pick });
             }
@@ -883,7 +883,7 @@ impl Session {
                 let q = b.frame.inverse() * (ev.p() + c);
                 let (x0, y0, x1, y1) = crate::tools::resized_box(handle, q, b.width, b.height, ev.shift, ev.alt);
                 let m = b.onto(x0, y0, x1, y1);
-                self.preview(|doc, _| transform::transform_points(doc, id, &b.points, m))?;
+                self.preview(|doc, _| transform::transform_box(doc, id, &b, m))?;
             }
             VGesture::BoxRotate { b, start_angle, .. } => {
                 let c = b.center();
@@ -892,7 +892,7 @@ impl Session {
                     angle = (angle / 15.0).round() * 15.0;
                 }
                 let m = figcraft_geom::rotate_about(Affine::IDENTITY, c, -angle);
-                self.preview(|doc, _| transform::transform_points(doc, id, &b.points, m))?;
+                self.preview(|doc, _| transform::transform_box(doc, id, &b, m))?;
                 self.tool.overlay.cursor = Cursor::Rotate((ev.p() - c).atan2().to_degrees());
                 self.vgesture(VGesture::BoxRotate { b, start_angle, angle });
             }
@@ -1010,6 +1010,10 @@ impl Session {
                         set_state(self, |e| {
                             e.vertices.clear();
                             e.segments.clear();
+                            for o in &mut e.others {
+                                o.vertices.clear();
+                                o.segments.clear();
+                            }
                         })?;
                     }
                 }
