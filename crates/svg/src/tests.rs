@@ -159,3 +159,32 @@ fn point_joins_equal_to_the_layer_join_keep_a_plain_stroke() {
     assert!(svg_with(StrokeJoin::Miter).contains("stroke-width=\"2\""), "equal joins stay a stroke");
     assert!(!svg_with(StrokeJoin::Round).contains("stroke-width="), "a differing join is drawn as an outline");
 }
+
+#[test]
+fn unique_id_is_linear_for_repeated_names() {
+    let d = Document::new("t");
+    let opts = SvgOptions::default();
+    let mut w = W {
+        doc: &d,
+        roots: &[],
+        page: Affine::IDENTITY,
+        defs: String::new(),
+        body: String::new(),
+        next: 0,
+        opts: &opts,
+        mask: None,
+        clip: None,
+        used_ids: Default::default(),
+        next_suffix: Default::default(),
+    };
+    assert_eq!(w.unique_id("a"), "a");
+    assert_eq!(w.unique_id("a_3"), "a_3");
+    assert_eq!(w.unique_id("a"), "a_2");
+    assert_eq!(w.unique_id("a"), "a_4");
+    let start = std::time::Instant::now();
+    for _ in 0..30_000 {
+        w.unique_id("Rectangle");
+    }
+    assert_eq!(w.unique_id("Rectangle"), "Rectangle_30001");
+    assert!(start.elapsed() < std::time::Duration::from_secs(2), "unique_id is quadratic: {:?}", start.elapsed());
+}
