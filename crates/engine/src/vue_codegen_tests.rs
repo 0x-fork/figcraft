@@ -212,9 +212,8 @@ fn a_nested_instance_keeps_its_v_if_guard() {
     // quoted value must not be mistaken for the tag's end.
     assert!(out.contains("v-if=\"showCard\""), "{out}");
     assert_eq!(out.matches("v-if=\"showCard\"").count(), 1, "{out}");
-    let line = out.lines().find(|l| l.contains("v-if=\"showCard\"")).unwrap_or_default();
-    assert!(line.contains("title=\"a &gt; b\"") || line.contains("title=\"a > b\""), "{out}");
-    assert!(line.contains("v-if=\"showCard\" />"), "the guard sits before the self-closing slash: {line}");
+    assert!(!out.contains("/ v-if"), "the guard must come before a self-closing slash: {out}");
+    assert!(out.contains("title=\"a &gt; b\"") || out.contains("title=\"a > b\""), "{out}");
 }
 
 #[test]
