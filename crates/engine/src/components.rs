@@ -335,6 +335,27 @@ fn carry_overrides(from: &Node, to: &mut Node, what: Carry) {
     }
 }
 
+/// An instance switched from variant `was` to `new`: its resizing (sizing and min / max per axis)
+/// that is still `was`'s follows `new`; what the instance set itself stays in `own`.
+fn follow_variant_resizing(own: &mut ChildLayout, was: &ChildLayout, new: &ChildLayout) {
+    if own.sizing_h == was.sizing_h {
+        own.sizing_h = new.sizing_h;
+    }
+    if own.sizing_v == was.sizing_v {
+        own.sizing_v = new.sizing_v;
+    }
+    for (o, w, n) in [
+        (&mut own.min_w, was.min_w, new.min_w),
+        (&mut own.max_w, was.max_w, new.max_w),
+        (&mut own.min_h, was.min_h, new.min_h),
+        (&mut own.max_h, was.max_h, new.max_h),
+    ] {
+        if *o == w {
+            *o = n;
+        }
+    }
+}
+
 /// Copy the values of property group `g` of `from` onto `to`, with the variables bound to them.
 pub(crate) fn copy_group(from: &Node, to: &mut Node, g: &str) {
     if from.bound.iter().chain(to.bound.iter()).any(|(k, _)| binding_group(k) == Some(g)) {
@@ -779,6 +800,7 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize, spare: BT
     if let Some(prev) = root.source.and_then(|p| doc.node(p)).filter(|p| sibling_variants(doc, p.id, component)) {
         let differs = diff_groups(prev, &comp);
         root.overrides.retain(|g| g == "name" || !differs.contains(&g.as_str()));
+        follow_variant_resizing(&mut fresh.child_layout, &prev.child_layout, &comp.child_layout);
     }
     carry_overrides(&root, &mut fresh, Carry::Root);
     if let Some(r) = doc.node_mut(inst) {
