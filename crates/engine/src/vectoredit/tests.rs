@@ -311,6 +311,41 @@ fn a_point_dropped_on_another_merges_into_it() {
 }
 
 #[test]
+fn deleting_every_point_takes_the_layer_with_the_edit_mode() {
+    // Delete: no point is left at all.
+    let mut s = Session::new();
+    let id = rect(&mut s);
+    ex(&mut s, "vector.edit.selectAll", json!({}));
+    ex(&mut s, "vector.edit.delete", json!({}));
+    assert!(net(&s, id).vertices.is_empty() && net(&s, id).segments.is_empty(), "no point left");
+    assert!(s.doc().unwrap().node(id).is_some(), "the layer stays while editing");
+    ex(&mut s, "vector.edit.end", json!({}));
+    assert!(s.doc().unwrap().node(id).is_none(), "it goes with edit mode instead of leaving an empty box");
+    assert!(s.selection().is_empty());
+    // The step that deleted the last points brings the shape back.
+    s.undo().unwrap();
+    assert_eq!(net(&s, id).vertices.len(), 4);
+    // Shift+Delete (heal): the last point is left on its own with no segment, drawing nothing either.
+    let mut s = Session::new();
+    let id = rect(&mut s);
+    ex(&mut s, "vector.edit.selectAll", json!({}));
+    ex(&mut s, "vector.deleteHeal", json!({}));
+    assert!(net(&s, id).segments.is_empty(), "nothing draws: {:?}", net(&s, id));
+    ex(&mut s, "vector.edit.end", json!({}));
+    assert!(s.doc().unwrap().node(id).is_none(), "an unconnected point left behind doesn't keep the layer");
+    // Escape ends edit mode the same way, for every layer edited along that is left empty.
+    let mut s = Session::new();
+    let a = crate::params::id_of(&ex(&mut s, "shape.rectangle", json!({"x": 0, "y": 0, "width": 100, "height": 100}))["id"]).unwrap();
+    let b = crate::params::id_of(&ex(&mut s, "shape.rectangle", json!({"x": 200, "y": 0, "width": 50, "height": 50}))["id"]).unwrap();
+    ex(&mut s, "vector.edit.begin", json!({"ids": [a, b]}));
+    ex(&mut s, "vector.edit.selectAll", json!({}));
+    ex(&mut s, "vector.edit.delete", json!({}));
+    s.escape().unwrap();
+    assert!(s.ds().unwrap().vector_edit.is_none());
+    assert!(s.doc().unwrap().node(a).is_none() && s.doc().unwrap().node(b).is_none());
+}
+
+#[test]
 fn undo_back_past_the_conversion_leaves_edit_mode() {
     let mut s = Session::new();
     let id = rect(&mut s);
