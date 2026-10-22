@@ -257,8 +257,11 @@ fn fills_close_open_subpaths() {
     let (fill, stroke) = (layer(&d, f, "stroked fill"), layer(&d, f, "stroked"));
     assert_eq!((loops(fill), fill.fills.len(), fill.strokes.len()), (2, 1, 0));
     assert_eq!((loops(stroke), stroke.fills.len(), stroke.strokes.len()), (0, 0, 1));
+    // Only near-closed ends: one layer, closed, stroke and all.
+    let near = layer(&d, f, "near");
+    assert_eq!((loops(near), near.fills.len(), near.strokes.len()), (1, 1, 1));
     let order: Vec<&str> = d.node(f).unwrap().children.iter().filter_map(|c| d.node(*c)).map(|n| n.name.as_str()).collect();
-    assert_eq!(order, ["filled", "stroked fill", "stroked"], "the fill paints first, as SVG paints fill then stroke");
+    assert_eq!(order, ["filled", "stroked fill", "stroked", "near", "under", "under fill"], "paint order: fill then stroke, or the stroke first");
 }
 
 #[test]
