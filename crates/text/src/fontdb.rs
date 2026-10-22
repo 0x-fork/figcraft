@@ -731,6 +731,7 @@ impl FontDb {
     }
 }
 
+/// The folders this platform keeps installed and activated fonts in, walked by the font scan.
 fn system_font_dirs() -> Vec<std::path::PathBuf> {
     #[allow(unused_mut)]
     let mut v: Vec<std::path::PathBuf> = Vec::new();
@@ -794,6 +795,9 @@ fn unix_user_font_dirs(home: Option<std::ffi::OsString>, data_home: Option<std::
     dirs
 }
 
+/// Adds the faces of every font file under `dir` (up to six folders deep) to `out`, keyed by
+/// lowercased family: files named `.ttf`, `.otf`, `.ttc` or `.otc`, and files without an extension
+/// that start with a font signature.
 fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (String, Vec<Pending>)>) {
     if depth > 6 {
         return;
