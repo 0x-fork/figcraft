@@ -521,6 +521,7 @@ fn group_label(g: &str) -> String {
         "grids" => tr("Layout grids"),
         "exports" => tr("Export settings"),
         "interactions" => tr("Interactions"),
+        "modes" => tr("Variable modes"),
         "size" => tr("Size"),
         "resizing" => tr("Resizing"),
         "position" => tr("Position"),

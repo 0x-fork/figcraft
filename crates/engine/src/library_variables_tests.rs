@@ -344,3 +344,39 @@ fn library_style_bindings_ignore_unrelated_local_variables() {
     healthy(&s);
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn modes_set_inside_nested_instances_come_along() {
+    let d = dir("nested-modes");
+    let lib_path = path_str(&d.join("kit.figcraft"));
+    let mut lib = Session::new();
+    theme(&mut lib);
+    let f = idv(&ex(&mut lib, "frame.create", json!({"x": 0, "y": 0, "width": 20, "height": 20, "name": "Icon"})));
+    ex(&mut lib, "variable.bind", json!({"ids": [f], "field": "fill", "variable": "primary"}));
+    let icon = idv(&ex(&mut lib, "component.create", json!({"ids": [f]})));
+    let b = idv(&ex(&mut lib, "frame.create", json!({"x": 100, "y": 0, "width": 60, "height": 40, "name": "Button"})));
+    ex(&mut lib, "instance.create", json!({"component": icon, "x": 10, "y": 10, "parent": b}));
+    let button = idv(&ex(&mut lib, "component.create", json!({"ids": [b]})));
+    let m = idv(&ex(&mut lib, "frame.create", json!({"x": 300, "y": 0, "width": 200, "height": 100, "name": "Modal"})));
+    let close = idv(&ex(&mut lib, "instance.create", json!({"component": button, "x": 10, "y": 10, "parent": m})));
+    let nested = lib.doc().unwrap().node(close).unwrap().children[0];
+    ex(&mut lib, "variable.setMode", json!({"ids": [nested], "collection": "Theme", "mode": "Dark"}));
+    ex(&mut lib, "component.create", json!({"ids": [m]}));
+    let lid = publish_to(&mut lib, &lib_path);
+
+    let mut s = Session::new();
+    ex(&mut s, "library.add", json!({"path": lib_path}));
+    let inst = idv(&ex(&mut s, "library.place", json!({"library": lid, "component": "Modal", "x": 0, "y": 0})));
+    let copy = |s: &Session| {
+        let doc = s.doc().unwrap();
+        doc.node(doc.node(inst).unwrap().children[0]).unwrap().children[0]
+    };
+    assert_eq!(fill(&s, copy(&s)), "FFFFFF", "the Dark mode set on the nested icon comes along");
+    // An update that rebuilds the Button copies keeps it too.
+    ex(&mut lib, "node.set", json!({"ids": [button], "layout": "horizontal"}));
+    republish(&mut lib);
+    ex(&mut s, "library.acceptUpdates", json!({}));
+    assert_eq!(fill(&s, copy(&s)), "FFFFFF");
+    healthy(&s);
+    let _ = std::fs::remove_dir_all(&d);
+}
