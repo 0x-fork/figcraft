@@ -225,6 +225,13 @@ fn vue_links_are_a_default_import_with_quoted_bindings() {
     assert!(line.starts_with("<Card :title=\"&quot;Say"), "{line}");
     assert!(line.contains(":dotted=\"false\""), "{line}");
     assert!(line.ends_with("\" />"), "{line}");
+    // A single-quoted attribute keeps its delimiter (the expression's double quotes stay), and a
+    // placeholder in template content is text, not a quoted string.
+    ex(&mut s, "instance.setProperties", json!({"ids": [i], "properties": {"Title": "Buy"}}));
+    ex(&mut s, "codeConnect.set", json!({"id": i, "language": "vue", "template": "<Card :title='{title}' :dotted='{Show dot}' />"}));
+    assert_eq!(code(&mut s, i, "vue"), "import Card from \"./Card.vue\";\n\n<Card :title='\"Buy\"' :dotted='false' />\n");
+    ex(&mut s, "codeConnect.set", json!({"id": i, "language": "vue", "template": "<Card title='{title}'>{title}</Card>"}));
+    assert_eq!(code(&mut s, i, "vue"), "import Card from \"./Card.vue\";\n\n<Card title='Buy'>Buy</Card>\n");
     // Vue is linkable; a language that isn't stays refused.
     assert!(s.execute("codeConnect.set", &json!({"id": c, "language": "css"})).is_err(), "not a code language");
     assert!(s.execute("codeConnect.set", &json!({"id": c, "language": "vue", "importPath": "a b"})).is_err(), "no spaces in a path");

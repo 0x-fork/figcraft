@@ -572,7 +572,8 @@ pub(crate) fn usage_with_styles(doc: &Document, id: NodeId, lang: CodeLang, dept
             if v.as_bool() == Some(true)
                 && let Some((layer, _)) = slots.iter().find(|(_, name)| *name == p.prop)
             {
-                let (content, css) = slot_content(doc, *layer, lang, depth);
+                let prefix = format!("slot-{}-", slot_name(&c, p));
+                let (content, css) = slot_content(doc, *layer, lang, depth, &prefix);
                 slot_css.push_str(&css);
                 args.push((&p.ident, content, false));
             }
@@ -628,14 +629,16 @@ pub(crate) fn usage_with_styles(doc: &Document, id: NodeId, lang: CodeLang, dept
 }
 
 /// The content an instance put in one of its slots, as an expression spanning lines, and the CSS
-/// its layers generated (so the caller's stylesheet keeps it).
-fn slot_content(doc: &Document, slot: NodeId, lang: CodeLang, depth: usize) -> (String, String) {
+/// its layers generated (so the caller's stylesheet keeps it). `prefix` keeps two slots' class
+/// names apart when their layers share a name.
+fn slot_content(doc: &Document, slot: NodeId, lang: CodeLang, depth: usize, prefix: &str) -> (String, String) {
     let Some(n) = doc.node(slot) else { return (String::new(), String::new()) };
     let ctx = Ctx { doc, root: slot, comp: None, base: depth };
     let kids = ctx.kids(n);
     match lang {
         CodeLang::React => {
             let mut m = Markup::new(&ctx, CodeLang::React);
+            m.class_prefix = Some(prefix.to_string());
             for k in kids {
                 m.node(k, Some(n), depth + 2, "");
             }
@@ -644,6 +647,7 @@ fn slot_content(doc: &Document, slot: NodeId, lang: CodeLang, depth: usize) -> (
         }
         CodeLang::Leptos => {
             let mut m = Markup::new(&ctx, CodeLang::Leptos);
+            m.class_prefix = Some(prefix.to_string());
             for k in kids {
                 m.node(k, Some(n), depth + 1, "");
             }
@@ -652,6 +656,7 @@ fn slot_content(doc: &Document, slot: NodeId, lang: CodeLang, depth: usize) -> (
         CodeLang::Vue => {
             // Just the markup: `usage` wraps it in the `<template #name>` of that slot.
             let mut m = Markup::new(&ctx, CodeLang::Vue);
+            m.class_prefix = Some(prefix.to_string());
             for k in kids {
                 m.node(k, Some(n), depth + 2, "");
             }
@@ -789,7 +794,9 @@ fn vue(doc: &Document, c: &Component) -> String {
     let props: Vec<&Param> = c.params.iter().filter(|p| !matches!(p.kind, ParamKind::Slot)).collect();
     let mut out = String::new();
     if !props.is_empty() {
-        out.push_str("<script setup lang=\"ts\">\n\nconst props = withDefaults(\n  defineProps<{\n");
+        // `__props` can't be a generated prop name (idents are camelCase words), so a property
+        // named `Props` isn't shadowed by the binding.
+        out.push_str("<script setup lang=\"ts\">\n\nconst __props = withDefaults(\n  defineProps<{\n");
         for p in &props {
             let ty = match &p.kind {
                 ParamKind::Variant(opts) => opts.iter().map(|o| vue_string(o)).collect::<Vec<_>>().join(" | "),

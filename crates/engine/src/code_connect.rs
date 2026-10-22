@@ -184,12 +184,21 @@ fn expr(doc: &Document, c: &Component, p: &Param, v: &Value, lang: CodeLang) -> 
     }
 }
 
-/// Whether the placeholder sits in a Vue bound attribute (`:name`, `v-bind:name`, `@event` or a
-/// `v-*` directive) rather than a static one. `None` when it isn't in an attribute at all.
-fn vue_bound_attribute(out: &str) -> Option<bool> {
+/// Where a placeholder sits in a Vue template: whether the attribute is bound, and the quote the
+/// template already opened (if any). `None` when it isn't in an attribute at all.
+fn vue_attribute(out: &str) -> Option<(bool, Option<char>)> {
     let end = out.trim_end();
-    let after = end.strip_suffix('"').unwrap_or(end).trim_end();
+    let (after, quote) = match end.chars().last() {
+        Some(q @ ('"' | '\'')) => (&end[..end.len() - q.len_utf8()], Some(q)),
+        _ => (end, None),
+    };
+    let after = after.trim_end();
     let eq = after.rfind('=')?;
+    // The placeholder must follow the `=` (or its opening quote) directly; text after a closed
+    // attribute (`<Card title='Buy'>`) is template content, not an attribute value.
+    if !after[eq + 1..].trim().is_empty() {
+        return None;
+    }
     let before = after[..eq].trim_end();
     let name: String = before
         .chars()
@@ -202,18 +211,32 @@ fn vue_bound_attribute(out: &str) -> Option<bool> {
     if name.is_empty() {
         return None;
     }
-    Some(name.starts_with(':') || name.starts_with("v-bind:") || name.starts_with('@') || name.starts_with("v-on:") || name.starts_with("v-"))
+    let bound = name.starts_with(':') || name.starts_with("v-bind:") || name.starts_with('@') || name.starts_with("v-on:") || name.starts_with("v-");
+    Some((bound, quote))
 }
 
-/// An expression written into a double-quoted HTML attribute: its own quotes and markup become
-/// entities, so Vue's parser hands the expression its string literal intact.
-fn html_attr_expr(e: &str) -> String {
-    e.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")
+/// An expression written into an HTML attribute opened with `quote`: its own delimiter and markup
+/// become entities, so Vue's parser hands the expression its string literal intact.
+fn html_attr_expr(e: &str, quote: Option<char>) -> String {
+    let e = e.replace('&', "&amp;").replace('<', "&lt;");
+    match quote {
+        Some('\'') => e.replace('\'', "&#39;"),
+        _ => e.replace('"', "&quot;"),
+    }
 }
 
-/// Literal text written into a double-quoted HTML attribute.
-fn html_attr_text(s: &str) -> String {
-    s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")
+/// Literal text written into an HTML attribute opened with `quote`.
+fn html_attr_text(s: &str, quote: Option<char>) -> String {
+    let s = s.replace('&', "&amp;").replace('<', "&lt;");
+    match quote {
+        Some('\'') => s.replace('\'', "&#39;"),
+        _ => s.replace('"', "&quot;"),
+    }
+}
+
+/// Literal text in Vue template content: braces would start an interpolation, so they are escaped.
+fn html_text(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('{', "&#123;").replace('}', "&#125;")
 }
 
 /// `link`'s template with `values` (one per parameter of `c`), every line prefixed by `pad`.
@@ -234,10 +257,10 @@ pub(crate) fn render(doc: &Document, c: &Component, values: &[(String, Value)], 
                     // Vue's bound attributes take an expression, so a string keeps its JS quotes
                     // inside the attribute (as entities); a static attribute takes plain text.
                     if lang == CodeLang::Vue {
-                        match vue_bound_attribute(&out) {
-                            Some(true) => {
-                                let expr = html_attr_expr(&e);
-                                if out.ends_with('"') {
+                        match vue_attribute(&out) {
+                            Some((true, quote)) => {
+                                let expr = html_attr_expr(&e, quote);
+                                if quote.is_some() {
                                     out.push_str(&expr);
                                 } else {
                                     out.push('"');
@@ -245,12 +268,12 @@ pub(crate) fn render(doc: &Document, c: &Component, values: &[(String, Value)], 
                                     out.push('"');
                                 }
                             }
-                            Some(false) => {
+                            Some((false, quote)) => {
                                 let text = match &p.kind {
-                                    ParamKind::Text | ParamKind::Variant(_) => html_attr_text(v.as_str().unwrap_or("")),
+                                    ParamKind::Text | ParamKind::Variant(_) => html_attr_text(v.as_str().unwrap_or(""), quote),
                                     _ => e.clone(),
                                 };
-                                if out.ends_with('"') {
+                                if quote.is_some() {
                                     out.push_str(&text);
                                 } else {
                                     out.push('"');
@@ -258,7 +281,13 @@ pub(crate) fn render(doc: &Document, c: &Component, values: &[(String, Value)], 
                                     out.push('"');
                                 }
                             }
-                            None => out.push_str(&e),
+                            None => {
+                                let text = match &p.kind {
+                                    ParamKind::Text | ParamKind::Variant(_) => html_text(v.as_str().unwrap_or("")),
+                                    _ => e.clone(),
+                                };
+                                out.push_str(&text);
+                            }
                         }
                     } else {
                         let markup = matches!(lang, CodeLang::React | CodeLang::Leptos);

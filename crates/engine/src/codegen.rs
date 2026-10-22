@@ -620,13 +620,33 @@ pub(crate) fn class_name(name: &str, used: &mut Vec<String>) -> String {
     name
 }
 
+/// The index of `markup`'s first tag-closing `>`, skipping `>` inside quoted attribute values.
+fn tag_end(markup: &str) -> Option<usize> {
+    let mut quote = None;
+    for (i, c) in markup.char_indices() {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '"' | '\'' => quote = Some(c),
+                '>' => return Some(i),
+                _ => {}
+            },
+        }
+    }
+    None
+}
+
 /// `markup`'s first element with a Vue `v-if` attribute (a call with no placing wrapper).
 fn with_v_if(markup: &str, guard: Option<&str>) -> String {
     let Some(guard) = guard else { return markup.to_string() };
-    match markup.find('>') {
-        Some(i) => format!("{} v-if=\"{guard}\"{}", &markup[..i], &markup[i..]),
-        None => markup.to_string(),
-    }
+    let Some(end) = tag_end(markup) else { return markup.to_string() };
+    let before = markup[..end].trim_end();
+    let at = if before.ends_with('/') { before.len() - 1 } else { end };
+    format!("{} v-if=\"{guard}\"{}", &markup[..at], &markup[at..])
 }
 
 fn html_escape(s: &str) -> String {
@@ -678,6 +698,9 @@ pub(crate) struct Markup<'c, 'a> {
     /// A Vue `v-if` guard for the element about to be written: Vue templates can't wrap an
     /// element in an expression, so a boolean parameter's layer carries the condition itself.
     v_if: Option<String>,
+    /// A prefix for every generated class name (slot content joins the caller's stylesheet, where
+    /// two slots' layer names may repeat).
+    pub class_prefix: Option<String>,
     /// Each layer's path in the tree (names with sibling counts), class and declarations, so
     /// variants can be compared layer by layer.
     pub rules: Vec<(String, String, String)>,
@@ -695,6 +718,7 @@ impl<'c, 'a> Markup<'c, 'a> {
             root_class: None,
             root_attrs: String::new(),
             v_if: None,
+            class_prefix: None,
             rules: Vec::new(),
         }
     }
@@ -756,7 +780,13 @@ impl<'c, 'a> Markup<'c, 'a> {
                 self.used.push(c.clone());
                 c
             }
-            None => class_name(&n.name, &mut self.used),
+            None => {
+                let class = class_name(&n.name, &mut self.used);
+                match &self.class_prefix {
+                    Some(prefix) => format!("{prefix}{class}"),
+                    None => class,
+                }
+            }
         };
         let pad = self.pad(depth);
         let attr = if self.lang == CodeLang::React { "className" } else { "class" };
