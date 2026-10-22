@@ -657,6 +657,9 @@ pub struct UiState {
     pub online: online::OnlineUi,
     /// The window was asked to close with unsaved changes: the question shows.
     pub confirm_close: bool,
+    /// The file a Save as started from the unsaved-changes question is saving: the window closes
+    /// once it is saved, and stays open if the dialog is cancelled or the save fails.
+    pub close_after_save_as: Option<u64>,
 }
 
 impl Default for UiState {
@@ -760,6 +763,7 @@ impl Default for UiState {
             live: live::LiveUi::default(),
             online: online::OnlineUi::default(),
             confirm_close: false,
+            close_after_save_as: None,
         }
     }
 }
