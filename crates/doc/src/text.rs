@@ -129,14 +129,17 @@ impl TextCase {
             TextCase::Title => {
                 let mut out = String::with_capacity(s.len());
                 let mut start = prev.is_none_or(|c| !is_word_char(c));
+                let mut before = prev;
                 for ch in s.chars() {
                     if start && ch.is_alphanumeric() {
                         out.extend(ch.to_uppercase());
                         start = false;
                     } else {
                         out.push(ch);
-                        start = !is_word_char(ch);
+                        // An apostrophe only continues a word right after a letter or digit.
+                        start = !is_word_char(ch) || (!ch.is_alphanumeric() && !before.is_some_and(|c| c.is_alphanumeric()));
                     }
+                    before = Some(ch);
                 }
                 out
             }
@@ -829,5 +832,18 @@ mod case_tests {
         // A plain paragraph has none.
         t.set_para_lists(0, 0, |p| p.list = P);
         assert_eq!(t.para_list(0), ParaList::default());
+    }
+}
+
+#[cfg(test)]
+mod title_case_tests {
+    use super::TextCase;
+
+    #[test]
+    fn title_case_after_opening_apostrophe() {
+        assert_eq!(TextCase::Title.apply("'hello world'"), "'Hello World'");
+        assert_eq!(TextCase::Title.apply("say 'hi'"), "Say 'Hi'");
+        assert_eq!(TextCase::Title.apply("don't"), "Don't");
+        assert_eq!(TextCase::Title.apply("\u{2019}hello"), "\u{2019}Hello");
     }
 }
