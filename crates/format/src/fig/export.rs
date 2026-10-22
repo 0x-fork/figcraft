@@ -2569,7 +2569,9 @@ fn unset(key: &str) -> Option<Kv<'static>> {
         "cornerSmoothing" | "stackChildPrimaryGrow" => fl(0.0),
         "stackMode" => e("NONE"),
         "stackChildAlignSelf" | "stackPositioning" => e("AUTO"),
-        "minSize" | "maxSize" => o(vec![("value", xy(0.0, 0.0))]),
+        "minSize" => o(vec![("value", xy(0.0, 0.0))]),
+        // No maximum is infinite (a maximum of 0 collapses the layer).
+        "maxSize" => o(vec![("value", o(vec![("x", Kv::Float(f32::INFINITY)), ("y", Kv::Float(f32::INFINITY))]))]),
         "gridColumnSpan" | "gridRowSpan" | "maxLines" => int(0),
         "scrollDirection" => e("NONE"),
         "scrollBehavior" => e("SCROLLS"),

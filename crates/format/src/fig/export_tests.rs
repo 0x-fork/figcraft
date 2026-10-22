@@ -1319,3 +1319,20 @@ fn set_properties_round_trip() {
     let NodeKind::Instance { props, .. } = &i.kind else { panic!() };
     assert_eq!(props.get("Label"), Some(&Value::String("Hi".into())));
 }
+
+#[test]
+fn an_instance_without_its_mains_maximum_size_overrides_it_with_infinity() {
+    let mut doc = Document::new("File");
+    let page = doc.first_page().unwrap();
+    let main = doc.create(page, NodeKind::Component { description: String::new(), props: BTreeMap::new() }, "Box", 0.0, 0.0, 100.0, 40.0).unwrap();
+    doc.node_mut(main).unwrap().child_layout.max_w = Some(300.0);
+    doc.create(page, NodeKind::Instance { component: main, props: BTreeMap::new() }, "Box", 0.0, 100.0, 100.0, 40.0).unwrap();
+    let (bytes, _) = export(&doc, None).unwrap();
+    let archive = Archive::open(&bytes).unwrap();
+    let (schema, message) = decode_canvas(&archive.canvas).unwrap();
+    let msg = schema.decode_message(schema.find("Message").unwrap(), &message).unwrap();
+    let inst = msg.get("nodeChanges").unwrap().list().iter().find(|n| n.get("type").and_then(Kv::str) == Some("INSTANCE")).unwrap();
+    let overrides = inst.get("symbolData").unwrap().get("symbolOverrides").unwrap().list();
+    let max = overrides.iter().find_map(|o| o.get("maxSize")).unwrap().get("value").unwrap();
+    assert_eq!((max.get("x"), max.get("y")), (Some(&Kv::Float(f32::INFINITY)), Some(&Kv::Float(f32::INFINITY))));
+}
