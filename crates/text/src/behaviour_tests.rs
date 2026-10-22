@@ -272,7 +272,7 @@ fn symbols_come_from_a_symbol_font_when_one_is_installed() {
     // Linux) the fallback draws them instead of the missing-glyph box (#1156). Each character
     // skips on a machine with no installed fallback family that has it.
     let Some(f) = face() else { return };
-    let families = ["Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols", "Noto Sans Symbols 2", "Noto Sans Math"];
+    let families = ["Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols", "Noto Sans Symbols 2", "Noto Sans Symbols2", "Noto Sans Math"];
     for c in ['\u{2316}', '\u{2912}'] {
         if f.has_char(c) || !families.iter().any(|k| find_face(k, "Regular").is_some_and(|k| k.has_char(c))) {
             continue;
