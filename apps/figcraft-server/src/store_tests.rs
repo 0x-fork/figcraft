@@ -313,3 +313,30 @@ fn edits_confirmed_after_a_compaction_cut_short_survive_a_restart() {
     let name = page_name(&restored);
     assert!(at(&name) >= at(&confirmed), "restored {name:?}, confirmed {confirmed:?}");
 }
+
+#[test]
+fn a_maxed_out_generation_does_not_wrap() {
+    let dir = TempDir::new("maxgen");
+    let c = StoreConfig { compact_after: 3, ..cfg(dir.path()) };
+    let mut store = Store::open(dir.path(), c.clone()).unwrap();
+    let (id, _, _) = publish(&mut store, "Max");
+    let path = dir.path().join(FILES).join(&id);
+    let (_, state) = disk::decode_snapshot(&fs::read(path.join(SNAPSHOT)).unwrap()).unwrap();
+    // Loading: no log goes with the snapshot, so the next generation would overflow.
+    fs::write(path.join(SNAPSHOT), disk::encode_snapshot(u64::MAX, &state).unwrap()).unwrap();
+    fs::remove_file(path.join(LOG)).unwrap();
+    assert!(store.open(&id).is_err());
+    // Compacting: the open log is at the largest generation.
+    fs::write(path.join(SNAPSHOT), disk::encode_snapshot(u64::MAX - 1, &state).unwrap()).unwrap();
+    let _ = fs::remove_file(path.join(LOG));
+    let mut server = store.open(&id).unwrap();
+    let mut a = join(&mut server, Access::Edit);
+    store.changed(&id, &mut server);
+    for i in 0..4 {
+        rename(&mut server, &mut a, &format!("P{i}"));
+        store.changed(&id, &mut server);
+        store.flush();
+    }
+    let snap = disk::check_snapshot(&fs::read(path.join(SNAPSHOT)).unwrap()).unwrap();
+    assert_eq!(snap, u64::MAX);
+}

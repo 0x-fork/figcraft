@@ -1167,7 +1167,10 @@ impl Store {
                 Log { generation, file: f, pending: Vec::new(), entries: kept, bytes, dirty: kept > 0 }
             }
             // A new snapshot and log of the next generation, so appends start clean.
-            _ => self.rewrite(file, generation + 1, &server).map_err(|e| e.why)?,
+            _ => {
+                let next = generation.checked_add(1).ok_or("the file's generation can't go any higher")?;
+                self.rewrite(file, next, &server).map_err(|e| e.why)?
+            }
         };
         self.entry(file)?.log = Some(log);
         Ok(server)
@@ -1243,7 +1246,11 @@ impl Store {
     fn compact(&mut self, file: &str, server: &Server) {
         self.compactions += 1;
         let Some(generation) = self.files.get(file).and_then(|e| e.log.as_ref()).map(|l| l.generation) else { return };
-        match self.rewrite(file, generation + 1, server) {
+        let Some(next) = generation.checked_add(1) else {
+            log::error!("file {file}: compaction failed: the file's generation can't go any higher");
+            return;
+        };
+        match self.rewrite(file, next, server) {
             Ok(log) => {
                 if let Ok(e) = self.entry(file) {
                     e.log = Some(log);
