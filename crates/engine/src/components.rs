@@ -116,6 +116,23 @@ pub fn inside_instance(doc: &Document, id: NodeId) -> bool {
     enclosing_instance(doc, id).is_some()
 }
 
+/// Mark the `modes` override on layers inside instances whose variable modes differ from their
+/// main layer's, for files from before `modes` was an override group. Copies follow their main
+/// layer's modes, so a layer on other modes chose them itself.
+pub fn mark_layer_modes(doc: &mut Document) {
+    let chose: Vec<NodeId> = doc
+        .nodes()
+        .filter(|n| !n.overrides.contains("modes") && n.source.and_then(|s| doc.node(s)).is_some_and(|m| m.var_modes != n.var_modes))
+        .map(|n| n.id)
+        .filter(|id| inside_instance(doc, *id))
+        .collect();
+    for id in chose {
+        if let Some(n) = doc.node_mut(id) {
+            n.overrides.insert("modes".into());
+        }
+    }
+}
+
 /// The slot property frame `id` stands for (its name and preferred components): a frame bound to
 /// a slot property of its component, or an instance's copy of one (followed through its sources).
 pub fn slot_def(doc: &Document, id: NodeId) -> Option<(&str, &[NodeId])> {

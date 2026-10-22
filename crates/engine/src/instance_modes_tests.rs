@@ -175,3 +175,22 @@ fn a_mode_set_on_an_icon_inside_a_placed_instance_survives_main_edits() {
     run(&mut s, "component.resetInstance", json!({"ids": [placed]}));
     assert_eq!(fill(&s, icon), "FF0000", "reset all brings back the main's mode");
 }
+
+#[test]
+fn a_file_from_before_modes_were_overrides_keeps_the_modes_chosen_inside_its_instances() {
+    let mut s = Session::new();
+    let (button, _, nested) = modal(&mut s);
+    // Saved before `modes` was an override group: the copy has its mode but no marker.
+    s.doc_mut().unwrap().node_mut(nested).unwrap().overrides.remove("modes");
+    let path = std::env::temp_dir().join(format!("figcraft-instance-modes-{}.figcraft", std::process::id()));
+    let p = path.to_string_lossy().into_owned();
+    run(&mut s, "file.saveAs", json!({"path": p}));
+    let mut s = Session::new();
+    run(&mut s, "file.open", json!({"path": p}));
+    let _ = std::fs::remove_file(&path);
+    let doc = s.doc().unwrap();
+    assert!(doc.node(nested).unwrap().overrides.contains("modes"), "opening it marks the mode the copy chose");
+    assert!(doc.nodes().filter(|n| n.id != nested).all(|n| !n.overrides.contains("modes")), "layers on their main's modes stay unmarked");
+    run(&mut s, "node.set", json!({"ids": [button], "layout": "horizontal"}));
+    assert_eq!(fill(&s, nested), "0000FF", "a rebuild keeps it");
+}

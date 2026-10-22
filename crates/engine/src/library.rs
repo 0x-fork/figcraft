@@ -553,11 +553,18 @@ fn stat(_path: &str) -> std::result::Result<Stamp, String> {
     Err(NO_FILES.into())
 }
 
+/// A library read from a file or a server, with the modes chosen inside its instances marked when
+/// it was published before they were overrides ([`crate::components::mark_layer_modes`]).
+pub(crate) fn settled(mut lib: PublishedLibrary) -> PublishedLibrary {
+    crate::components::mark_layer_modes(Arc::make_mut(&mut lib.doc));
+    lib
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn read_file(path: &str) -> std::result::Result<PublishedLibrary, String> {
     let f = crate::file_access::open(path).map_err(|e| e.to_string())?;
     match figcraft_format::read_library(std::io::BufReader::new(f)) {
-        Ok(Some(lib)) => Ok(lib),
+        Ok(Some(lib)) => Ok(settled(lib)),
         Ok(None) => Err(format!("{path} has no published library: open it and publish it first (Libraries ▸ Publish library…)")),
         Err(e) => Err(format!("{path}: {e}")),
     }
