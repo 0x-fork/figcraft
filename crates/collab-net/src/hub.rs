@@ -402,6 +402,8 @@ enum HubIn {
         sock: TcpStream,
         /// Its size (in flight until handled).
         bytes: usize,
+        /// Told when the hub takes the connection in (dropped unsent when it doesn't).
+        admitted: SyncSender<()>,
     },
     Msg {
         conn: u64,
@@ -946,9 +948,13 @@ fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimit
                 if reserved || !shared.in_flight.take(bytes, limits.max_in_flight) {
                     end(Some(BUSY));
                 } else {
-                    ws.set_config(|c| *c = config(max));
-                    let opened = sock.try_clone().is_ok_and(|s| hub.send(HubIn::Open { conn, ip, first, out: out.clone(), sock: s, bytes }).is_ok());
-                    if opened && ws.get_ref().set_read_timeout(Some(idle)).is_ok() {
+                    let (admitted, verdict) = sync_channel(1);
+                    let opened =
+                        sock.try_clone().is_ok_and(|s| hub.send(HubIn::Open { conn, ip, first, out: out.clone(), sock: s, bytes, admitted }).is_ok());
+                    // Nothing more is read until the hub took the connection in (its token checked):
+                    // only then may it send messages of the full size.
+                    if opened && verdict.recv().is_ok() && ws.get_ref().set_read_timeout(Some(idle)).is_ok() {
+                        ws.set_config(|c| *c = config(max));
                         read_loop(&mut ws, conn, hub, limits, max, &shared.in_flight, &end);
                         let _ = hub.send(HubIn::Gone { conn });
                     }
@@ -1074,6 +1080,8 @@ struct Pending {
     out: Line,
     sock: TcpStream,
     ip: IpAddr,
+    /// Told when it is taken in.
+    admitted: SyncSender<()>,
 }
 
 /// A connection the hub took in.
@@ -1195,7 +1203,7 @@ impl<B: Backend> Hub<B> {
 
     fn handle(&mut self, m: HubIn) {
         match m {
-            HubIn::Open { conn, ip, first, out, sock, bytes } => {
+            HubIn::Open { conn, ip, first, out, sock, bytes, admitted } => {
                 self.in_flight.give(bytes);
                 // The operator (with the server key) gets in from anywhere; everyone else is
                 // checked (blocked addresses, connection rates).
@@ -1204,7 +1212,7 @@ impl<B: Backend> Hub<B> {
                     log::info!("event=refused ip={ip} reason={why:?}");
                     return refuse(&out, &why);
                 }
-                let c = Pending { out, sock, ip };
+                let c = Pending { out, sock, ip, admitted };
                 match first {
                     ClientMsg::Hello(hello) => self.join(conn, hello, c),
                     ClientMsg::Manage(m) => self.manage(conn, &m, c),
@@ -1399,6 +1407,7 @@ impl<B: Backend> Hub<B> {
                 if let Some(c) = old.and_then(|old| self.conns.remove(&old)) {
                     shutdown(&c.sock);
                 }
+                let _ = c.admitted.try_send(());
                 self.conns
                     .insert(conn, Conn { out: c.out, sock: c.sock, kind: Kind::Joined { file: file.clone(), id, link: admission.link }, ip: c.ip });
                 self.queue(&file, more);
@@ -1444,6 +1453,7 @@ impl<B: Backend> Hub<B> {
 
     /// Take in connection `c` as `kind` and send it `first`.
     fn take_in(&mut self, conn: u64, c: Pending, kind: Kind, first: &ServerMsg) {
+        let _ = c.admitted.try_send(());
         self.conns.insert(conn, Conn { out: c.out, sock: c.sock, kind, ip: c.ip });
         self.answer(conn, first);
     }
@@ -1747,3 +1757,7 @@ mod queue_tests;
 #[cfg(test)]
 #[path = "barred_tests.rs"]
 mod barred_tests;
+
+#[cfg(test)]
+#[path = "preauth_tests.rs"]
+mod preauth_tests;
