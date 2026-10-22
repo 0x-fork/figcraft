@@ -206,10 +206,15 @@ fn connect(server: &Endpoint, limits: &NetLimits, timeout: Duration) -> Result<W
     Ok(ws)
 }
 
-/// Close politely: read until the server's close arrives (or the socket ends), so it isn't lost.
+/// How long `close` waits for the server's close.
+const CLOSE_DRAIN: Duration = Duration::from_secs(2);
+
+/// Close politely: read until the server's close arrives (or the socket ends), so it isn't lost,
+/// but no longer than [`CLOSE_DRAIN`] (a server that keeps pinging would pin the loop).
 fn close(mut ws: Ws) {
     let _ = ws.close(None);
-    while ws.read().is_ok() {}
+    let deadline = std::time::Instant::now() + CLOSE_DRAIN;
+    while std::time::Instant::now() < deadline && ws.read().is_ok() {}
 }
 
 fn send(ws: &mut Ws, msg: &ClientMsg) -> Result<(), String> {
@@ -238,5 +243,33 @@ fn reply<T>(ws: &mut Ws, limits: &NetLimits, pick: impl Fn(ServerMsg) -> Option<
             Ok(_) => continue,
             Err(e) => Err(format!("no answer from the server ({e})")),
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A server that keeps pinging and never answers the close must not pin `close` forever.
+    #[test]
+    fn close_returns_against_a_server_that_keeps_pinging() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            let Ok(mut ws) = tungstenite::accept(s) else { return };
+            while ws.send(Message::Ping(Bytes::new())).is_ok() {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let limits = NetLimits { idle_timeout: Duration::from_millis(300), ..NetLimits::default() };
+        let server = Endpoint { host: addr.to_string(), path: "/".into(), secure: false };
+        let ws = connect(&server, &limits, Duration::from_secs(2)).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            close(ws);
+            let _ = tx.send(());
+        });
+        assert!(rx.recv_timeout(Duration::from_secs(3)).is_ok(), "close() kept draining a pinging server");
     }
 }
