@@ -42,7 +42,7 @@ use figcraft_collab::message::{
     PluginReply, PluginReq, ReportInfo, Usage,
 };
 use figcraft_collab::{Change, Replica, Server, same_secret};
-use figcraft_collab_net::hub::{Admission, Backend, Closing, Handled, OpenFile, ip_key};
+use figcraft_collab_net::hub::{Admission, Backend, Closing, Handled, OpenFile, ip_blocks, ip_key};
 use figcraft_collab_net::token;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -514,6 +514,34 @@ impl Store {
         self.keep(name, snapshot, None, &|_| Ok(())).map(|(info, edit, view, _)| (info, edit, view))
     }
 
+    /// For each block the address `ip` counts in ([`ip_blocks`]), how many times one address's
+    /// caps it gets, and the files and bytes kept by the files published from addresses in it. An
+    /// address that doesn't parse counts as itself only, ×1, by its exact text.
+    fn per_block(&self, ip: &str) -> Vec<(u32, usize, u64)> {
+        let blocks_of = |text: &str| text.parse::<IpAddr>().map(|a| ip_blocks(ip_key(a))).unwrap_or_default();
+        let kept: Vec<(&str, Vec<_>, u64)> = self
+            .files
+            .iter()
+            .filter_map(|(id, e)| {
+                let from = e.meta.ip.as_deref()?;
+                Some((from, blocks_of(from).into_iter().map(|(b, _)| b).collect(), self.bytes(id)))
+            })
+            .collect();
+        let sum = |mine: &mut dyn Iterator<Item = &(&str, Vec<_>, u64)>| mine.fold((0, 0u64), |(f, b), (_, _, n)| (f + 1, b.saturating_add(*n)));
+        let blocks = blocks_of(ip);
+        if blocks.is_empty() {
+            let (files, bytes) = sum(&mut kept.iter().filter(|(from, _, _)| *from == ip));
+            return vec![(1, files, bytes)];
+        }
+        blocks
+            .into_iter()
+            .map(|(block, times)| {
+                let (files, bytes) = sum(&mut kept.iter().filter(|(_, blocks, _)| blocks.contains(&block)));
+                (times, files, bytes)
+            })
+            .collect()
+    }
+
     /// Keep a document published without the key from `ip`, within the caps on what one address
     /// and everyone may keep: the file, its links and its owner token.
     pub fn publish_open(&mut self, ip: IpAddr, name: &str, snapshot: &[Change]) -> Result<(FileInfo, NewLink, NewLink, String), String> {
@@ -525,19 +553,21 @@ impl Store {
         if !self.abuse.allow(ip, Action::Publish, Instant::now()) {
             return Err("too many files published from your address lately: try again in an hour".into());
         }
-        let ip_text = ip.to_string();
-        let mine: Vec<&String> = self.files.iter().filter(|(_, e)| e.meta.ip.as_deref() == Some(ip_text.as_str())).map(|(id, _)| id).collect();
-        if mine.len() >= max_files {
-            return Err(format!(
-                "your address keeps {} files on this server already, the most it may: remove one (with its owner token) or wait until one expires",
-                mine.len()
-            ));
+        let blocks = self.per_block(&ip.to_string());
+        for &(times, files, _) in &blocks {
+            if files >= max_files.saturating_mul(times as usize) {
+                return Err(format!(
+                    "your address keeps {files} files on this server already, the most it may: remove one (with its owner token) or wait until one expires"
+                ));
+            }
         }
-        let used_ip: u64 = mine.iter().map(|id| self.bytes(id)).sum();
         let used_all: u64 = self.files.keys().map(|id| self.bytes(id)).sum();
         let fits = |n: u64| {
-            if used_ip.saturating_add(n) > max_ip {
-                return Err(format!("your address's files would take more than the {} MiB it may keep here: remove one first", max_ip >> 20));
+            for &(times, _, used) in &blocks {
+                let cap = max_ip.saturating_mul(u64::from(times));
+                if used.saturating_add(n) > cap {
+                    return Err(format!("your address's files would take more than the {} MiB it may keep here: remove one first", cap >> 20));
+                }
             }
             if used_all.saturating_add(n) > max_all {
                 return Err("this server is full: it takes no more files for now (try again later, or another server)".into());
@@ -1090,9 +1120,11 @@ impl Store {
         let h = &self.cfg.hosting;
         let Some(ip) = self.files.get(file).filter(|e| e.meta.owner.is_some()).and_then(|e| e.meta.ip.clone()) else { return Ok(()) };
         let (max_ip, max_all) = (h.max_bytes_per_ip, h.max_total_bytes);
-        let used_ip: u64 = self.files.iter().filter(|(_, e)| e.meta.ip.as_deref() == Some(ip.as_str())).map(|(id, _)| self.bytes(id)).sum();
-        if used_ip.saturating_add(n) > max_ip {
-            return Err(format!("the files published from this file's address have reached their {} MiB: that change wasn't kept", max_ip >> 20));
+        for (times, _, used) in self.per_block(&ip) {
+            let cap = max_ip.saturating_mul(u64::from(times));
+            if used.saturating_add(n) > cap {
+                return Err(format!("the files published from this file's address have reached their {} MiB: that change wasn't kept", cap >> 20));
+            }
         }
         let used_all: u64 = self.files.keys().map(|id| self.bytes(id)).sum();
         if used_all.saturating_add(n) > max_all {
