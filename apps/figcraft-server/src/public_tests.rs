@@ -197,6 +197,22 @@ fn idle_files_published_without_the_key_expire() {
 }
 
 #[test]
+fn offline_commands_do_not_sweep_idle_files() {
+    let dir = TempDir::new("offline-sweep");
+    let mut c = open(dir.path());
+    c.idle_days = 30.0;
+    let mut store = Store::open(dir.path(), c.store()).unwrap();
+    let (public, ..) = store.publish_open(ip("203.0.113.9"), "Public", &snapshot("Public")).unwrap();
+    store.age(&public.id, 31 * 86_400);
+    drop(store);
+    let store = Store::try_open(dir.path(), c.store()).unwrap().unwrap();
+    drop(store);
+    assert!(dir.path().join("files").join(&public.id).exists(), "a command deleted an idle file");
+    let _serving = Store::open(dir.path(), c.store()).unwrap();
+    assert!(!dir.path().join("files").join(&public.id).exists());
+}
+
+#[test]
 fn rate_limits_and_blocks_refuse_with_a_reason() {
     let dir = TempDir::new("limits");
     let mut c = open(dir.path());
