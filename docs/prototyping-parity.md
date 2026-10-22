@@ -1,6 +1,6 @@
 # Prototyping parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-17 · **Change:** minor (a Present tab with device and scale controls (#537); core editor leftovers: delays on mouse triggers and manual overlay offsets; controller buttons on key/gamepad triggers, widgets that react in prototypes, `proto.evaluate` and the mode lookup rules pinned) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-22 · **Change:** minor (Change to, set variable and set variable mode lay out what they change in the player, as the canvas does) · **Target:** Figma Design (desktop app 126.10.7)
 
 **Breadth ~92%, ready ~74% (estimated).** Every Figma trigger except media, every action except
 media control, every transition and easing exist; key/gamepad triggers take controller buttons,
@@ -101,6 +101,7 @@ case pins the current behaviour).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-22 | minor | Change to, set variable and set variable mode lay out what they change in the player as the canvas does: text sizes to what it shows and hugging frames follow (an instance with a longer label changed to the main's width; a bound text kept its old size). Two player tests. Breadth and ready unchanged. |
 | 2026-10-17 | minor | Community batch #753: a Present tab (#537): playback in its own tab that keeps its screen and history, a current-frame thumbnail, previous / next, device presets and scale; the frame reflows to the device's screen on the prototype's copy; phone and tablet content drags inside a fixed device as its overflow allows ("No scrolling" frames clip; iPad mini, MacBook Air and Desktop keep their bodies); the unsaved-changes question shows above the presentation. Checked in the app on Windows. Percentages and hours unchanged |
 | 2026-10-13 | minor | Prototyping, delays on mouse triggers and manual overlay offsets (M5): mouse enter, leave, down and up wait `delayMs` before their actions run (once while waiting; dropped when the screen or overlay they were on goes away; a pointer that leaves early doesn't cancel, the documentation is silent), and a manual overlay sits at `offset: [x, y]` from the top-left of the layer that opens it (without one, right below it, as before). Delay and X/Y fields in the interaction editor, the player on its own clock, REST import (`delay`, `overlayRelativePosition`), `.fig` import and export (the export's field for mouse delays is unchecked against other software). Numbers unchanged. |
 | 2026-10-12 | minor | Controller buttons on key/gamepad triggers (Controller menu, player polling on Windows and in the browser, REST import instead of skipping, control channel injection), widgets reacting to clicks in presented prototypes on the prototype's own copy, `proto.evaluate`; the mode lookup and set-variable-mode rules written as cases (they already held). Breadth 90% → 92%, ready unchanged at 74% (controllers on Windows and the browser only; no real prototype QA yet), 3–6 h → 2–5 h |
