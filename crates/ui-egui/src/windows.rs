@@ -343,8 +343,9 @@ pub(crate) fn confirm_close(app: &mut FigApp, ctx: &Context) {
             return;
         }
         app.ui.close_after_save_as = None;
+        // Saved: go on with the other files, then close.
         if app.session.docs.iter().find(|d| d.uid == uid).is_none_or(|d| !d.is_dirty()) {
-            request_close(app, ctx);
+            save_then_close(app, ctx);
         }
         return;
     }
@@ -374,6 +375,10 @@ pub(crate) fn confirm_close(app: &mut FigApp, ctx: &Context) {
                 answer = Some(CloseAnswer::Save);
             }
         });
+        // Save is the default: Enter answers it when no button has the keyboard.
+        if answer.is_none() && ui.memory(|m| m.focused().is_none()) && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            answer = Some(CloseAnswer::Save);
+        }
     });
     if !open {
         answer = Some(CloseAnswer::Cancel);

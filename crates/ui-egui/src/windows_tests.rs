@@ -171,16 +171,18 @@ fn a_request_for_a_window_on_screen_wakes_it_while_the_main_window_is_hidden() {
     assert!(woken.lock().unwrap().contains(&other), "the other window is asked to draw: {:?}", woken.lock().unwrap());
 }
 
-/// Answers Save as with `path` (`None`: cancelled) and counts the dialogs asked for.
+/// Answers each Save as with the next of `paths` (none left: cancelled) and counts the dialogs
+/// asked for.
 struct SaveAs {
-    path: Option<std::path::PathBuf>,
+    paths: Vec<std::path::PathBuf>,
     asked: std::rc::Rc<std::cell::Cell<usize>>,
 }
 
 impl crate::Services for SaveAs {
     fn pick_save(&mut self, _title: &str, _name: &str, _exts: &[&str]) -> crate::DialogFuture {
         self.asked.set(self.asked.get() + 1);
-        Box::pin(std::future::ready(self.path.take()))
+        let next = if self.paths.is_empty() { None } else { Some(self.paths.remove(0)) };
+        Box::pin(std::future::ready(next))
     }
 }
 
@@ -193,7 +195,7 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
 
 /// The main window with one file that has unsaved changes, saved at `path` first when given, and
 /// the window asked to close (the question shows).
-fn asking(path: Option<&std::path::Path>, save_as: Option<std::path::PathBuf>) -> (egui::Context, FigApp, std::rc::Rc<std::cell::Cell<usize>>) {
+fn asking(path: Option<&std::path::Path>, save_as: Vec<std::path::PathBuf>) -> (egui::Context, FigApp, std::rc::Rc<std::cell::Cell<usize>>) {
     let mut s = Session::new();
     if let Some(p) = path {
         s.execute("file.saveAs", &json!({"path": p.to_string_lossy()})).unwrap();
@@ -201,7 +203,7 @@ fn asking(path: Option<&std::path::Path>, save_as: Option<std::path::PathBuf>) -
     s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
     let asked = std::rc::Rc::new(std::cell::Cell::new(0));
     let ctx = egui::Context::default();
-    let mut app = FigApp::new(s, Box::new(SaveAs { path: save_as, asked: asked.clone() }));
+    let mut app = FigApp::new(s, Box::new(SaveAs { paths: save_as, asked: asked.clone() }));
     frame(&ctx, &mut app, false);
     frame(&ctx, &mut app, true);
     assert!(app.ui.confirm_close, "the question shows");
@@ -224,7 +226,7 @@ fn settle(ctx: &egui::Context, app: &mut FigApp) {
 #[test]
 fn the_unsaved_changes_question_offers_save_dont_save_and_cancel() {
     // As the other Craft apps ask it (#1170): Don't Save, Cancel, and Save as the default.
-    let (ctx, mut app, _) = asking(None, None);
+    let (ctx, mut app, _) = asking(None, vec![]);
     ctx.enable_accesskit();
     frame(&ctx, &mut app, false);
     let out = ctx.run_ui(RawInput::default(), |ui| app.ui(ui));
@@ -241,7 +243,7 @@ fn the_unsaved_changes_question_offers_save_dont_save_and_cancel() {
 fn save_saves_a_file_with_a_path_and_then_closes() {
     let d = temp_dir("path");
     let path = d.join("a.figcraft");
-    let (ctx, mut app, asked) = asking(Some(&path), None);
+    let (ctx, mut app, asked) = asking(Some(&path), vec![]);
     assert_eq!(rects_in(&path), 0);
     crate::windows::answer_close(&mut app, &ctx, crate::windows::CloseAnswer::Save);
     settle(&ctx, &mut app);
@@ -255,7 +257,7 @@ fn save_saves_a_file_with_a_path_and_then_closes() {
 fn save_asks_where_for_an_untitled_file_and_closes_once_saved() {
     let d = temp_dir("untitled");
     let path = d.join("new.figcraft");
-    let (ctx, mut app, asked) = asking(None, Some(path.clone()));
+    let (ctx, mut app, asked) = asking(None, vec![path.clone()]);
     crate::windows::answer_close(&mut app, &ctx, crate::windows::CloseAnswer::Save);
     settle(&ctx, &mut app);
     assert_eq!(asked.get(), 1, "Save as asks where");
@@ -267,7 +269,7 @@ fn save_asks_where_for_an_untitled_file_and_closes_once_saved() {
 #[test]
 fn a_cancelled_save_as_or_a_failed_save_keeps_the_window_open() {
     // Save as cancelled: nothing is written, the file keeps its changes and the window stays.
-    let (ctx, mut app, asked) = asking(None, None);
+    let (ctx, mut app, asked) = asking(None, vec![]);
     crate::windows::answer_close(&mut app, &ctx, crate::windows::CloseAnswer::Save);
     settle(&ctx, &mut app);
     assert_eq!(asked.get(), 1);
@@ -278,7 +280,7 @@ fn a_cancelled_save_as_or_a_failed_save_keeps_the_window_open() {
     // The save fails (its folder is gone): the error shows and the window stays.
     let d = temp_dir("gone");
     let path = d.join("a.figcraft");
-    let (ctx, mut app, _) = asking(Some(&path), None);
+    let (ctx, mut app, _) = asking(Some(&path), vec![]);
     std::fs::remove_dir_all(&d).unwrap();
     crate::windows::answer_close(&mut app, &ctx, crate::windows::CloseAnswer::Save);
     settle(&ctx, &mut app);
@@ -290,7 +292,7 @@ fn a_cancelled_save_as_or_a_failed_save_keeps_the_window_open() {
 fn dont_save_closes_and_cancel_keeps_the_window() {
     let d = temp_dir("answers");
     let path = d.join("a.figcraft");
-    let (ctx, mut app, _) = asking(Some(&path), None);
+    let (ctx, mut app, _) = asking(Some(&path), vec![]);
     crate::windows::answer_close(&mut app, &ctx, crate::windows::CloseAnswer::Cancel);
     settle(&ctx, &mut app);
     assert!(!app.ui.quit && !app.ui.confirm_close);
@@ -299,5 +301,45 @@ fn dont_save_closes_and_cancel_keeps_the_window() {
     settle(&ctx, &mut app);
     assert!(app.ui.quit, "Don't Save closes");
     assert_eq!(rects_in(&path), 0, "without saving");
+    std::fs::remove_dir_all(&d).ok();
+}
+
+#[test]
+fn one_save_saves_every_untitled_file_of_the_window_then_closes() {
+    // Two new files with changes: Save asks where for each in turn, then the window closes,
+    // without asking the question again in between (#1173 review).
+    let d = temp_dir("two");
+    let (a, b) = (d.join("a.figcraft"), d.join("b.figcraft"));
+    let (ctx, mut app, asked) = asking(None, vec![a.clone(), b.clone()]);
+    app.session.execute("file.new", &json!({"name": "Second"})).unwrap();
+    app.session.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
+    crate::windows::answer_close(&mut app, &ctx, crate::windows::CloseAnswer::Save);
+    for _ in 0..8 {
+        frame(&ctx, &mut app, false);
+        assert!(!app.ui.confirm_close, "not asked again");
+    }
+    assert_eq!(asked.get(), 2);
+    assert_eq!((rects_in(&a), rects_in(&b)), (1, 1), "both saved");
+    assert!(app.ui.quit);
+    std::fs::remove_dir_all(&d).ok();
+}
+
+#[test]
+fn enter_answers_save() {
+    let d = temp_dir("enter");
+    let path = d.join("a.figcraft");
+    let (ctx, mut app, _) = asking(Some(&path), vec![]);
+    frame(&ctx, &mut app, false);
+    let enter = |pressed| egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE };
+    let input = RawInput { events: vec![enter(true), enter(false)], ..Default::default() };
+    ctx.run_ui(input, |ui| {
+        crate::windows::on_close_request(&mut app, ui.ctx());
+        app.ui(ui);
+    })
+    .textures_delta
+    .clear();
+    settle(&ctx, &mut app);
+    assert_eq!(rects_in(&path), 1, "Enter saved");
+    assert!(app.ui.quit);
     std::fs::remove_dir_all(&d).ok();
 }
