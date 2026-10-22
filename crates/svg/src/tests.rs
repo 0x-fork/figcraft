@@ -135,6 +135,34 @@ fn title_case_does_not_restart_words_across_fill_runs_in_live_text() {
     assert!(svg.contains(">He</tspan>") && svg.contains(">l</tspan>") && svg.contains(">lo</tspan>"), "{svg}");
 }
 
+/// Control characters in text (a pasted vertical-tab soft break, U+0001) are not allowed in XML:
+/// live-text export must leave them out so the SVG still parses, for plain and per-run spans.
+#[test]
+fn live_text_export_drops_xml_forbidden_control_characters() {
+    use figcraft_doc::{StyleRun, TextData};
+    figcraft_text::scan_system_fonts();
+    for styled in [false, true] {
+        let mut d = Document::new("t");
+        let page = d.first_page().unwrap();
+        let mut text = TextData::new("line one\u{b}line two\u{1}");
+        text.style.font_size = 24.0;
+        if styled {
+            let mut style = text.style.clone();
+            style.fills = Some(vec![Paint::solid(Color::from_hex("00FF00").unwrap())]);
+            text.runs.push(StyleRun { start: 5, end: 12, style });
+            text.normalize();
+        }
+        let id = d.create(page, NodeKind::Text(text), "Text", 0.0, 0.0, 600.0, 40.0).unwrap();
+        d.get_mut(id).unwrap().fills = vec![Paint::solid(Color::BLACK)];
+        let svg = export_svg(&d, &[id], &SvgOptions { outline_text: false, ..SvgOptions::default() }).unwrap();
+        assert!(!svg.contains('\u{b}') && !svg.contains('\u{1}'), "{svg:?}");
+        assert!(svg.contains("line") && svg.contains("two"), "{svg}");
+        let mut d2 = Document::new("t2");
+        let p2 = d2.first_page().unwrap();
+        assert!(import_svg(&mut d2, svg.as_bytes(), p2, 0.0, 0.0, "x").is_ok(), "{svg:?}");
+    }
+}
+
 #[test]
 fn point_joins_equal_to_the_layer_join_keep_a_plain_stroke() {
     use figcraft_doc::{StrokeJoin, VectorNetwork};
