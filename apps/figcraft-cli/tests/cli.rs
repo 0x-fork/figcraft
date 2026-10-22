@@ -60,6 +60,7 @@ fn help_after_a_subcommand_prints_the_usage() {
         &["plugin", "publish", "--help"],
         &["perf", "--help"],
         &["mcp", "--attach", "notaport", "--help"],
+        &["mcp", "--bogus", "--help"],
     ] {
         let out = bin().args(args).stdin(Stdio::null()).output().unwrap();
         assert_eq!(out.status.code(), Some(0), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
