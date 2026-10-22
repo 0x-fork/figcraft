@@ -334,6 +334,11 @@ fn write_key(root: &Path) -> Result<String, String> {
     Ok(key)
 }
 
+/// The highest version a file's first library publish may claim. Publishing counts up by one (a
+/// library carried over from another server keeps its number), so no real history gets near it.
+/// Later publishes may go one past the version on the server, so there is always a next one.
+const MAX_FIRST_LIBRARY_VERSION: u64 = 1 << 32;
+
 impl Store {
     /// Use the data directory `root` (made if missing). Fails when another server or command holds
     /// it. Files that can't be read are skipped and listed in [`problems`](Self::problems).
@@ -973,6 +978,12 @@ impl Store {
             if m.version <= old.version {
                 return Err(format!("version {} is on the server already: publish again to follow it", old.version));
             }
+            // A jump would let a client use up the numbers and leave no newer version to publish.
+            if m.version > old.version.saturating_add(1) {
+                return Err(format!("version {} is too high: the next one after {} is {}", m.version, old.version, old.version.saturating_add(1)));
+            }
+        } else if m.version > MAX_FIRST_LIBRARY_VERSION {
+            return Err(format!("version {} is too high: a first publish goes up to {MAX_FIRST_LIBRARY_VERSION}", m.version));
         }
         // Each version has a file of its own, written before the description names it: a failed
         // description write or a crash in between leaves the previous version served whole, never
