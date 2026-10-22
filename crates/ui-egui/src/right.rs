@@ -879,44 +879,32 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     });
     if indep_ok && ui.data(|d| d.get_temp::<bool>(Id::new("indep_corners"))).unwrap_or(false) {
         let radii = common(doc, sel, |n| n.corners.radii);
-        let keys = [
-            ("topLeftRadius", tr("Top left radius")),
-            ("topRightRadius", tr("Top right radius")),
-            ("bottomRightRadius", tr("Bottom right radius")),
-            ("bottomLeftRadius", tr("Bottom left radius")),
+        // `k` indexes `radii` ([top left, top right, bottom right, bottom left]); the fields sit
+        // where their corners are: top left, top right / bottom left, bottom right.
+        let corners = [
+            ("topLeftRadius", tr("Top left radius"), Icon::CornerTopLeft, 0),
+            ("topRightRadius", tr("Top right radius"), Icon::CornerTopRight, 1),
+            ("bottomLeftRadius", tr("Bottom left radius"), Icon::CornerBottomLeft, 3),
+            ("bottomRightRadius", tr("Bottom right radius"), Icon::CornerBottomRight, 2),
         ];
-        row(ui, 32.0, |ui| {
-            for (k, (key, name)) in keys.iter().enumerate().take(2) {
-                let e = crate::variable_ui::number_field(
-                    app,
-                    ui,
-                    &ids,
-                    key,
-                    Id::new(("corner", k)),
-                    Lead::Icon(Icon::CornerRadius, name),
-                    radii.map(|r| r[k]),
-                    "",
-                    col,
-                );
-                app.field(&ids, key, e, |v| json!(v.max(0.0)));
-            }
-        });
-        row(ui, 32.0, |ui| {
-            for (k, (key, name)) in keys.iter().enumerate().skip(2) {
-                let e = crate::variable_ui::number_field(
-                    app,
-                    ui,
-                    &ids,
-                    key,
-                    Id::new(("corner", k)),
-                    Lead::Icon(Icon::CornerRadius, name),
-                    radii.map(|r| r[k]),
-                    "",
-                    col,
-                );
-                app.field(&ids, key, e, |v| json!(v.max(0.0)));
-            }
-        });
+        for pair in corners.chunks(2) {
+            row(ui, 32.0, |ui| {
+                for (key, name, icon, k) in pair {
+                    let e = crate::variable_ui::number_field(
+                        app,
+                        ui,
+                        &ids,
+                        key,
+                        Id::new(("corner", *k)),
+                        Lead::Icon(*icon, name),
+                        radii.map(|r| r[*k]),
+                        "",
+                        col,
+                    );
+                    app.field(&ids, key, e, |v| json!(v.max(0.0)));
+                }
+            });
+        }
         let sm = common(doc, sel, |n| (n.corners.smoothing * 100.0).round());
         widgets::sublabels(ui, tr("Corner smoothing"), None);
         row(ui, 32.0, |ui| {
