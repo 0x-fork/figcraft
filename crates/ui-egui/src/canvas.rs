@@ -1039,8 +1039,10 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
         if width_tool {
             width_overlay(app, painter, &doc, &ve, zoom);
         } else if let Some(c) = app.session.vector_edit_box() {
+            // The box around several selected points draws no corner handles: they would read as
+            // points. Its corners and edges still scale the points when dragged.
             let label = format!("{} × {}", fmt((c[1] - c[0]).hypot()), fmt((c[3] - c[0]).hypot()));
-            size_label = transform_box(app, painter, c.map(|p| app.to_screen(p.x, p.y)), accent(painter), true, 4, Some(label));
+            size_label = transform_box(app, painter, c.map(|p| app.to_screen(p.x, p.y)), accent(painter), true, 0, Some(label));
         }
     }
     // Selection.
