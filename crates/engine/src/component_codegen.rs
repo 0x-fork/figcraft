@@ -526,7 +526,7 @@ pub(crate) fn instance_values(doc: &Document, id: NodeId, c: &Component) -> Opti
 pub fn usage(doc: &Document, id: NodeId, lang: CodeLang, depth: usize) -> Option<String> {
     let c = main_of(doc, id).and_then(|m| describe(doc, m))?;
     let values = instance_values(doc, id, &c)?;
-    let pad = if lang == CodeLang::React { "  ".repeat(depth) } else { indent(depth) };
+    let pad = if matches!(lang, CodeLang::React | CodeLang::Vue) { "  ".repeat(depth) } else { indent(depth) };
     // A connected component: its real snippet. shortcut: inside a layer tree it brings no import
     // line; collect them at the top of the tree's code when people ask for it.
     if let Some(link) = crate::code_connect::link(doc, id, lang) {
@@ -574,7 +574,7 @@ pub fn usage(doc: &Document, id: NodeId, lang: CodeLang, depth: usize) -> Option
             let attrs: String = args
                 .iter()
                 .filter(|(name, _, _)| !is_slot(name))
-                .map(|(name, expr, plain)| if *plain { format!(" {name}={expr}") } else { format!(" :{name}=\"{expr}\"") })
+                .map(|(name, expr, plain)| if *plain { format!(" {name}={expr}") } else { format!(" :{name}=\"{}\"", expr.replace('"', "&quot;")) })
                 .collect();
             let slots: String = args
                 .iter()

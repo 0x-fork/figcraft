@@ -124,6 +124,11 @@ fn instances_are_calls_passing_the_values_they_set() {
     assert_eq!(component_code(&mut s, i, "swiftui")["usage"], "Card(showDot: false, title: \"Say \\\"hi\\\" $5\\nnow\")\n");
     assert_eq!(component_code(&mut s, i, "compose")["usage"], "Card(showDot = false, title = \"Say \\\"hi\\\" \\$5\\nnow\")\n");
     assert_eq!(component_code(&mut s, i, "leptos")["usage"], "<Card show_dot={false} title={\"Say \\\"hi\\\" $5\\nnow\"} />\n");
+    // A quoted title becomes a binding whose attribute value is escaped: the expression itself
+    // keeps its JS quotes, and the attribute's own quotes are entities.
+    assert_eq!(component_code(&mut s, i, "vue")["usage"], "<Card :showDot=\"false\" :title=\"&quot;Say \\&quot;hi\\&quot; $5\\nnow&quot;\" />\n");
+    let vue = code(&mut s, i, "vue");
+    assert!(vue.starts_with("<Card :showDot=\"false\" :title=\"&quot;Say \\&quot;hi\\&quot; $5\\nnow&quot;\" />\n"), "{vue}");
 }
 
 #[test]
