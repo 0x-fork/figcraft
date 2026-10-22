@@ -1291,7 +1291,7 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
   `:prop="value"`. On an instance (or a layer tree containing
   instances) each instance is a call passing only the values it changes, e.g. `<Button
   state="Hover" label="Buy" />`, `<Button state=ButtonState::Hover label="Buy" />`,
-  `<Button :state="Hover" />`, `Button(state:
+  `<Button state="Hover" />`, `Button(state:
   .hover, label: "Buy")`, `Button(state = ButtonState.Hover, label = "Buy")`. Names are escaped and
   unique (keywords get a suffix, `default` → `defaultValue`, Rust's `type` → `type_`; Leptos names
   are snake_case; names that would shadow framework types get one too, `Text` → `TextComponent`). `inspect.componentCode
@@ -1303,9 +1303,10 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
   name and a call passing every property) → `{component, language, code, unknown}`. Templates are
   text, never executed: `{property}` (its name or parameter name) is the instance's value escaped
   for the language (React and Leptos keep the markup's braces, so `size={size}` gives
-  `size="Large"` and `disabled={disabled}` gives `disabled={true}`; a Vue binding is quoted
-  instead, so `:size={size}` gives `:size="Large"` and `:disabled={disabled}` gives
-  `:disabled="true"` — write the placeholder without quotes and let the value bring them; a
+  `size="Large"` and `disabled={disabled}` gives `disabled={true}`; a Vue binding takes an
+  expression, so `:size={size}` gives `:size="&quot;Large&quot;"` and `:disabled={disabled}` gives
+  `:disabled="true"` — the string keeps its JS quotes as entities, and a static attribute
+  (`size={size}`) takes plain text; a
   component swap is the component itself, `:icon={icon}` giving `:icon="Icon"`; a string that needs
   escapes keeps them inside the value, where the attribute's own quotes become `&quot;`; Leptos
   imports with `use

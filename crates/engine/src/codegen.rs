@@ -243,12 +243,13 @@ impl<'a> Ctx<'a> {
         depth > self.base + MAX_DEPTH
     }
 
-    /// A call for an instance below the root (`None` for other layers, or a missing main).
-    fn call(&self, n: &Node, lang: CodeLang, depth: usize) -> Option<String> {
+    /// A call for an instance below the root (`None` for other layers, or a missing main), with
+    /// the CSS its slot content generated.
+    fn call(&self, n: &Node, lang: CodeLang, depth: usize) -> Option<(String, String)> {
         if n.id == self.root || !matches!(n.kind, NodeKind::Instance { .. }) {
             return None;
         }
-        crate::component_codegen::usage(self.doc, n.id, lang, depth)
+        crate::component_codegen::usage_with_styles(self.doc, n.id, lang, depth)
     }
 }
 
@@ -619,6 +620,15 @@ pub(crate) fn class_name(name: &str, used: &mut Vec<String>) -> String {
     name
 }
 
+/// `markup`'s first element with a Vue `v-if` attribute (a call with no placing wrapper).
+fn with_v_if(markup: &str, guard: Option<&str>) -> String {
+    let Some(guard) = guard else { return markup.to_string() };
+    match markup.find('>') {
+        Some(i) => format!("{} v-if=\"{guard}\"{}", &markup[..i], &markup[i..]),
+        None => markup.to_string(),
+    }
+}
+
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('\n', "<br>")
 }
@@ -777,15 +787,20 @@ impl<'c, 'a> Markup<'c, 'a> {
         if self.code() && !root && matches!(n.kind, NodeKind::Instance { .. }) {
             let at = depth + usize::from(!decls.is_empty());
             let run = if self.lang == CodeLang::Leptos { ".run()" } else { "" };
-            let inner = match self.ctx.param(n, "mainComponent") {
-                Some(p) => Some(format!("{}{{{}{run}}}\n", self.pad(at), self.ident(p))),
-                None => self.ctx.call(n, self.lang, at),
+            let (inner, css) = match self.ctx.param(n, "mainComponent") {
+                Some(p) if self.lang == CodeLang::Vue => (Some(format!("{}<component :is=\"{}\" />\n", self.pad(at), self.ident(p))), String::new()),
+                Some(p) => (Some(format!("{}{{{}{run}}}\n", self.pad(at), self.ident(p))), String::new()),
+                None => self.ctx.call(n, self.lang, at).map_or((None, String::new()), |(code, css)| (Some(code), css)),
             };
+            self.styles.push_str(&css);
             if let Some(inner) = inner {
+                // A Vue guard set by `node` rides on the call when there is no wrapper.
+                let guard = if self.lang == CodeLang::Vue { self.v_if.take() } else { None };
                 if decls.is_empty() {
-                    self.markup.push_str(&inner);
+                    self.markup.push_str(&with_v_if(&inner, guard.as_deref()));
                 } else {
-                    self.markup.push_str(&format!("{pad}<div {attr}=\"{class}\">\n{inner}{pad}</div>\n"));
+                    let guard = guard.map(|g| format!(" v-if=\"{g}\"")).unwrap_or_default();
+                    self.markup.push_str(&format!("{pad}<div {attr}=\"{class}\"{guard}>\n{inner}{pad}</div>\n"));
                     self.rule(path, &class, decls);
                 }
                 return;
@@ -830,7 +845,10 @@ impl<'c, 'a> Markup<'c, 'a> {
                 let vue = self.lang == CodeLang::Vue;
                 let leptos = self.lang == CodeLang::Leptos;
                 let open = open("div");
-                let slot_ident = slot.map(|p| class_name(&p.ident, &mut Vec::new()));
+                let slot_ident = slot.map(|p| match self.ctx.comp {
+                    Some(c) => crate::component_codegen::slot_name(c, p),
+                    None => class_name(&p.ident, &mut Vec::new()),
+                });
                 if let Some(p) = slot.filter(|_| kids.is_empty()) {
                     let content = if leptos {
                         format!("{{{}}}.as_ref().map(|c| c.run())", self.ident(p))
@@ -938,7 +956,7 @@ fn swift_layer(ctx: &Ctx, n: &Node, depth: usize, out: &mut String, extra: &[Str
     // Nested instances are calls; an instance swap parameter is a view.
     let call = match ctx.param(n, "mainComponent").filter(|_| n.id != ctx.root) {
         Some(p) => Some(format!("{pad}{}\n", p.ident)),
-        None => ctx.call(n, CodeLang::SwiftUi, depth),
+        None => ctx.call(n, CodeLang::SwiftUi, depth).map(|(code, _)| code),
     };
     if let Some(call) = call {
         out.push_str(&call);
@@ -1111,7 +1129,7 @@ fn compose_layer(ctx: &Ctx, n: &Node, depth: usize, out: &mut String) {
     // Nested instances are calls; an instance swap parameter is a composable.
     let call = match ctx.param(n, "mainComponent").filter(|_| n.id != ctx.root) {
         Some(p) => Some(format!("{pad}{}()\n", p.ident)),
-        None => ctx.call(n, CodeLang::Compose, depth),
+        None => ctx.call(n, CodeLang::Compose, depth).map(|(code, _)| code),
     };
     if let Some(call) = call {
         out.push_str(&call);

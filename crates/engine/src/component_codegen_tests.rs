@@ -220,12 +220,16 @@ fn instance_swap_properties_take_views() {
     let leptos = code(&mut s, chip, "leptos");
     assert!(leptos.contains("    #[prop(into, default = (|| view! { <HeartIcon /> }).into())] icon: ViewFn,"), "{leptos}");
     assert!(leptos.contains("{icon.run()}"), "{leptos}");
+    let vue = code(&mut s, chip, "vue");
+    assert!(vue.contains("    icon?: unknown;"), "{vue}");
+    assert!(vue.contains("<component :is=\"icon\" />"), "a swap is a component, not an element: {vue}");
     let i = idv(&ex(&mut s, "instance.create", json!({"component": chip, "x": 0, "y": 100})));
     ex(&mut s, "instance.setProperties", json!({"ids": [i], "properties": {"Icon": star}}));
     assert_eq!(component_code(&mut s, i, "react")["usage"], "<Chip icon={<StarIcon />} />\n");
     assert_eq!(component_code(&mut s, i, "swiftui")["usage"], "Chip(icon: AnyView(StarIcon()))\n");
     assert_eq!(component_code(&mut s, i, "compose")["usage"], "Chip(icon = { StarIcon() })\n");
     assert_eq!(component_code(&mut s, i, "leptos")["usage"], "<Chip icon={|| view! { <StarIcon /> }} />\n");
+    assert_eq!(component_code(&mut s, i, "vue")["usage"], "<Chip :icon=\"StarIcon\" />\n");
 }
 
 #[test]

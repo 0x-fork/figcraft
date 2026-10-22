@@ -182,3 +182,78 @@ fn a_keyword_property_name_stays_usable() {
     let out = vue(&mut s, c);
     assert!(out.contains("defaultValue"), "{out}");
 }
+
+#[test]
+fn a_nested_instance_keeps_its_v_if_guard() {
+    let mut s = Session::new();
+    let (card, _, _) = card(&mut s);
+    let f = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 300, "height": 200, "name": "Toolbar"})));
+    let nested = idv(&ex(&mut s, "instance.create", json!({"component": card, "x": 10, "y": 10, "parent": f})));
+    let c = idv(&ex(&mut s, "component.create", json!({"ids": [f]})));
+    ex(&mut s, "component.addProperty", json!({"id": c, "name": "Show card", "type": "boolean", "default": true, "layer": nested}));
+    let out = vue(&mut s, c);
+    // The call's early return must not swallow the guard `node` put on it.
+    assert!(out.contains("v-if=\"showCard\""), "{out}");
+    assert_eq!(out.matches("v-if=\"showCard\"").count(), 1, "{out}");
+}
+
+#[test]
+fn a_text_default_cannot_close_the_script_block() {
+    let mut s = Session::new();
+    let f = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 200, "height": 100, "name": "Card"})));
+    let text = idv(&ex(&mut s, "text.create", json!({"text": "Hello", "x": 0, "y": 0, "parent": f, "props": {"name": "Title"}})));
+    let c = idv(&ex(&mut s, "component.create", json!({"ids": [f]})));
+    ex(
+        &mut s,
+        "component.addProperty",
+        json!({"id": c, "name": "Title", "type": "text", "layer": text, "default": "</script><script>alert(1)</script>"}),
+    );
+    let out = vue(&mut s, c);
+    assert!(out.contains("\\u003C/script>"), "{out}");
+    assert_eq!(out.matches("</script>").count(), 1, "only the SFC's own closing tag: {out}");
+}
+
+#[test]
+fn slot_names_stay_distinct_when_idents_lowercase_alike() {
+    let mut s = Session::new();
+    let f = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 300, "height": 200, "name": "Shell"})));
+    let a = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 100, "height": 100, "parent": f, "name": "A"})));
+    let b = idv(&ex(&mut s, "frame.create", json!({"x": 100, "y": 0, "width": 100, "height": 100, "parent": f, "name": "B"})));
+    let c = idv(&ex(&mut s, "component.create", json!({"ids": [f]})));
+    ex(&mut s, "component.makeSlot", json!({"id": a, "name": "Foo Bar"}));
+    ex(&mut s, "component.makeSlot", json!({"id": b, "name": "Foobar"}));
+    let out = vue(&mut s, c);
+    assert!(out.contains("<slot name=\"foobar\""), "{out}");
+    assert!(out.contains("<slot name=\"foobar-2\""), "{out}");
+    // The instance's templates use the same names.
+    let g = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 300, "width": 20, "height": 20, "name": "Badge"})));
+    let badge = idv(&ex(&mut s, "component.create", json!({"ids": [g]})));
+    let i = idv(&ex(&mut s, "instance.create", json!({"component": c, "x": 400, "y": 0})));
+    ex(&mut s, "instance.slotInsert", json!({"id": i, "slot": "Foo Bar", "component": badge, "replace": true}));
+    ex(&mut s, "instance.slotInsert", json!({"id": i, "slot": "Foobar", "component": badge, "replace": true}));
+    let usage = component_code(&mut s, i, "vue")["usage"].as_str().unwrap_or_default().to_string();
+    assert!(usage.contains("<template #foobar>"), "{usage}");
+    assert!(usage.contains("<template #foobar-2>"), "{usage}");
+}
+
+#[test]
+fn slot_content_css_reaches_the_parent_stylesheet() {
+    let mut s = Session::new();
+    let f = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 300, "height": 200, "name": "Panel"})));
+    let content = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 200, "height": 100, "parent": f, "name": "Content"})));
+    let panel = idv(&ex(&mut s, "component.create", json!({"ids": [f]})));
+    ex(&mut s, "component.makeSlot", json!({"id": content, "name": "Content"}));
+    let screen = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 400, "width": 400, "height": 300, "name": "Screen"})));
+    let i = idv(&ex(&mut s, "instance.create", json!({"component": panel, "x": 10, "y": 10, "parent": screen})));
+    let slot = {
+        let doc = s.doc().unwrap();
+        crate::components::slots_of(doc, i).first().map(|(l, _)| *l).unwrap()
+    };
+    ex(&mut s, "shape.rectangle", json!({"x": 0, "y": 0, "width": 10, "height": 10, "parent": slot, "props": {"name": "Swatch", "fill": "#FF0000"}}));
+    // The layer's class rules belong to the tree that holds the instance, not to a discarded
+    // snippet: both web targets keep them in their stylesheet.
+    let out = vue(&mut s, screen);
+    assert!(out.contains(".swatch {"), "{out}");
+    assert!(out.contains("#FF0000"), "{out}");
+    assert!(code(&mut s, screen, "react").contains(".swatch {"));
+}

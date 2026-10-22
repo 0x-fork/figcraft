@@ -184,6 +184,38 @@ fn expr(doc: &Document, c: &Component, p: &Param, v: &Value, lang: CodeLang) -> 
     }
 }
 
+/// Whether the placeholder sits in a Vue bound attribute (`:name`, `v-bind:name`, `@event` or a
+/// `v-*` directive) rather than a static one. `None` when it isn't in an attribute at all.
+fn vue_bound_attribute(out: &str) -> Option<bool> {
+    let end = out.trim_end();
+    let after = end.strip_suffix('"').unwrap_or(end).trim_end();
+    let eq = after.rfind('=')?;
+    let before = after[..eq].trim_end();
+    let name: String = before
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '@' | '.' | '[' | ']'))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.starts_with(':') || name.starts_with("v-bind:") || name.starts_with('@') || name.starts_with("v-on:") || name.starts_with("v-"))
+}
+
+/// An expression written into a double-quoted HTML attribute: its own quotes and markup become
+/// entities, so Vue's parser hands the expression its string literal intact.
+fn html_attr_expr(e: &str) -> String {
+    e.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")
+}
+
+/// Literal text written into a double-quoted HTML attribute.
+fn html_attr_text(s: &str) -> String {
+    s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")
+}
+
 /// `link`'s template with `values` (one per parameter of `c`), every line prefixed by `pad`.
 pub(crate) fn render(doc: &Document, c: &Component, values: &[(String, Value)], link: &CodeLink, lang: CodeLang, pad: &str) -> String {
     // A template that skipped `check` (a hand-edited file) and is far too long stays as written:
@@ -199,16 +231,34 @@ pub(crate) fn render(doc: &Document, c: &Component, values: &[(String, Value)], 
                     let e = expr(doc, c, p, v, lang);
                     // JSX and `view!`: a plain string reads best as an attribute value, anything
                     // else is an expression in braces (JSX attribute strings have no escapes).
-                    // A Vue binding takes a quoted value. A plain string literal brings its own
-                    // quotes; the template's own quote, when it wrote one, ends it; anything else
-                    // is wrapped here, and a quote inside is escaped for the attribute.
+                    // Vue's bound attributes take an expression, so a string keeps its JS quotes
+                    // inside the attribute (as entities); a static attribute takes plain text.
                     if lang == CodeLang::Vue {
-                        if !out.ends_with('"') && e.starts_with('"') && !e.contains('\\') {
-                            out.push_str(&e);
-                        } else if out.ends_with('"') {
-                            out.push_str(&e.replace('"', "&quot;"));
-                        } else {
-                            out.push_str(&format!("\"{}\"", e.replace('"', "&quot;")));
+                        match vue_bound_attribute(&out) {
+                            Some(true) => {
+                                let expr = html_attr_expr(&e);
+                                if out.ends_with('"') {
+                                    out.push_str(&expr);
+                                } else {
+                                    out.push('"');
+                                    out.push_str(&expr);
+                                    out.push('"');
+                                }
+                            }
+                            Some(false) => {
+                                let text = match &p.kind {
+                                    ParamKind::Text | ParamKind::Variant(_) => html_attr_text(v.as_str().unwrap_or("")),
+                                    _ => e.clone(),
+                                };
+                                if out.ends_with('"') {
+                                    out.push_str(&text);
+                                } else {
+                                    out.push('"');
+                                    out.push_str(&text);
+                                    out.push('"');
+                                }
+                            }
+                            None => out.push_str(&e),
                         }
                     } else {
                         let markup = matches!(lang, CodeLang::React | CodeLang::Leptos);
