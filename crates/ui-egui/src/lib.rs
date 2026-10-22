@@ -219,6 +219,8 @@ mod variables_rename_tests;
 #[cfg(test)]
 mod variants_discovery_tests;
 #[cfg(test)]
+mod vector_keys_tests;
+#[cfg(test)]
 mod vector_panel_tests;
 #[cfg(test)]
 mod vector_tail_ui_tests;
