@@ -4,7 +4,9 @@ FigCraft without a window: inspect, export, convert and render documents, run co
 commands, serve MCP and measure performance. Build it with
 `cargo build --release -p figcraft-cli` (binary `target/release/figcraft-cli`).
 
-Bad arguments print usage and exit with code 2; failures exit with 1. The CLI never panics on input.
+`figcraft-cli --help` (or `-h`, or `help`) prints usage on stdout and exits with 0, and so does
+`--help` or `-h` after a subcommand (`figcraft-cli mcp --help`). Bad arguments print usage and exit
+with code 2; failures exit with 1. The CLI never panics on input.
 
 ## Fonts
 

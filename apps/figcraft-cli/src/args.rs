@@ -1,6 +1,6 @@
 //! Minimal std-only argument parsing: positionals, `--key value` / `--key=value` / `-o value`
 //! options (given again: the last counts, or all with [`Args::values`]), and boolean `--flag`s.
-//! Unknown options are usage errors.
+//! Unknown options are usage errors; `--help` or `-h` is [`CliError::Help`].
 
 use std::collections::BTreeMap;
 
@@ -30,6 +30,10 @@ impl Args {
                 Some((n, v)) => (n, Some(v.to_string())),
                 None => (name, None),
             };
+            // `--help` / `-h` anywhere among the options (not as an option's value) asks for help.
+            if inline.is_none() && matches!(name, "help" | "h") {
+                return Err(CliError::Help);
+            }
             if valued.contains(&name) {
                 let v = match inline {
                     Some(v) => v,
@@ -134,5 +138,16 @@ mod tests {
         // Negative numbers are positionals, not options.
         let a = Args::parse(&v(&["-5"]), &[], &[]).unwrap();
         assert_eq!(a.positional, ["-5"]);
+    }
+
+    #[test]
+    fn help_is_asked_for_anywhere_but_as_a_value() {
+        for argv in [&["--help"][..], &["-h"], &["in.figcraft", "-o", "out", "--help"], &["--json", "-h"]] {
+            assert!(matches!(Args::parse(&v(argv), &["o"], &["json"]), Err(CliError::Help)), "{argv:?}");
+        }
+        let a = Args::parse(&v(&["--filter", "--help", "-o", "-h"]), &["filter", "o"], &[]).unwrap();
+        assert_eq!((a.value("filter").as_deref(), a.value("o").as_deref()), (Some("--help"), Some("-h")));
+        // `--help=x` is no request for help, just an unknown option.
+        assert!(matches!(Args::parse(&v(&["--help=x"]), &[], &[]), Err(CliError::Usage(_))));
     }
 }
