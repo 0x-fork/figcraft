@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (`.fig` export: files the incumbent imports, with component set properties; REST import keeps slot layers and instances' slot content (#792); REST import reads grid track sizes (#465); `.fig` import fidelity from the community batches, budgets for large files, the import report, a `.fig` copy from Save as, paste from another design app; instance layers' size and resizing and Hug on import (#731, #732); SVG/PDF export depth refusal (#208); `.fig` export: instance sizes, variables with modes, shared styles, variable-width strokes; `.fig` export: written files checked by opening them in other software; experimental `.fig` export; export and inspect behaviour suite and fixes; .fig import: editable vector networks and more layer kinds; embedded image colour profiles; `.fig` import, best effort; animated GIF fills and TIFF images; last major: created, formats from the installed Figma's Info.plist and help center, ours from source) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (`.fig` export: grid track sizes; files the incumbent imports, with component set properties; REST import keeps slot layers and instances' slot content (#792); REST import reads grid track sizes (#465); `.fig` import fidelity from the community batches, budgets for large files, the import report, a `.fig` copy from Save as, paste from another design app; instance layers' size and resizing and Hug on import (#731, #732); SVG/PDF export depth refusal (#208); `.fig` export: instance sizes, variables with modes, shared styles, variable-width strokes; `.fig` export: written files checked by opening them in other software; experimental `.fig` export; export and inspect behaviour suite and fixes; .fig import: editable vector networks and more layer kinds; embedded image colour profiles; `.fig` import, best effort; animated GIF fills and TIFF images; last major: created, formats from the installed Figma's Info.plist and help center, ours from source) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every format Figma reads or writes, with FigCraft's support. Sources: `Info.plist` of
 `/Applications/Figma.app` (document types only; nothing inside the bundle's code was read), Figma's
@@ -87,7 +87,7 @@ each.
   rotation, tile scale, crop); strokes (weight, align, join, caps, dashes, miter limit, per-side
   weights); shadows, layer and background blurs (progressive too), noise and texture; corners and
   smoothing, constraints, clip content, masks with their type; auto layout (direction, wrap, gaps, padding,
-  alignment, hug, strokes in layout, stacking order, grids with their tracks and cells) and how
+  alignment, hug, strokes in layout, stacking order, grids with their tracks, their sizes (fixed, hug, fill) and cells) and how
   layers sit in it (fill, absolute, min/max sizes, an axis without a maximum as infinite); layout grids; export settings; text style
   (font, with styles under the names font families give their faces: "SemiBold", "ExtraBold"…, and
   "Semi Bold" in Inter; size; line height, a share of
@@ -126,8 +126,8 @@ each.
   image adjustments, glass settings other than frost, springs other than Gentle (written as ease
   out), set-variable, set-variable-mode and conditional actions, scroll-to offsets, text decoration
   looks, variable font axes, text on a path, nested list levels, list spacing, hanging punctuation,
-  leading trim, OpenType features, per-layer operations inside boolean groups, grid tracks of fixed
-  or content size, different stroke ends on lines. Not written at all: stroke outlines of dashed and
+  leading trim, OpenType features, per-layer operations inside boolean groups, different
+  stroke ends on lines. Not written at all: stroke outlines of dashed and
   per-side strokes and of inside or outside strokes on polygons, stars and vectors, glyph outlines
   of text (a reader lays text out with its own fonts), version history and branches.
 - **Checked by opening written files in other software:** the example documents and a small test
@@ -179,6 +179,7 @@ each.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-22 | minor | `.fig` export writes grid track sizes (`gridColumnsSizing` / `gridRowsSizing`: fixed px, hug, fill shares), which the import already read; they were written as equal tracks (with a warning). Checked on a synthetic grid there (fixed 320/140/112/34/34 px columns): written as equal tracks it came in with five equal columns and its layers overflowing their cells; now its columns keep their sizes. Numbers unchanged |
 | 2026-10-22 | minor | `.fig` export imports into the incumbent (checked with synthetic files, black-box): images are named and referenced by their SHA-1 (with SHA-256 names any file with an image failed to import); component sets hold their property definitions, variant properties included, with a copy per variant that its layers and instances name, and values also as variable data, so properties, bindings and instance values come across; an axis without a maximum size is written as infinite (0 collapsed frames with only a maximum width); compound weights are spelt the way font families name their faces ("SemiBold"; "Semi Bold" in Inter), so their text isn't a missing font; the kiwi encoder writes infinite floats. Numbers unchanged |
 | 2026-10-18 | minor | REST file JSON import keeps `SLOT` layers (#792): they were dropped with everything placed in them, which emptied every instance's slot. A slot in a main component becomes a slot frame bound to its `SLOT` property (the one it references, else the one named like it, else the only one left), and an instance's slot holds the instance's own content, kept across syncs, moves of the mains and saving, unless the instance's property value is the main's default content (without values, a slot that holds layers keeps them). Instances in slot content link to their own mains. Slot content limits, preferred-only and preferred components are warnings. Synthetic files only. Numbers unchanged |
 | 2026-10-17 | minor | REST file JSON import reads grid track sizes from the CSS track strings `gridColumnsSizing` / `gridRowsSizing` (fixed px, fill fr, hug `auto`, `minmax(0, 1fr)`, `repeat()`; other tracks stay equal) (#465). Numbers unchanged |

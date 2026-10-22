@@ -635,6 +635,12 @@ fn normalize(n: &mut Node, ix: &dyn Fn(NodeId) -> NodeId) {
             let d = AutoLayout::default();
             (l.grid_columns, l.grid_rows) = (d.grid_columns, d.grid_rows);
         }
+        // Equal (one-share) tracks say what no track list says.
+        for tracks in [&mut l.column_tracks, &mut l.row_tracks] {
+            if tracks.iter().all(|t| *t == GridTrack::default()) {
+                tracks.clear();
+            }
+        }
     }
     n.child_layout.grid_align_h = None;
     n.child_layout.grid_align_v = None;
@@ -1335,4 +1341,44 @@ fn an_instance_without_its_mains_maximum_size_overrides_it_with_infinity() {
     let overrides = inst.get("symbolData").unwrap().get("symbolOverrides").unwrap().list();
     let max = overrides.iter().find_map(|o| o.get("maxSize")).unwrap().get("value").unwrap();
     assert_eq!((max.get("x"), max.get("y")), (Some(&Kv::Float(f32::INFINITY)), Some(&Kv::Float(f32::INFINITY))));
+}
+
+#[test]
+fn grid_track_sizes_are_written_and_read_back() {
+    let mut doc = Document::new("File");
+    let page = doc.first_page().unwrap();
+    let id = doc.create(page, NodeKind::Frame, "Row", 0.0, 0.0, 720.0, 70.0).unwrap();
+    let columns = vec![GridTrack::fixed(320.0), GridTrack::hug(), GridTrack { sizing: Sizing::Fill, value: 2.0 }, GridTrack::fixed(34.0)];
+    doc.node_mut(id).unwrap().layout = Some(AutoLayout {
+        mode: LayoutMode::Grid,
+        grid_columns: 4,
+        grid_rows: 1,
+        column_tracks: columns.clone(),
+        row_tracks: vec![GridTrack::fixed(69.0)],
+        ..AutoLayout::default()
+    });
+    let (bytes, warnings) = export(&doc, None).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let archive = Archive::open(&bytes).unwrap();
+    let (schema, message) = decode_canvas(&archive.canvas).unwrap();
+    let msg = schema.decode_message(schema.find("Message").unwrap(), &message).unwrap();
+    let row = msg.get("nodeChanges").unwrap().list().iter().find(|n| n.get("name").and_then(Kv::str) == Some("Row")).unwrap();
+    let key = |g: &Kv| format!("{}:{}", g.get("sessionID").unwrap().f64().unwrap(), g.get("localID").unwrap().f64().unwrap());
+    let order: Vec<String> = row.get("gridColumns").unwrap().get("entries").unwrap().list().iter().map(|e| key(e.get("id").unwrap())).collect();
+    let sizes = row.get("gridColumnsSizing").unwrap().get("entries").unwrap().list();
+    let written: Vec<(String, f64)> = order
+        .iter()
+        .map(|id| {
+            let size = sizes.iter().find(|e| key(e.get("id").unwrap()) == *id).unwrap().get("trackSize").unwrap();
+            let (min, max) = (size.get("minSizing").unwrap(), size.get("maxSizing").unwrap());
+            assert_eq!(min, max);
+            (min.get("type").and_then(Kv::str).unwrap().to_string(), min.get("value").unwrap().f64().unwrap())
+        })
+        .collect();
+    let types: Vec<(&str, f64)> = written.iter().map(|(t, v)| (t.as_str(), *v)).collect();
+    assert_eq!(types, [("FIXED", 320.0), ("HUG", 0.0), ("FLEX", 2.0), ("FIXED", 34.0)]);
+    let (back, _) = import(&bytes, "File").unwrap();
+    let l = back.nodes().find(|n| n.name == "Row").unwrap().layout.clone().unwrap();
+    assert_eq!(l.column_tracks, columns);
+    assert_eq!(l.row_tracks, vec![GridTrack::fixed(69.0)]);
 }
