@@ -511,6 +511,16 @@ impl Presenter {
         self.rev += 1;
     }
 
+    /// After an action changed layers of `design` (since `before`): text resizes to what it shows,
+    /// instances follow and auto layout reflows, as after an edit on the canvas; then
+    /// [`relayout`](Self::relayout).
+    fn settle(&mut self, before: &Document) {
+        if let Some(d) = self.design.as_mut() {
+            figcraft_engine::normalize(d, before);
+        }
+        self.relayout();
+    }
+
     /// Responsive prototypes: resize the presented frame to a screen of `size` (None: frames
     /// keep their size). Lays out again only when it changes.
     fn respond_to(&mut self, size: Option<(f64, f64)>) {
@@ -879,28 +889,31 @@ impl Presenter {
                 }
                 self.begin(tr, dur, easing, now);
                 let Some(d) = self.design.as_mut() else { return false };
+                let before = d.clone();
                 if let Some(n) = d.node_mut(inst)
                     && let NodeKind::Instance { component, .. } = &mut n.kind
                 {
                     *component = *dest;
                 }
                 figcraft_engine::components::sync_instance(d, inst);
-                self.relayout();
+                self.settle(&before);
                 true
             }
             Action::SetVariable { variable, value, expr } => {
                 let Some(d) = self.design.as_mut() else { return false };
+                let before = d.clone();
                 let set = figcraft_engine::proto_run::set_variable(d, node, variable, value, expr.as_ref());
                 if set {
-                    self.relayout();
+                    self.settle(&before);
                 }
                 set
             }
             Action::SetVariableMode { collection, mode } => {
                 let Some(d) = self.design.as_mut() else { return false };
+                let before = d.clone();
                 let set = figcraft_engine::proto_run::set_mode(d, self.current, collection, mode);
                 if set {
-                    self.relayout();
+                    self.settle(&before);
                 }
                 set
             }
