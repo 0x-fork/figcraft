@@ -267,9 +267,11 @@ Or in a project's `.mcp.json`:
 - **Styles stay true to their layers**: editing a styled fill, stroke, effect or layout grid list
   (`node.set`, `fill.set`, `fill.add`, a bound variable…) unlinks that style (`styles.fill` etc. go
   `null`), so a later `style.update` doesn't overwrite the edit; `style.apply` replaces variables
-  bound to what the style sets; a text style goes on text layers only. Names are trimmed per `/`
-  folder part. `style.move {styles, before?, folder?}` reorders (and with `folder`, renames into it),
-  `style.duplicate {style}` adds "<name> copy" right below, `style.renameFolder {folder, name}`.
+  bound to what the style sets; a text style goes on text layers only. In one call, a style link
+  (`fillStyle`, `textStyle`…) wins over values it sets; set a deviation in a later call, which
+  unlinks it. Names are trimmed per `/` folder part. `style.move {styles, before?, folder?}`
+  reorders (and with `folder`, renames into it), `style.duplicate {style}` adds "<name> copy" right
+  below, `style.renameFolder {folder, name}`.
 - **Variables**: `variable.bind` refuses a variable of a type the field doesn't take (a colour on
   `width`); scopes only filter pickers. `variable.delete` / `variable.deleteCollection` unbind the
   layers using them (they keep their last value) and give aliases to them their values. An
