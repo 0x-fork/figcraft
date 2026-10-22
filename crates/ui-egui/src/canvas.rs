@@ -1021,10 +1021,10 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
         let hover_on = |id| ov.vector_hover.filter(|_| ov.vector_hover_on.unwrap_or(ve.id) == id);
         for part in &ve.others {
             if let Some(po) = figcraft_engine::vectoredit::overlay(&doc, &ve.view(part)) {
-                vector_overlay(app, painter, &po, !width_tool, hover_on(part.id), false);
+                vector_overlay(app, painter, &po, !width_tool, hover_on(part.id), false, None);
             }
         }
-        vector_overlay(app, painter, &o, !width_tool, hover_on(ve.id), true);
+        vector_overlay(app, painter, &o, !width_tool, hover_on(ve.id), true, ov.vector_add);
         if width_tool {
             width_overlay(app, painter, &doc, &ve, zoom);
         } else if let Some(c) = app.session.vector_edit_box() {
@@ -1327,8 +1327,9 @@ fn bezier_handle(painter: &egui::Painter, v: Pos2, e: Pos2, r: f32, fill: Color3
     painter.circle_stroke(e, r, stroke(accent(painter), 1.0));
 }
 
-/// Vector edit mode: a layer's segments, handles and points (`points`) with its `hover`ed part, and
-/// for the `active` layer the closed area under the paint bucket and the pen's rubber band.
+/// Vector edit mode: a layer's segments, handles and points (`points`) with its `hover`ed part, the
+/// `add` point a press would put on the outline, and for the `active` layer the closed area under
+/// the paint bucket and the pen's rubber band.
 fn vector_overlay(
     app: &FigApp,
     painter: &egui::Painter,
@@ -1336,6 +1337,7 @@ fn vector_overlay(
     points: bool,
     hover: Option<figcraft_engine::vectoredit::VHit>,
     active: bool,
+    add: Option<figcraft_engine::tools::VectorAdd>,
 ) {
     use figcraft_engine::vectoredit::VHit;
     let ov = &app.session.tool.overlay;
@@ -1381,6 +1383,22 @@ fn vector_overlay(
         painter.rect_stroke(r, CornerRadius::same(5), stroke(accent(painter), 1.0), StrokeKind::Inside);
         if o.anchor == Some(i) {
             painter.circle_stroke(p, 7.5, stroke(accent(painter), 1.0));
+        }
+    }
+    // The point a press would add to the outline: the pen's ghost anchor where it is over a
+    // segment, or a segment's midpoint under the Move tool (which grows and fills once the pointer
+    // is on it, when a press adds it).
+    if let Some(a) = add {
+        let p = app.to_screen(a.at[0], a.at[1]);
+        let col = accent(painter);
+        if a.midpoint {
+            let (r, fill) = if a.on { (5.5, col) } else { (3.5, Color32::from_white_alpha(190)) };
+            painter.circle_filled(p, r, fill);
+            painter.circle_stroke(p, r, stroke(if a.on { Color32::WHITE } else { col.gamma_multiply(0.7) }, 1.2));
+        } else {
+            let r = Rect::from_center_size(p, vec2(7.0, 7.0));
+            painter.rect_filled(r, CornerRadius::same(5), Color32::from_white_alpha(160));
+            painter.rect_stroke(r, CornerRadius::same(5), stroke(col.gamma_multiply(0.8), 1.0), StrokeKind::Inside);
         }
     }
     if let Some([x0, y0, x1, y1]) = ov.rubber.filter(|_| active) {
