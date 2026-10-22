@@ -1110,7 +1110,24 @@ impl Store {
         let mut issues = Vec::new();
         let mut fresh_log = true;
         let mut kept = 0;
-        match disk::read_capped(&dir.join(LOG), self.cfg.max_file_bytes).and_then(|b| disk::read_log(&b)) {
+        let log_path = dir.join(LOG);
+        // A log that's there but can't be read (an IO error, or over a lowered cap) may hold
+        // confirmed edits: the file isn't opened, and the log is left as it is for another try.
+        let read = match disk::read_capped(&log_path, self.cfg.max_file_bytes) {
+            Err(why) if log_path.exists() => return Err(format!("its log can't be read ({why}); it was left as it is")),
+            r => r,
+        };
+        // One that isn't a log is moved aside before a new one replaces it (or the file isn't opened).
+        let read = match read.map(|b| disk::read_log(&b)) {
+            Ok(Err(why)) => {
+                let aside = dir.join(format!("{LOG}.unreadable-{generation}-{}", now()));
+                fs::rename(&log_path, &aside).map_err(|e| format!("{why}, and it couldn't be moved aside ({e})"))?;
+                Err(format!("{why}; it was moved aside to {}", aside.display()))
+            }
+            Ok(Ok(log)) => Ok(log),
+            Err(why) => Err(why),
+        };
+        match read {
             Ok(log) if log.generation == generation => {
                 fresh_log = false;
                 for entry in log.entries {
