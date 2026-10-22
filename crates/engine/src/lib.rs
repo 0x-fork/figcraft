@@ -1675,6 +1675,8 @@ mod fig_export_tests;
 #[cfg(test)]
 mod fig_import_tests;
 #[cfg(test)]
+mod fill_none_tests;
+#[cfg(test)]
 mod finite_geometry_tests;
 #[cfg(test)]
 mod frame_guides_tests;
