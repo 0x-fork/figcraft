@@ -720,7 +720,9 @@ most when it can't be reached).
 
 - `instance.swap {ids?, component}` shows another component in the instances (overrides on layers
   with matching names stay; property values with the same names too). Nested instances can be
-  swapped on their own (an override of the instance they're in).
+  swapped on their own (an override of the instance they're in); a swapped nested instance keeps
+  what its outer main overrode on matching layers as its own, so later edits of those in the main
+  don't reach it.
 - `instance.swapAt {component, x, y}` swaps the instance at a page point: of the instances under
   it (innermost first), the first showing a variant of the same component set, else the innermost
   (never one inside the dropped component); only text layers keep their overrides. The Assets
