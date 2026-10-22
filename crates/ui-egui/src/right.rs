@@ -2251,9 +2251,23 @@ pub(crate) fn prop_row(app: &mut FigApp, ui: &mut Ui, p: &figcraft_engine::devin
     }
 }
 
-/// The selection's assets (layers with export settings, icons, images): click one to export it,
-/// or export them all.
-fn inspect_assets(app: &mut FigApp, ui: &mut Ui, assets: &[figcraft_engine::devinspect::Asset]) {
+/// The thumbnails and chosen export formats of the Inspect tab's assets, kept between frames and
+/// dropped when the document changes.
+#[derive(Clone, Default)]
+struct AssetUi {
+    revision: u64,
+    thumbs: std::collections::HashMap<NodeId, Option<egui::TextureHandle>>,
+    formats: std::collections::HashMap<NodeId, usize>,
+}
+
+/// An asset row's height and its preview's side.
+const ASSET_ROW_H: f32 = 56.0;
+const ASSET_THUMB: f32 = 40.0;
+
+/// The selection's assets (layers with export settings, icons, images) as a list of a preview, a
+/// name and a format: click one to export it in that format, or export them all with their own
+/// export settings.
+fn inspect_assets(app: &mut FigApp, ui: &mut Ui, doc: &Document, assets: &[figcraft_engine::devinspect::Asset]) {
     let t = Tokens::get(ui.ctx());
     widgets::separator(ui);
     let export_all = [(Icon::Export, tr("Export all"))];
@@ -2262,30 +2276,80 @@ fn inspect_assets(app: &mut FigApp, ui: &mut Ui, assets: &[figcraft_engine::devi
         widgets::note(ui, tr("No assets: no export settings, icons or images. Add export settings in the Design tab."), t.text_secondary);
         return;
     }
-    let mut export: Option<Vec<NodeId>> = all.then(|| assets.iter().map(|a| a.id).collect());
+    let mut export_all_ids: Option<Vec<NodeId>> = all.then(|| assets.iter().map(|a| a.id).collect());
+    let mut export_one: Option<(NodeId, ExportSetting, String)> = None;
+    let revision = app.session.ds().map(|d| d.revision).unwrap_or(0);
+    let cache_id = Id::new("inspect_asset_ui");
+    let mut state: AssetUi = ui.data(|d| d.get_temp(cache_id)).unwrap_or_default();
+    if state.revision != revision {
+        state.revision = revision;
+        state.thumbs.clear();
+        state.formats.clear();
+    }
+    let px = ASSET_THUMB * ui.ctx().pixels_per_point();
     for a in assets {
-        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ASSET_ROW_H), Sense::click());
         let resp = resp.tip(trf("Export {name}", &[("name", &a.name)]));
         if resp.hovered() {
-            ui.painter().rect_filled(r.shrink2(vec2(8.0, 0.0)), CornerRadius::same(5), t.hover);
+            ui.painter().rect_filled(r.shrink2(vec2(8.0, 1.0)), CornerRadius::same(6), t.hover);
             icons::paint(ui.painter(), Rect::from_center_size(pos2(r.max.x - PAD - 6.0, r.center().y), vec2(12.0, 12.0)), Icon::Export, t.icon);
         }
-        let name_r = Rect::from_min_max(pos2(r.min.x + PAD, r.min.y), pos2(r.min.x + 96.0 - 4.0, r.max.y));
-        ui.painter().with_clip_rect(name_r).text(pos2(name_r.min.x, r.center().y), Align2::LEFT_CENTER, &a.name, regular(11.0), t.text);
-        let fmt_r = Rect::from_min_max(pos2(r.min.x + 96.0, r.min.y), pos2(r.max.x - PAD - 16.0, r.max.y));
-        ui.painter().with_clip_rect(fmt_r).text(
-            pos2(fmt_r.min.x, r.center().y),
-            Align2::LEFT_CENTER,
-            a.exports.join(", "),
-            regular(11.0),
-            t.text_secondary,
-        );
-        if resp.clicked() {
-            export = Some(vec![a.id]);
+        // The preview, as exporting it paints it (a slice shows the page under it).
+        let thumb = Rect::from_min_size(pos2(r.min.x + PAD, r.center().y - ASSET_THUMB / 2.0), vec2(ASSET_THUMB, ASSET_THUMB));
+        ui.painter().rect_filled(thumb, CornerRadius::same(4), t.field);
+        let tex = state.thumbs.entry(a.id).or_insert_with(|| crate::assets_panel::thumbnail(ui.ctx(), doc, a.id, px)).clone();
+        if let Some(tex) = tex {
+            let size = tex.size_vec2();
+            let inner = thumb.shrink(3.0);
+            // Never past 1:1 physical pixels, so small assets stay crisp.
+            let k = (inner.width() / size.x).min(inner.height() / size.y).min(1.0 / ui.ctx().pixels_per_point()).max(0.0);
+            let img = Rect::from_center_size(thumb.center(), size * k);
+            ui.painter().with_clip_rect(inner).image(tex.id(), img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        }
+        ui.painter().rect_stroke(thumb, CornerRadius::same(4), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+        // The name, and the format to export it as (its first export setting's, until chosen).
+        let x = thumb.max.x + 10.0;
+        let name_r = Rect::from_min_max(pos2(x, r.min.y + 5.0), pos2(r.max.x - PAD, r.min.y + 27.0));
+        let name = widgets::elide(ui, &a.name, name_r.width());
+        ui.painter().with_clip_rect(name_r).text(pos2(name_r.min.x, name_r.center().y), Align2::LEFT_CENTER, &name, regular(11.0), t.text);
+        let idx = state
+            .formats
+            .get(&a.id)
+            .copied()
+            .filter(|i| *i < ExportFormat::ALL.len())
+            .unwrap_or_else(|| ExportFormat::ALL.iter().position(|f| Some(*f) == a.settings.first().map(|s| s.format)).unwrap_or(0));
+        let fmt = ExportFormat::ALL[idx];
+        let btn = Rect::from_min_size(pos2(x, r.min.y + 31.0), vec2(74.0, 20.0));
+        let btn_resp = ui.interact(btn, Id::new(("inspect_asset_format", a.id)), Sense::click());
+        a11y::combo(&btn_resp, tr("Format"), fmt.label(), a11y::menu_open(&btn_resp));
+        if btn_resp.hovered() {
+            ui.painter().rect_filled(btn, CornerRadius::same(5), t.field);
+            ui.painter().rect_stroke(btn, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), egui::StrokeKind::Inside);
+        } else {
+            ui.painter().rect_filled(btn, CornerRadius::same(5), t.field);
+        }
+        ui.painter().text(pos2(btn.min.x + 8.0, btn.center().y), Align2::LEFT_CENTER, fmt.label(), regular(11.0), t.text);
+        icons::paint(ui.painter(), Rect::from_center_size(pos2(btn.max.x - 9.0, btn.center().y), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
+        menu_popup(&btn_resp).show(|ui| {
+            for (i, f) in ExportFormat::ALL.iter().enumerate() {
+                if menu_item(ui, f.label(), "") {
+                    state.formats.insert(a.id, i);
+                    ui.close();
+                }
+            }
+        });
+        if resp.clicked() && !btn_resp.hovered() {
+            let mut setting = a.settings.first().cloned().unwrap_or_default();
+            setting.format = fmt;
+            let file = format!("{}{}.{}", a.name.rsplit('/').next().unwrap_or(&a.name), setting.file_suffix(), fmt.ext());
+            export_one = Some((a.id, setting, file));
         }
     }
-    if let Some(ids) = export {
+    ui.data_mut(|d| d.insert_temp(cache_id, state));
+    if let Some(ids) = export_all_ids.take() {
         crate::export_panel::export_layers(app, &ids, true);
+    } else if let Some((id, setting, file)) = export_one {
+        crate::export_panel::save_one(app, &[id], &setting, &file);
     }
     ui.add_space(4.0);
 }
@@ -2329,7 +2393,7 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
     for s in figcraft_engine::devinspect::properties_with(&doc, first, fmt) {
         inspect_section(app, ui, &s);
     }
-    inspect_assets(app, ui, &figcraft_engine::devinspect::assets(&doc, &sel));
+    inspect_assets(app, ui, &doc, &figcraft_engine::devinspect::assets(&doc, &sel));
     use figcraft_engine::codegen::CodeLang;
     let lang_id = Id::new("inspect_lang");
     let lang = ui.data(|d| d.get_temp::<usize>(lang_id)).and_then(|i| CodeLang::ALL.get(i).copied()).unwrap_or_default();
