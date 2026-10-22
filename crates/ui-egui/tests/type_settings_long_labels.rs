@@ -27,7 +27,11 @@ fn widths(language: &str) -> Vec<f32> {
         let raw =
             RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))), time: Some(i as f64 / 60.0), ..Default::default() };
         ctx.run_ui(raw, |ui| app.ui(ui)).textures_delta.clear();
-        widths.extend(ctx.memory(|m| m.area_rect(open)).map(|r| r.width()));
+        // From the frame after the one it opened on (egui's sizing pass).
+        if i > 3 {
+            assert!(Popup::is_id_open(&ctx, open), "{language}: Type settings closed on frame {i}");
+            widths.push(ctx.memory(|m| m.area_rect(open)).unwrap().width());
+        }
     }
     widths
 }
@@ -36,9 +40,8 @@ fn widths(language: &str) -> Vec<f32> {
 fn type_settings_keeps_its_width_with_labels_longer_than_their_column() {
     for language in ["ka", "fr"] {
         let w = widths(language);
-        assert!(w.len() > 30, "{language}: Type settings is open ({} frames)", w.len());
         assert_ne!(figcraft_ui_egui::i18n::tr("Paragraph indent"), "Paragraph indent", "{language} is shown");
-        let (first, last) = (w[1], w[w.len() - 1]);
-        assert!((last - first).abs() < 0.01, "{language}: Type settings widens every frame: {first} → {last}");
+        // The width it asks for (`Popup::width`), every frame.
+        assert!(w.iter().all(|x| (x - 264.0).abs() < 0.01), "{language}: Type settings widens: {} → {}", w[0], w[w.len() - 1]);
     }
 }
