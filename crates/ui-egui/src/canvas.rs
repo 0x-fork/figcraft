@@ -1441,19 +1441,48 @@ fn region_hatch(app: &FigApp, painter: &egui::Painter) {
 fn builder_overlay(app: &FigApp, painter: &egui::Painter, t: &Tokens, arr: &figcraft_engine::shapebuilder::Arrangement) {
     let ov = &app.session.tool.overlay;
     let screen = |r: &figcraft_engine::shapebuilder::Region| -> Vec<Vec<Pos2>> {
-        r.polys.iter().map(|poly| poly.iter().map(|p| app.to_screen(p.x, p.y)).collect()).collect()
+        r.polys.iter().filter_map(|poly| clean_poly(poly.iter().map(|p| app.to_screen(p.x, p.y)))).collect()
     };
     // Edges read on any fill: a light halo under a thin accent line.
     for r in &arr.regions {
         for poly in screen(r) {
-            painter.add(Shape::closed_line(poly.clone(), stroke(Color32::from_white_alpha(150), 2.5)));
-            painter.add(Shape::closed_line(poly, stroke(accent(painter), 1.0)));
+            for seg in segments(&poly) {
+                painter.add(Shape::line(seg.to_vec(), stroke(Color32::from_white_alpha(150), 2.5)));
+                painter.add(Shape::line(seg.to_vec(), stroke(accent(painter), 1.0)));
+            }
         }
     }
     let col = if ov.builder_remove { t.danger } else { accent(painter) };
     for r in ov.builder_regions.iter().filter_map(|i| arr.regions.get(*i)) {
         hatched(painter, &screen(r), col);
     }
+}
+
+/// A region contour in screen space, ready to draw: non-finite and repeated points dropped (the
+/// last point back at the first, the points a sliver doubles back on) and sub-pixel slivers left
+/// out, since they're invisible anyway.
+fn clean_poly(points: impl IntoIterator<Item = Pos2>) -> Option<Vec<Pos2>> {
+    let mut out: Vec<Pos2> = Vec::new();
+    for q in points {
+        if !(q.x.is_finite() && q.y.is_finite()) || out.last().is_some_and(|l| l.distance(q) < 0.01) {
+            continue;
+        }
+        out.push(q);
+    }
+    if out.len() > 1 && out.first().is_some_and(|f| f.distance(*out.last().unwrap_or(f)) < 0.01) {
+        out.pop();
+    }
+    let n = out.len();
+    let twice_area: f32 = (0..n).map(|k| out[k].x * out[(k + 1) % n].y - out[(k + 1) % n].x * out[k].y).sum();
+    (n > 2 && twice_area.abs() > 0.4).then_some(out)
+}
+
+/// A closed polygon as its segments. Drawn segment by segment rather than as one closed path: a
+/// joined path asks the tessellator for a mitre at every hairpin a region's sliver doubles back on,
+/// and a zero-length segment there divides by a zero normal, which draws a spike across the canvas.
+fn segments(poly: &[Pos2]) -> impl Iterator<Item = [Pos2; 2]> + '_ {
+    let n = poly.len();
+    (0..n).map(move |k| [poly[k], poly[(k + 1) % n]])
 }
 
 /// Polygons hatched and outlined in `col` (an area about to be filled, merged or removed), each
@@ -1465,8 +1494,10 @@ fn hatched(painter: &egui::Painter, polys: &[Vec<Pos2>], col: Color32) {
         painter.line_segment(l, stroke(col, 1.25));
     }
     for poly in polys {
-        painter.add(Shape::closed_line(poly.clone(), stroke(halo, 4.0)));
-        painter.add(Shape::closed_line(poly.clone(), stroke(col, 2.0)));
+        for seg in segments(poly) {
+            painter.add(Shape::line(seg.to_vec(), stroke(halo, 4.0)));
+            painter.add(Shape::line(seg.to_vec(), stroke(col, 2.0)));
+        }
     }
 }
 
@@ -1593,6 +1624,10 @@ pub fn fmt(v: f64) -> String {
     let r = (v * 100.0).round() / 100.0;
     if (r - r.round()).abs() < 1e-9 { format!("{}", r.round() as i64) } else { format!("{r}") }
 }
+
+#[cfg(test)]
+#[path = "builder_poly_tests.rs"]
+mod builder_poly_tests;
 
 #[cfg(test)]
 #[path = "zoom_preview_tests.rs"]
