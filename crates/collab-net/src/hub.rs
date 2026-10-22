@@ -820,8 +820,8 @@ fn refuse(out: &Line, why: &str) {
 /// What the server tells a client when it is too busy to take more from it.
 const BUSY: &str = "the server is busy: try again in a moment";
 
-/// Read the next binary message (skipping pings) and its size, or why the connection should end.
-fn next_message(ws: &mut WebSocket<Duplex>, max: usize) -> Result<Option<(ClientMsg, usize)>, String> {
+/// Read the next binary message (skipping pings, until `deadline`) and its size, or why the connection should end.
+fn next_message(ws: &mut WebSocket<Duplex>, max: usize, deadline: Option<Instant>) -> Result<Option<(ClientMsg, usize)>, String> {
     loop {
         return match ws.read() {
             Ok(Message::Binary(b)) => {
@@ -830,6 +830,10 @@ fn next_message(ws: &mut WebSocket<Duplex>, max: usize) -> Result<Option<(Client
                 message::decode::<ClientMsg>(&b, max).map(|m| Some((m, b.len()))).map_err(|_| "that message couldn't be read".to_string())
             }
             Ok(Message::Text(_)) => Err("only binary messages are spoken here".into()),
+            // Pings keep the per-read timeout alive, but not the overall deadline (slowloris).
+            Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)) if deadline.is_some_and(|d| Instant::now() >= d) => {
+                Err("no hello in time".into())
+            }
             Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)) => continue,
             Ok(Message::Close(_)) => Ok(None),
             Err(tungstenite::Error::Capacity(_)) => Err(too_large(max)),
@@ -851,6 +855,7 @@ fn too_large(max: usize) -> String {
 /// One connection's reader (the writer runs on its own thread).
 fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimits, open: Open, shared: &Shared) {
     let _ = stream.set_nodelay(true);
+    let hello_deadline = Instant::now() + limits.hello_timeout;
     if stream.set_read_timeout(Some(limits.hello_timeout)).is_err() || stream.set_write_timeout(Some(limits.write_timeout)).is_err() {
         return;
     }
@@ -923,7 +928,7 @@ fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimit
         log::info!("event=refused ip={ip} reason=connections_per_address");
         end(Some("too many connections from your address: close some and try again"));
     } else {
-        match next_message(&mut ws, limits.max_hello) {
+        match next_message(&mut ws, limits.max_hello, Some(hello_deadline)) {
             Ok(Some((
                 first @ (ClientMsg::Hello(_)
                 | ClientMsg::Manage(_)
@@ -981,7 +986,7 @@ fn read_loop(
     let mut bucket = Bucket::new(limits.rate, limits.burst);
     let mut signals = Bucket::new(SIGNAL_RATE, SIGNAL_BURST);
     loop {
-        match next_message(ws, max) {
+        match next_message(ws, max, None) {
             Ok(Some((msg, bytes))) => {
                 let now = Instant::now();
                 if !bucket.take(now) {
