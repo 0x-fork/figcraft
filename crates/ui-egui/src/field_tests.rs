@@ -370,36 +370,55 @@ fn arithmetic_commits_tab_moves_on_and_escape_restores() {
     assert_eq!(geom(&u, a).0, 78.0);
 }
 
+/// Answers a Save as dialog with `path`, once, and counts the dialogs asked for.
+struct SaveAsPicker {
+    path: Option<std::path::PathBuf>,
+    asked: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl crate::Services for SaveAsPicker {
+    fn pick_save(&mut self, _title: &str, _name: &str, _exts: &[&str]) -> crate::DialogFuture {
+        self.asked.set(self.asked.get() + 1);
+        Box::pin(std::future::ready(self.path.take()))
+    }
+}
+
+/// The x of layer `a` in the file at `path`, opened again.
+fn saved_x(path: &std::path::Path, a: NodeId) -> f64 {
+    let mut back = Session::new();
+    back.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap();
+    back.doc().unwrap().world_bounds(a).unwrap().x0
+}
+
 #[test]
 fn the_save_shortcut_saves_from_a_field_with_what_was_typed() {
     // Cmd/Ctrl+S with the keyboard in a panel field saved nothing (#1157). It commits the field
     // first (as clicking away does), then saves; the field lets go of the keyboard.
+    // Shift+Cmd/Ctrl+S does the same through Save as.
     let cmd = if cfg!(target_os = "macos") { Modifiers::COMMAND } else { Modifiers::COMMAND.plus(Modifiers::CTRL) };
     let (mut u, a, _) = setup();
     let dir = std::env::temp_dir().join(format!("figcraft-save-from-field-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("doc.figcraft");
+    let (path, copy) = (dir.join("doc.figcraft"), dir.join("copy.figcraft"));
     u.app.session.execute("file.saveAs", &json!({"path": path.to_string_lossy()})).unwrap();
-    for (shortcut, mods) in [("Cmd/Ctrl+S", cmd), ("Shift+Cmd/Ctrl+S on a file with a path", cmd.plus(Modifiers::SHIFT))] {
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    u.app.services = Box::new(SaveAsPicker { path: Some(copy.clone()), asked: asked.clone() });
+    for (shortcut, mods, x, file) in [("Cmd/Ctrl+S", cmd, 77.0, &path), ("Shift+Cmd/Ctrl+S", cmd.plus(Modifiers::SHIFT), 66.0, &copy)] {
         let (p, _) = field(&mut u, "X");
         click(&mut u, p);
         assert!(crate::a11y::field_focused(&u.ctx), "{shortcut}: the field has the keyboard");
-        let x = if mods.shift { "66" } else { "77" };
-        u.frame(vec![Event::Text(x.into())]);
+        u.frame(vec![Event::Text(x.to_string())]);
         key(&mut u, Key::S, mods);
-        u.frame(vec![]);
-        assert_eq!(geom(&u, a).0, x.parse::<f64>().unwrap(), "{shortcut}: what was typed is committed");
-        assert!(!crate::a11y::field_focused(&u.ctx), "{shortcut}: the field let go");
-        if mods.shift {
-            // Save as asks where (a dialog this harness doesn't answer): nothing is written yet.
-            continue;
+        for _ in 0..3 {
+            u.frame(vec![]);
         }
+        assert_eq!(geom(&u, a).0, x, "{shortcut}: what was typed is committed");
+        assert!(!crate::a11y::field_focused(&u.ctx), "{shortcut}: the field let go");
         assert!(!u.app.session.ds().unwrap().is_dirty(), "{shortcut}: saved");
-        let mut back = Session::new();
-        back.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap();
-        let b = back.doc().unwrap().world_bounds(a).unwrap();
-        assert_eq!(b.x0, 77.0, "{shortcut}: the file on disk has the typed value");
+        assert_eq!(saved_x(file, a), x, "{shortcut}: the file on disk has the typed value");
     }
+    assert_eq!(asked.get(), 1, "only Save as asked where");
+    assert_eq!(saved_x(&path, a), 77.0, "Save as left the first file alone");
     std::fs::remove_dir_all(&dir).ok();
 }
 
