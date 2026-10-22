@@ -453,8 +453,9 @@ impl Document {
                 return true;
             }
             guard += 1;
-            if guard > 10_000 {
-                return false;
+            // More hops than nodes means the parent chain loops; fail closed so callers reject the move.
+            if guard > self.nodes.len() {
+                return true;
             }
             cur = self.node(c).and_then(|n| n.parent);
         }

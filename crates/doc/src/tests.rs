@@ -464,3 +464,15 @@ fn text_style_empty_range_links_and_unlinks_all() {
     e.unlink_text_style(0, 0);
     assert!(e.style.style_id.is_none());
 }
+
+#[test]
+fn is_ancestor_holds_for_very_deep_chains() {
+    let mut d = Document::new("x");
+    let root = d.create(page(&d), NodeKind::Frame, "root", 0.0, 0.0, 1.0, 1.0).unwrap();
+    let mut leaf = root;
+    for _ in 0..10_005 {
+        leaf = d.create(leaf, NodeKind::Frame, "n", 0.0, 0.0, 1.0, 1.0).unwrap();
+    }
+    assert!(d.is_ancestor(root, leaf));
+    assert!(matches!(d.reparent(root, leaf, None), Err(DocError::Cycle(..))));
+}
