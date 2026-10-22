@@ -4,7 +4,7 @@
 
 FigCraft's interface has a localization layer with an English catalog, a Russian catalog reviewed
 by a native speaker, and Spanish (with a Latin American overlay), French, German, Brazilian
-Portuguese, Japanese, Korean, Simplified Chinese, Indonesian and Czech drafts (machine-drafted,
+Portuguese, Japanese, Korean, Simplified Chinese, Indonesian, Vietnamese and Czech drafts (machine-drafted,
 waiting for native speakers' review), plus Swedish and Turkish catalogs. This page lists the twelve key
 languages of the craftrules standard, then the other languages Figma ships. How to add a
 language: [`translating.md`](translating.md).
@@ -32,7 +32,7 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
   channel stay English. Accessibility names come from the same strings.
 - **Language preference:** Preferences ▸ Language (System, then each catalog by its own name:
   English, Čeština, Deutsch, Español, Español (Latinoamérica), Français, Bahasa Indonesia, 日本語,
-  한국어, Português (Brasil), Русский, Svenska, Türkçe, 简体中文), applied at once without a
+  한국어, Português (Brasil), Русский, Svenska, Türkçe, Tiếng Việt, 简体中文), applied at once without a
   restart; System takes the first of the OS's preferred languages that has a catalog (on Windows
   only the first preferred language counts, since that list also holds the languages added for a
   keyboard; macOS AppleLanguages, `LANGUAGE` then the locale variables on Linux and BSD; a regional
@@ -53,7 +53,7 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
 - **Not yet localized:** messages the engine writes (errors, a few toasts, Dev Mode property values
   such as "inside"), number formatting (decimal points stay `.`), and decimal plural rules
   (`trn` takes integers: Czech uses one/few/other and Russian one/few/many; French and Brazilian
-  Portuguese take the singular for 0 as well; Japanese, Korean and Chinese have one form;
+  Portuguese take the singular for 0 as well; Japanese, Korean, Chinese and Vietnamese have one form;
   CLDR's "many" for millions in French, Spanish and Portuguese reads as the plural).
 - **Script support in documents:** Unicode bidi with Arabic shaping and mirrored brackets in text
   layers; right-to-left list markers and indents; right-to-left names in the layers panel, tabs
@@ -96,7 +96,7 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
 | Japanese | ja | 2,254 / 2,272 (99.2%, draft) | yes | CJK text and IME in documents; UI text in an installed Japanese face (web: the `FIGCRAFT_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
 | German | de | 2,176 / 2,272 (95.8%, draft) | yes | Latin; long words elide in narrow fields | no | draft | 1–2 (after native review) |
 | Korean | ko | 2,166 / 2,272 (95.3%, draft) | yes | Hangul text and IME in documents; UI text in an installed Korean face (web: the `FIGCRAFT_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
-| Vietnamese | vi | 0 (0%) | no | Latin with stacked diacritics | no | none | 3–5 |
+| Vietnamese | vi | 2,352 / 2,352 (100%, draft) | yes | Latin with stacked diacritics | no | draft | 1–2 (after native review) |
 
 Other languages (measured 2026-10-17): Russian (`ru`) 2,244 / 2,272 (98.8%), reviewed and approved
 by VanTan, one/few/many integer plurals; Swedish (`sv`) 2,264 (99.6%), its command labels and menu
@@ -113,8 +113,8 @@ right-to-left mirroring of the panels is in Arabic's hours. Total: **29–51 h**
 every string adds).
 
 Priority: native reviews of the drafts and the es-419 overlay (every one of Figma's languages
-and variants has one, plus Simplified Chinese, Indonesian and Czech, which Figma doesn't ship), then
-Hindi, Vietnamese and Arabic. Traditional Chinese is not planned (no catalog; its users see English).
+and variants has one, plus Simplified Chinese, Indonesian, Vietnamese and Czech, which Figma doesn't ship), then
+Hindi and Arabic. Traditional Chinese is not planned (no catalog; its users see English).
 
 ## Revision history
 
