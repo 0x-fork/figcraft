@@ -302,6 +302,10 @@ pub fn lock(root: &Path) -> Result<Option<File>, String> {
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut dirs, 0o700);
     dirs.create(root).map_err(|e| format!("can't create the data directory {}: {e}", root.display()))?;
+    // `DirBuilder` only applies the mode to directories it creates; tighten an existing one too.
+    #[cfg(unix)]
+    fs::set_permissions(root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .map_err(|e| format!("can't restrict the data directory {}: {e}", root.display()))?;
     let f = OpenOptions::new()
         .create(true)
         .truncate(false)

@@ -229,6 +229,17 @@ fn one_server_per_data_directory() {
     assert_eq!(again.key(), key, "the key is kept");
 }
 
+#[cfg(unix)]
+#[test]
+fn an_existing_data_directory_is_made_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new("perms");
+    fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(crate::store::lock(dir.path()).unwrap().is_some());
+    let mode = fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+}
+
 #[test]
 fn temporary_directories_are_removed() {
     let path = {
