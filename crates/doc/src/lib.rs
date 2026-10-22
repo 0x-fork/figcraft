@@ -269,7 +269,16 @@ impl Document {
     /// A fresh unused id (in this document's client space during a collaboration session; see
     /// [`set_client_id`](Self::set_client_id)).
     pub fn alloc_id(&mut self) -> NodeId {
-        self.next_id.alloc()
+        // A file's saved `next_id` can be stale (behind ids already in use): skip taken ids.
+        let mut id = self.next_id.alloc();
+        while self.nodes.contains_key(&id) {
+            let next = self.next_id.alloc();
+            if next == id {
+                break;
+            }
+            id = next;
+        }
+        id
     }
 
     /// The id [`alloc_id`](Self::alloc_id) returns next.
@@ -821,6 +830,10 @@ impl Document {
             return Err(DocError::NotContainer(parent));
         }
         let new_root = *map.get(&root).ok_or(DocError::NoNode(root))?;
+        // Never overwrite an existing node with a copy.
+        if let Some(taken) = nodes.iter().filter_map(|n| map.get(&n.id)).find(|i| self.nodes.contains_key(*i)) {
+            return Err(DocError::Invalid(format!("node {taken} already exists")));
+        }
         for n in nodes {
             let Some(new_id) = map.get(&n.id) else { continue };
             let mut c = n.clone();
