@@ -413,6 +413,13 @@ pub(crate) enum Gesture {
     },
 }
 
+/// Where Shift puts the Pen's next point: as far from `last` as `p` is, at the nearest 45° step.
+fn at_45_degrees(last: Point, p: Point) -> Point {
+    let v = p - last;
+    let ang = (v.atan2() / (std::f64::consts::PI / 4.0)).round() * std::f64::consts::PI / 4.0;
+    last + Vec2::from_angle(ang) * v.hypot()
+}
+
 /// The handles a pen path shows while it is drawn ([`Overlay::pen_handles`]): the last anchor's in
 /// and out handles and the one before's out handle, those that aren't zero.
 fn pen_handles(points: &[(Point, Vec2, Vec2)]) -> Vec<[f64; 4]> {
@@ -1085,6 +1092,8 @@ impl Session {
             guides = g;
             self.tool.overlay.cursor = Cursor::Pen(self.pen_cursor(&doc, &sel, to, ev.zoom));
             if let Some((last, _, out)) = self.tool.pen.as_ref().and_then(|pen| pen.points.last()) {
+                // With Shift the band ends where a click puts the point (#970).
+                let to = if ev.shift { at_45_degrees(*last, to) } else { to };
                 self.tool.overlay.rubber = Some([last.x, last.y, to.x, to.y]);
                 self.tool.overlay.rubber_handle = (out.hypot() > 0.0).then_some([last.x + out.x, last.y + out.y]);
             }
@@ -2094,9 +2103,7 @@ impl Session {
         if ev.shift
             && let Some((last, _, _)) = pen.points.last()
         {
-            let v = p - *last;
-            let ang = (v.atan2() / (std::f64::consts::PI / 4.0)).round() * std::f64::consts::PI / 4.0;
-            p = *last + Vec2::from_angle(ang) * v.hypot();
+            p = at_45_degrees(*last, p);
         }
         pen.points.push((p, Vec2::ZERO, Vec2::ZERO));
         self.tool.gesture = Gesture::PenDrag { anchor: p };
