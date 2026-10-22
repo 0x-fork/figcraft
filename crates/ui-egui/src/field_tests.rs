@@ -371,6 +371,39 @@ fn arithmetic_commits_tab_moves_on_and_escape_restores() {
 }
 
 #[test]
+fn the_save_shortcut_saves_from_a_field_with_what_was_typed() {
+    // Cmd/Ctrl+S with the keyboard in a panel field saved nothing (#1157). It commits the field
+    // first (as clicking away does), then saves; the field lets go of the keyboard.
+    let cmd = if cfg!(target_os = "macos") { Modifiers::COMMAND } else { Modifiers::COMMAND.plus(Modifiers::CTRL) };
+    let (mut u, a, _) = setup();
+    let dir = std::env::temp_dir().join(format!("figcraft-save-from-field-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("doc.figcraft");
+    u.app.session.execute("file.saveAs", &json!({"path": path.to_string_lossy()})).unwrap();
+    for (shortcut, mods) in [("Cmd/Ctrl+S", cmd), ("Shift+Cmd/Ctrl+S on a file with a path", cmd.plus(Modifiers::SHIFT))] {
+        let (p, _) = field(&mut u, "X");
+        click(&mut u, p);
+        assert!(crate::a11y::field_focused(&u.ctx), "{shortcut}: the field has the keyboard");
+        let x = if mods.shift { "66" } else { "77" };
+        u.frame(vec![Event::Text(x.into())]);
+        key(&mut u, Key::S, mods);
+        u.frame(vec![]);
+        assert_eq!(geom(&u, a).0, x.parse::<f64>().unwrap(), "{shortcut}: what was typed is committed");
+        assert!(!crate::a11y::field_focused(&u.ctx), "{shortcut}: the field let go");
+        if mods.shift {
+            // Save as asks where (a dialog this harness doesn't answer): nothing is written yet.
+            continue;
+        }
+        assert!(!u.app.session.ds().unwrap().is_dirty(), "{shortcut}: saved");
+        let mut back = Session::new();
+        back.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap();
+        let b = back.doc().unwrap().world_bounds(a).unwrap();
+        assert_eq!(b.x0, 77.0, "{shortcut}: the file on disk has the typed value");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn mixed_values_take_edits_relative_to_each_layer() {
     let (mut u, a, b) = setup();
     u.app.run("select.set", json!({"ids": [a, b]}));
