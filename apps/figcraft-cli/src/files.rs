@@ -208,10 +208,10 @@ pub fn info(path: &str, as_json: bool) -> CliResult<ExitCode> {
 }
 
 /// The file name a layer exports to: the app's rule ([`figcraft_engine::cmd::file::safe_file_name`],
-/// so `/` becomes `_` too), without leading or trailing spaces and dots.
+/// so `/` becomes `_` too), without leading or trailing spaces and dots, at most 100 characters.
 fn sanitize(name: &str) -> String {
     let s = figcraft_engine::cmd::file::safe_file_name(name);
-    let s = s.trim().trim_matches('.').trim().to_string();
+    let s = s.trim_matches(|c: char| c == '.' || c.is_whitespace()).to_string();
     if s.is_empty() { "layer".into() } else { s.chars().take(100).collect() }
 }
 
@@ -418,6 +418,7 @@ mod tests {
         assert_eq!(sanitize("Q&A, 50% #1 [v2] {x} ~é"), "Q&A, 50% #1 [v2] {x} ~é");
         assert_eq!(sanitize("a\\b:c*d?e\"f<g>h|i\tj"), "a_b_c_d_e_f_g_h_i_j");
         assert_eq!(sanitize(" .hidden. "), "hidden");
+        assert_eq!(sanitize(" . .name. . "), "name", "spaces and dots at the edges, mixed");
         assert_eq!(sanitize(&"x".repeat(300)).chars().count(), 100);
     }
 
