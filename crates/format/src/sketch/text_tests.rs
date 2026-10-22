@@ -250,3 +250,24 @@ fn postscript_names_find_installed_fonts() {
     let (doc, _) = import(&z, "f").unwrap();
     assert_eq!(data(&doc, "A").style.font_family, "Courier New PSMT");
 }
+
+/// A run without kerning, a fixed line height or font axes has none: it doesn't take the first
+/// run's (the text's base style) as its own.
+#[test]
+fn later_runs_dont_inherit_the_first_runs_settings() {
+    let mut t = text("Mixed", 0.0, 0.0, 200.0, 40.0, "AaBb", &[(0, 2, "Skia", 20.0, BLACK), (2, 2, "Helvetica", 14.0, BLACK)]);
+    let first = &mut t["attributedString"]["attributes"][0]["attributes"];
+    first["kerning"] = json!(2);
+    first["paragraphStyle"]["minimumLineHeight"] = json!(24);
+    first["paragraphStyle"]["maximumLineHeight"] = json!(24);
+    first["MSAttributedStringFontAttribute"]["attributes"]["variation"] = json!({"2003265652": 3});
+    let (doc, _) = open(vec![t]);
+    let td = data(&doc, "Mixed");
+    let at = |i: usize| td.runs.iter().find(|r| r.start <= i && i < r.end).map_or(&td.style, |r| &r.style);
+    assert_eq!(at(0).letter_spacing.resolve(20.0), 2.0);
+    let second = at(2);
+    assert_eq!(second.font_family, "Helvetica");
+    assert_eq!(second.letter_spacing.resolve(14.0), 0.0, "{second:?}");
+    assert_eq!(second.line_height, figcraft_doc::LineHeight::Auto, "{second:?}");
+    assert!(second.variations.is_empty(), "{second:?}");
+}

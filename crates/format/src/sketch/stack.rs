@@ -62,12 +62,17 @@ pub(crate) fn apply(l: &Value, node: &mut JsonMap<String, Value>) {
     node.insert("primaryAxisSizingMode".into(), json!(mode(main)));
     node.insert("counterAxisSizingMode".into(), json!(mode(cross)));
     // Items: flow order, sizing, absolute ones.
-    let sources: Vec<&Value> = super::tree::layers(l).iter().collect();
+    // Source layers by id (the first of a repeated id).
+    let mut sources: std::collections::BTreeMap<&str, &Value> = std::collections::BTreeMap::new();
+    for src in super::tree::layers(l) {
+        if let Some(id) = src.get("do_objectID").and_then(Value::as_str) {
+            sources.entry(id).or_insert(src);
+        }
+    }
     if let Some(kids) = node.get_mut("children").and_then(Value::as_array_mut) {
         // Children were built one per source layer, skipped ones aside: match them by id.
         for kid in kids.iter_mut() {
-            let id = kid.get("id").and_then(Value::as_str).map(str::to_string);
-            let Some(src) = sources.iter().find(|s| id.is_some() && s.get("do_objectID").and_then(Value::as_str) == id.as_deref()) else { continue };
+            let Some(src) = kid.get("id").and_then(Value::as_str).and_then(|id| sources.get(id).copied()) else { continue };
             let Some(m) = kid.as_object_mut() else { continue };
             item(src, m, row, stretch);
         }

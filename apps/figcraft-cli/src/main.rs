@@ -108,6 +108,9 @@ fn run(argv: &[String]) -> CliResult<ExitCode> {
         // Text lays out with the installed fonts, like the desktop app, so headless renders and
         // auto layout sizes match what users see.
         figcraft_text::scan_system_fonts_on_demand();
+    } else {
+        // Nothing scans them then, not even a `.sketch` import matching its fonts.
+        figcraft_text::opt_out_of_system_fonts();
     }
     let Some((cmd, rest)) = argv.split_first() else { return Err(CliError::Usage("missing subcommand".into())) };
     match cmd.as_str() {

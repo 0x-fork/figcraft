@@ -129,18 +129,18 @@ pub(crate) fn type_style(cx: &mut Cx, a: &Value) -> Value {
         cx.warn("text without a font uses Helvetica");
     }
     let mut s = json!({"fontFamily": family, "fontStyle": style, "fontSize": size.min(10_000.0)});
-    if let Some(v) = font.and_then(|f| f.get("variation")).and_then(variations) {
-        s["fontVariations"] = v;
-    }
+    // Every field is written, neutral when the run has none: a run's style starts from the text's
+    // (its first run's), and an unwritten field would keep that one's value.
+    s["fontVariations"] = font.and_then(|f| f.get("variation")).and_then(variations).unwrap_or_else(|| json!({}));
     let p = a.get("paragraphStyle");
     let line = |k: &str| p.and_then(|p| p.get(k)).and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0);
     if let Some(lh) = line("maximumLineHeight").or_else(|| line("minimumLineHeight")) {
         s["lineHeightPx"] = json!(lh.min(1e4));
         s["lineHeightUnit"] = json!("PIXELS");
+    } else {
+        s["lineHeightUnit"] = json!("INTRINSIC_%");
     }
-    if let Some(k) = a.get("kerning").and_then(Value::as_f64).filter(|k| k.is_finite()) {
-        s["letterSpacing"] = json!(k);
-    }
+    s["letterSpacing"] = json!(a.get("kerning").and_then(Value::as_f64).filter(|k| k.is_finite()).unwrap_or(0.0).clamp(-1e4, 1e4));
     let set = |k: &str| a.get(k).and_then(Value::as_i64).is_some_and(|v| v != 0);
     s["textDecoration"] = json!(if set("underlineStyle") {
         "UNDERLINE"

@@ -633,6 +633,12 @@ fn match_font_families(doc: &mut Document) {
             }
         }
     }
+    // Shared text styles too, so they stay like the layers linked to them.
+    for st in &mut doc.styles {
+        if let StyleKind::Text { style } = &mut st.kind {
+            fix(style);
+        }
+    }
 }
 
 /// Sketch draws text with the tracking a font's `trak` table gives at its size (Apple's text engine
@@ -666,6 +672,11 @@ fn platform_tracking(doc: &mut Document) {
             for r in &mut td.runs {
                 track(&mut r.style);
             }
+        }
+    }
+    for st in &mut doc.styles {
+        if let StyleKind::Text { style } = &mut st.kind {
+            track(style);
         }
     }
 }

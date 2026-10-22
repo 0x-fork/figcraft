@@ -526,6 +526,8 @@ pub struct Rescan {
 static DB: OnceLock<RwLock<FontDb>> = OnceLock::new();
 /// Set by [`scan_system_fonts_on_demand`].
 static ON_DEMAND: AtomicBool = AtomicBool::new(false);
+/// Set by [`opt_out_of_system_fonts`].
+static OPTED_OUT: AtomicBool = AtomicBool::new(false);
 /// Done once per process: concurrent callers wait for the one scan.
 static SCANNED: OnceLock<()> = OnceLock::new();
 /// Directory walks done (at most one).
@@ -1111,10 +1113,17 @@ pub fn load_font_bytes(bytes: Vec<u8>) -> Vec<String> {
     families
 }
 
-/// `FIGCRAFT_NO_SYSTEM_FONTS` is set (and not `0`): renders use only the embedded fonts.
+/// `FIGCRAFT_NO_SYSTEM_FONTS` is set (and not `0`), or the process opted out
+/// ([`opt_out_of_system_fonts`]): renders use only the embedded fonts.
 #[cfg(not(target_arch = "wasm32"))]
 fn system_fonts_opted_out() -> bool {
-    std::env::var_os("FIGCRAFT_NO_SYSTEM_FONTS").is_some_and(|v| !v.is_empty() && v != "0")
+    OPTED_OUT.load(Ordering::Relaxed) || std::env::var_os("FIGCRAFT_NO_SYSTEM_FONTS").is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Use only the embedded fonts for the rest of the process, as `FIGCRAFT_NO_SYSTEM_FONTS` does
+/// (headless runs with `--no-system-fonts`): no call scans the system fonts after this.
+pub fn opt_out_of_system_fonts() {
+    OPTED_OUT.store(true, Ordering::Relaxed);
 }
 
 /// Every font text can use is known: the system fonts were indexed, or there are none to index

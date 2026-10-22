@@ -17,13 +17,22 @@ fn sketch(app_version: &str, pages: &[(&str, &str)]) -> Vec<u8> {
 
 /// [`sketch`] with `layers` on the first page.
 fn sketch_with(app_version: &str, pages: &[(&str, &str)], layers: &[Value]) -> Vec<u8> {
+    sketch_with_doc(app_version, pages, layers, json!({}))
+}
+
+/// [`sketch_with`] with the fields of `extra` added to `document.json` (shared styles…).
+fn sketch_with_doc(app_version: &str, pages: &[(&str, &str)], layers: &[Value], extra: Value) -> Vec<u8> {
     let refs: Vec<Value> = pages.iter().map(|(id, _)| json!({"_class": "MSJSONFileReference", "_ref": format!("pages/{id}")})).collect();
+    let mut document = json!({"_class": "document", "pages": refs});
+    for (k, v) in extra.as_object().into_iter().flatten() {
+        document[k] = v.clone();
+    }
     let mut out = Vec::new();
     {
         let mut z = zip::ZipWriter::new(std::io::Cursor::new(&mut out));
         let o = zip::write::SimpleFileOptions::default();
         z.start_file("document.json", o).unwrap();
-        z.write_all(json!({"_class": "document", "pages": refs}).to_string().as_bytes()).unwrap();
+        z.write_all(document.to_string().as_bytes()).unwrap();
         z.start_file("meta.json", o).unwrap();
         // The format version that Sketch writes (103 for 50; 110 and up from 52).
         let version = if app_version.split('.').next().and_then(|v| v.parse::<u32>().ok()).is_some_and(|v| v >= 52) { 125 } else { 103 };
@@ -475,4 +484,42 @@ fn sketch_text_in_a_stack_stays_put() {
     figcraft_layout::layout_frame(&mut doc, stack, &crate::measure::TextMeasure);
     let after = doc.world_bounds(label).unwrap();
     assert!((before.y0 - after.y0).abs() < 1e-6, "{before:?} → {after:?}");
+}
+
+/// Shared text styles get what their linked layers get on import: the installed family's name and
+/// the platform's tracking (a layer and its style stay alike).
+#[test]
+fn sketch_shared_text_styles_match_their_layers() {
+    if !std::path::Path::new("/System/Library/Fonts/SFNS.ttf").exists() {
+        return;
+    }
+    figcraft_text::fontdb::scan_system_fonts();
+    let attrs = json!({"MSAttributedStringFontAttribute": {"attributes": {"name": "SFUIText-Regular", "size": 13}}});
+    let style = json!({"_class": "style", "textStyle": {"_class": "textStyle", "encodedAttributes": attrs.clone()}});
+    let shared = json!({"_class": "sharedStyle", "do_objectID": "TS", "name": "Body", "value": style.clone()});
+    let run = json!({"location": 0, "length": 2, "attributes": attrs});
+    let mut linked = style;
+    linked["sharedObjectID"] = json!("TS");
+    let t = shape(
+        "text",
+        "Label",
+        [0.0, 0.0, 100.0, 20.0],
+        json!({"attributedString": {"string": "Hi", "attributes": [run]}, "textBehaviour": 0, "style": linked}),
+    );
+    let extra = json!({"layerTextStyles": {"_class": "sharedTextStyleContainer", "objects": [shared]}});
+    let data = base64::engine::general_purpose::STANDARD.encode(sketch_with_doc("64", &[("A", "Page")], &[t], extra));
+    let mut s = Session::new();
+    s.execute("file.open", &json!({"data": data, "name": "x.sketch"})).unwrap();
+    let doc = s.doc().unwrap();
+    let NodeKind::Text(td) = &doc.nodes().find(|n| n.name == "Label").unwrap().kind else { panic!("not text") };
+    let st = doc
+        .styles
+        .iter()
+        .find_map(|st| match &st.kind {
+            figcraft_doc::StyleKind::Text { style } if st.name == "Body" => Some(style.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(st.font_family, td.style.font_family);
+    assert_eq!(st.letter_spacing.resolve(13.0), td.style.letter_spacing.resolve(13.0), "{st:?}");
 }

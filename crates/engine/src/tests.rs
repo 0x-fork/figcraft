@@ -633,3 +633,16 @@ fn find_replace_changing_only_the_case_replaces_every_occurrence() {
     assert_eq!(s.doc().unwrap().node(t).unwrap().kind.text().unwrap().characters, "FigCraft and FigCraft, FigCraft");
     assert_eq!(s.doc().unwrap().node(f).unwrap().name, "FigCraft / FigCraft");
 }
+
+/// Damaged and too-old `.sketch` data sent to the file commands (which the junk sweep skips) fail
+/// with an ordinary error, not a caught panic.
+#[test]
+fn damaged_sketch_data_fails_without_panicking() {
+    for data in ["UEsDBBQAAAAIAP////8=", "U1FMaXRlIGZvcm1hdCAzAA=="] {
+        for cmd in ["file.open", "file.import"] {
+            let mut s = sess();
+            let r = s.execute(cmd, &json!({"data": data, "name": "x.sketch"}));
+            assert!(matches!(r, Err(ref e) if !matches!(e, EngineError::Internal { .. })), "{cmd}: {r:?}");
+        }
+    }
+}
