@@ -1103,3 +1103,219 @@ fn local_samples_round_trip() {
         assert_same(&a, &b, &format!("{} (export warnings: {warnings:?})", p.display()));
     }
 }
+
+#[test]
+fn images_are_named_by_the_sha1_of_their_bytes() {
+    // FIPS 180 test vectors.
+    assert_eq!(export::sha1_hex(b""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+    assert_eq!(export::sha1_hex(b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
+    assert_eq!(export::sha1_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"), "84983e441c3bd26ebaae4aa1f95129e5e54670f1");
+    assert_eq!(export::sha1_hex(&vec![b'a'; 1_000_000]), "34aa973cd4c4daa4f61eeb2bdbad27316534016f");
+    let (bytes, _) = export(&generate(3), None).unwrap();
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes[..])).unwrap();
+    let names: Vec<String> = z.file_names().filter(|n| n.starts_with("images/")).map(str::to_string).collect();
+    assert!(!names.is_empty());
+    for name in names {
+        let data = crate::read_member(&mut z, &name, 1 << 26).unwrap();
+        assert_eq!(name.strip_prefix("images/"), Some(export::sha1_hex(&data).as_str()));
+    }
+    // Paints name the image by its 20 bytes.
+    let archive = Archive::open(&bytes).unwrap();
+    let (schema, message) = decode_canvas(&archive.canvas).unwrap();
+    let msg = schema.decode_message(schema.find("Message").unwrap(), &message).unwrap();
+    let mut hashes = 0;
+    for nc in msg.get("nodeChanges").unwrap().list() {
+        for p in nc.get("fillPaints").map(Kv::list).unwrap_or_default() {
+            if let Some(h) = p.get("image").and_then(|i| i.get("hash")).and_then(Kv::bytes) {
+                assert_eq!(h.len(), 20);
+                hashes += 1;
+            }
+        }
+    }
+    assert!(hashes > 0);
+}
+
+#[test]
+fn an_axis_without_a_maximum_size_is_written_as_infinite() {
+    let mut doc = Document::new("File");
+    let page = doc.first_page().unwrap();
+    let id = doc.create(page, NodeKind::Frame, "Subject", 0.0, 0.0, 100.0, 100.0).unwrap();
+    let node = doc.node_mut(id).unwrap();
+    node.layout = Some(AutoLayout::default());
+    node.child_layout.max_w = Some(1200.0);
+    node.child_layout.min_h = Some(40.0);
+    let (bytes, _) = export(&doc, None).unwrap();
+    let archive = Archive::open(&bytes).unwrap();
+    let (schema, message) = decode_canvas(&archive.canvas).unwrap();
+    let msg = schema.decode_message(schema.find("Message").unwrap(), &message).unwrap();
+    let nc = msg.get("nodeChanges").unwrap().list().iter().find(|n| n.get("name").and_then(Kv::str) == Some("Subject")).unwrap();
+    let axes = |k: &str| {
+        let v = nc.get(k).unwrap().get("value").unwrap();
+        (v.get("x").cloned().unwrap(), v.get("y").cloned().unwrap())
+    };
+    assert_eq!(axes("maxSize"), (Kv::Float(1200.0), Kv::Float(f32::INFINITY)));
+    assert_eq!(axes("minSize"), (Kv::Float(0.0), Kv::Float(40.0)));
+    let (back, _) = import(&bytes, "File").unwrap();
+    let cl = &back.nodes().find(|n| n.name == "Subject").unwrap().child_layout;
+    assert_eq!([cl.min_w, cl.max_w, cl.min_h, cl.max_h], [None, Some(1200.0), Some(40.0), None]);
+}
+
+#[test]
+fn compound_weights_are_spelt_the_way_font_families_name_their_faces() {
+    assert_eq!(export::face_style("Libre Franklin", "Semi Bold"), "SemiBold");
+    assert_eq!(export::face_style("Fira Sans", "SemiBold"), "SemiBold");
+    assert_eq!(export::face_style("Roboto", "Extra Light Italic"), "ExtraLight Italic");
+    assert_eq!(export::face_style("Roboto", "Bold"), "Bold");
+    assert_eq!(export::face_style("Inter", "SemiBold"), "Semi Bold");
+    assert_eq!(export::face_style("Inter Display", "Extra Bold"), "Extra Bold");
+}
+
+/// A component set whose variants share a text and a boolean property, its layers bound to them,
+/// and an instance of the second variant with its own label.
+fn set_with_properties() -> (Document, NodeId) {
+    fn mirror(doc: &mut Document, src: NodeId, parent: NodeId) {
+        let mut n = doc.node(src).unwrap().clone();
+        let kids = std::mem::take(&mut n.children);
+        n.id = doc.alloc_id();
+        n.source = Some(src);
+        let id = doc.insert(n, parent, None).unwrap();
+        for k in kids {
+            mirror(doc, k, id);
+        }
+    }
+    let mut doc = Document::new("File");
+    let page = doc.first_page().unwrap();
+    let glyph =
+        doc.create(page, NodeKind::Component { description: String::new(), props: BTreeMap::new() }, "Glyph", 400.0, 0.0, 16.0, 16.0).unwrap();
+    doc.create(glyph, NodeKind::Rectangle, "Shape", 0.0, 0.0, 16.0, 16.0).unwrap();
+    let set = doc.create(page, NodeKind::ComponentSet { description: String::new() }, "Button", 0.0, 0.0, 300.0, 120.0).unwrap();
+    let mut variants = Vec::new();
+    for (i, name) in ["Size=Small", "Size=Large"].into_iter().enumerate() {
+        let props = BTreeMap::from([
+            ("Label".to_string(), PropDef::Text { default: "Button".into() }),
+            ("Show icon".to_string(), PropDef::Boolean { default: true }),
+        ]);
+        let v = doc.create(set, NodeKind::Component { description: String::new(), props }, name, 0.0, 60.0 * i as f64, 120.0, 40.0).unwrap();
+        let label = doc.create(v, NodeKind::Text(TextData::new("Button")), "Label", 0.0, 0.0, 60.0, 20.0).unwrap();
+        doc.node_mut(label).unwrap().prop_refs.insert("characters".into(), "Label".into());
+        // The icon is an instance placed in the variant: like the editor's, its `source` is its
+        // main, which the binding doesn't belong to.
+        let icon = doc.create(v, NodeKind::Instance { component: glyph, props: BTreeMap::new() }, "Icon", 70.0, 0.0, 16.0, 16.0).unwrap();
+        let n = doc.node_mut(icon).unwrap();
+        n.source = Some(glyph);
+        n.prop_refs.insert("visible".into(), "Show icon".into());
+        variants.push(v);
+    }
+    let large = variants[1];
+    let main = doc.node(large).unwrap().clone();
+    let id = doc.alloc_id();
+    let mut n = main.clone();
+    let props = BTreeMap::from([("Label".to_string(), Value::String("Hi".into()))]);
+    (n.id, n.kind, n.name, n.parent, n.source) = (id, NodeKind::Instance { component: large, props }, "Button".into(), None, None);
+    n.children.clear();
+    n.transform = Affine::translate((0.0, 200.0));
+    doc.insert(n, page, None).unwrap();
+    for k in main.children {
+        mirror(&mut doc, k, id);
+    }
+    let kids = doc.node(id).unwrap().children.clone();
+    for k in kids {
+        let n = doc.node_mut(k).unwrap();
+        if let NodeKind::Text(td) = &mut n.kind {
+            td.characters = "Hi".into();
+            td.runs.clear();
+            n.overrides.insert("characters".into());
+        }
+    }
+    (doc, id)
+}
+
+#[test]
+fn set_properties_live_on_the_set_with_a_copy_per_variant() {
+    let (doc, _) = set_with_properties();
+    let (bytes, _) = export(&doc, None).unwrap();
+    let archive = Archive::open(&bytes).unwrap();
+    let (schema, message) = decode_canvas(&archive.canvas).unwrap();
+    let msg = schema.decode_message(schema.find("Message").unwrap(), &message).unwrap();
+    let changes = msg.get("nodeChanges").unwrap().list();
+    let key = |g: &Kv| format!("{}:{}", g.get("sessionID").unwrap().f64().unwrap(), g.get("localID").unwrap().f64().unwrap());
+    let named = |name: &str| changes.iter().filter(|n| n.get("name").and_then(Kv::str) == Some(name)).collect::<Vec<_>>();
+    let id_of = |n: &Kv| key(n.get("guid").unwrap());
+    let parent_of = |n: &Kv| key(n.get("parentIndex").unwrap().get("guid").unwrap());
+
+    // The set: every definition, the variant property first, with its values in order.
+    let set = named("Button").into_iter().find(|n| n.get("isStateGroup").is_some()).unwrap();
+    let defs = set.get("componentPropDefs").unwrap().list();
+    let def = |name: &str| defs.iter().find(|d| d.get("name").and_then(Kv::str) == Some(name)).unwrap();
+    assert_eq!(def("Size").get("type").and_then(Kv::str), Some("VARIANT"));
+    assert_eq!(def("Label").get("type").and_then(Kv::str), Some("TEXT"));
+    assert_eq!(def("Show icon").get("type").and_then(Kv::str), Some("BOOL"));
+    assert_eq!(defs.first().and_then(|d| d.get("name")).and_then(Kv::str), Some("Size"));
+    for d in defs {
+        assert!(d.get("varValue").is_some() && d.get("sortPosition").is_some(), "{d:?}");
+    }
+    let label_default = def("Label").get("varValue").unwrap().get("value").unwrap().get("textDataValue").unwrap();
+    assert_eq!(label_default.get("characters").and_then(Kv::str), Some("Button"));
+    assert_eq!(label_default.get("lines").map(|l| l.list().len()), Some(1));
+    let orders = set.get("stateGroupPropertyValueOrders").unwrap().list();
+    assert_eq!(orders.len(), 1);
+    let values: Vec<&str> = orders[0].get("values").unwrap().list().iter().filter_map(Kv::str).collect();
+    assert_eq!((orders[0].get("property").and_then(Kv::str), values), (Some("Size"), vec!["Small", "Large"]));
+
+    // Each variant: its own copy of each definition and its variant value; its layers name the copy.
+    let set_ids: BTreeMap<String, String> =
+        defs.iter().map(|d| (key(d.get("id").unwrap()), d.get("name").and_then(Kv::str).unwrap().to_string())).collect();
+    let mut copies = BTreeSet::new();
+    let mut large_label = None;
+    for (name, value) in [("Size=Small", "Small"), ("Size=Large", "Large")] {
+        let v = named(name)[0];
+        let mut own = BTreeMap::new();
+        for d in v.get("componentPropDefs").unwrap().list() {
+            let parent = set_ids.get(&key(d.get("parentPropDefId").unwrap())).unwrap().clone();
+            assert!(copies.insert(key(d.get("id").unwrap())), "copies are the variant's own");
+            own.insert(parent, key(d.get("id").unwrap()));
+        }
+        assert_eq!(own.keys().map(String::as_str).collect::<Vec<_>>(), ["Label", "Show icon"]);
+        let specs = v.get("variantPropSpecs").unwrap().list();
+        assert_eq!(set_ids.get(&key(specs[0].get("propDefId").unwrap())).map(String::as_str), Some("Size"));
+        assert_eq!(specs[0].get("value").and_then(Kv::str), Some(value));
+        for (layer, prop, field) in [("Label", "Label", "TEXT_DATA"), ("Icon", "Show icon", "VISIBLE")] {
+            let l = named(layer).into_iter().find(|l| parent_of(l) == id_of(v)).unwrap();
+            let r = &l.get("componentPropRefs").unwrap().list()[0];
+            assert_eq!((key(r.get("defID").unwrap()), r.get("componentPropNodeField").and_then(Kv::str)), (own[prop].clone(), Some(field)));
+            let entry = &l.get("parameterConsumptionMap").unwrap().get("entries").unwrap().list()[0];
+            let def_id = entry.get("variableData").unwrap().get("value").unwrap().get("propRefValue").unwrap().get("defId").unwrap();
+            assert_eq!(key(def_id), own[prop]);
+        }
+        if value == "Large" {
+            large_label = Some(own["Label"].clone());
+        }
+    }
+
+    // The instance names the large variant's copy, with the value as variable data too.
+    let inst = named("Button").into_iter().find(|n| n.get("type").and_then(Kv::str) == Some("INSTANCE")).unwrap();
+    let a = &inst.get("componentPropAssignments").unwrap().list()[0];
+    assert_eq!(Some(key(a.get("defID").unwrap())), large_label);
+    let chars = a.get("varValue").unwrap().get("value").unwrap().get("textDataValue").unwrap().get("characters");
+    assert_eq!(chars.and_then(Kv::str), Some("Hi"));
+}
+
+#[test]
+fn set_properties_round_trip() {
+    let (doc, inst) = set_with_properties();
+    let (bytes, warnings) = export(&doc, None).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let (back, _) = import(&bytes, "File").unwrap();
+    for name in ["Size=Small", "Size=Large"] {
+        let v = back.nodes().find(|n| n.name == name).unwrap();
+        let NodeKind::Component { props, .. } = &v.kind else { panic!("{name} is a component") };
+        assert_eq!(props.get("Label"), Some(&PropDef::Text { default: "Button".into() }), "{name}");
+        assert_eq!(props.get("Show icon"), Some(&PropDef::Boolean { default: true }), "{name}");
+        let label = v.children.iter().filter_map(|c| back.node(*c)).find(|c| c.name == "Label").unwrap();
+        assert_eq!(label.prop_refs.get("characters").map(String::as_str), Some("Label"));
+    }
+    let name = &doc.node(inst).unwrap().name;
+    let i = back.nodes().find(|n| &n.name == name && matches!(n.kind, NodeKind::Instance { .. })).unwrap();
+    let NodeKind::Instance { props, .. } = &i.kind else { panic!() };
+    assert_eq!(props.get("Label"), Some(&Value::String("Hi".into())));
+}
