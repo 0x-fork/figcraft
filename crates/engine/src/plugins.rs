@@ -107,6 +107,8 @@ const DENIED: &[&str] = &[
     "plugins.",
     "libraries.",
     "library.add",
+    // Uploads the open document to a server.
+    "library.publishToServer",
     "edit.undo",
     "edit.redo",
     "edit.repeat",
@@ -591,4 +593,16 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("plugins.runLast", "Run last plugin", "{}", false, run_last),
         spec!("plugins.manage", "Manage plugins…", "{}  opens the plugins window; returns the list like `plugin.list`", false, manage),
     ]
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+
+    #[test]
+    fn read_only_plugin_cannot_publish_to_server() {
+        let m = Manifest::parse(r#"{"id":"x.y","name":"X","main":"plugin.wasm"}"#).unwrap();
+        let r = refusal(&m, "library.publishToServer", &json!({}));
+        assert!(r.is_some(), "library.publishToServer uploads the document and must be refused");
+    }
 }
