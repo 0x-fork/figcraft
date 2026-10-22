@@ -695,10 +695,14 @@ impl Session {
                     }
                 }
                 None => {
-                    // Outside every edited layer (and not shift): leave edit mode.
+                    // A press on another layer (and not shift) leaves edit mode, so the normal tool
+                    // takes it; empty canvas only clears the points and starts a marquee (a
+                    // double-click or Escape leaves edit mode).
                     let inside =
                         ve.parts().iter().any(|p| doc.world_render_bounds(p.id).is_some_and(|b| b.inflate(tol * 4.0, tol * 4.0).contains(ev.p())));
-                    if !inside && !ev.shift {
+                    let page = self.ds()?.page;
+                    let other = !inside && self.hit(&doc, page, ev.p(), tol * 2.0).is_some();
+                    if other && !ev.shift {
                         super::end(self)?;
                         return Ok(false);
                     }

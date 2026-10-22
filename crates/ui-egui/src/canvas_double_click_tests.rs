@@ -85,7 +85,23 @@ fn double_clicking_an_unselected_shape_edits_its_points() {
 }
 
 #[test]
-fn a_click_that_leaves_vector_edit_does_not_keep_the_next_double_click_out() {
+fn a_double_click_on_empty_canvas_right_after_entering_leaves_vector_edit() {
+    let mut s = Session::new();
+    let r = s.execute("shape.rectangle", &json!({"x": 100, "y": 100, "width": 300, "height": 200})).unwrap();
+    let r: NodeId = figcraft_engine::params::id_of(&r["id"]).unwrap();
+    s.execute("select.none", &json!({})).unwrap();
+    let mut u = Ui::new(s);
+    let shape = u.app.to_screen(250.0, 200.0);
+    let empty = Pos2::new(u.app.canvas.rect.left() + 30.0, u.app.canvas.rect.bottom() - 30.0);
+    // The double-click that enters edit mode, then straight away one on empty canvas.
+    double_click_at(&mut u, shape);
+    assert_eq!(u.app.session.ds().unwrap().vector_edit.as_ref().map(|v| v.id), Some(r));
+    double_click_at(&mut u, empty);
+    assert!(u.app.session.ds().unwrap().vector_edit.is_none(), "a double-click on empty canvas leaves vector edit at once");
+}
+
+#[test]
+fn a_click_on_empty_canvas_keeps_vector_edit_until_a_double_click() {
     let mut s = Session::new();
     let r = s.execute("shape.rectangle", &json!({"x": 100, "y": 100, "width": 300, "height": 200})).unwrap();
     let r: NodeId = figcraft_engine::params::id_of(&r["id"]).unwrap();
@@ -95,9 +111,13 @@ fn a_click_that_leaves_vector_edit_does_not_keep_the_next_double_click_out() {
     let empty = Pos2::new(u.app.canvas.rect.left() + 30.0, u.app.canvas.rect.bottom() - 30.0);
     double_click_at(&mut u, shape);
     assert!(u.app.session.ds().unwrap().vector_edit.is_some());
-    // One click on empty canvas leaves the edit mode.
+    // One click on empty canvas only clears the points: edit mode stays.
     click(&mut u, empty);
-    assert!(u.app.session.ds().unwrap().vector_edit.is_none(), "a click outside leaves vector edit");
+    assert!(u.app.session.ds().unwrap().vector_edit.is_some(), "a click on empty canvas keeps vector edit");
+    // A double-click on empty canvas leaves it, the earlier click and the counts from entering
+    // included.
+    double_click_at(&mut u, empty);
+    assert!(u.app.session.ds().unwrap().vector_edit.is_none(), "a double-click on empty canvas leaves vector edit");
     // The next double-click edits the shape again.
     double_click_at(&mut u, shape);
     assert!(u.app.session.ds().unwrap().vector_edit.is_some(), "a double-click edits it again");

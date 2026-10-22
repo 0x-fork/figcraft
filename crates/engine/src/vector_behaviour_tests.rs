@@ -94,7 +94,8 @@ fn entering_and_leaving_vector_edit_mode() {
         ("Enter", false, "Enter leaves edit mode"),
         ("Escape", false, "Escape leaves edit mode"),
         ("Escape with an open pen path", true, "Escape first ends the pen's path and stays in edit mode"),
-        ("click outside", false, "silent: a click away from the shape leaves edit mode (pinned)"),
+        ("click outside", true, "silent: a click away from the shape only clears the points (pinned)"),
+        ("double-click outside", false, "a double-click away from the shape leaves edit mode"),
     ];
     for (how, after, why) in rows {
         let mut s = Session::new();
@@ -113,6 +114,7 @@ fn entering_and_leaving_vector_edit_mode() {
                 key(&mut s, "Escape", false);
                 assert!(editing(&s).is_some_and(|e| e.anchor.is_none()), "{why}: the path ended");
             }
+            "double-click outside" => s.pointer(&ev(PointerKind::DoubleClick, (600.0, 600.0), NONE)).unwrap(),
             _ => click(&mut s, (600.0, 600.0), NONE),
         }
         assert_eq!(editing(&s).is_some(), after, "{why}");
