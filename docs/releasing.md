@@ -68,6 +68,20 @@ FIGCRAFT_DEFAULT_SERVER=wss://design.example.org/ cargo build --release -p figcr
 The release workflow leaves it unset. The public server's terms are in
 [`online-sharing-terms.md`](online-sharing-terms.md).
 
+## The default font
+
+New text starts in Inter (`figcraft_doc::DEFAULT_FONT`). A distribution whose users mostly write a
+script Inter lacks (Thai, say) can name another family with `FIGCRAFT_DEFAULT_FONT` when building;
+unset or empty means Inter. Pick a family the build embeds from craft-fonts (the web build has no
+other fonts) or one its users have installed:
+
+```sh
+FIGCRAFT_DEFAULT_FONT="Noto Sans Thai" cargo build --release -p figcraft
+```
+
+Files record each text's family, so they open in the same font in any build. The release workflow
+leaves it unset.
+
 ## What gets built
 
 | Platform | Artifacts | Built on |
