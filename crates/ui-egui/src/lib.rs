@@ -1700,7 +1700,7 @@ impl FigApp {
             let mut worker = worker.unwrap_or_else(|| render_worker::Worker::new(ctx.clone()));
             canvas::show(self, ui, &mut worker);
             self.worker = Some(worker);
-            if !hidden {
+            if !hidden && mobile.is_none() {
                 ui.scope_builder(egui::UiBuilder::new().id_salt("toolbar"), |ui| {
                     a11y::container(ui, egui::accesskit::Role::Toolbar, i18n::tr("Tools"));
                     toolbar::show(self, ui);
