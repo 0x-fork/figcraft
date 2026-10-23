@@ -1393,3 +1393,35 @@ fn variants_that_disagree_on_a_default_are_a_warning() {
     let (_, warnings) = export(&doc, None).unwrap();
     assert!(warnings.iter().any(|w| w.contains("different defaults")), "{warnings:?}");
 }
+
+#[test]
+fn a_name_used_with_two_types_in_a_set_writes_both_definitions() {
+    let (mut doc, _) = set_with_properties();
+    let large = doc.nodes().find(|n| n.name == "Size=Large").unwrap().id;
+    if let NodeKind::Component { props, .. } = &mut doc.node_mut(large).unwrap().kind {
+        props.insert("Label".into(), PropDef::Boolean { default: true });
+    }
+    let (bytes, _) = export(&doc, None).unwrap();
+    let archive = Archive::open(&bytes).unwrap();
+    let (schema, message) = decode_canvas(&archive.canvas).unwrap();
+    let msg = schema.decode_message(schema.find("Message").unwrap(), &message).unwrap();
+    let changes = msg.get("nodeChanges").unwrap().list();
+    let key = |g: &Kv| format!("{}:{}", g.get("sessionID").unwrap().f64().unwrap(), g.get("localID").unwrap().f64().unwrap());
+    let set = changes.iter().find(|n| n.get("isStateGroup").is_some()).unwrap();
+    let written: BTreeSet<String> = set.get("componentPropDefs").unwrap().list().iter().map(|d| key(d.get("id").unwrap())).collect();
+    let labels: Vec<&str> = set
+        .get("componentPropDefs")
+        .unwrap()
+        .list()
+        .iter()
+        .filter(|d| d.get("name").and_then(Kv::str) == Some("Label"))
+        .filter_map(|d| d.get("type").and_then(Kv::str))
+        .collect();
+    assert_eq!(labels.len(), 2, "{labels:?}");
+    // Every variant copy names a definition the set holds.
+    for v in changes.iter().filter(|n| n.get("variantPropSpecs").is_some()) {
+        for d in v.get("componentPropDefs").unwrap().list() {
+            assert!(written.contains(&key(d.get("parentPropDefId").unwrap())));
+        }
+    }
+}
