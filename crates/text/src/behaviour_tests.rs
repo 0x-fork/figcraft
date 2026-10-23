@@ -266,6 +266,35 @@ fn hangul_comes_from_a_korean_font_when_one_is_installed() {
 }
 
 #[test]
+fn thai_comes_from_a_thai_font_when_one_is_installed() {
+    // The default (Latin) face has no Thai. With a Thai face (Noto Sans Thai from craft-fonts or
+    // Linux, Leelawadee UI or Tahoma on Windows, Thonburi on macOS) the fallback draws every Thai
+    // cluster, marks included, instead of the missing-glyph box. Skips on a machine without one.
+    let Some(f) = face() else { return };
+    if f.has_char('\u{0E01}') {
+        return;
+    }
+    let thai = ["Noto Sans Thai", "Noto Sans Thai UI", "Leelawadee UI", "Thonburi", "Tahoma"];
+    if !thai.iter().any(|t| find_face(t, "Regular").is_some_and(|t| t.has_char('\u{0E01}'))) {
+        return;
+    }
+    // "ภาษาไทย" (the Thai language) and "น้ำ" (water: a tone mark over SARA AM).
+    let s = "Ab \u{0E20}\u{0E32}\u{0E29}\u{0E32}\u{0E44}\u{0E17}\u{0E22} \u{0E19}\u{0E49}\u{0E33}";
+    let chars: Vec<char> = s.chars().collect();
+    let l = layout(&text(s, TextAutoResize::WidthAndHeight), None, None);
+    let is_thai = |g: &&Glyph| chars.get(g.char_start).is_some_and(|c| ('\u{0E00}'..='\u{0E7F}').contains(c));
+    let glyphs: Vec<_> = l.glyphs.iter().filter(is_thai).collect();
+    assert!(!glyphs.is_empty());
+    for g in &glyphs {
+        assert!(g.gid != 0, "char {}: missing glyph in {} {}", g.char_start, g.face.family, g.face.style);
+        assert!(g.face.has_char('\u{0E01}'), "char {}: drawn by {}, which has no Thai", g.char_start, g.face.family);
+    }
+    let drawn: std::collections::BTreeSet<usize> = glyphs.iter().flat_map(|g| g.char_start..g.char_end).collect();
+    let want: std::collections::BTreeSet<usize> = (3..chars.len()).filter(|i| chars[*i] != ' ').collect();
+    assert_eq!(drawn, want, "every Thai char is in a drawn cluster");
+}
+
+#[test]
 fn break_opportunities() {
     // (before, after, may break between, derivation)
     let cases: [(char, char, bool, &str); 22] = [
