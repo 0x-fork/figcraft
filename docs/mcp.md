@@ -635,7 +635,8 @@ rotation?, color?, width?, height?, responsive?}` (`None`, `iPhone 16`, `iPhone 
 `Black`, `White`, `Pink`, `Teal`, `Blue` for the iPhone 16 (an error lists them), `""` for the
 default; `width` / `height` set the custom size's screen, 1–10000 points, and pick `Custom size`,
 which is a bare screen without a body). On a device the presented frame is sized to the device's
-screen: what doesn't fit is clipped, or scrolls when the frame's `overflow` allows it, while `fixed`
+screen: a frame bigger than the screen scrolls through its whole size whatever its `overflow`, content
+past the frame's own edges scrolls only as its `overflow` allows (else it's clipped), and `fixed`
 layers stay on screen (pinned to the edges their constraints name). With `responsive: true` (saved
 in the file) the presented frame is instead resized to the device's screen, or without a device to
 the presenter's window at 100%, and its constraints and auto layout respond as when it is resized

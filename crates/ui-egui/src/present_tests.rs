@@ -175,6 +175,38 @@ fn the_frame_scrolls_on_the_device_screen_by_wheel_and_drag() {
     assert_eq!(u.scroll_y(), 0.0);
 }
 
+/// A long top-level frame scrolls on a phone with no overflow setting, as in Figma: the landing
+/// page template's Phone frame ("No scrolling", hugging its height) scrolls by the wheel.
+#[test]
+fn a_top_level_frame_taller_than_the_phone_scrolls_without_an_overflow_setting() {
+    let mut s = Session::new();
+    s.execute("file.newFromTemplate", &json!({"template": "landing-page"})).unwrap();
+    s.execute("proto.settings", &json!({"device": "iPhone 16", "responsive": true})).unwrap();
+    let doc = s.doc().unwrap();
+    let page = doc.first_page().unwrap();
+    let phone = doc.top_frames(page).into_iter().find(|f| doc.node(*f).unwrap().name == "Phone").unwrap();
+    assert_eq!(doc.node(phone).unwrap().overflow, figcraft_doc::proto::Overflow::None);
+    let mut u = Ui::new(s);
+    u.run("proto.preview", json!({"start": phone}));
+    let range = u.preview()["scrollRange"][1].as_f64().unwrap();
+    assert!(range > 1000.0, "the page is far taller than the screen: {range}");
+    let c = u.pane().center();
+    let wheel = move || {
+        vec![
+            Event::PointerMoved(c),
+            Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, -60.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: Default::default(),
+            },
+        ]
+    };
+    u.frames(6, wheel);
+    u.frames(20, Vec::new);
+    assert!(u.scroll_y() > 0.0, "{}", u.scroll_y());
+}
+
 #[test]
 fn full_window_presenter_shares_the_player() {
     let (mut u, a, ..) = setup();

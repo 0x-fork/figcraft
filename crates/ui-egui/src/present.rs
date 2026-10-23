@@ -4,8 +4,9 @@
 //! The player works on its own copy of the document (interactive components, variables and scroll
 //! offsets change it without touching the user's file) and copies the editor's document again
 //! whenever it changes, so the preview pane follows edits live. On a device, the presented frame
-//! is sized to the device's screen ([`fit_viewport`]): what doesn't fit is clipped, or scrolls when
-//! the frame's overflow allows it. A responsive prototype's frame is instead resized to the screen
+//! is sized to the device's screen ([`fit_viewport`]): a frame bigger than the screen scrolls
+//! through its whole size (as in Figma, with no overflow setting), while content past the frame's
+//! own edges scrolls only as its overflow allows and is otherwise clipped. A responsive prototype's frame is instead resized to the screen
 //! (the device's, else the player's whole area) and laid out again, its constraints and auto layout
 //! responding (`figcraft_engine::cmd::proto::respond`, on the player's copy, from the design each
 //! time). Device bodies are drawn in code in the device's colour. Every frame is rendered through
@@ -1170,11 +1171,13 @@ pub fn scroll_range(doc: &Document, frame: NodeId) -> (f64, f64) {
 
 /// How far `frame`'s content can scroll when `viewport` (page units, from its top-left) of it
 /// shows, as a device's screen shows a top-level frame: the frame itself is content then, so a
-/// frame taller than the screen scrolls through its whole height. Without a viewport the frame
-/// shows at its own size and what overflows it scrolls. Only the axes its overflow allows scroll.
+/// frame bigger than the screen scrolls through its whole size whatever its overflow (as in
+/// Figma, a top-level frame needs no overflow setting for that). Without a viewport the frame
+/// shows at its own size and what overflows it scrolls. Content past the frame's own edges
+/// scrolls only on the axes its overflow allows.
 pub fn scroll_range_in(doc: &Document, frame: NodeId, viewport: Option<(f64, f64)>) -> (f64, f64) {
     let Some(n) = doc.node(frame) else { return (0.0, 0.0) };
-    if n.overflow == Overflow::None {
+    if n.overflow == Overflow::None && viewport.is_none() {
         return (0.0, 0.0);
     }
     let (mut x1, mut y1) = (0.0f64, 0.0f64);
@@ -1191,6 +1194,13 @@ pub fn scroll_range_in(doc: &Document, frame: NodeId, viewport: Option<(f64, f64
         x1 += l.padding[1];
         y1 += l.padding[2];
     }
+    // Axes the overflow doesn't scroll clip what lies past the frame's edges.
+    if !matches!(n.overflow, Overflow::Horizontal | Overflow::Both) {
+        x1 = 0.0;
+    }
+    if !matches!(n.overflow, Overflow::Vertical | Overflow::Both) {
+        y1 = 0.0;
+    }
     let (vw, vh) = match viewport {
         Some(v) => {
             x1 = x1.max(n.width);
@@ -1199,8 +1209,7 @@ pub fn scroll_range_in(doc: &Document, frame: NodeId, viewport: Option<(f64, f64
         }
         None => (n.width, n.height),
     };
-    let rx = if matches!(n.overflow, Overflow::Horizontal | Overflow::Both) { (x1 - vw).max(0.0) } else { 0.0 };
-    let ry = if matches!(n.overflow, Overflow::Vertical | Overflow::Both) { (y1 - vh).max(0.0) } else { 0.0 };
+    let (rx, ry) = ((x1 - vw).max(0.0), (y1 - vh).max(0.0));
     (if rx.is_finite() { rx } else { 0.0 }, if ry.is_finite() { ry } else { 0.0 })
 }
 
@@ -2356,7 +2365,7 @@ fn scrollers_at(p: &Presenter, base: &Document, disp: &Document, root: NodeId, p
     let mut out: Vec<NodeId> = disp
         .subtree(root)
         .into_iter()
-        .filter(|f| disp.node(*f).is_some_and(|n| n.visible && n.overflow != Overflow::None))
+        .filter(|f| disp.node(*f).is_some_and(|n| n.visible && (n.overflow != Overflow::None || *f == root)))
         .filter(|f| disp.world_bounds(*f).is_some_and(|b| place.rect(b).contains(q)))
         .filter(|f| p.range(base, *f) != (0.0, 0.0))
         .collect();
@@ -3144,9 +3153,11 @@ mod tests {
         assert_eq!(disp.world_bounds(list).unwrap().y0, 800.0);
         p.scroll_to(0.0, 99_999.0);
         assert_eq!(p.scroll[&a], (0.0, 1148.0), "clamped to the range");
-        // Without scrolling the screen only clips; without a device the frame shows whole.
+        // A top-level frame taller than the screen scrolls without an overflow setting (its own
+        // range still clips nested content); without a device the frame shows whole.
         d.get_mut(a).unwrap().overflow = Overflow::None;
-        assert_eq!(scroll_range_in(&d, a, viewport(&d, a)), (0.0, 0.0));
+        assert_eq!(scroll_range_in(&d, a, viewport(&d, a)), (0.0, 1148.0));
+        assert_eq!(scroll_range(&d, a), (0.0, 0.0));
         if let Some(pg) = d.page_of(a)
             && let NodeKind::Page { prototype, .. } = &mut d.get_mut(pg).unwrap().kind
         {
