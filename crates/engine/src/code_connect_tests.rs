@@ -237,6 +237,10 @@ fn vue_links_are_a_default_import_with_quoted_bindings() {
     ex(&mut s, "instance.setProperties", json!({"ids": [i], "properties": {"Title": "Say \"hi\""}}));
     ex(&mut s, "codeConnect.set", json!({"id": i, "language": "vue", "template": "<Card title=\"{title} {title}\" />"}));
     assert_eq!(code(&mut s, i, "vue"), "import Card from \"./Card.vue\";\n\n<Card title=\"Say &quot;hi&quot; Say &quot;hi&quot;\" />\n");
+    // Text after a completed tag is text, even when it contains `=`.
+    ex(&mut s, "instance.setProperties", json!({"ids": [i], "properties": {"Title": "Buy"}}));
+    ex(&mut s, "codeConnect.set", json!({"id": i, "language": "vue", "template": "<p>Total = {title}</p>"}));
+    assert_eq!(code(&mut s, i, "vue"), "import Card from \"./Card.vue\";\n\n<p>Total = Buy</p>\n");
     // Vue is linkable; a language that isn't stays refused.
     assert!(s.execute("codeConnect.set", &json!({"id": c, "language": "css"})).is_err(), "not a code language");
     assert!(s.execute("codeConnect.set", &json!({"id": c, "language": "vue", "importPath": "a b"})).is_err(), "no spaces in a path");

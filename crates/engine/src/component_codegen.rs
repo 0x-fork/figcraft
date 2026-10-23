@@ -823,10 +823,7 @@ fn vue(doc: &Document, c: &Component) -> String {
         }
         out.push_str("  }>(),\n  {\n");
         for p in &props {
-            // A component-valued prop has no literal to default to.
-            if matches!(p.kind, ParamKind::InstanceSwap | ParamKind::Slot) {
-                continue;
-            }
+            // An instance swap defaults to its component reference; a slot isn't in `props`.
             out.push_str(&format!("    {}: {},\n", p.ident, value_expr(doc, c, p, &p.default, CodeLang::Vue)));
         }
         out.push_str("  },\n);\n\n</script>\n\n");

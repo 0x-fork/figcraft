@@ -228,6 +228,7 @@ fn instance_swap_properties_take_views() {
     assert!(leptos.contains("{icon.run()}"), "{leptos}");
     let vue = code(&mut s, chip, "vue");
     assert!(vue.contains("    icon?: unknown;"), "{vue}");
+    assert!(vue.contains("    icon: HeartIcon,"), "the swap defaults to its component: {vue}");
     assert!(vue.contains("<component :is=\"icon\" />"), "a swap is a component, not an element: {vue}");
     let i = idv(&ex(&mut s, "instance.create", json!({"component": chip, "x": 0, "y": 100})));
     ex(&mut s, "instance.setProperties", json!({"ids": [i], "properties": {"Icon": star}}));

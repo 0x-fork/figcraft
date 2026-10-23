@@ -184,10 +184,38 @@ fn expr(doc: &Document, c: &Component, p: &Param, v: &Value, lang: CodeLang) -> 
     }
 }
 
+/// Whether `s` ends inside an unclosed opening tag (no `>` outside quotes since the last `<`).
+fn inside_open_tag(s: &str) -> bool {
+    let mut in_tag = false;
+    let mut quote = None;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '<' if !in_tag && chars.peek().is_some_and(|ch| ch.is_ascii_alphabetic() || matches!(*ch, '/' | '!' | '?')) => {
+                    in_tag = true;
+                }
+                '>' if in_tag => in_tag = false,
+                '"' | '\'' if in_tag => quote = Some(c),
+                _ => {}
+            },
+        }
+    }
+    in_tag
+}
+
 /// Where a placeholder sits in a Vue template: whether the attribute is bound, and the quote the
 /// template already opened (if any). `None` when it isn't in an attribute at all.
 fn vue_attribute(out: &str) -> Option<(bool, Option<char>)> {
     let end = out.trim_end();
+    if !inside_open_tag(end) {
+        return None;
+    }
     let (after, quote) = match end.chars().last() {
         Some(q @ ('"' | '\'')) => (&end[..end.len() - q.len_utf8()], Some(q)),
         _ => (end, None),
