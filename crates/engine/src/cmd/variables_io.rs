@@ -80,7 +80,9 @@ fn css(doc: &Document, colls: &[&Collection], tailwind: bool) -> String {
         let attr = css_var_name(&c.name);
         for (i, m) in c.modes.iter().enumerate() {
             let sel = match i {
-                0 if tailwind => "@theme".to_string(),
+                // `static`: Tailwind otherwise drops theme variables no utility uses, and pages also
+                // read them through `var()` and `(--name)` utilities.
+                0 if tailwind => "@theme static".to_string(),
                 0 => ":root".to_string(),
                 _ => format!("[data-{}=\"{}\"]", attr.trim_start_matches('-'), css_safe(&m.name)),
             };
