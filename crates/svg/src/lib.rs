@@ -160,8 +160,13 @@ fn hex(c: Color) -> String {
 
 impl W<'_> {
     fn id(&mut self, prefix: &str) -> String {
-        self.next += 1;
-        format!("{prefix}{}", self.next)
+        loop {
+            self.next += 1;
+            let id = format!("{prefix}{}", self.next);
+            if self.used_ids.insert(id.clone()) {
+                return id;
+            }
+        }
     }
 
     /// `fill="..." [fill-opacity]` for a paint on a w×h box; `None` when it paints nothing.

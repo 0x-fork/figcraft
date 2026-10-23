@@ -159,3 +159,14 @@ fn point_joins_equal_to_the_layer_join_keep_a_plain_stroke() {
     assert!(svg_with(StrokeJoin::Miter).contains("stroke-width=\"2\""), "equal joins stay a stroke");
     assert!(!svg_with(StrokeJoin::Round).contains("stroke-width="), "a differing join is drawn as an outline");
 }
+
+#[test]
+fn layer_ids_never_clash_with_generated_ids() {
+    let mut d = Document::new("t");
+    let p = d.first_page().unwrap();
+    let f = d.create(p, NodeKind::Frame, "clip1", 0.0, 0.0, 100.0, 100.0).unwrap();
+    d.get_mut(f).unwrap().clip = true;
+    d.create(f, NodeKind::Rectangle, "R", 0.0, 0.0, 50.0, 50.0).unwrap();
+    let svg = export_svg(&d, &[f], &SvgOptions { include_ids: true, ..SvgOptions::default() }).unwrap();
+    assert_eq!(svg.matches("id=\"clip1\"").count(), 1, "{svg}");
+}
