@@ -1382,3 +1382,14 @@ fn grid_track_sizes_are_written_and_read_back() {
     assert_eq!(l.column_tracks, columns);
     assert_eq!(l.row_tracks, vec![GridTrack::fixed(69.0)]);
 }
+
+#[test]
+fn variants_that_disagree_on_a_default_are_a_warning() {
+    let (mut doc, _) = set_with_properties();
+    let large = doc.nodes().find(|n| n.name == "Size=Large").unwrap().id;
+    if let NodeKind::Component { props, .. } = &mut doc.node_mut(large).unwrap().kind {
+        props.insert("Label".into(), PropDef::Text { default: "Large".into() });
+    }
+    let (_, warnings) = export(&doc, None).unwrap();
+    assert!(warnings.iter().any(|w| w.contains("different defaults")), "{warnings:?}");
+}

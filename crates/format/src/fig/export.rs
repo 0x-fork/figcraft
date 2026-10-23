@@ -2002,13 +2002,23 @@ impl<'d> Exporter<'d> {
                 ]));
             }
         }
-        let mut seen = std::collections::BTreeSet::new();
+        // The format keeps one default per property of a set (a variant's copy holds none): the first
+        // variant's, with a warning when another variant's differs.
+        let mut seen: BTreeMap<String, PropDef> = BTreeMap::new();
         for v in &variants {
             let NodeKind::Component { props, .. } = &v.kind else { continue };
             for (name, d) in props {
-                if prop_type(d).is_some() && seen.insert(name.clone()) {
-                    let index = defs.len();
-                    defs.extend(self.prop_def(set.id, name, d, index));
+                if prop_type(d).is_none() {
+                    continue;
+                }
+                match seen.get(name) {
+                    Some(first) if first != d => self.warn("variants with different defaults for one property were written with the first variant's"),
+                    Some(_) => {}
+                    None => {
+                        seen.insert(name.clone(), d.clone());
+                        let index = defs.len();
+                        defs.extend(self.prop_def(set.id, name, d, index));
+                    }
                 }
             }
         }
