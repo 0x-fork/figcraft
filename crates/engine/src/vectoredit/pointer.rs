@@ -428,11 +428,11 @@ impl Session {
     }
 
     /// The region of the active layer a press at `ev` would take (Move tool, `h` the network's part
-    /// there). Inside the transform box around points selected in their own right, the box keeps
-    /// its drag unless the region is already selected.
+    /// there). Inside the transform box around points selected in their own right (in any edited
+    /// layer), the box keeps its drag unless the region is already selected.
     fn region_under(doc: &Document, ve: &VectorEdit, h: Option<VHit>, ev: &PointerEvent) -> Option<usize> {
         let r = region_hit(doc, ve, ev.p(), ev.zoom)?;
-        let own = !ve.shown_vertices().is_empty() || !ve.segments.is_empty();
+        let own = !ve.shown_vertices().is_empty() || !ve.segments.is_empty() || ve.others_selected();
         let in_box = !ev.shift && own && transform::box_hit(doc, ve, h, ev.p(), ev.zoom) == Some(BoxHit::Inside);
         (!in_box || ve.regions.contains(&r)).then_some(r)
     }

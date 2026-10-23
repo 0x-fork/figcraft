@@ -397,3 +397,32 @@ fn inside_the_box_of_several_layers_drags_and_a_click_clears_them_all() {
     click(&mut s, 150.0, 50.0);
     assert!(ve(&s).parts().iter().all(|p| p.vertices.is_empty()), "a click inside clears every layer's points");
 }
+
+#[test]
+fn inside_the_box_of_another_layer_drags_over_a_region_of_the_active_one() {
+    // `b`'s points selected, `a` (a filled 300 square around `b`) active with nothing selected:
+    // the press at the box's centre lands on `a`'s region too.
+    let mut s = Session::new();
+    let mut square = |x: f64, size: f64| {
+        crate::params::id_of(&ex(&mut s, "shape.rectangle", json!({"x": x, "y": x, "width": size, "height": size}))["id"]).unwrap()
+    };
+    let (a, b) = (square(0.0, 300.0), square(100.0, 50.0));
+    ex(&mut s, "view.snapGeometry", json!({"on": false}));
+    ex(&mut s, "view.snapObjects", json!({"on": false}));
+    ex(&mut s, "view.snapPixel", json!({"on": false}));
+    ex(&mut s, "vector.edit.begin", json!({"ids": [a, b]}));
+    ex(&mut s, "vector.edit.select", json!({"id": b, "vertices": [0, 1, 2, 3]}));
+    ex(&mut s, "vector.edit.select", json!({"id": a, "add": true}));
+    let doc = s.doc().unwrap().clone();
+    let e = ve(&s);
+    assert!(e.id == a && e.vertices.is_empty() && e.others_selected());
+    assert!(hit_any(&doc, &e, pt(125.0, 125.0), 6.0).is_none());
+    assert!(regions::region_hit(&doc, &e, pt(125.0, 125.0), 1.0).is_some(), "a region of the active layer under the press");
+    assert_eq!(box_hit(&doc, &e, None, pt(125.0, 125.0), 1.0), Some(BoxHit::Inside));
+    let before: Vec<Point> = (0..4).map(|v| page_pt(&s, b, v)).collect();
+    drag(&mut s, (125.0, 125.0), (145.0, 135.0));
+    assert!(ve(&s).regions.is_empty(), "the region isn't selected");
+    for (v, p) in before.iter().enumerate() {
+        assert!(near(page_pt(&s, b, v), *p + Vec2::new(20.0, 10.0)), "point {v} of b moves along");
+    }
+}
