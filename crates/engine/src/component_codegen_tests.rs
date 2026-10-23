@@ -129,6 +129,12 @@ fn instances_are_calls_passing_the_values_they_set() {
     assert_eq!(component_code(&mut s, i, "vue")["usage"], "<Card :showDot=\"false\" :title=\"&quot;Say \\&quot;hi\\&quot; $5\\nnow&quot;\" />\n");
     let vue = code(&mut s, i, "vue");
     assert!(vue.starts_with("<Card :showDot=\"false\" :title=\"&quot;Say \\&quot;hi\\&quot; $5\\nnow&quot;\" />\n"), "{vue}");
+    // A plain attribute keeps HTML entities intact: a literal ampersand is written as `&amp;`,
+    // and a literal `&amp;` as `&amp;amp;`.
+    ex(&mut s, "instance.setProperties", json!({"ids": [i], "properties": {"Title": "Fish & Chips"}}));
+    assert_eq!(component_code(&mut s, i, "vue")["usage"], "<Card :showDot=\"false\" title=\"Fish &amp; Chips\" />\n");
+    ex(&mut s, "instance.setProperties", json!({"ids": [i], "properties": {"Title": "Fish &amp; Chips"}}));
+    assert_eq!(component_code(&mut s, i, "vue")["usage"], "<Card :showDot=\"false\" title=\"Fish &amp;amp; Chips\" />\n");
 }
 
 #[test]

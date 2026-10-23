@@ -246,9 +246,19 @@ pub(crate) fn render(doc: &Document, c: &Component, values: &[(String, Value)], 
     let checkable = link.template.len() <= MAX_TEMPLATE * 4;
     let pieces = checkable.then(|| parse(&link.template).ok()).flatten().unwrap_or_else(|| vec![Piece::Text(&link.template)]);
     let mut out = String::new();
+    // A quoted attribute stays open across substitutions: `title="{a} {b}"` must treat both
+    // placeholders as attribute values, not text after the first one.
+    let mut vue_attr: Option<(bool, Option<char>)> = None;
     for piece in pieces {
         match piece {
-            Piece::Text(t) => out.push_str(t),
+            Piece::Text(t) => {
+                out.push_str(t);
+                if let Some((_, Some(q))) = vue_attr
+                    && t.contains(q)
+                {
+                    vue_attr = None;
+                }
+            }
             Piece::Value { name, inner } => match find(c, values, name) {
                 Some((p, v)) => {
                     let e = expr(doc, c, p, v, lang);
@@ -257,29 +267,31 @@ pub(crate) fn render(doc: &Document, c: &Component, values: &[(String, Value)], 
                     // Vue's bound attributes take an expression, so a string keeps its JS quotes
                     // inside the attribute (as entities); a static attribute takes plain text.
                     if lang == CodeLang::Vue {
-                        match vue_attribute(&out) {
-                            Some((true, quote)) => {
-                                let expr = html_attr_expr(&e, quote);
-                                if quote.is_some() {
-                                    out.push_str(&expr);
+                        match vue_attr.or_else(|| vue_attribute(&out)) {
+                            Some((bound, quote)) => {
+                                if bound {
+                                    let expr = html_attr_expr(&e, quote);
+                                    if quote.is_some() {
+                                        out.push_str(&expr);
+                                    } else {
+                                        out.push('"');
+                                        out.push_str(&expr);
+                                        out.push('"');
+                                    }
                                 } else {
-                                    out.push('"');
-                                    out.push_str(&expr);
-                                    out.push('"');
+                                    let text = match &p.kind {
+                                        ParamKind::Text | ParamKind::Variant(_) => html_attr_text(v.as_str().unwrap_or(""), quote),
+                                        _ => e.clone(),
+                                    };
+                                    if quote.is_some() {
+                                        out.push_str(&text);
+                                    } else {
+                                        out.push('"');
+                                        out.push_str(&text);
+                                        out.push('"');
+                                    }
                                 }
-                            }
-                            Some((false, quote)) => {
-                                let text = match &p.kind {
-                                    ParamKind::Text | ParamKind::Variant(_) => html_attr_text(v.as_str().unwrap_or(""), quote),
-                                    _ => e.clone(),
-                                };
-                                if quote.is_some() {
-                                    out.push_str(&text);
-                                } else {
-                                    out.push('"');
-                                    out.push_str(&text);
-                                    out.push('"');
-                                }
+                                vue_attr = quote.map(|q| (bound, Some(q)));
                             }
                             None => {
                                 let text = match &p.kind {
@@ -287,6 +299,7 @@ pub(crate) fn render(doc: &Document, c: &Component, values: &[(String, Value)], 
                                     _ => e.clone(),
                                 };
                                 out.push_str(&text);
+                                vue_attr = None;
                             }
                         }
                     } else {

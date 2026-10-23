@@ -453,6 +453,17 @@ pub(crate) fn vue_string(s: &str) -> String {
     js_string(s).replace('<', "\\u003C")
 }
 
+/// A plain Vue attribute value: its JS string quotes stay as the attribute delimiters, and HTML
+/// entities inside are escaped so the value reads back unchanged.
+fn html_attr_value(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// A Vue binding expression inside a double-quoted attribute.
+fn html_attr_expr(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
 /// The type name of a component (a variant's set) by id.
 pub(crate) fn component_type(doc: &Document, comp: NodeId) -> Option<String> {
     let n = doc.node(comp).filter(|n| matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. }))?;
@@ -609,7 +620,11 @@ pub(crate) fn usage_with_styles(doc: &Document, id: NodeId, lang: CodeLang, dept
             let attrs: String = args
                 .iter()
                 .filter(|(name, _, _)| !is_slot(name))
-                .map(|(name, expr, plain)| if *plain { format!(" {name}={expr}") } else { format!(" :{name}=\"{}\"", expr.replace('"', "&quot;")) })
+                .map(
+                    |(name, expr, plain)| {
+                        if *plain { format!(" {name}={}", html_attr_value(expr)) } else { format!(" :{name}=\"{}\"", html_attr_expr(expr)) }
+                    },
+                )
                 .collect();
             let slots: String = args
                 .iter()
