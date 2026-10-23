@@ -1,7 +1,9 @@
 //! Project tasks: `cargo xtask <task>`.
 //!
-//! - `ci`      fmt check, clippy -D warnings, tests, layers, assets, wasm check
+//! - `ci`      fmt check, clippy -D warnings, tests, the translation report, layers, assets, wasm check
 //! - `test`    the workspace tests (nextest when installed) and doctests
+//! - `i18n-report` the UI strings, command labels and menu wordings each language lacks (never fails
+//!   on them: a missing translation reads English)
 //! - `layers`  crate dependency layering check
 //! - `assets`  every file under assets/ and docs/ has a row in ATTRIBUTION.md
 //! - `parity`  menu-catalog coverage → docs/parity-checklist.md
@@ -38,6 +40,7 @@ fn main() -> ExitCode {
     let ok = match task {
         "ci" => ci(),
         "test" => test(),
+        "i18n-report" => i18n_report(),
         "layers" => layers::check(&root()),
         "assets" => assets(),
         "parity" => parity(),
@@ -47,7 +50,7 @@ fn main() -> ExitCode {
         "plugins" => plugins(),
         "bench" => bench(args.get(1).map_or("1000,10000,50000", String::as_str)),
         _ => {
-            eprintln!("tasks: ci, test, layers, assets, parity, version [set X.Y.Z], icon, wasm, plugins, bench [SIZES]");
+            eprintln!("tasks: ci, test, i18n-report, layers, assets, parity, version [set X.Y.Z], icon, wasm, plugins, bench [SIZES]");
             task == "help"
         }
     };
@@ -58,6 +61,7 @@ fn ci() -> bool {
     run(cargo().args(["fmt", "--all", "--check"]))
         && run(cargo().args(["clippy", "--workspace", "--all-targets", "--keep-going", "--", "-D", "warnings"]))
         && test()
+        && i18n_report()
         && layers::check(&root())
         && assets()
         && wasm()
@@ -75,6 +79,12 @@ fn test() -> bool {
         run(cargo().args(["test", "--workspace", "--lib", "--bins", "--tests"]))
     };
     units && run(cargo().args(["test", "--workspace", "--doc"]))
+}
+
+/// Prints what each language's catalog lacks, from the test that lists it. `--workspace --lib`
+/// reuses the binaries `test` built.
+fn i18n_report() -> bool {
+    run(cargo().args(["test", "-q", "--workspace", "--lib", "--", "--exact", "i18n::tests::missing_translations_report", "--nocapture"]))
 }
 
 fn wasm() -> bool {
