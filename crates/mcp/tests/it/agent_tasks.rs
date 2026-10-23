@@ -1,8 +1,7 @@
 //! End-to-end agent tasks: an in-process MCP client completes realistic design tasks only through
 //! MCP tool calls, and checks every result through inspect_document / get_node like an agent would.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-mod common;
+use crate::common;
 
 use common::{Client, approx, png_dims};
 use serde_json::{Value, json};

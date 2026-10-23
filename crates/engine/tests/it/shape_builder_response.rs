@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use figcraft_engine::Session;
 use serde_json::{Value, json};
 

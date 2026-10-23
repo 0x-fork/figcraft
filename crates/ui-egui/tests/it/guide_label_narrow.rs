@@ -1,5 +1,3 @@
-#![allow(clippy::unwrap_used)]
-
 use egui::{Pos2, RawInput, Rect, Vec2, vec2};
 use figcraft_engine::Session;
 use figcraft_ui_egui::{FigApp, NoServices};

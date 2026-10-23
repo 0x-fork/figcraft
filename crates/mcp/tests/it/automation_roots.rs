@@ -1,6 +1,5 @@
 //! `--automation-read-root` / `--automation-write-root` over MCP (#715): a tool call reads only
 //! inside the read and write roots and writes only inside the write roots.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
 
 use std::path::PathBuf;
 

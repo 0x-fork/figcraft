@@ -1,7 +1,6 @@
 //! JSON-RPC / MCP protocol behaviour.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-mod common;
+use crate::common;
 
 use common::Client;
 use figcraft_mcp::{PROTOCOL_VERSION, Server, TOOL_NAMES};

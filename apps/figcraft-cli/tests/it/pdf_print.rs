@@ -1,5 +1,4 @@
 //! `figcraft-cli export` with PDF print options: bleed, marks, CMYK; bad lengths are usage errors.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::process::Command;
 

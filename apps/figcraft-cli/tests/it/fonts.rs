@@ -1,6 +1,5 @@
 //! Headless runs lay text out with the installed fonts, like the desktop app, unless
 //! `--no-system-fonts` or `FIGCRAFT_NO_SYSTEM_FONTS=1` opts out.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::process::Command;
 
