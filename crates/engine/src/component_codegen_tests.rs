@@ -187,7 +187,7 @@ fn variant_sets_share_one_definition() {
     assert!(kt.contains("enum class ButtonState { Default, Hover }"), "{kt}");
     assert!(kt.contains("    state: ButtonState = ButtonState.Default,"), "{kt}");
     let ark = code(&mut s, set, "arkui");
-    assert!(ark.contains("enum ButtonState { Default, Hover }"), "{ark}");
+    assert!(ark.contains("export enum ButtonState { Default, Hover }"), "{ark}");
     assert!(ark.contains("    @Prop state: ButtonState = ButtonState.Default"), "{ark}");
     let leptos = code(&mut s, set, "leptos");
     for want in [

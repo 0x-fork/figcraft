@@ -88,3 +88,33 @@ fn a_copied_effect_replaces_an_effect_row_or_adds_one() {
     };
     assert_eq!((shadow.radius, shadow.offset, visible), (7.0, (2.0, 3.0), true));
 }
+
+#[test]
+fn pasting_design_layers_keeps_a_copied_row() {
+    let mut s = Session::new();
+    let a = rect(&mut s);
+    ex(&mut s, "fill.copy", json!({"id": a}));
+    // Layers pasted from another app replace the copied layers, not the copied fill row.
+    let mut other = Session::new();
+    other.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
+    let exported = other.execute("file.export", &json!({"format": "fig"})).unwrap();
+    ex(&mut s, "edit.pasteDesignLayers", json!({"data": exported["data"]}));
+    let b = rect(&mut s);
+    ex(&mut s, "fill.paste", json!({"ids": [b], "index": 0}));
+}
+
+#[test]
+fn a_copied_pattern_cannot_paste_into_a_layer_it_draws() {
+    let mut s = Session::new();
+    let outer = id(ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 100, "height": 100})));
+    let inner = id(ex(&mut s, "node.create", json!({"type": "rectangle", "x": 10, "y": 10, "width": 20, "height": 20, "parent": outer})));
+    // A pattern taken from the frame's child, on a layer beside the frame.
+    let source = rect(&mut s);
+    ex(&mut s, "fill.pattern", json!({"ids": [source], "source": inner}));
+    ex(&mut s, "fill.copy", json!({"id": source}));
+    // Onto the frame that holds the pattern's source it would draw itself, as `fill.pattern` refuses.
+    assert!(s.execute("fill.paste", &json!({"ids": [outer]})).is_err());
+    // Onto a layer that doesn't hold the pattern's source it still pastes.
+    let other = rect(&mut s);
+    ex(&mut s, "fill.paste", json!({"ids": [other], "index": 0}));
+}

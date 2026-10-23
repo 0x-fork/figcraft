@@ -60,6 +60,21 @@ fn a_cut_command_in_edit_mode_with_nothing_selected_keeps_the_layer() {
 }
 
 #[test]
+fn a_cut_command_heals_points_selected_in_another_edited_layer() {
+    let mut u = Ui::new(Session::new());
+    let a = id(u.app.session.execute("vector.create", &json!({"points": [[100, 100], [200, 100], [300, 100]], "closed": false})).unwrap());
+    let b = id(u.app.session.execute("vector.create", &json!({"points": [[100, 200], [200, 200], [300, 200]], "closed": false})).unwrap());
+    figcraft_engine::vectoredit::begin_many(&mut u.app.session, &[a, b]).unwrap();
+    // Points selected in the second layer, then the first made active: only `others` has a selection.
+    u.app.session.execute("vector.edit.select", &json!({"id": b, "vertices": [1]})).unwrap();
+    u.app.session.execute("vector.edit.select", &json!({"id": a, "add": true})).unwrap();
+    u.frame_with(vec![Event::Cut], Modifiers::SHIFT);
+    assert!(u.app.session.doc().unwrap().node(a).is_some() && u.app.session.doc().unwrap().node(b).is_some(), "both layers stay");
+    assert_eq!(net(&u, a).vertices.len(), 3, "the active layer had nothing selected");
+    assert_eq!(net(&u, b).vertices.len(), 2, "the other layer's point is gone");
+}
+
+#[test]
 fn a_cut_command_outside_edit_mode_cuts_the_layer() {
     let mut s = Session::new();
     let path = id(s.execute("vector.create", &json!({"points": [[100, 100], [200, 100], [300, 100]], "closed": false})).unwrap());

@@ -145,9 +145,9 @@ fn cut(app: &mut FigApp) {
         crate::menus::invoke(app, "edit.cut");
         return;
     };
-    if !ve.vertices.is_empty() {
+    if ve.parts().iter().any(|p| !p.vertices.is_empty()) {
         app.run("vector.deleteHeal", json!({}));
-    } else if !ve.segments.is_empty() {
+    } else if ve.parts().iter().any(|p| !p.segments.is_empty()) {
         app.run("vector.edit.delete", json!({}));
     }
 }

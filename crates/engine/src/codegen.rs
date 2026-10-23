@@ -1187,11 +1187,20 @@ fn arkui_layer(ctx: &Ctx, n: &Node, depth: usize, out: &mut String, extra: &[Str
         return;
     }
     // Nested instances are calls; an instance swap parameter is a builder.
-    let call = match ctx.param(n, "mainComponent").filter(|_| n.id != ctx.root) {
+    let swap = ctx.param(n, "mainComponent").filter(|_| n.id != ctx.root);
+    let call = match swap {
         Some(p) => Some(format!("{pad}this.{}()\n", p.ident)),
         None => ctx.call(n, CodeLang::ArkUi, depth),
     };
     if let Some(call) = call {
+        if let Some(p) = swap.filter(|_| !extra.is_empty()) {
+            // The builder returns nothing, so a position goes on a container around the call.
+            out.push_str(&format!("{pad}Stack() {{\n{pad}    this.{}()\n{pad}}}\n", p.ident));
+            for m in extra {
+                out.push_str(&format!("{pad}{m}\n"));
+            }
+            return;
+        }
         out.push_str(&call);
         for m in extra {
             out.push_str(&format!("{pad}    {m}\n"));
@@ -1228,6 +1237,10 @@ fn arkui_layer(ctx: &Ctx, n: &Node, depth: usize, out: &mut String, extra: &[Str
                 TextAlignH::Center => mods.push(".textAlign(TextAlign.Center)".into()),
                 TextAlignH::Right => mods.push(".textAlign(TextAlign.End)".into()),
                 TextAlignH::Justified => mods.push(".textAlign(TextAlign.JUSTIFY)".into()),
+            }
+            // Aligning needs a box to align in: the text layer's own width.
+            if !matches!(t.align_h, TextAlignH::Left) {
+                mods.push(format!(".width({})", num(n.width)));
             }
             match s.case {
                 TextCase::Upper => mods.push(".textCase(TextCase.UpperCase)".into()),
@@ -1271,8 +1284,9 @@ fn arkui_layer(ctx: &Ctx, n: &Node, depth: usize, out: &mut String, extra: &[Str
                 Some(p) => out.push_str(&format!("{pad}    this.{}()\n", p.ident)),
                 None => {
                     for c in ctx.kids(n) {
-                        // Free children sit at their position inside a Stack.
-                        let pos: Vec<String> = match doc.node(c).filter(|_| n.layout.is_none()) {
+                        // Free children sit at their position inside a Stack, and so does a child
+                        // that ignores its auto layout parent.
+                        let pos: Vec<String> = match doc.node(c).filter(|cn| n.layout.is_none() || cn.child_layout.absolute) {
                             Some(cn) => {
                                 let [_, _, _, _, x, y] = cn.transform.as_coeffs();
                                 vec![format!(".position({{ x: {}, y: {} }})", num(x), num(y))]
@@ -1440,6 +1454,53 @@ mod tests {
         assert!(ark.contains(".position({ x: 7, y: 9 })"), "{ark}");
         assert!(ark.contains("…"), "depth capped");
         assert!(code_for(doc, NodeId(999_999), CodeLang::Css).is_empty());
+    }
+
+    #[test]
+    fn arkui_aligned_text_gets_the_layers_width() {
+        let mut s = Session::new();
+        let f = id_of(&s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 200, "height": 100})).unwrap()["id"]).unwrap();
+        let t = id_of(&s.execute("text.create", &json!({"text": "Hi", "x": 0, "y": 0, "parent": f})).unwrap()["id"]).unwrap();
+        s.execute("node.set", &json!({"id": t, "props": {"textAlign": "center", "width": 120.0}})).unwrap();
+        let doc = s.doc().unwrap();
+        let ark = code_for(doc, f, CodeLang::ArkUi);
+        assert!(ark.contains(".textAlign(TextAlign.Center)"), "{ark}");
+        let width = doc.node(t).map(|n| n.width).unwrap_or_default();
+        assert!(ark.contains(&format!(".width({})", num(width))), "the alignment has a box: {ark}");
+    }
+
+    #[test]
+    fn arkui_places_a_child_that_ignores_its_auto_layout_parent() {
+        let mut s = Session::new();
+        let f = id_of(&s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 200, "height": 100})).unwrap()["id"]).unwrap();
+        let c = id_of(&s.execute("shape.rectangle", &json!({"x": 7, "y": 9, "width": 20, "height": 20, "parent": f})).unwrap()["id"]).unwrap();
+        s.execute("node.set", &json!({"id": c, "props": {"absolute": true}})).unwrap();
+        s.execute("layout.add", &json!({"ids": [f]})).unwrap();
+        let doc = s.doc().unwrap();
+        let [_, _, _, _, x, y] = doc.node(c).unwrap().transform.as_coeffs();
+        let ark = code_for(doc, f, CodeLang::ArkUi);
+        assert!(ark.contains("Row(") || ark.contains("Column("), "the parent is still auto layout: {ark}");
+        assert!(ark.contains(&format!(".position({{ x: {}, y: {} }})", num(x), num(y))), "the absolute child keeps its place: {ark}");
+    }
+
+    #[test]
+    fn arkui_wraps_a_positioned_instance_swap_so_the_position_lands_on_a_container() {
+        let mut s = Session::new();
+        let icon = id_of(&s.execute("frame.create", &json!({"x": 0, "y": 400, "width": 24, "height": 24, "name": "Icon"})).unwrap()["id"]).unwrap();
+        s.execute("shape.star", &json!({"x": 0, "y": 0, "width": 24, "height": 24, "parent": icon})).unwrap();
+        let heart = id_of(&s.execute("component.create", &json!({"ids": [icon]})).unwrap()["id"]).unwrap();
+        let f = id_of(&s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 120, "height": 40, "name": "Chip"})).unwrap()["id"]).unwrap();
+        let nested = id_of(&s.execute("instance.create", &json!({"component": heart, "x": 8, "y": 8, "parent": f})).unwrap()["id"]).unwrap();
+        let chip = id_of(&s.execute("component.create", &json!({"ids": [f]})).unwrap()["id"]).unwrap();
+        s.execute("component.addProperty", &json!({"id": chip, "name": "Icon", "type": "instanceSwap", "default": heart, "layer": nested})).unwrap();
+        let doc = s.doc().unwrap();
+        let ark = code_for(doc, chip, CodeLang::ArkUi);
+        assert!(ark.contains("Stack() {\n"), "the builder is wrapped: {ark}");
+        assert!(ark.contains("this.icon()"), "{ark}");
+        // The position follows the wrapper's closing brace, not the void builder call.
+        let lines: Vec<&str> = ark.lines().collect();
+        let at = lines.iter().position(|l| l.contains(".position({ x: 8, y: 8 })")).unwrap_or_else(|| panic!("no position: {ark}"));
+        assert_eq!(lines[at - 1].trim(), "}", "the position is on a container: {ark}");
     }
 
     #[test]

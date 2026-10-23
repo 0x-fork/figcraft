@@ -2294,10 +2294,15 @@ fn inspect_assets(app: &mut FigApp, ui: &mut Ui, doc: &Document, assets: &[figcr
             ui.painter().rect_filled(r.shrink2(vec2(8.0, 1.0)), CornerRadius::same(6), t.hover);
             icons::paint(ui.painter(), Rect::from_center_size(pos2(r.max.x - PAD - 6.0, r.center().y), vec2(12.0, 12.0)), Icon::Export, t.icon);
         }
-        // The preview, as exporting it paints it (a slice shows the page under it).
+        // The preview, as exporting it paints it (a slice shows the page under it). Rows scrolled
+        // out of view draw nothing, so they don't pay for a thumbnail either.
         let thumb = Rect::from_min_size(pos2(r.min.x + PAD, r.center().y - ASSET_THUMB / 2.0), vec2(ASSET_THUMB, ASSET_THUMB));
         ui.painter().rect_filled(thumb, CornerRadius::same(4), t.field);
-        let tex = state.thumbs.entry(a.id).or_insert_with(|| crate::assets_panel::thumbnail(ui.ctx(), doc, a.id, px)).clone();
+        let tex = if ui.is_rect_visible(r) {
+            state.thumbs.entry(a.id).or_insert_with(|| crate::assets_panel::thumbnail(ui.ctx(), doc, a.id, px)).clone()
+        } else {
+            None
+        };
         if let Some(tex) = tex {
             let size = tex.size_vec2();
             let inner = thumb.shrink(3.0);

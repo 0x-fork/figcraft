@@ -623,10 +623,26 @@ fn paste_design_layers(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Disabled(CMD.into(), "the copied layers came in empty".into()));
     }
     let (nodes, images, bounds) = copied(&doc, &tops);
+    // A design-app paste replaces the copied layers, not the copied rows: a `fill.copy` before it
+    // still pastes afterwards.
     let props = s.clipboard.props.take();
+    let paint = s.clipboard.paint.take();
+    let stroke = s.clipboard.stroke.take();
+    let effect = s.clipboard.effect.take();
     // No open file has id 0. So paste treats this copy as a copy from a different file.
-    s.clipboard =
-        crate::Clipboard { nodes, images, props, bounds, source_doc: 0, source: Some(doc), source_path: None, ..crate::Clipboard::default() };
+    s.clipboard = crate::Clipboard {
+        nodes,
+        images,
+        props,
+        paint,
+        stroke,
+        effect,
+        bounds,
+        source_doc: 0,
+        source: Some(doc),
+        source_path: None,
+        ..crate::Clipboard::default()
+    };
     let mut out = paste(s, p)?;
     if !other.issues.is_empty() {
         out["warnings"] = json!(other.issues);
@@ -1435,6 +1451,14 @@ fn paint_paste(s: &mut Session, p: &Value, fills: bool) -> Result<Value> {
         return Err(EngineError::Disabled(cmd.into(), format!("the copied paint is a {what}")));
     }
     let ids = req_targets(cmd, s, p)?;
+    // A copied pattern pointing at a target or a layer inside it would make the layer pattern
+    // itself; `fill.pattern` refuses the same, and the renderer would drop the pattern.
+    if let figcraft_color::PaintKind::Pattern(pt) = &paint.kind {
+        let doc = s.doc()?;
+        if ids.iter().any(|t| doc.is_ancestor(*t, NodeId(pt.source))) {
+            return Err(bad(cmd, "a layer can't be filled with itself or a layer inside it"));
+        }
+    }
     let mut q = json!({"ids": ids, "paint": serde_json::to_value(paint).map_err(|e| bad(cmd, e.to_string()))?});
     let out = match opt_index(cmd, p, "index")? {
         Some(at) => {

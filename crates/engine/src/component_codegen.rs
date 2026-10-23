@@ -847,7 +847,7 @@ fn arkui_definition(doc: &Document, c: &Component) -> String {
     let mut out = String::new();
     for p in &c.params {
         if let ParamKind::Variant(opts) = &p.kind {
-            out.push_str(&format!("enum {} {{ {} }}\n\n", enum_name(c, p, false), cases(opts, false).join(", ")));
+            out.push_str(&format!("export enum {} {{ {} }}\n\n", enum_name(c, p, false), cases(opts, false).join(", ")));
         }
     }
     // A default builder per instance swap or slot, named apart from every parameter.
