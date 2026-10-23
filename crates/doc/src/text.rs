@@ -797,7 +797,7 @@ mod case_tests {
         assert_eq!(DEFAULT_FONT, named.unwrap_or("Inter"));
         let st = TextStyle::default();
         assert_eq!(st.font_family, DEFAULT_FONT);
-        // The family is always written, so a saved file opens in the same font in any build.
+        // The family is always written, so a saved file keeps it in a build with another default.
         let saved = serde_json::to_value(&st).unwrap();
         assert_eq!(saved["font_family"], DEFAULT_FONT);
     }

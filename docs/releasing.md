@@ -79,8 +79,10 @@ other fonts) or one its users have installed:
 FIGCRAFT_DEFAULT_FONT="Noto Sans Thai" cargo build --release -p figcraft
 ```
 
-Files record each text's family, so they open in the same font in any build. The release workflow
-leaves it unset.
+Files record each text's family, so the variable only changes what new text starts in: a file
+saved by one build keeps its fonts in a build with another default. Like any other family, it
+renders only where it is available (embedded or installed); elsewhere the text falls back to the
+faces that are. The release workflow leaves it unset.
 
 ## What gets built
 
