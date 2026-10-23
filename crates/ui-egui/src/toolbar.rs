@@ -492,6 +492,17 @@ mod tests {
     use super::*;
     use egui::Shape;
 
+    #[test]
+    fn pill_never_outgrows_a_phone_canvas() {
+        let phone = Rect::from_min_size(pos2(0.0, 0.0), vec2(375.0, 700.0));
+        let pill = pill_rect(phone, main_width());
+        assert!(pill.width() <= phone.width() - 16.0 && pill.min.x >= 8.0 && pill.max.x <= phone.max.x - 8.0, "{pill:?}");
+        // A desktop canvas keeps the full width, and a degenerate one doesn't go negative.
+        let wide = Rect::from_min_size(pos2(0.0, 0.0), vec2(1400.0, 800.0));
+        assert_eq!(pill_rect(wide, main_width()).width(), main_width());
+        assert_eq!(pill_rect(Rect::from_min_size(pos2(0.0, 0.0), vec2(4.0, 4.0)), main_width()).width(), 0.0);
+    }
+
     /// The stroke widths `icon` paints with in a `size` box at `ppp` pixels per point.
     fn widths(ppp: f32, icon: Icon, size: f32) -> Vec<f32> {
         let ctx = egui::Context::default();

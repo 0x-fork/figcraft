@@ -1571,7 +1571,9 @@ impl FigApp {
         use a11y::Tip as _;
         let t = theme::Tokens::get(ctx);
         egui::Area::new(egui::Id::new("mobile_panel_buttons")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
-            for (side, icon, name) in [(MobilePanel::Left, icons::Icon::Layers, i18n::tr("Layers")), (MobilePanel::Right, icons::Icon::Panels, i18n::tr("Design"))] {
+            for (side, icon, name) in
+                [(MobilePanel::Left, icons::Icon::Layers, i18n::tr("Layers")), (MobilePanel::Right, icons::Icon::Panels, i18n::tr("Design"))]
+            {
                 let open = self.ui.mobile_panel == Some(side);
                 let (r, resp) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::click());
                 let resp = resp.tip(name);
