@@ -417,3 +417,19 @@ fn css_export_gives_lengths_a_unit_and_keeps_opacity_bare() {
     // A radius is a length; opacity stays a number, also through an alias it reads.
     assert!(css.contains("--card: 12px;") && css.contains("--fade: 0.5;") && css.contains("--half: 0.5;"), "{css}");
 }
+
+#[test]
+fn review_a_long_alias_chain_keeps_its_role_to_the_end() {
+    let mut s = Session::new();
+    ex(&mut s, "variable.createCollection", json!({"name": "Brand"}));
+    ex(&mut s, "variable.create", json!({"collection": "Brand", "name": "o0", "type": "number", "value": 0.5}));
+    // o12 -> o11 -> … -> o0: longer than any fixed number of rounds would reach.
+    for i in 1..=12 {
+        ex(&mut s, "variable.create", json!({"collection": "Brand", "name": format!("o{i}"), "type": "number", "value": 1}));
+        ex(&mut s, "variable.set", json!({"variable": format!("o{i}"), "value": {"alias": format!("o{}", i - 1)}}));
+    }
+    let f = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 100, "height": 100})));
+    ex(&mut s, "variable.bind", json!({"ids": [f], "field": "opacity", "variable": "o12"}));
+    let css = ex(&mut s, "variable.export", json!({"format": "css"}))["text"].as_str().unwrap_or_default().to_string();
+    assert!(css.contains("--o0: 0.5;"), "{css}");
+}
