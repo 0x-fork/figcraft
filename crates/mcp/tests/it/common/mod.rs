@@ -1,5 +1,4 @@
 //! An in-process MCP client: feeds JSON-RPC lines to `Server::handle_line`.
-#![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use figcraft_mcp::Server;
 use serde_json::{Value, json};

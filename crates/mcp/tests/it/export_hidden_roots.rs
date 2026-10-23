@@ -1,7 +1,6 @@
 //! Hidden top-level layers in an export take no room in the image (issue #447).
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-mod common;
+use crate::common;
 
 use common::{Client, png_dims};
 use serde_json::{Value, json};

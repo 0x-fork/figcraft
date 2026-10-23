@@ -1,6 +1,5 @@
 //! `screenshot` with `ids` must honour `maxSize` for the rendered paint area (shadows, overflow).
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-mod common;
+use crate::common;
 use common::{Client, png_dims};
 use serde_json::{Value, json};
 

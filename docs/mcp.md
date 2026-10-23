@@ -1675,7 +1675,7 @@ other key next to `$step` fails the whole batch, which is rolled back. Only an o
 value too) is read as a reference. A step that is itself a `command.batch` is passed on as written,
 so the references in its steps are to its own steps, not the outer batch's.
 
-The end-to-end tests in `crates/mcp/tests/agent_tasks.rs` are worked examples of realistic tasks
+The end-to-end tests in `crates/mcp/tests/it/agent_tasks.rs` are worked examples of realistic tasks
 (auto layout, a card built in one batch with step references, components and overrides, gradients
 and shadows, paint styles, Light/Dark variables, align/distribute/group, boolean subtract + flatten,
 export, undo/redo, drawing with tools).

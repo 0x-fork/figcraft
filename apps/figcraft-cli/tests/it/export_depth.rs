@@ -1,5 +1,4 @@
 //! Depth refusal through the actual CLI, including its exit status and destination writes.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use figcraft_doc::color::{Color, Paint};
 use figcraft_doc::{Document, NodeKind};

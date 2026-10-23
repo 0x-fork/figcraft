@@ -1,6 +1,5 @@
 //! The attached backend against a fake app: a loopback control server answering with a headless
 //! session, speaking the desktop app's JSON-lines protocol.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;

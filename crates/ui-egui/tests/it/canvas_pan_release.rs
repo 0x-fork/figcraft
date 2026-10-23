@@ -1,6 +1,5 @@
 //! A canvas pan (middle button or Space + primary) ends when its button is released, even when the
 //! release happens over a panel: returning to the canvas with no button held must not move the view.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use egui::{Event, Key, PointerButton, Pos2, RawInput, Rect, vec2};
 use figcraft_engine::Session;

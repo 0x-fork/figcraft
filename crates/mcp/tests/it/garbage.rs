@@ -1,5 +1,4 @@
 //! Fuzz-ish: no input line may crash the server or leave it unable to answer.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use figcraft_mcp::{Server, TOOL_NAMES};
 use proptest::prelude::*;
