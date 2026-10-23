@@ -1,6 +1,5 @@
 //! File > Export frames to PDF: the menu asks where to save and writes the frames' PDF there,
 //! one visible top-level frame per page.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::path::PathBuf;
 

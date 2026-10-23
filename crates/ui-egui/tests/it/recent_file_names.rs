@@ -1,5 +1,4 @@
 //! Recent file rows keep their full accessible name.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use egui::{Context, Id, Pos2, RawInput, Rect, accesskit::Role, vec2};
 use figcraft_engine::Session;

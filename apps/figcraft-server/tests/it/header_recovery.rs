@@ -2,7 +2,6 @@
 //! holds confirmed edits (#408): the log is replayed over the snapshot, which only the changes the
 //! snapshot lacks survive, and the damage is reported. A genuine leftover of a compaction cut short
 //! still restores silently.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use figcraft_collab::message::{Access, ClientMsg};
 use figcraft_collab::{Client, Outgoing, Replica, Server};

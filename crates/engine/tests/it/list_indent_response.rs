@@ -1,5 +1,4 @@
 //! `text.listIndent` / `text.listOutdent` report `changed` only when the document changed.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use figcraft_engine::{
     Session,

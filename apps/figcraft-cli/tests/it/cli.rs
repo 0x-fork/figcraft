@@ -1,5 +1,4 @@
 //! The binary end to end.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::io::Write;
 use std::process::{Command, Stdio};

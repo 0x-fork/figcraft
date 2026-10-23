@@ -1,5 +1,3 @@
-#![allow(clippy::unwrap_used)]
-
 use figcraft_color::Paint;
 use figcraft_doc::NodeId;
 use figcraft_engine::{

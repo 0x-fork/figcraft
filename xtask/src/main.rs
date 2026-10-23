@@ -1,6 +1,7 @@
 //! Project tasks: `cargo xtask <task>`.
 //!
 //! - `ci`      fmt check, clippy -D warnings, tests, layers, assets, wasm check
+//! - `test`    the workspace tests (nextest when installed) and doctests
 //! - `layers`  crate dependency layering check
 //! - `assets`  every file under assets/ and docs/ has a row in ATTRIBUTION.md
 //! - `parity`  menu-catalog coverage → docs/parity-checklist.md
@@ -16,7 +17,7 @@
 mod icon;
 mod layers;
 
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 
 fn run(cmd: &mut Command) -> bool {
     eprintln!("$ {cmd:?}");
@@ -36,6 +37,7 @@ fn main() -> ExitCode {
     let task = args.first().map(String::as_str).unwrap_or("help");
     let ok = match task {
         "ci" => ci(),
+        "test" => test(),
         "layers" => layers::check(&root()),
         "assets" => assets(),
         "parity" => parity(),
@@ -45,7 +47,7 @@ fn main() -> ExitCode {
         "plugins" => plugins(),
         "bench" => bench(args.get(1).map_or("1000,10000,50000", String::as_str)),
         _ => {
-            eprintln!("tasks: ci, layers, assets, parity, version [set X.Y.Z], icon, wasm, plugins, bench [SIZES]");
+            eprintln!("tasks: ci, test, layers, assets, parity, version [set X.Y.Z], icon, wasm, plugins, bench [SIZES]");
             task == "help"
         }
     };
@@ -54,16 +56,31 @@ fn main() -> ExitCode {
 
 fn ci() -> bool {
     run(cargo().args(["fmt", "--all", "--check"]))
-        && run(cargo().args(["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]))
-        && run(cargo().args(["test", "--workspace"]))
+        && run(cargo().args(["clippy", "--workspace", "--all-targets", "--keep-going", "--", "-D", "warnings"]))
+        && test()
         && layers::check(&root())
         && assets()
         && wasm()
 }
 
+/// Unit and integration tests with nextest when it is installed (`cargo install cargo-nextest`),
+/// else with `cargo test`; then the doctests, which nextest does not run. Examples are not built:
+/// clippy's `--all-targets` already checks them.
+fn test() -> bool {
+    let nextest = cargo().args(["nextest", "--version"]).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+    let units = if nextest {
+        run(cargo().args(["nextest", "run", "--workspace", "--lib", "--bins", "--tests"]))
+    } else {
+        eprintln!("xtask: cargo-nextest not installed; running unit and integration tests with `cargo test`");
+        run(cargo().args(["test", "--workspace", "--lib", "--bins", "--tests"]))
+    };
+    units && run(cargo().args(["test", "--workspace", "--doc"]))
+}
+
 fn wasm() -> bool {
     run(cargo().args([
         "check",
+        "--keep-going",
         "--target",
         "wasm32-unknown-unknown",
         "-p",
