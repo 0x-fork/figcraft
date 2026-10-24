@@ -233,6 +233,7 @@ mod windows_qa_tests;
 mod windows_tests;
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -1175,7 +1176,7 @@ impl FigApp {
     pub fn save_as_dialog(&mut self) {
         let Ok(name) = self.session.doc().map(|d| d.name.clone()) else { return };
         self.pick_save(i18n::tr("Save as"), &format!("{name}.figcraft"), &["figcraft", "fig"], |app, mut p| {
-            if p.extension().is_none_or(|e| e.is_empty()) {
+            if p.extension().is_none_or(OsStr::is_empty) {
                 if !p.set_extension("figcraft") {
                     app.toast(i18n::tr("Use the .figcraft or .fig extension."));
                     return;
@@ -1192,7 +1193,7 @@ impl FigApp {
                         return;
                     }
                 }
-            } else if !p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("figcraft") || e.eq_ignore_ascii_case("fig")) {
+            } else if !p.extension().and_then(OsStr::to_str).is_some_and(|e| e.eq_ignore_ascii_case("figcraft") || e.eq_ignore_ascii_case("fig")) {
                 app.toast(i18n::tr("Use the .figcraft or .fig extension."));
                 return;
             }
@@ -1211,7 +1212,7 @@ impl FigApp {
             .docs
             .get(tab)
             .and_then(|d| d.path.as_deref())
-            .is_some_and(|path| !Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("fig")));
+            .is_some_and(|path| !Path::new(path).extension().and_then(OsStr::to_str).is_some_and(|e| e.eq_ignore_ascii_case("fig")));
         if native_path {
             if self.run("file.save", json!({})).is_some() {
                 self.toast(i18n::tr("Saved"));
@@ -1870,13 +1871,13 @@ pub(crate) const OPEN_EXTENSIONS: &[&str] = &["figcraft", "fig", "json", "svg", 
 
 /// Whether `path` names a file type that opens as a document (the extension, in any case).
 pub(crate) fn opens(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()).is_some_and(|e| OPEN_EXTENSIONS.iter().any(|x| x.eq_ignore_ascii_case(e)))
+    path.extension().and_then(OsStr::to_str).is_some_and(|e| OPEN_EXTENSIONS.iter().any(|x| x.eq_ignore_ascii_case(e)))
 }
 
 /// Whether `path` is a whole document (`.figcraft`, `.fig`, file JSON) rather than an image or SVG:
 /// dropped on the canvas it opens as a file of its own instead of adding its pages to the open one.
 pub(crate) fn is_document(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()).is_some_and(|e| ["figcraft", "fig", "json"].iter().any(|x| x.eq_ignore_ascii_case(e)))
+    path.extension().and_then(OsStr::to_str).is_some_and(|e| ["figcraft", "fig", "json"].iter().any(|x| x.eq_ignore_ascii_case(e)))
 }
 
 /// Reads the contents of dropped file `name` that has no file on disk to read by path.

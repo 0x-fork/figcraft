@@ -488,11 +488,11 @@ pub(crate) fn write(path: &str, _bytes: &[u8]) -> Result<()> {
 }
 
 fn ext(path: &str) -> String {
-    std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
+    std::path::Path::new(path).extension().and_then(std::ffi::OsStr::to_str).unwrap_or("").to_ascii_lowercase()
 }
 
 fn file_stem(path: &str) -> String {
-    std::path::Path::new(path).file_stem().and_then(|e| e.to_str()).unwrap_or("Untitled").to_string()
+    std::path::Path::new(path).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Untitled").to_string()
 }
 
 /// The counts the import report shows for a freshly loaded document.

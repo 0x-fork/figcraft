@@ -95,7 +95,7 @@ pub fn guard(app: &mut FigApp, ctx: &Context, f: impl FnOnce(&mut FigApp)) {
     let roots = app.automation_roots.clone();
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| figcraft_engine::file_access::confined(roots.as_ref(), || f(&mut *app))));
     if let Err(e) = res {
-        let msg = e.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| e.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into());
+        let msg = e.downcast_ref::<&str>().map(ToString::to_string).or_else(|| e.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into());
         log::error!("UI panic: {msg}");
         app.toast(format!("Internal error (please report): {msg}"));
         ctx.request_repaint();

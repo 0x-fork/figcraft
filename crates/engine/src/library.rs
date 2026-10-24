@@ -339,7 +339,7 @@ pub fn publish(doc: &Document, prev: Option<&PublishedLibrary>, sel: &Selection,
         .map(|v| v.id.as_str())
         .collect();
     let (bound, mode_colls) = used_variables(doc, &units);
-    let var_ids = alias_closure(&doc.variables, offered_vars.iter().map(|v| v.to_string()).chain(bound));
+    let var_ids = alias_closure(&doc.variables, offered_vars.iter().map(ToString::to_string).chain(bound));
     snap.variables.variables = doc.variables.variables.iter().filter(|v| var_ids.contains(&v.id)).cloned().collect();
     let coll_ids: BTreeSet<&str> = snap
         .variables

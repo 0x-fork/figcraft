@@ -786,6 +786,38 @@ fn push_changes(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"layers": pushed}))
 }
 
+fn restore_prop_defs(doc: &Document, props: &BTreeMap<String, Value>) -> BTreeMap<String, PropDef> {
+    let mut defs = BTreeMap::new();
+    for (k, v) in props {
+        let def = match v {
+            Value::Bool(b) => PropDef::Boolean { default: *b },
+            Value::String(t) => PropDef::Text { default: t.clone() },
+            other => match id_of(other) {
+                Some(c) if doc.contains(c) => PropDef::InstanceSwap { default: c, preferred: Vec::new() },
+                _ => continue,
+            },
+        };
+        defs.insert(k.clone(), def);
+    }
+    defs
+}
+
+fn restore_id_map(doc: &mut Document, i: NodeId, component: NodeId, sub: &[NodeId]) -> BTreeMap<NodeId, NodeId> {
+    let mut map: BTreeMap<NodeId, NodeId> = BTreeMap::new();
+    let mut used: BTreeSet<NodeId> = BTreeSet::new();
+    map.insert(i, component);
+    used.insert(component);
+    for d in sub.iter().filter(|d| **d != i) {
+        let src = doc.node(*d).and_then(|n| n.source);
+        let nid = match src {
+            Some(s) if !doc.contains(s) && used.insert(s) => s,
+            _ => doc.alloc_id(),
+        };
+        map.insert(*d, nid);
+    }
+    map
+}
+
 fn restore_main(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "component.restoreMain";
     let i = targets(s, p).first().copied().ok_or_else(|| bad(cmd, "select an instance"))?;
@@ -804,35 +836,13 @@ fn restore_main(s: &mut Session, p: &Value) -> Result<Value> {
     // The main comes back with its old id (other instances point to it) and its layers with the
     // ids their copies mirror, so every instance re-links by source.
     let sub = doc.subtree(i);
-    let mut map: BTreeMap<NodeId, NodeId> = BTreeMap::new();
-    let mut used: BTreeSet<NodeId> = BTreeSet::new();
-    map.insert(i, component);
-    used.insert(component);
-    for d in sub.iter().filter(|d| **d != i) {
-        let src = doc.node(*d).and_then(|n| n.source);
-        let nid = match src {
-            Some(s) if !doc.contains(s) && used.insert(s) => s,
-            _ => doc.alloc_id(),
-        };
-        map.insert(*d, nid);
-    }
+    let map = restore_id_map(doc, i, component, &sub);
     let mut nodes = Vec::new();
     let mut nested = Vec::new();
     for d in &sub {
         let Some(mut n) = doc.node(*d).cloned() else { continue };
         if *d == i {
-            let mut defs = BTreeMap::new();
-            for (k, v) in &props {
-                let def = match v {
-                    Value::Bool(b) => PropDef::Boolean { default: *b },
-                    Value::String(t) => PropDef::Text { default: t.clone() },
-                    other => match id_of(other) {
-                        Some(c) if doc.contains(c) => PropDef::InstanceSwap { default: c, preferred: Vec::new() },
-                        _ => continue,
-                    },
-                };
-                defs.insert(k.clone(), def);
-            }
+            let defs = restore_prop_defs(doc, &props);
             n.kind = NodeKind::Component { description: String::new(), props: defs };
             n.source = None;
             n.overrides.clear();

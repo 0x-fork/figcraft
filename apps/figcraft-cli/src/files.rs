@@ -1,5 +1,6 @@
 //! The file subcommands: info, export, convert, render and run.
 
+use std::ffi::OsStr;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -19,7 +20,7 @@ fn load_noted(path: &str) -> CliResult<(Document, Vec<String>)> {
 }
 
 fn ext(path: &str) -> String {
-    Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
+    Path::new(path).extension().and_then(OsStr::to_str).unwrap_or("").to_ascii_lowercase()
 }
 
 fn image_format(e: &str) -> Option<ExportFormat> {
