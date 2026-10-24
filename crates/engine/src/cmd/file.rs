@@ -11,22 +11,34 @@ use super::{CommandSpec, ok};
 use crate::params::*;
 use crate::{DocState, EngineError, Result, Session, bad, spec};
 
+/// A new file of `kind` in a tab of its own.
+fn new_file(s: &mut Session, p: &Value, kind: FileKind) -> Result<Value> {
+    let name = string(p, "name").unwrap_or_else(|| if kind == FileKind::Board { "Untitled board" } else { "Untitled" }.into());
+    let mut doc = Document::new(name);
+    doc.kind = kind;
+    // A property of the page from here on: a later change of theme leaves it alone. Boards are
+    // light whatever the theme.
+    let background = if kind == FileKind::Board { BOARD_PAGE } else { s.new_page_background() };
+    for page in doc.pages.clone() {
+        if let Some(NodeKind::Page { background: b, .. }) = doc.node_mut(page).map(|n| &mut n.kind) {
+            *b = background;
+        }
+    }
+    s.docs.push(DocState::new(doc, None));
+    s.active = s.docs.len() - 1;
+    Ok(json!({"index": s.active, "kind": kind.id()}))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        spec!("file.new", "New design file", "{name?}", false, |s, p| {
-            let name = string(p, "name").unwrap_or_else(|| "Untitled".into());
-            let mut doc = Document::new(name);
-            // A property of the page from here on: a later change of theme leaves it alone.
-            let background = s.new_page_background();
-            for page in doc.pages.clone() {
-                if let Some(NodeKind::Page { background: b, .. }) = doc.node_mut(page).map(|n| &mut n.kind) {
-                    *b = background;
-                }
-            }
-            s.docs.push(DocState::new(doc, None));
-            s.active = s.docs.len() - 1;
-            Ok(json!({"index": s.active}))
-        }),
+        spec!("file.new", "New design file", "{name?}", false, |s, p| new_file(s, p, FileKind::Design)),
+        spec!(
+            "file.newBoard",
+            "New board",
+            "{name?}  a board: sticky notes, shapes with text, connectors, marker and stamps on a light page",
+            false,
+            |s, p| new_file(s, p, FileKind::Board)
+        ),
         spec!(
             "file.open",
             "Open",
@@ -366,7 +378,7 @@ fn version_index(cmd: &str, ds: &DocState, p: &Value) -> Result<usize> {
     if i < ds.versions.len() { Ok(i) } else { Err(bad(cmd, format!("no version at index {i}"))) }
 }
 
-fn read_version(v: &Version) -> Result<Arc<Document>> {
+pub(crate) fn read_version(v: &Version) -> Result<Arc<Document>> {
     v.document().map_err(|e| EngineError::Other(format!("version “{}” can't be read: {e}", v.name)))
 }
 
@@ -476,11 +488,11 @@ pub(crate) fn write(path: &str, _bytes: &[u8]) -> Result<()> {
 }
 
 fn ext(path: &str) -> String {
-    std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
+    std::path::Path::new(path).extension().and_then(std::ffi::OsStr::to_str).unwrap_or("").to_ascii_lowercase()
 }
 
 fn file_stem(path: &str) -> String {
-    std::path::Path::new(path).file_stem().and_then(|e| e.to_str()).unwrap_or("Untitled").to_string()
+    std::path::Path::new(path).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Untitled").to_string()
 }
 
 /// The counts the import report shows for a freshly loaded document.
@@ -1381,8 +1393,11 @@ fn export_path(name: &str) -> String {
     if parts.is_empty() { "Untitled".into() } else { parts.join("/") }
 }
 
-/// `name` without path separators and characters file systems reject.
-fn safe_file_name(name: &str) -> String {
+/// `name` without path separators and characters file systems reject (`/ \ : * ? " < > |` and
+/// control characters become `_`); everything else is kept, up to the first 200 characters.
+/// `figcraft-cli export` names its files by this rule too (and keeps at most 100 characters before
+/// the number and extension it adds).
+pub fn safe_file_name(name: &str) -> String {
     name.chars().take(200).map(|c| if c.is_control() || "/\\:*?\"<>|".contains(c) { '_' } else { c }).collect()
 }
 

@@ -13,6 +13,7 @@ pub mod al_keys;
 pub mod annotations;
 pub mod arc_handles;
 pub mod background;
+pub mod board;
 pub mod booleans;
 pub mod branches;
 pub mod catalog;
@@ -22,6 +23,8 @@ pub mod codegen;
 pub mod collab;
 pub mod component_codegen;
 pub mod components;
+pub mod datafill;
+pub mod dev_measurements;
 pub mod dev_resources;
 pub mod devcompare;
 pub mod devinspect;
@@ -59,7 +62,9 @@ pub mod synthetic;
 pub mod synthetic_ds;
 pub mod templates;
 pub mod textedit;
+pub mod textfit;
 pub mod textpreview;
+pub mod token_roles;
 pub mod tools;
 pub mod vectoredit;
 pub mod widgets;
@@ -413,6 +418,7 @@ impl DocState {
         }
         doc.link_layer_text_styles();
         cmd::styles::apply_paint_bindings_on_load(&mut doc);
+        components::mark_layer_modes(&mut doc);
         // Initial import settlement belongs to the saved baseline, not the user's first edit.
         let page = doc.current_page.filter(|p| doc.pages.contains(p)).or_else(|| doc.first_page()).unwrap_or(NodeId(0));
         let doc = Arc::new(doc);
@@ -936,6 +942,7 @@ impl Session {
     /// as it was.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        board::refuse_on_board(self, id)?;
         // Revert replaces the document's uid: refuse before ending previews or syncing branches.
         if id == "file.revert" && self.live().doc_uid.is_some() {
             return Err(EngineError::Disabled(id.into(), "leave the live session before reverting to the saved file".into()));
@@ -959,6 +966,8 @@ impl Session {
             ds.end_preview();
         }
         let before = self.ds().ok().map(|d| (d.doc.clone(), d.selection.clone(), d.page, d.uid));
+        // Cut and copy write the clipboard before a later check can refuse the command.
+        let clipboard_before = self.clipboard.clone();
         let result = guard::run(id, || (spec.run)(self, params))
             .and_then(|v| self.check_instance_structure(id, &before).map(|()| v))
             .and_then(|v| self.check_preview(id, &before).map(|()| v))
@@ -991,6 +1000,7 @@ impl Session {
                     ds.selection = sel;
                     ds.page = page;
                 }
+                self.clipboard = clipboard_before;
             }
         }
         result
@@ -1394,7 +1404,9 @@ pub fn normalize(doc: &mut Document, before: &Document) {
         figcraft_layout::coherent_sizing(doc, id);
     }
     touched.extend(doc.take_dirty());
-    // 1. Text auto-size.
+    // 1. Text auto-size (a sticky's note first takes the size its length calls for).
+    board::settle_text(doc, before, &touched);
+    touched.extend(doc.take_dirty());
     for id in live(doc, &touched) {
         let Some(n) = doc.node(id) else { continue };
         if let Some((w, h)) = figcraft_text::auto_size(n)
@@ -1474,6 +1486,9 @@ pub fn normalize(doc: &mut Document, before: &Document) {
             doc.keep_if_unchanged(a, was_dirty);
         }
     }
+    touched.extend(doc.take_dirty());
+    // 4b. Board connectors follow the layers they join; their labels sit at their middles.
+    board::settle_routes(doc, before, &touched);
     touched.extend(doc.take_dirty());
     // 5. Ready-for-dev layers whose contents changed show "Changed".
     mark_dev_changes(doc, before, &touched);
@@ -1607,6 +1622,10 @@ mod batch_step_ref_tests;
 #[cfg(test)]
 mod binding_lists_tests;
 #[cfg(test)]
+mod board_tests;
+#[cfg(test)]
+mod board_tools_tests;
+#[cfg(test)]
 mod booleans_tests;
 #[cfg(test)]
 mod bound_alpha_tests;
@@ -1643,7 +1662,11 @@ mod cursor_tests;
 #[cfg(test)]
 mod dark_page_text_tests;
 #[cfg(test)]
+mod datafill_tests;
+#[cfg(test)]
 mod design_paste_tests;
+#[cfg(test)]
+mod dev_measurements_tests;
 #[cfg(test)]
 mod dev_resources_tests;
 #[cfg(test)]
@@ -1652,6 +1675,10 @@ mod devcompare_tests;
 mod devfocus_tests;
 #[cfg(test)]
 mod devinspect_tests;
+#[cfg(test)]
+mod devmode_behaviour_tests;
+#[cfg(test)]
+mod devmode_tail_tests;
 #[cfg(test)]
 mod doc_urls_tests;
 #[cfg(test)]
@@ -1674,6 +1701,8 @@ mod fig_export_assets_tests;
 mod fig_export_tests;
 #[cfg(test)]
 mod fig_import_tests;
+#[cfg(test)]
+mod fill_none_tests;
 #[cfg(test)]
 mod finite_geometry_tests;
 #[cfg(test)]
@@ -1869,6 +1898,8 @@ mod text_style_picker_tests;
 #[cfg(test)]
 mod text_tail_tests;
 #[cfg(test)]
+mod textfit_tests;
+#[cfg(test)]
 mod theme_pages_tests;
 #[cfg(test)]
 mod tiff_tests;
@@ -1889,9 +1920,13 @@ mod variants_discovery_tests;
 #[cfg(test)]
 mod vector_behaviour_tests;
 #[cfg(test)]
+mod vector_fill_rule_tests;
+#[cfg(test)]
 mod vector_multi_behaviour_tests;
 #[cfg(test)]
 mod vector_offset_tests;
+#[cfg(test)]
+mod vector_path_set_tests;
 #[cfg(test)]
 mod version_preview_tests;
 #[cfg(test)]
