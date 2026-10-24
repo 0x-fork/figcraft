@@ -152,8 +152,16 @@ fn blend_style(b: figcraft_color::BlendMode) -> String {
     }
 }
 
+/// `s` escaped for XML text and attribute values; characters XML 1.0 forbids (control characters
+/// other than tab, newline and carriage return, U+FFFE and U+FFFF) are left out.
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.chars()
+        .filter(|&c| !matches!(c, '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{fffe}' | '\u{ffff}'))
+        .collect::<String>()
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn hex(c: Color) -> String {
