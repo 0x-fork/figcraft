@@ -1166,6 +1166,20 @@ fn size_param(cmd: &str, p: &Value) -> Result<Option<ExportSize>> {
 
 /// Most files one `file.exportLayers` writes.
 const MAX_EXPORT_FILES: usize = 1000;
+/// Most bytes the files of one zip export add up to: the files, the archive and its base64 copy
+/// are all in memory at once (in the browser too).
+const MAX_ZIP_BYTES: usize = 256 << 20;
+
+/// Keep `bytes` as zip member `name`, unless the members would pass `limit` bytes together.
+fn add_member<'a>(members: &mut Vec<(&'a str, Vec<u8>)>, name: &'a str, bytes: Vec<u8>, limit: usize) -> Result<()> {
+    let total = members.iter().map(|(_, b)| b.len()).sum::<usize>().saturating_add(bytes.len());
+    if total > limit {
+        let mb = limit >> 20;
+        return Err(bad("file.exportLayers", format!("the files would pass {mb} MB as one zip: export fewer layers at a time, or to a folder")));
+    }
+    members.push((name, bytes));
+    Ok(())
+}
 
 /// One file of a layer export: the layer, its setting and the file name.
 pub struct ExportJob {
@@ -1259,7 +1273,7 @@ fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
                 write(&path, &bytes)?;
                 f["path"] = json!(path);
             }
-            None if zip => members.push((job.file.as_str(), bytes)),
+            None if zip => add_member(&mut members, job.file.as_str(), bytes, MAX_ZIP_BYTES)?,
             None => f["data"] = json!(base64::engine::general_purpose::STANDARD.encode(&bytes)),
         }
         files.push(f);
@@ -1801,5 +1815,20 @@ mod staging_write_tests {
             std::fs::set_permissions(&ro, perms).unwrap();
         }
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod zip_cap_tests {
+    use super::add_member;
+
+    #[test]
+    fn zip_members_stop_at_the_limit_and_keep_what_fit() {
+        let mut members = Vec::new();
+        add_member(&mut members, "a.png", vec![0; 6], 10).unwrap();
+        add_member(&mut members, "b.png", vec![0; 4], 10).unwrap();
+        let err = add_member(&mut members, "c.png", vec![0; 1], 10).unwrap_err().to_string();
+        assert!(err.contains("as one zip"), "{err}");
+        assert_eq!(members.iter().map(|(n, _)| *n).collect::<Vec<_>>(), ["a.png", "b.png"]);
     }
 }
