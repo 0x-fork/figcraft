@@ -643,6 +643,9 @@ pub struct UiState {
     pub paste_event: bool,
     /// The window got the focus back since the last V release.
     pub refocused: bool,
+    /// A save shortcut pressed while a panel field had the keyboard: the field lets go (which
+    /// commits what was typed) and the command runs the next frame (`shortcuts::handle`).
+    pub after_field: Option<&'static str>,
     /// The modifiers held, as of the last modifier change in the raw events: a paste event doesn't
     /// carry them.
     pub held: egui::Modifiers,
@@ -764,6 +767,7 @@ impl Default for UiState {
             v_pressed: false,
             paste_event: false,
             refocused: false,
+            after_field: None,
             held: egui::Modifiers::NONE,
             next_autosave: 0.0,
             auto_save_at: None,
