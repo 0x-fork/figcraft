@@ -1620,7 +1620,6 @@ impl FigApp {
         !hidden && (!board || self.ui.board_panel)
     }
 
-    /// One frame of the window drawing now.
     /// A narrow window's two buttons for the side panels (touch-sized); the open one closes again.
     fn mobile_buttons(&mut self, ctx: &egui::Context, at: egui::Pos2) {
         use a11y::Tip as _;
@@ -1634,7 +1633,7 @@ impl FigApp {
                 let resp = resp.tip(name);
                 let fill = if open { t.accent } else { t.panel };
                 ui.painter().rect(r, 8.0, fill, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-                icons::paint(ui.painter(), r.shrink(10.0), icon, if open { t.accent_text } else { t.icon });
+                icons::paint(ui.painter(), r.shrink(10.0), icon, if open { t.accent_on } else { t.icon });
                 if resp.clicked() {
                     self.ui.mobile_panel = if open { None } else { Some(side) };
                 }
@@ -1643,6 +1642,7 @@ impl FigApp {
         });
     }
 
+    /// One frame of the window drawing now.
     pub(crate) fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let t = theme::Tokens::get(&ctx);
