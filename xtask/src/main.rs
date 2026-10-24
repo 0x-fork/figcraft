@@ -31,7 +31,7 @@ fn cargo() -> Command {
 }
 
 fn root() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().map(|p| p.to_path_buf()).unwrap_or_default()
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().map(std::path::Path::to_path_buf).unwrap_or_default()
 }
 
 fn main() -> ExitCode {
