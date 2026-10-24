@@ -38,6 +38,7 @@ fn failed_group_closes_documents_opened_inside_it() {
 fn failed_group_reopens_documents_closed_inside_it() {
     let mut s = Session::new();
     s.execute("file.new", &json!({"name": "Second"})).unwrap();
+    let uids: Vec<_> = s.docs.iter().map(|ds| ds.uid).collect();
     assert_eq!((s.docs.len(), s.active), (2, 1));
 
     let result = s.execute(
@@ -53,7 +54,9 @@ fn failed_group_reopens_documents_closed_inside_it() {
     assert!(result.is_err());
     assert_eq!(s.docs.len(), 2);
     assert_eq!(s.active, 1);
+    assert_eq!(s.docs.iter().map(|ds| ds.uid).collect::<Vec<_>>(), uids);
     assert!(s.ds().is_ok());
+    assert!(s.closed_in_group.is_empty());
 }
 
 #[test]
