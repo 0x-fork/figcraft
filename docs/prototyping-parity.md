@@ -93,6 +93,7 @@ case pins the current behaviour).
 | Hotspot hints, inspect panel in the presenter, comments in the presenter | done | |
 | Preview pane following edits live | done | |
 | Edit interactions on several layers at once | done | |
+| Open link: a notice before a website opens, with a checkbox to skip it on this device | done | `http` and `https` links (a mail link opens at once); Open link opens it, Cancel or Escape drops it; the desktop app saves the checkbox with its preferences, and the web build keeps it until the page reloads; `proto.linkNotice {show}` turns it on or off (`present_links_tests`) |
 | Opening a link in place | missing | |
 | Controllers on macOS, Linux and FreeBSD | missing | the usual Rust controller library links the system's libudev on Linux; the pure-Rust desktop builds read none there yet |
 | Prototype in a separate window; mirror to a phone | missing | see [hardware-parity](hardware-parity.md) |
@@ -103,6 +104,7 @@ case pins the current behaviour).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | patch | Open link to a website first shows a notice that it leaves the prototype, with the link, Open link, Cancel and "Don't show this again", which the desktop app saves with its preferences and the web build keeps until the page reloads (`proto.linkNotice` turns the notice back on); a second link to a website that fires while the notice shows is dropped, and a mail link still opens. Before, the player opened the link at once, also from an After delay trigger. Numbers unchanged |
 | 2026-10-23 | patch | A top-level frame taller (or wider) than the device's screen scrolls with no overflow setting, as Figma's documentation says; before, "No scrolling" frames such as the landing page template's Phone frame only clipped. Content past a frame's own edges still scrolls only as its overflow allows. Checked in the app on macOS. Numbers unchanged |
 | 2026-10-22 | minor | Change to, set variable and set variable mode lay out what they change in the player as the canvas does: text sizes to what it shows and hugging frames follow (an instance with a longer label changed to the main's width; a bound text kept its old size). Two player tests. Breadth and ready unchanged. |
 | 2026-10-17 | minor | Presentation tabs: one per page of a file instead of a single "Present" tab, named "file - page" (renames follow); Play shows a page's tab as it was; tabs outlive their file and come back when a saved file opens again. Numbers unchanged. |
