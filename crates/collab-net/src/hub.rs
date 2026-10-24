@@ -811,10 +811,15 @@ fn encode(msg: &ServerMsg) -> Option<Bytes> {
 
 /// Queue `Refused {reason}` and a close for one connection (small: not counted against its caps).
 fn refuse(out: &Line, why: &str) {
+    refused(out, why);
+}
+
+/// [`refuse`], and whether the close was queued (it isn't when the queue is full).
+fn refused(out: &Line, why: &str) -> bool {
     if let Some(b) = encode(&ServerMsg::Refused { reason: why.to_string() }) {
         let _ = out.tx.try_send(Out::Bytes(b, None));
     }
-    let _ = out.tx.try_send(Out::Close(CloseCode::Policy, reason(why)));
+    out.tx.try_send(Out::Close(CloseCode::Policy, reason(why))).is_ok()
 }
 
 /// What the server tells a client when it is too busy to take more from it.
@@ -1429,7 +1434,9 @@ impl<B: Backend> Hub<B> {
             barred.insert(c.ip);
         }
         log::info!("event=removed file={file} client={id} ip={}", c.ip);
-        let _ = c.out.tx.try_send(Out::Close(CloseCode::Away, REMOVED.into()));
+        if c.out.tx.try_send(Out::Close(CloseCode::Away, REMOVED.into())).is_err() {
+            shutdown(&c.sock);
+        }
         self.gone(conn);
         Ok(())
     }
@@ -1543,8 +1550,10 @@ impl<B: Backend> Hub<B> {
             // People in the file are told the session is over for them, as when a host stops (they
             // keep their copy; nothing retries); a library request is refused.
             for conn in &people {
-                if let Some(c) = self.conns.get(conn) {
-                    let _ = c.out.tx.try_send(Out::Close(CloseCode::Away, STOPPED.into()));
+                if let Some(c) = self.conns.get(conn)
+                    && c.out.tx.try_send(Out::Close(CloseCode::Away, STOPPED.into())).is_err()
+                {
+                    shutdown(&c.sock);
                 }
                 self.gone(*conn);
             }
@@ -1593,8 +1602,10 @@ impl<B: Backend> Hub<B> {
     /// Refuse connections with `why` and drop them at once (nothing more they send counts).
     fn kick(&mut self, conns: &[u64], why: &str) {
         for conn in conns {
-            if let Some(c) = self.conns.get(conn) {
-                refuse(&c.out, why);
+            if let Some(c) = self.conns.get(conn)
+                && !refused(&c.out, why)
+            {
+                shutdown(&c.sock);
             }
             self.gone(*conn);
         }
