@@ -32,7 +32,9 @@ pub fn begin(s: &mut Session, id: NodeId, caret: Option<usize>, created: bool) -
 pub fn end(s: &mut Session) -> Result<()> {
     let Some(te) = s.ds()?.text_edit.clone() else { return Ok(()) };
     s.ds_mut()?.text_edit = None;
-    let empty = text_of(s, te.id).map(|t| t.characters.trim().is_empty()).unwrap_or(false);
+    // A board object's text (a sticky's note) stays when emptied; the object is selected again.
+    let owner = s.doc().ok().and_then(|d| crate::board::owner_of_text(d, te.id));
+    let empty = owner.is_none() && text_of(s, te.id).map(|t| t.characters.trim().is_empty()).unwrap_or(false);
     if empty {
         let doc = s.doc_mut()?;
         let _ = doc.remove(te.id);
@@ -50,6 +52,9 @@ pub fn end(s: &mut Session) -> Result<()> {
     }
     s.commit_interaction()?;
     let ds = s.ds_mut()?;
+    if let Some(o) = owner {
+        ds.selection = vec![o];
+    }
     ds.revision += 1;
     Ok(())
 }
@@ -782,6 +787,7 @@ mod tests {
         assert!(r.is_null() || r["axes"].is_array());
     }
 
+    /// No text command panics on junk parameters while a text is being edited.
     #[test]
     fn text_commands_survive_junk_while_editing() {
         let junk = [
@@ -793,7 +799,8 @@ mod tests {
             json!({"variations": {"wght": "heavy", "toolong": 1}, "text": "\u{0}\u{7}", "cursor": 1e300}),
             json!({"variations": {"wght": 1e300, "opsz": -1e300}, "replace": "yes", "text": "日本語", "cursor": -1}),
         ];
-        for spec in crate::cmd::all_commands().iter().filter(|c| c.id.starts_with("text.")) {
+        // `text.rescanFonts` takes no params and walks the font folders: one walk per junk is slow.
+        for spec in crate::cmd::all_commands().iter().filter(|c| c.id.starts_with("text.") && c.id != "text.rescanFonts") {
             for j in &junk {
                 let (mut s, id) = setup("Hi there\nyou");
                 begin(&mut s, id, Some(2), false).unwrap();
