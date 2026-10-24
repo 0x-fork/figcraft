@@ -219,3 +219,25 @@ fn not_of_a_variable_reads_back_when_a_name_starts_with_not() {
     }
     assert_eq!(Expr::op(Not, vec![Expr::var("b")]).display(&vars()), "not b-name", "plain names stay bare");
 }
+
+#[test]
+fn literal_true_false_survive_variables_named_true_false() {
+    use ExprOp::*;
+    let lit = |x: bool| Expr::Value(VariableValue::Boolean(x));
+    for name in ["true", "false", "TRUE"] {
+        let mut v = vars();
+        if let Some(var) = v.variables.iter_mut().find(|x| x.id == "b") {
+            var.name = name.into();
+        }
+        for e in [
+            Expr::op(Equals, vec![Expr::var("b"), lit(true)]),
+            Expr::op(Equals, vec![Expr::var("b"), lit(false)]),
+            Expr::op(Not, vec![lit(false)]),
+            Expr::var("b"),
+        ] {
+            let shown = e.display(&v);
+            assert_eq!(Expr::parse(&shown, &v), Ok(e.clone()), "{name:?} shown as {shown:?}");
+        }
+        assert_eq!(Expr::parse(&format!("{{{name}}}"), &v), Ok(Expr::var("b")));
+    }
+}
