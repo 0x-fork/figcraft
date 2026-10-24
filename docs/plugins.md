@@ -225,7 +225,7 @@ plugin directory requests (`plugin.directory.*` says so). Import plugins with `p
 | `author` | Optional: who made it, as you type it (64 characters at most); plugin directories show it. |
 | `main` | Required. The module, a `.wasm` path relative to the manifest, inside its folder. |
 | `api` | The plugin API version the plugin was written for: `1` (the default), `2` (panels and settings), `3` (widgets) or `4` (saving files). A manifest asking for a newer one than FigCraft runs is refused, so a plugin that needs panels, widgets or `saveFile` fails clearly on an older FigCraft. |
-| `permissions.saveFile` | API 4: `true` lets the plugin offer a file to save (an exporter's output). FigCraft asks the user where it goes with its own Save dialog (a download in the browser); the plugin never gets a path. Manage plugins lists it ("can save files"); a plugin directory's entries don't carry it, so their wire format stays as it is. |
+| `permissions.saveFile` | API 4: `true` lets the plugin offer a file to save (an exporter's output). FigCraft asks the user where it goes with its own Save dialog (a download in the browser); the plugin never gets a path. Manage plugins lists it ("can save files"). A plugin directory's entries don't carry it (their wire format stays as it is), so installing any API 4 plugin from one says it may offer files to save. |
 | `widget` | API 3: `true` when the plugin draws a widget (it's listed in Plugins ▸ Widgets). |
 | `permissions.access` | `read` (the default): commands that leave the document as it is; such plugins also run from Dev Mode's Inspect tab. `write`: edits too. |
 | `permissions.commands` | Optional allowlist: exact command ids or prefixes ending in `*` (`node.*`). Empty: any command the access allows. |

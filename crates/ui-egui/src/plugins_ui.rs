@@ -477,6 +477,12 @@ fn confirm_window(app: &mut FigApp, ctx: &Context, t: &Tokens) {
         if e.widget {
             asks.push(tr("put a widget on the canvas").to_string());
         }
+        // shortcut: a directory entry doesn't say whether the manifest asks for `saveFile` (a new
+        // field would break the entries' postcard wire format), so every API 4 plugin says it may;
+        // carry the permission in the entry once the directory protocol negotiates new fields.
+        if e.api >= 4 {
+            asks.push(tr("offer files to save if it asks to (you choose where each one goes)").to_string());
+        }
         for a in asks {
             ui.add(egui::Label::new(RichText::new(format!("•  {a}")).font(regular(11.0)).color(t.text)).wrap());
         }
