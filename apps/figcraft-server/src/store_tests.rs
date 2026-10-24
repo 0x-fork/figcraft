@@ -391,6 +391,11 @@ fn names_and_report_reasons_lose_bidi_controls() {
         assert_eq!(store.reports().last().unwrap().reason, "a b", "reason U+{:04X}", m as u32);
         store.remove(&id).unwrap();
     }
+    // A reason that is only control characters says nothing.
+    let (id, _, _) = publish(&mut store, "blank");
+    for blank in ["\0", "\u{202E}", " \0\t\u{2066} "] {
+        assert!(store.keep_report(&id, None, "192.0.2.99".parse().unwrap(), blank).is_err(), "{blank:?}");
+    }
 }
 
 #[test]

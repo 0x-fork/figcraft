@@ -296,7 +296,8 @@ fn clean_name(s: &str) -> String {
 
 /// A report's reason: trimmed, control and bidi characters turned into spaces, at most `MAX_REASON` characters.
 fn clean_reason(s: &str) -> String {
-    s.trim().chars().map(|c| if c.is_control() || is_bidi_control(c) { ' ' } else { c }).take(MAX_REASON).collect()
+    let s: String = s.chars().map(|c| if c.is_control() || is_bidi_control(c) { ' ' } else { c }).collect();
+    s.trim().chars().take(MAX_REASON).collect()
 }
 
 /// Bidirectional format characters, which could reorder what a terminal shows.
