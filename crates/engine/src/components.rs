@@ -12,9 +12,10 @@
 //! `characters`, `textStyle` (font, size, spacing, resizing, …), `padding`, `gap` and `alignment`
 //! (of auto layout: its direction and other settings are the main's), `grids`, `exports`,
 //! `interactions`, `size` and `resizing` (hug, fill or fixed, with min and max sizes) of layers
-//! inside an instance, `component` (a swapped nested instance), `props` (property values of a
-//! nested instance) and `slot` (a slot holding the instance's own content). An instance's own
-//! export settings, interactions and resizing are its own, like its place. `position`
+//! inside an instance, `modes` (the variable modes a layer inside an instance chooses),
+//! `component` (a swapped nested instance), `props` (property values of a nested instance) and
+//! `slot` (a slot holding the instance's own content). An instance's own export settings,
+//! interactions, resizing and variable modes are its own, like its place. `position`
 //! overrides of layers inside an instance are still read and kept, but new ones are refused
 //! ([`check_override_edit`]): those layers take their place and constraints from the main.
 //!
@@ -60,6 +61,7 @@ pub const OVERRIDE_GROUPS: &[&str] = &[
     "size",
     "resizing",
     "position",
+    "modes",
     "component",
     "props",
     SLOT,
@@ -112,6 +114,23 @@ fn enclosing_instance(doc: &Document, id: NodeId) -> Option<NodeId> {
 /// Whether `id` is a layer inside an instance (not the outermost instance itself).
 pub fn inside_instance(doc: &Document, id: NodeId) -> bool {
     enclosing_instance(doc, id).is_some()
+}
+
+/// Mark the `modes` override on layers inside instances whose variable modes differ from their
+/// main layer's, for files from before `modes` was an override group. Copies follow their main
+/// layer's modes, so a layer on other modes chose them itself.
+pub fn mark_layer_modes(doc: &mut Document) {
+    let chose: Vec<NodeId> = doc
+        .nodes()
+        .filter(|n| !n.overrides.contains("modes") && n.source.and_then(|s| doc.node(s)).is_some_and(|m| m.var_modes != n.var_modes))
+        .map(|n| n.id)
+        .filter(|id| inside_instance(doc, *id))
+        .collect();
+    for id in chose {
+        if let Some(n) = doc.node_mut(id) {
+            n.overrides.insert("modes".into());
+        }
+    }
 }
 
 /// The slot property frame `id` stands for (its name and preferred components): a frame bound to
@@ -415,6 +434,7 @@ pub(crate) fn copy_group(from: &Node, to: &mut Node, g: &str) {
             (b.sizing_h, b.sizing_v, b.min_w, b.max_w, b.min_h, b.max_h) = (a.sizing_h, a.sizing_v, a.min_w, a.max_w, a.min_h, a.max_h);
         }
         "position" => to.transform = from.transform,
+        "modes" => to.var_modes = from.var_modes.clone(),
         "component" => {
             if let (NodeKind::Instance { component: a, .. }, NodeKind::Instance { component: b, .. }) = (&from.kind, &mut to.kind) {
                 *b = *a;
@@ -1117,6 +1137,9 @@ pub fn diff_groups(a: &Node, b: &Node) -> Vec<&'static str> {
     if a.interactions != b.interactions {
         out.push("interactions");
     }
+    if a.var_modes != b.var_modes {
+        out.push("modes");
+    }
     if let (NodeKind::Instance { component: x, props: px }, NodeKind::Instance { component: y, props: py }) = (&a.kind, &b.kind) {
         if x != y {
             out.push("component");
@@ -1214,10 +1237,10 @@ pub fn sync_after_edit(doc: &mut Document, before: &Document, changed: &[NodeId]
         }
         let raw = diff_groups(b, n);
         let mut groups = raw.clone();
-        // An instance's own place, resizing, export settings and interactions are its own, not
-        // overrides.
+        // An instance's own place, resizing, export settings, interactions and variable modes are
+        // its own, not overrides.
         if top_root {
-            groups.retain(|g| !matches!(*g, "component" | "props" | "position" | "resizing" | "exports" | "interactions"));
+            groups.retain(|g| !matches!(*g, "component" | "props" | "position" | "resizing" | "exports" | "interactions" | "modes"));
         }
         if groups.iter().any(|g| matches!(*g, "size" | "position")) {
             groups.retain(|g| !matches!(*g, "size" | "position") || !geometry_derived(doc, before, id, g));
@@ -2037,7 +2060,7 @@ pub fn rebase_instance(doc: &mut Document, inst: NodeId) {
             let mut groups: Vec<String> = value_groups(m, n)
                 .into_iter()
                 .filter(|g| !matches!(g.as_str(), "name" | "exports" | "interactions") && !from_variables.contains(&g.as_str()))
-                .filter(|g| placed_source.is_some() || g != "resizing")
+                .filter(|g| placed_source.is_some() || !matches!(g.as_str(), "resizing" | "modes"))
                 .collect();
             let named = if placed_source.is_some() { n.name != m.name } else { n.name != default_instance_name(doc, component) };
             if named {
@@ -2061,8 +2084,11 @@ pub fn rebase_instance(doc: &mut Document, inst: NodeId) {
     }
     if let Some(n) = doc.node_mut(inst) {
         n.source = root_base;
-        // A top-level instance's resizing is its own (a nested one's overrides its main layer's).
-        n.overrides.retain(|g| !matches!(g.as_str(), "component" | "props" | "position") && (placed_source.is_some() || g != "resizing"));
+        // A top-level instance's resizing and modes are its own (a nested one's override its main
+        // layer's).
+        n.overrides.retain(|g| {
+            !matches!(g.as_str(), "component" | "props" | "position") && (placed_source.is_some() || !matches!(g.as_str(), "resizing" | "modes"))
+        });
         n.overrides.extend(root_groups);
     }
 }
