@@ -750,7 +750,10 @@ fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, S
     let total = value.get("children").and_then(Value::as_array).map_or(0, Vec::len);
     let window = children_window(&mut value, offset, budget.saturating_sub(MARKER_RESERVE));
     let shown = value.get("children").and_then(Value::as_array).map_or(0, Vec::len);
-    let next = (offset + shown < total).then_some(offset + shown);
+    // A child too large to fit on its own is passed over (a page of just the marker), so paging
+    // moves on and every answer stays within maxBytes; `get_node` on the child reads it.
+    let after = offset + shown.max(1);
+    let next = (after < total).then_some(after);
     let used_wire = wire_size(&value);
     let mut out = with_marker(
         value,
@@ -766,7 +769,7 @@ fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, S
             "nextOffset": next,
         })),
     );
-    if window && next.is_none() && offset == 0 && used == depth {
+    if window && shown == total && offset == 0 && used == depth && used_wire + MARKER_RESERVE <= budget {
         // Nothing was left out after all (an offset of zero that fitted whole).
         out.as_object_mut().map(|o| o.remove("truncated"));
     }

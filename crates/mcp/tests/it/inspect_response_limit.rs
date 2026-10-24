@@ -152,3 +152,34 @@ fn get_node(c: &mut Client, args: Value) -> (Value, usize) {
     let wire = serde_json::to_string(&text).unwrap().len() + ENVELOPE;
     (serde_json::from_str(text).expect("the block is JSON"), wire)
 }
+
+/// A child too large for the limit on its own is passed over, one per page of just the marker,
+/// so paging moves on and every page stays within the limit.
+#[test]
+fn children_too_large_to_fit_page_one_at_a_time() {
+    let mut c = Client::new();
+    let frame = c.create(json!({"type": "frame", "x": 0, "y": 0, "width": 400, "height": 400}));
+    for i in 0..3 {
+        c.create(json!({"type": "rectangle", "parent": frame, "x": i * 5, "y": 5, "width": 20, "height": 20, "name": "n".repeat(3000)}));
+    }
+    let mut offset = Some(0u64);
+    let mut pages = 0;
+    while let Some(at) = offset {
+        let (page, wire) = get_node(&mut c, json!({"id": frame, "depth": 1, "maxBytes": 2500, "offset": at}));
+        assert!(wire <= 2500, "page at {at} exceeds maxBytes: {wire}");
+        assert_eq!(page["children"].as_array().map_or(0, Vec::len), 0, "{}", page["truncated"]);
+        assert!(!page["truncated"].is_null(), "the marker stays: page at {at}");
+        offset = page["truncated"]["children"]["nextOffset"].as_u64();
+        assert!(offset.is_none_or(|o| o > at), "paging moves on from {at}");
+        pages += 1;
+        assert!(pages <= 3);
+    }
+    assert_eq!(pages, 3);
+
+    // A sole child passed over still says the answer was cut.
+    let single = c.create(json!({"type": "frame", "x": 500, "y": 0, "width": 40, "height": 40}));
+    c.create(json!({"type": "rectangle", "parent": single, "x": 0, "y": 0, "width": 20, "height": 20, "name": "n".repeat(3000)}));
+    let (page, _) = get_node(&mut c, json!({"id": single, "depth": 1, "maxBytes": 2500}));
+    assert_eq!(page["children"].as_array().map_or(0, Vec::len), 0);
+    assert_eq!(page["truncated"]["children"]["total"], json!(1), "{}", page["truncated"]);
+}
