@@ -143,6 +143,20 @@ fn text_put_on_a_path_with_an_empty_effect_style_keeps_its_own_effects() {
 }
 
 #[test]
+fn text_put_on_a_path_takes_a_fill_binding_made_through_fills() {
+    let mut s = Session::new();
+    let (t, v) = text_and_curve(&mut s, json!({"fill": "#FF0000"}));
+    s.execute("variable.bind", &json!({"ids": [v], "field": "fills", "variable": "shadow"})).unwrap();
+    s.execute("variable.bind", &json!({"ids": [t], "field": "fills", "variable": "ink"})).unwrap();
+    let path = s.doc().unwrap().node(v).unwrap().clone();
+    assert!(path.bound.contains_key("fills"));
+    s.execute("text.onPath", &json!({"ids": [t, v]})).unwrap();
+    let n = s.doc().unwrap().node(t).unwrap();
+    assert_eq!(n.bound, path.bound, "the path's `fills` binding replaces the text's");
+    assert_eq!(n.fills, path.fills);
+}
+
+#[test]
 fn pattern_fills_tile_their_source_live() {
     let mut s = Session::new();
     let tile = id(s.execute("shape.rectangle", &json!({"x": 500, "y": 0, "width": 10, "height": 10})).unwrap());

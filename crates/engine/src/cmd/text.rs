@@ -148,7 +148,11 @@ fn on_path(s: &mut Session, p: &Value) -> Result<Value> {
     let (transform, w, h) = (pn.transform, pn.width, pn.height);
     let fills = pn.fills.iter().any(|f| f.visible).then(|| (pn.fills.clone(), pn.styles.fill.clone()));
     let effects = (!pn.effects.is_empty()).then(|| (pn.effects.clone(), pn.styles.effect.clone()));
-    let moved = |k: &str| (fills.is_some() && (k == "fill" || k.starts_with("fills/"))) || (effects.is_some() && k.starts_with("effects/"));
+    let moved = |k: &str| match super::lists::list_binding(k) {
+        Some((super::lists::BoundList::Fills, ..)) => fills.is_some(),
+        Some((super::lists::BoundList::Effects, ..)) => effects.is_some(),
+        _ => false,
+    };
     let bound: Vec<(String, VariableId)> = pn.bound.iter().filter(|(k, _)| moved(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
     let mut tp = TextPath::new(&geom);
     tp.start = num(p, "start").filter(|v| v.is_finite()).unwrap_or(0.0).clamp(0.0, 1.0);
