@@ -1022,6 +1022,45 @@ fn junk_documents_never_panic() {
     }
 }
 
+/// Grid track sizes reach the file and come back: fixed px, fractional fill and hug tracks, and a
+/// track the format has no name for leaves an equal track behind instead of failing the write.
+#[test]
+fn grid_track_sizes_round_trip() {
+    let mut doc = Document::new("File");
+    let page = doc.first_page().unwrap();
+    let grid = doc.create(page, NodeKind::Frame, "Grid", 0.0, 0.0, 400.0, 200.0).unwrap();
+    {
+        let node = doc.node_mut(grid).unwrap();
+        node.layout = Some(AutoLayout {
+            mode: LayoutMode::Grid,
+            grid_columns: 3,
+            grid_rows: 2,
+            column_tracks: vec![GridTrack::fixed(120.0), GridTrack::fill(2.0), GridTrack::hug()],
+            row_tracks: vec![GridTrack::fill(1.0), GridTrack::fixed(50.0)],
+            ..AutoLayout::default()
+        });
+    }
+    let (bytes, warnings) = export(&doc, None).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let (back, iw) = import(&bytes, "File").unwrap();
+    assert!(iw.is_empty(), "{iw:?}");
+    let l = back.node(back.pages[0]).and_then(|p| p.children.first()).and_then(|c| back.node(*c)).and_then(|n| n.layout.clone()).unwrap();
+    assert_eq!(l.column_tracks, vec![GridTrack::fixed(120.0), GridTrack::fill(2.0), GridTrack::hug()]);
+    assert_eq!(l.row_tracks, vec![GridTrack::fill(1.0), GridTrack::fixed(50.0)]);
+
+    // A negative fixed track is no size the format can name: the write still succeeds, the track
+    // falls back to an equal one, and the warning says so.
+    let mut odd = doc.clone();
+    if let Some(l) = odd.node_mut(grid).and_then(|n| n.layout.as_mut()) {
+        l.column_tracks[0] = GridTrack::fixed(-5.0);
+    }
+    let (bytes, warnings) = export(&odd, None).unwrap();
+    assert_eq!(warnings, vec!["grid tracks whose size the format can't hold were written as equal tracks".to_string()]);
+    let (back, _) = import(&bytes, "File").unwrap();
+    let l = back.node(back.pages[0]).and_then(|p| p.children.first()).and_then(|c| back.node(*c)).and_then(|n| n.layout.clone()).unwrap();
+    assert_eq!(l.column_tracks[0], GridTrack::fill(1.0), "an unwritable track reads back equal");
+}
+
 /// A frame's own min/max size survives whatever its parent is, not only under auto layout.
 #[test]
 fn frame_size_limits_survive_without_auto_layout_parent() {
