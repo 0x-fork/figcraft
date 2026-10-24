@@ -34,6 +34,10 @@ of the window itself (`screenshot` with `window`) needs it on screen: it is then
 
 ### Confining file access
 
+The roots below belong to the **headless** side: the session `figcraft-cli mcp` runs itself, with
+no window. A server attached with `--attach` runs the commands inside the app instead, so the app
+confines them — from the flags it was started with, not from anything passed to the CLI.
+
 ```sh
 figcraft-cli mcp --automation-read-root /work/project --automation-write-root /work/project/out
 ```
