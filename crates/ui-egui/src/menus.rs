@@ -231,7 +231,7 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         // The file name in the left panel's header turns into its editor, the name selected.
         "file.rename" => {
             app.ui.left_tab = crate::LeftTab::File;
-            app.ui.left_collapsed = false;
+            app.ui.open_left_panel();
             app.ui.rename_file = true;
         }
         "text.link" => app.ui.menu_input = Some(crate::dialogs::MenuInput::Link(String::new())),
@@ -246,7 +246,7 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         "tool.set" => app.ui.tool_flyout = Some("move"),
         "page.select" => {
             app.ui.left_tab = crate::LeftTab::File;
-            app.ui.left_collapsed = false;
+            app.ui.open_left_panel();
             app.ui.pages_open = true;
         }
         // From a menu the link is pasted into the Join dialog (`collab.join {link}` joins directly).

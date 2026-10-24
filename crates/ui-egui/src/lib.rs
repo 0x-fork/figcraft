@@ -491,6 +491,22 @@ pub enum MobilePanel {
     Left,
     Right,
 }
+
+impl UiState {
+    /// Opens the left panel; a narrow window shows it in place of the right one.
+    pub fn open_left_panel(&mut self) {
+        self.left_collapsed = false;
+        self.mobile_panel = Some(MobilePanel::Left);
+    }
+
+    /// Closes the left panel.
+    pub fn close_left_panel(&mut self) {
+        self.left_collapsed = true;
+        if self.mobile_panel == Some(MobilePanel::Left) {
+            self.mobile_panel = None;
+        }
+    }
+}
 pub const CANVAS_MIN: f32 = 160.0;
 
 /// The widths the side panels are drawn at in `avail` points (the window less the icon rail), from
@@ -645,6 +661,8 @@ pub struct UiState {
     pub left_collapsed: bool,
     /// The side panel open in a narrow window (a phone), where only one shows at a time.
     pub mobile_panel: Option<MobilePanel>,
+    /// The window was narrow (one side panel at a time) at the last frame.
+    pub narrow: bool,
     pub comments: comments::CommentUi,
     pub versions: versions::VersionUi,
     /// The branch review dialog, while open.
@@ -778,6 +796,7 @@ impl Default for UiState {
             batch_rename: None,
             left_collapsed: false,
             mobile_panel: None,
+            narrow: false,
             comments: comments::CommentUi::default(),
             versions: versions::VersionUi::default(),
             branch_review: None,
@@ -1054,7 +1073,14 @@ impl FigApp {
                 "panel.devMode" => {
                     self.ui.right_tab = if self.ui.right_tab == RightTab::Inspect { RightTab::Design } else { RightTab::Inspect };
                 }
-                "panel.leftSidebar" => self.ui.left_collapsed = !self.ui.left_collapsed,
+                "panel.leftSidebar" => {
+                    let shown = if self.ui.narrow { self.ui.mobile_panel == Some(MobilePanel::Left) } else { !self.ui.left_collapsed };
+                    if shown {
+                        self.ui.close_left_panel();
+                    } else {
+                        self.ui.open_left_panel();
+                    }
+                }
                 "panel.widths" => {
                     let width = |k: &str| r.data.get(k).and_then(Value::as_f64).map(|w| w as f32);
                     let (left, right) = (width("left"), width("right"));
@@ -1069,7 +1095,7 @@ impl FigApp {
                 "panel.layers" => self.ui.left_tab = LeftTab::File,
                 "panel.assets" => {
                     self.ui.left_tab = LeftTab::Assets;
-                    self.ui.left_collapsed = false;
+                    self.ui.open_left_panel();
                     self.ui.versions = Default::default();
                 }
                 "panel.versionHistory" => versions::open(self),
@@ -1078,7 +1104,7 @@ impl FigApp {
                 }
                 "panel.libraries" => {
                     self.ui.left_tab = LeftTab::Assets;
-                    self.ui.left_collapsed = false;
+                    self.ui.open_left_panel();
                     self.ui.libraries = true;
                 }
                 "home" => self.ui.home = true,
@@ -1635,7 +1661,11 @@ impl FigApp {
                 ui.painter().rect(r, 8.0, fill, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
                 icons::paint(ui.painter(), r.shrink(10.0), icon, if open { t.accent_on } else { t.icon });
                 if resp.clicked() {
-                    self.ui.mobile_panel = if open { None } else { Some(side) };
+                    if side == MobilePanel::Left && !open {
+                        self.ui.open_left_panel();
+                    } else {
+                        self.ui.mobile_panel = if open { None } else { Some(side) };
+                    }
                 }
                 ui.add_space(4.0);
             }
@@ -1696,6 +1726,7 @@ impl FigApp {
         let hidden = self.session.ds().map(|d| d.view.ui_hidden).unwrap_or(false);
         let narrow = !hidden && ui.available_width() < NARROW_WIDTH;
         let mobile = self.ui.mobile_panel.filter(|_| narrow);
+        self.ui.narrow = narrow;
         // A narrow window shows the right panel when its button asks for it, a board's too.
         let right_open = (self.right_panel_shown(hidden) && !narrow) || mobile == Some(MobilePanel::Right);
         if !hidden && (!narrow || mobile == Some(MobilePanel::Left)) {
