@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::cmd::CommandSpec;
 use crate::params::{get, id, id_of, num_or, string};
-use crate::{Result, Session, bad, spec};
+use crate::{EngineError, Result, Session, bad, spec};
 
 const CMD: &str = "data.fill";
 const MAX_ROWS: usize = 500;
@@ -31,6 +31,10 @@ fn file_name(name: &str) -> String {
 }
 
 fn fill(s: &mut Session, p: &Value) -> Result<Value> {
+    // Refused before any copy or file is made: a rollback afterwards wouldn't take files back.
+    if let Some(why) = s.live_read_only(s.ds()?.uid) {
+        return Err(EngineError::Disabled(CMD.into(), why.into()));
+    }
     let src = id(p, "id").ok_or_else(|| bad(CMD, "`id` (the frame to repeat) required"))?;
     let rows = match get(p, "rows") {
         Some(Value::Array(a)) if a.iter().all(Value::is_object) && a.len() <= MAX_ROWS => a.clone(),
