@@ -170,7 +170,8 @@ fn a_saved_file_opened_again_gets_its_tab_back() {
     u.run("file.close", json!({"index": 0}));
     u.run("file.open", json!({"path": path}));
     u.run("proto.present", json!({"start": a}));
-    assert_eq!(tabs(&u), json!([{"name": "Untitled - Page 1", "active": true}]));
+    // Saved as Proto.figcraft: the file's title follows its name.
+    assert_eq!(tabs(&u), json!([{"name": "Proto - Page 1", "active": true}]));
     u.key(pos2(700.0, 500.0), Key::Escape);
     assert!(!u.app.ui.home, "back to its file");
     assert_eq!(tabs(&u), json!([]));
