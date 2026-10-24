@@ -1,8 +1,8 @@
 //! `inspect_document` must not emit a message larger than a client can read in one piece: MCP
 //! stdio is newline-delimited JSON, so one result is one message, and a client whose read buffer
 //! it exceeds closes the pipe and kills the server for the rest of the session (#912).
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-mod common;
+use crate::common;
+
 use common::Client;
 use serde_json::{Value, json};
 
