@@ -1007,39 +1007,46 @@ impl Document {
 
     /// Check structural invariants (used by tests and after loading untrusted files).
     pub fn validate(&self) -> Vec<String> {
+        // Hostile files can break an invariant per child; keep only the first few reports.
+        const MAX_ISSUES: usize = 100;
+        fn note(issues: &mut Vec<String>, msg: impl FnOnce() -> String) {
+            if issues.len() < MAX_ISSUES {
+                issues.push(msg());
+            }
+        }
         let mut issues = Vec::new();
         for (id, n) in self.nodes.iter() {
             if n.id != *id {
-                issues.push(format!("node key {id} has id {}", n.id));
+                note(&mut issues, || format!("node key {id} has id {}", n.id));
             }
             let mut seen = std::collections::BTreeSet::new();
             for c in &n.children {
                 if !seen.insert(*c) {
-                    issues.push(format!("child {c} listed twice in {id}"));
+                    note(&mut issues, || format!("child {c} listed twice in {id}"));
                 }
                 match self.node(*c) {
                     Some(cn) if cn.parent == Some(*id) => {}
-                    Some(_) => issues.push(format!("child {c} of {id} has another parent")),
-                    None => issues.push(format!("child {c} of {id} missing")),
+                    Some(_) => note(&mut issues, || format!("child {c} of {id} has another parent")),
+                    None => note(&mut issues, || format!("child {c} of {id} missing")),
                 }
             }
             if let Some(p) = n.parent
                 && !self.node(p).is_some_and(|pn| pn.children.contains(id))
             {
-                issues.push(format!("{id} not listed in parent {p}"));
+                note(&mut issues, || format!("{id} not listed in parent {p}"));
             }
             // The library store's root is a page that is never listed.
             let listed = self.pages.contains(id) || (n.is_page() && self.libraries.store == Some(*id));
             if n.is_page() != listed {
-                issues.push(format!("page list mismatch for {id}"));
+                note(&mut issues, || format!("page list mismatch for {id}"));
             }
             if n.is_page() && n.parent.is_some() {
-                issues.push(format!("page {id} has a parent"));
+                note(&mut issues, || format!("page {id} has a parent"));
             }
         }
         let reachable = self.reachable();
         for id in self.nodes.keys().filter(|k| !reachable.contains(*k)) {
-            issues.push(format!("{id} is not under a page (cycle or detached)"));
+            note(&mut issues, || format!("{id} is not under a page (cycle or detached)"));
         }
         issues
     }
