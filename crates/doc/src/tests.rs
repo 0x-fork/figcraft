@@ -541,3 +541,15 @@ fn hit_test_even_odd_vector_hole_misses() {
     let nz = d.create(p, NodeKind::Vector { network: ring(WindingRule::NonZero) }, "V", 0.0, 0.0, 200.0, 200.0).unwrap();
     assert_eq!(d.hit_test(p, Point::new(100.0, 100.0), 0.0, None), Some(nz));
 }
+
+#[test]
+fn is_ancestor_holds_for_very_deep_chains() {
+    let mut d = Document::new("x");
+    let root = d.create(page(&d), NodeKind::Frame, "root", 0.0, 0.0, 1.0, 1.0).unwrap();
+    let mut leaf = root;
+    for _ in 0..10_005 {
+        leaf = d.create(leaf, NodeKind::Frame, "n", 0.0, 0.0, 1.0, 1.0).unwrap();
+    }
+    assert!(d.is_ancestor(root, leaf));
+    assert!(matches!(d.reparent(root, leaf, None), Err(DocError::Cycle(..))));
+}
