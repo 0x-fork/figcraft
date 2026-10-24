@@ -966,6 +966,8 @@ impl Session {
             ds.end_preview();
         }
         let before = self.ds().ok().map(|d| (d.doc.clone(), d.selection.clone(), d.page, d.uid));
+        // Cut and copy write the clipboard before a later check can refuse the command.
+        let clipboard_before = self.clipboard.clone();
         let result = guard::run(id, || (spec.run)(self, params))
             .and_then(|v| self.check_instance_structure(id, &before).map(|()| v))
             .and_then(|v| self.check_preview(id, &before).map(|()| v))
@@ -998,6 +1000,7 @@ impl Session {
                     ds.selection = sel;
                     ds.page = page;
                 }
+                self.clipboard = clipboard_before;
             }
         }
         result
