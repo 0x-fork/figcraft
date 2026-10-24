@@ -39,7 +39,7 @@ fn class(c: char) -> Class {
         return Class::Close;
     }
     match c {
-        ' ' | '\t' | '\u{3000}' | '\u{2002}'..='\u{200B}' => Class::Space,
+        ' ' | '\t' | '\u{3000}' | '\u{2002}'..='\u{2006}' | '\u{2008}'..='\u{200B}' => Class::Space,
         '-' | '/' | '\u{2010}' | '\u{2013}' | '\u{2014}' => Class::Hyphen,
         '\u{2E80}'..='\u{2FFF}'
         | '\u{3003}'..='\u{33FF}'
@@ -97,4 +97,16 @@ pub fn grapheme_step(text: &str, index: usize, forward: bool) -> usize {
         at = next;
     }
     at.min(index)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn figure_space_is_non_breaking() {
+        assert!(!break_between('\u{2007}', '0'));
+        assert!(!break_between('1', '\u{2007}'));
+        assert!(!is_space('\u{2007}'));
+    }
 }

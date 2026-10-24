@@ -468,17 +468,15 @@ fn type_settings(
         // Indent applies to start-aligned text only; elsewhere the field stays visible but off.
         let start_aligned =
             common(doc, ids, |n| n.kind.text().map(|t| t.align_h != TextAlignH::Center && t.align_h != TextAlignH::Justified)).flatten();
-        ui.horizontal(|ui| {
-            ui.add_enabled_ui(start_aligned != Some(false), |ui| {
-                ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new(tr("Paragraph indent")).font(regular(11.0)).color(t.text)));
-                let field = widgets::number_field(ui, Id::new("ty_indent"), Lead::None, indent, "", w - 118.0, 1.0);
-                if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) = field {
-                    app.set_props(ids, json!({"paragraphIndent": v.clamp(0.0, 10_000.0)}));
-                }
-            })
-            .response
-            .on_disabled_hover_text(tr("Paragraph indent applies to left-aligned text"));
-        });
+        ui.add_enabled_ui(start_aligned != Some(false), |ui| {
+            let field =
+                field_row(ui, tr("Paragraph indent"), |ui, fw| widgets::number_field(ui, Id::new("ty_indent"), Lead::None, indent, "", fw, 1.0));
+            if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) = field {
+                app.set_props(ids, json!({"paragraphIndent": v.clamp(0.0, 10_000.0)}));
+            }
+        })
+        .response
+        .on_disabled_hover_text(tr("Paragraph indent applies to left-aligned text"));
         ui.add_space(4.0);
         for (key, label) in [("hangingPunctuation", tr("Hanging punctuation")), ("hangingList", tr("Hanging list"))] {
             let all_on = ids.iter().all(|i| {
@@ -508,16 +506,13 @@ fn type_settings(
         if resize == Some(TextAutoResize::Truncate) {
             let max = common(doc, ids, |n| n.kind.text().map(|t| t.max_lines)).flatten();
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new(tr("Max lines")).font(regular(11.0)).color(t.text)));
-                let shown = max.map(f64::from).filter(|m| *m > 0.0);
-                let empty = if max.is_some() { tr("Auto") } else { tr(MIXED) };
-                if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
-                    widgets::number_field_or(ui, Id::new("ty_maxlines"), shown, empty, w - 118.0, 1.0)
-                {
-                    app.run("text.maxLines", json!({"ids": ids, "lines": v.round().clamp(0.0, 10_000.0)}));
-                }
-            });
+            let shown = max.map(f64::from).filter(|m| *m > 0.0);
+            let empty = if max.is_some() { tr("Auto") } else { tr(MIXED) };
+            if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
+                field_row(ui, tr("Max lines"), |ui, fw| widgets::number_field_or(ui, Id::new("ty_maxlines"), shown, empty, fw, 1.0))
+            {
+                app.run("text.maxLines", json!({"ids": ids, "lines": v.round().clamp(0.0, 10_000.0)}));
+            }
         }
     } else if let (2, Some(face)) = (tab, &vf) {
         variable_axes(app, ui, ids, styles, face);
@@ -542,13 +537,14 @@ fn type_settings(
     }
 }
 
-/// A Type settings row: a label, then `add` with the rest of the width.
-fn field_row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui, f32) -> R) -> R {
+/// A Type settings row: a label, then `add` with the rest of the width. A label wider than its
+/// column (French, say) narrows the field rather than the row outgrowing the popover, which then
+/// widened every frame (#1029).
+pub(crate) fn field_row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui, f32) -> R) -> R {
     let t = Tokens::get(ui.ctx());
-    let w = ui.available_width();
     ui.horizontal(|ui| {
         ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new(label).font(regular(11.0)).color(t.text)));
-        add(ui, w - 118.0)
+        add(ui, ui.available_width())
     })
     .inner
 }
@@ -587,7 +583,7 @@ fn decoration_details(app: &mut FigApp, ui: &mut Ui, styles: &[TextStyle], apply
             if !auto
                 && ui
                     .add(
-                        egui::Label::new(egui::RichText::new(tr("Auto")).font(regular(11.0)).color(Tokens::get(ui.ctx()).accent))
+                        egui::Label::new(egui::RichText::new(tr("Auto")).font(regular(11.0)).color(Tokens::get(ui.ctx()).accent_text))
                             .sense(Sense::click()),
                     )
                     .on_hover_text(tip)
@@ -713,7 +709,7 @@ fn variable_axes(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextSt
     }
     if styles.iter().any(|s| !s.variations.is_empty()) {
         ui.add_space(8.0);
-        let r = ui.add(egui::Label::new(egui::RichText::new(tr("Reset to style")).font(regular(11.0)).color(t.accent)).sense(Sense::click()));
+        let r = ui.add(egui::Label::new(egui::RichText::new(tr("Reset to style")).font(regular(11.0)).color(t.accent_text)).sense(Sense::click()));
         if r.on_hover_text(tr("Back to the values the font style implies")).clicked() {
             app.run("text.setVariations", json!({"ids": ids, "variations": {}, "replace": true}));
         }
@@ -789,7 +785,7 @@ fn axis_slider(ui: &mut Ui, id: Id, axis: &figcraft_text::Axis, value: Option<f6
         let x = x_of(v);
         p.rect_filled(Rect::from_min_max(track.min, pos2(x, track.max.y)), CornerRadius::same(2), t.accent);
         p.circle_filled(pos2(x, track.center().y), 6.0, Color32::WHITE);
-        let ring = if resp.hovered() || resp.dragged() { t.accent } else { t.border_strong };
+        let ring = if resp.hovered() || resp.dragged() { crate::theme::ACCENT } else { t.border_strong };
         p.circle_stroke(pos2(x, track.center().y), 6.0, Stroke::new(1.0, ring));
     }
     if resp.double_clicked() {
@@ -899,14 +895,14 @@ fn feature_row(ui: &mut Ui, tag: &str, label: &str, on: Option<bool>, supported:
     match on {
         Some(true) => {
             ui.painter().rect_filled(b, CornerRadius::same(3), t.accent);
-            icons::paint(ui.painter(), b.shrink(1.5), Icon::Check, Color32::WHITE);
+            icons::paint(ui.painter(), b.shrink(1.5), Icon::Check, t.accent_on);
         }
         Some(false) => {
             ui.painter().rect_stroke(b, CornerRadius::same(3), Stroke::new(1.0, t.border_strong), StrokeKind::Inside);
         }
         None => {
             ui.painter().rect_filled(b, CornerRadius::same(3), t.accent);
-            ui.painter().line_segment([pos2(b.min.x + 3.5, b.center().y), pos2(b.max.x - 3.5, b.center().y)], Stroke::new(1.5, Color32::WHITE));
+            ui.painter().line_segment([pos2(b.min.x + 3.5, b.center().y), pos2(b.max.x - 3.5, b.center().y)], Stroke::new(1.5, t.accent_on));
         }
     }
     let col = if supported { t.text } else { t.text_tertiary };
@@ -1025,7 +1021,7 @@ fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, ti
     crate::a11y::text(&resp, tip, value);
     ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
     if editing.is_some() {
-        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.accent), StrokeKind::Inside);
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, crate::theme::ACCENT), StrokeKind::Inside);
     } else if resp.hovered() {
         ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
     }
@@ -1274,7 +1270,7 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
                     if hovered {
                         ui.painter().rect_filled(rect, CornerRadius::same(5), t.accent);
                     }
-                    let col = if hovered { Color32::WHITE } else { t.text };
+                    let col = if hovered { t.accent_on } else { t.text };
                     if current.is_some_and(|c| c.eq_ignore_ascii_case(f)) {
                         icons::paint(
                             ui.painter(),

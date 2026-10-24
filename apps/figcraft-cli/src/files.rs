@@ -29,9 +29,20 @@ fn image_format(e: &str) -> Option<ExportFormat> {
     }
 }
 
+/// Writes through [`figcraft_engine::file_access`] when automation roots are in force, so a
+/// confined run can only write inside a write root (#833).
+///
+/// Unconfined it writes with `std::fs::write`, as it always did. `file_access::write` stages the
+/// bytes and renames them into place, which **replaces** a symbolic link at `path` instead of
+/// writing through it to its target -- a change of behaviour for anyone whose output path is a
+/// link, and nothing to do with confinement. Inside a root the staged write is the right one:
+/// `Roots::check` has already refused a link that leads out of the root.
 fn write(path: &str, bytes: &[u8]) -> CliResult<()> {
     if let Some(dir) = Path::new(path).parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).map_err(|e| CliError::Failed(format!("{}: {e}", dir.display())))?;
+        figcraft_engine::file_access::create_dir_all(dir).map_err(|e| CliError::Failed(e.to_string()))?;
+    }
+    if figcraft_engine::file_access::current().is_some() {
+        return figcraft_engine::file_access::write(path, bytes).map_err(|e| CliError::Failed(e.to_string()));
     }
     std::fs::write(path, bytes).map_err(|e| CliError::Failed(format!("{path}: {e}")))
 }
@@ -196,9 +207,11 @@ pub fn info(path: &str, as_json: bool) -> CliResult<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// The file name a layer exports to: the app's rule ([`figcraft_engine::cmd::file::safe_file_name`],
+/// so `/` becomes `_` too), without leading or trailing spaces and dots, at most 100 characters.
 fn sanitize(name: &str) -> String {
-    let s: String = name.chars().map(|c| if c.is_alphanumeric() || matches!(c, '-' | '_' | ' ' | '.') { c } else { '_' }).collect();
-    let s = s.trim().trim_matches('.').to_string();
+    let s = figcraft_engine::cmd::file::safe_file_name(name);
+    let s = s.trim_matches(|c: char| c == '.' || c.is_whitespace()).to_string();
     if s.is_empty() { "layer".into() } else { s.chars().take(100).collect() }
 }
 
@@ -244,7 +257,7 @@ pub fn export(file: &str, out: &str, t: &Target) -> CliResult<ExitCode> {
         println!("{out}");
         return Ok(ExitCode::SUCCESS);
     }
-    std::fs::create_dir_all(out).map_err(|e| CliError::Failed(format!("{out}: {e}")))?;
+    figcraft_engine::file_access::create_dir_all(out).map_err(|e| CliError::Failed(e.to_string()))?;
     let ids = match target {
         Some(t) => vec![t],
         None => {
@@ -329,7 +342,8 @@ pub fn parse_script(text: &str) -> Result<Vec<(String, Value)>, String> {
 }
 
 pub fn run_script(script: &str, input: Option<&str>, out: Option<&str>) -> CliResult<ExitCode> {
-    let text = std::fs::read_to_string(script).map_err(|e| CliError::Failed(format!("{script}: {e}")))?;
+    let bytes = figcraft_engine::file_access::read(script).map_err(|e| CliError::Failed(e.to_string()))?;
+    let text = String::from_utf8(bytes).map_err(|_| CliError::Failed(format!("{script}: not UTF-8")))?;
     let steps = parse_script(&text).map_err(|e| CliError::Failed(format!("{script}: {e}")))?;
     let mut s = match input {
         Some(path) => {
@@ -399,6 +413,13 @@ mod tests {
         assert_eq!(sanitize("Home / Hero"), "Home _ Hero");
         assert_eq!(sanitize("../.."), "_");
         assert_eq!(sanitize(""), "layer");
+        // The same characters the app's export keeps (#1154): only what file systems refuse goes.
+        assert_eq!(sanitize("Homepage - desktop (live + verbeteringen)"), "Homepage - desktop (live + verbeteringen)");
+        assert_eq!(sanitize("Q&A, 50% #1 [v2] {x} ~é"), "Q&A, 50% #1 [v2] {x} ~é");
+        assert_eq!(sanitize("a\\b:c*d?e\"f<g>h|i\tj"), "a_b_c_d_e_f_g_h_i_j");
+        assert_eq!(sanitize(" .hidden. "), "hidden");
+        assert_eq!(sanitize(" . .name. . "), "name", "spaces and dots at the edges, mixed");
+        assert_eq!(sanitize(&"x".repeat(300)).chars().count(), 100);
     }
 
     #[test]

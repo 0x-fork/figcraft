@@ -482,7 +482,7 @@ fn style_grid(ui: &mut Ui, list: &[(&Style, Key)], applied: Option<&Key>, editab
                     None => preview(ui, r, s, StyleSlot::Fill),
                 }
                 if applied == Some(key) {
-                    ui.painter().rect_stroke(r.expand(2.0), CornerRadius::same(5), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
+                    ui.painter().rect_stroke(r.expand(2.0), CornerRadius::same(5), Stroke::new(2.0, crate::theme::ACCENT), egui::StrokeKind::Inside);
                 } else if resp.hovered() && !text {
                     ui.painter().rect_stroke(r.expand(2.0), CornerRadius::same(4), Stroke::new(1.0, t.menu_text), egui::StrokeKind::Inside);
                 }
@@ -909,7 +909,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     // Clicks in the colour picker editing this picker's style, or in a menu the editor opened,
     // keep it open.
     let picker_rect =
-        app.ui.picker.as_ref().filter(|t| matches!(t, PickerTarget::Style { .. })).and(ctx.memory(|m| m.area_rect(Id::new("color_picker"))));
+        app.ui.picker.as_ref().filter(|t| matches!(t, PickerTarget::Style { .. })).and(ctx.memory(|m| m.area_rect(crate::colorpicker::window_id())));
     // So do clicks in the variable picker binding one of its fields (Escape closes that first).
     let variables = crate::variable_ui::picker_rect(ctx);
     let in_popup = egui::Popup::is_any_open(ctx) || variables.is_some();
