@@ -286,11 +286,13 @@ pub fn menu_row(ui: &mut Ui, label: &str, shortcut: &str, art_w: f32, art: impl 
     if hovered {
         ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
     }
-    let col = t.menu_text;
+    // These menus sit on the theme's popup fill (white in the light theme), not on the dark
+    // `t.menu` of the menu bar: the theme's text, white only on the green highlight (#972).
+    let col = if hovered { t.menu_text } else { t.text };
     ui.painter().galley(pos2(r.min.x + MENU_PAD, r.center().y - text.size().y / 2.0), text, col);
     if let Some(k) = keys {
         let at = pos2(r.max.x - MENU_PAD - k.size().x, r.center().y - k.size().y / 2.0);
-        ui.painter().galley(at, k, if hovered { t.menu_text } else { t.menu_dim });
+        ui.painter().galley(at, k, if hovered { t.menu_text } else { t.text_secondary });
     }
     art(ui.painter(), r, col);
     resp
