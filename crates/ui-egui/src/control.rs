@@ -252,7 +252,7 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                 .collect(),
         )),
         "document.inspect" => {
-            let depth = p.get("depth").and_then(Value::as_u64).unwrap_or(8) as usize;
+            let depth = p.get("depth").and_then(Value::as_u64).unwrap_or(8).min(64) as usize;
             Ok(figcraft_engine::inspect::document(&app.session, depth, b(p, "allPages")))
         }
         "node.get" => {
