@@ -742,7 +742,7 @@ fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, S
             }
         }
         if used_wire + MARKER_RESERVE <= budget {
-            return Ok(ToolResult::json(&with_marker(value, depth, used, wire, used_wire, max_bytes, None)));
+            return Ok(ToolResult::json(&with_marker(value, depth, used, wire, used_wire, max_bytes, true, None)));
         }
     }
 
@@ -755,6 +755,16 @@ fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, S
     let after = offset + shown.max(1);
     let next = (after < total).then_some(after);
     let used_wire = wire_size(&value);
+    if used_wire + MARKER_RESERVE > budget {
+        // Even with every child left out, the layer's own fields (a very long name, say) pass the
+        // limit: an answer would be larger than the caller can read, so there is none.
+        return Err(format!(
+            "layer {id} takes {used_wire} bytes on the wire without its children, more than fit in maxBytes {max_bytes}; ask again with a larger `maxBytes`"
+        ));
+    }
+    // Children left out after the window were cut by size; a window that only `offset` moved, of a
+    // subtree within the limit, is paging.
+    let over = wire > budget || next.is_some();
     let mut out = with_marker(
         value,
         depth,
@@ -762,6 +772,7 @@ fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, S
         wire,
         used_wire,
         max_bytes,
+        over,
         Some(json!({
             "from": offset,
             "shown": shown,
@@ -769,7 +780,7 @@ fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, S
             "nextOffset": next,
         })),
     );
-    if window && shown == total && offset == 0 && used == depth && used_wire + MARKER_RESERVE <= budget {
+    if window && shown == total && offset == 0 && used == depth {
         // Nothing was left out after all (an offset of zero that fitted whole).
         out.as_object_mut().map(|o| o.remove("truncated"));
     }
@@ -801,9 +812,19 @@ fn children_window(value: &mut Value, offset: usize, budget: usize) -> bool {
     true
 }
 
-/// `value` with the `truncated` object saying how it was cut. `children`: the window, when the
+/// `value` with the `truncated` object saying how it was cut. `over`: the subtree asked for passed
+/// the limit (else the window is only the `offset` asked for). `children`: the window, when the
 /// children were cut as well as (or instead of) the depth.
-fn with_marker(mut value: Value, asked: u64, used: u64, asked_wire: usize, used_wire: usize, max_bytes: usize, children: Option<Value>) -> Value {
+fn with_marker(
+    mut value: Value,
+    asked: u64,
+    used: u64,
+    asked_wire: usize,
+    used_wire: usize,
+    max_bytes: usize,
+    over: bool,
+    children: Option<Value>,
+) -> Value {
     if let Some(obj) = value.as_object_mut() {
         let mut marker = json!({
             "requestedDepth": asked,
@@ -815,10 +836,16 @@ fn with_marker(mut value: Value, asked: u64, used: u64, asked_wire: usize, used_
         match &children {
             Some(window) => {
                 marker["children"] = window.clone();
-                marker["reason"] = json!(format!(
-                    "the subtree at depth {asked} would be {asked_wire} bytes on the wire, over the {max_bytes}-byte limit a client can read in one message; its children are reported from {} instead",
-                    window.get("from").and_then(Value::as_u64).unwrap_or(0)
-                ));
+                let from = window.get("from").and_then(Value::as_u64).unwrap_or(0);
+                marker["reason"] = json!(if over {
+                    format!(
+                        "the subtree at depth {asked} would be {asked_wire} bytes on the wire, over the {max_bytes}-byte limit a client can read in one message; its children are reported from {from} instead"
+                    )
+                } else {
+                    format!(
+                        "its children are reported from {from}, the `offset` asked for; the subtree at depth {asked} ({asked_wire} bytes) is within the {max_bytes}-byte limit"
+                    )
+                });
                 marker["hint"] = json!("ask again with the `offset` in `children.nextOffset` for the rest, or get_node({id, depth}) on one child");
             }
             None => {

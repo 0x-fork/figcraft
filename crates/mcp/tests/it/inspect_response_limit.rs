@@ -127,6 +127,7 @@ fn a_node_with_more_children_than_fit_is_windowed() {
     assert_eq!(window["total"], json!(total), "{window}");
     assert!(shown > 0 && shown < total, "some children, not all: {shown} of {total}");
     assert_eq!(window["nextOffset"], json!(shown), "the offset to ask for next: {window}");
+    assert!(cut["truncated"]["reason"].as_str().unwrap_or("").contains("over the"), "cut by size: {}", cut["truncated"]);
     // The layer itself is still there, not just a marker.
     assert_eq!(cut["id"], whole["id"]);
 
@@ -182,4 +183,36 @@ fn children_too_large_to_fit_page_one_at_a_time() {
     let (page, _) = get_node(&mut c, json!({"id": single, "depth": 1, "maxBytes": 2500}));
     assert_eq!(page["children"].as_array().map_or(0, Vec::len), 0);
     assert_eq!(page["truncated"]["children"]["total"], json!(1), "{}", page["truncated"]);
+}
+
+/// A layer whose own fields pass the limit with every child left out is refused: an answer would
+/// be over maxBytes, and the marker would only make it larger.
+#[test]
+fn a_layer_too_large_on_its_own_is_refused() {
+    let mut c = Client::new();
+    let rect = c.create(json!({"type": "rectangle", "x": 0, "y": 0, "width": 20, "height": 20, "name": "n".repeat(3000)}));
+    let r = c.call("get_node", json!({"id": rect, "maxBytes": 2500}));
+    assert_eq!(r["isError"], true, "{r}");
+    assert!(r["content"][0]["text"].as_str().unwrap_or("").contains("maxBytes"), "{r}");
+    // A layer of ordinary size answers within the same limit.
+    let small = c.create(json!({"type": "rectangle", "x": 0, "y": 0, "width": 20, "height": 20}));
+    let (v, wire) = get_node(&mut c, json!({"id": small, "maxBytes": 2500}));
+    assert!(wire <= 2500 && v["truncated"].is_null(), "{wire}: {v}");
+}
+
+/// A window that only an `offset` made, of a subtree within the limit, is paging: the marker
+/// doesn't say the limit was passed.
+#[test]
+fn an_offset_alone_pages_without_claiming_the_limit() {
+    let mut c = Client::new();
+    let frame = c.create(json!({"type": "frame", "x": 0, "y": 0, "width": 400, "height": 400}));
+    for i in 0..3 {
+        c.create(json!({"type": "rectangle", "parent": frame, "x": i * 5, "y": 5, "width": 20, "height": 20}));
+    }
+    let (page, _) = get_node(&mut c, json!({"id": frame, "depth": 1, "offset": 1}));
+    let t = &page["truncated"];
+    assert_eq!(page["children"].as_array().map_or(0, Vec::len), 2, "{t}");
+    assert!(t["children"]["nextOffset"].is_null(), "{t}");
+    let reason = t["reason"].as_str().unwrap_or("");
+    assert!(reason.contains("offset") && !reason.contains("over the"), "{reason}");
 }
