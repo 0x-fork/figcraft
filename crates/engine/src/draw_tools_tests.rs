@@ -129,6 +129,20 @@ fn text_put_on_a_stroke_only_path_keeps_its_own_fill_and_effects() {
 }
 
 #[test]
+fn text_put_on_a_path_with_an_empty_effect_style_keeps_its_own_effects() {
+    let mut s = Session::new();
+    let (t, v) = text_and_curve(&mut s, json!({"fills": []}));
+    let none = s.execute("style.create", &json!({"type": "effect", "name": "None", "value": []})).unwrap()["id"].clone();
+    s.execute("style.apply", &json!({"ids": [v], "style": none})).unwrap();
+    let path = s.doc().unwrap().node(v).unwrap().clone();
+    assert!(path.effects.is_empty() && path.styles.effect.is_some());
+    let text = s.doc().unwrap().node(t).unwrap().clone();
+    s.execute("text.onPath", &json!({"ids": [t, v]})).unwrap();
+    let n = s.doc().unwrap().node(t).unwrap();
+    assert_eq!((&n.effects, &n.styles.effect), (&text.effects, &text.styles.effect), "a path whose effect style draws no effects");
+}
+
+#[test]
 fn pattern_fills_tile_their_source_live() {
     let mut s = Session::new();
     let tile = id(s.execute("shape.rectangle", &json!({"x": 500, "y": 0, "width": 10, "height": 10})).unwrap());

@@ -147,7 +147,7 @@ fn on_path(s: &mut Session, p: &Value) -> Result<Value> {
     let (parent, index) = (pn.parent.ok_or_else(|| bad(CMD, "pages have no path"))?, doc.index_in_parent(path));
     let (transform, w, h) = (pn.transform, pn.width, pn.height);
     let fills = pn.fills.iter().any(|f| f.visible).then(|| (pn.fills.clone(), pn.styles.fill.clone()));
-    let effects = (!pn.effects.is_empty() || pn.styles.effect.is_some()).then(|| (pn.effects.clone(), pn.styles.effect.clone()));
+    let effects = (!pn.effects.is_empty()).then(|| (pn.effects.clone(), pn.styles.effect.clone()));
     let moved = |k: &str| (fills.is_some() && (k == "fill" || k.starts_with("fills/"))) || (effects.is_some() && k.starts_with("effects/"));
     let bound: Vec<(String, VariableId)> = pn.bound.iter().filter(|(k, _)| moved(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
     let mut tp = TextPath::new(&geom);
