@@ -613,15 +613,18 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
     // mode counts on, so leaving it right away would otherwise take a fourth click or a pause.
     let ds = app.session.ds().ok();
     let editing = ds.is_some_and(|d| d.vector_edit.is_some() || d.text_edit.is_some());
-    let empty_canvas = ds.is_some_and(|d| {
-        let Some(ve) = d.vector_edit.as_ref().filter(|v| v.anchor.is_none() && d.text_edit.is_none()) else {
-            return false;
-        };
-        let p = app.to_page(pos);
-        let tol = 6.0 / d.view.zoom.max(1e-6);
-        ve.parts().iter().all(|part| d.doc.world_render_bounds(part.id).is_none_or(|b| !b.inflate(tol * 4.0, tol * 4.0).contains(p)))
-    });
-    if resp.double_clicked() || (resp.triple_clicked() && (!editing || empty_canvas)) {
+    // Only a triple click asks (it walks the parts' render bounds).
+    let empty_canvas = || {
+        ds.is_some_and(|d| {
+            let Some(ve) = d.vector_edit.as_ref().filter(|v| v.anchor.is_none() && d.text_edit.is_none()) else {
+                return false;
+            };
+            let p = app.to_page(pos);
+            let tol = 6.0 / d.view.zoom.max(1e-6);
+            ve.parts().iter().all(|part| d.doc.world_render_bounds(part.id).is_none_or(|b| !b.inflate(tol * 4.0, tol * 4.0).contains(p)))
+        })
+    };
+    if resp.double_clicked() || (resp.triple_clicked() && (!editing || empty_canvas())) {
         let ev = pointer_event(app, PointerKind::DoubleClick, pos, &mods);
         if let Err(e) = app.session.pointer(&ev) {
             app.toast(e.to_string());
