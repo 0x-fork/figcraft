@@ -79,6 +79,8 @@ struct W<'a> {
     clip: Option<String>,
     /// `id` attributes written so far.
     used_ids: std::collections::BTreeSet<String>,
+    /// The next `_k` suffix to try per base id, so repeated names don't rescan from `_2`.
+    next_suffix: std::collections::HashMap<String, usize>,
 }
 
 /// ` clip-path="url(#…)"` for a clip path id (else nothing).
@@ -549,7 +551,15 @@ impl W<'_> {
     fn unique_id(&mut self, name: &str) -> String {
         let base: String = name.chars().take(200).map(|c| if c.is_whitespace() || c.is_control() { '_' } else { c }).collect();
         let base = if base.is_empty() { "layer".to_string() } else { base };
-        let id = (1..).map(|k| if k == 1 { base.clone() } else { format!("{base}_{k}") }).find(|i| !self.used_ids.contains(i)).unwrap_or(base);
+        let next = self.next_suffix.entry(base.clone()).or_insert(1);
+        let id = loop {
+            let k = *next;
+            *next += 1;
+            let candidate = if k == 1 { base.clone() } else { format!("{base}_{k}") };
+            if !self.used_ids.contains(&candidate) {
+                break candidate;
+            }
+        };
         self.used_ids.insert(id.clone());
         id
     }
@@ -1004,6 +1014,7 @@ pub fn try_export_svg(doc: &Document, ids: &[NodeId], opts: &SvgOptions) -> Resu
         mask: None,
         clip: None,
         used_ids: Default::default(),
+        next_suffix: Default::default(),
     };
     for id in ids {
         let parent_xf = doc.node(*id).and_then(|n| n.parent).map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY);
