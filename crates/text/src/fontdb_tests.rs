@@ -305,20 +305,24 @@ fn hidden_apple_families_take_public_names() {
     assert_eq!(public_family("Inter").as_deref(), Some("Inter"));
 }
 
-/// Like the platforms, a variable font's optical size follows the text size, also for a named
-/// style (macOS only: the system font is the one variable font with an optical size axis at hand).
+/// A named style keeps its own optical size whatever the text size (existing documents render as
+/// before); a custom `opsz` value (what a `.sketch` import sets) wins. Needs a variable font with an
+/// optical size axis and named instances: macOS's or Windows' system font.
 #[test]
-fn optical_size_follows_the_text_size() {
-    let Ok(bytes) = std::fs::read("/System/Library/Fonts/SFNS.ttf") else { return };
+fn named_styles_keep_their_optical_size() {
+    let Some(bytes) = ["/System/Library/Fonts/SFNS.ttf", "C:/Windows/Fonts/SegUIVar.ttf"].iter().find_map(|p| std::fs::read(p).ok()) else {
+        return;
+    };
     let face = Face::from_bytes(FontBytes::Shared(std::sync::Arc::new(bytes)), 0, None, None).unwrap();
     let opsz = face.axes.iter().position(|a| a.tag == "opsz").unwrap();
-    let at = |size: f64| {
-        let style =
-            figcraft_doc::TextStyle { font_family: "System Font".into(), font_style: "Semibold".into(), font_size: size, ..Default::default() };
-        face.axis_values(&style)[opsz]
-    };
-    assert_eq!(at(12.0), 17.0);
-    assert_eq!(at(40.0), 40.0);
+    let inst = face.instances.first().unwrap();
+    let mut style = figcraft_doc::TextStyle { font_style: inst.name.clone(), ..Default::default() };
+    for size in [1.0, 12.0, 40.0, 200.0] {
+        style.font_size = size;
+        assert_eq!(face.axis_values(&style)[opsz], inst.coords[opsz], "{} at {size}", inst.name);
+    }
+    style.variations.insert("opsz".into(), 1e9);
+    assert_eq!(face.axis_values(&style)[opsz], face.axes[opsz].max);
 }
 
 /// The tracking a font's `trak` table gives at a size (Apple's fonts carry one; the platform text

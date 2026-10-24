@@ -334,6 +334,10 @@ fn sketch_text_keeps_the_platform_tracking() {
     let NodeKind::Text(td) = &doc.nodes().find(|n| n.name == "Label").unwrap().kind else { panic!("not text") };
     let ls = td.style.letter_spacing.resolve(13.0);
     assert!((ls - (-12.0 * 13.0 / 2048.0)).abs() < 1e-6, "{ls}");
+    // A named style's optical size follows the size there: the text carries it.
+    let f = figcraft_text::fontdb::find_face(&td.style.font_family, &td.style.font_style).unwrap();
+    let named = f.axis("opsz").is_some() && f.instance(&td.style.font_style).is_some();
+    assert_eq!(td.style.variations.get("opsz").copied(), named.then_some(13.0), "{:?}", td.style);
 }
 
 /// A text an override changed is measured again, and the stack around it re-flows: a hugging chip

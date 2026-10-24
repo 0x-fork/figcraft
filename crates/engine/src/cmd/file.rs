@@ -662,7 +662,8 @@ fn match_font_families(doc: &mut Document) {
 
 /// Sketch draws text with the tracking a font's `trak` table gives at its size (Apple's text engine
 /// adds it; FigCraft's, like Figma's, doesn't): the imported text keeps it as letter spacing, so
-/// lines measure and break as they did there.
+/// lines measure and break as they did there. A named style's optical size follows the text size
+/// there too (FigCraft keeps the instance's), so the imported text carries it as an `opsz` value.
 fn platform_tracking(doc: &mut Document) {
     let mut cache: std::collections::BTreeMap<(String, String), Option<std::sync::Arc<figcraft_text::fontdb::Face>>> =
         std::collections::BTreeMap::new();
@@ -682,6 +683,9 @@ fn platform_tracking(doc: &mut Document) {
         if t != 0.0 && t.is_finite() {
             let px = style.letter_spacing.resolve(style.font_size);
             style.letter_spacing = figcraft_doc::LetterSpacing::Pixels(px + t);
+        }
+        if f.axis("opsz").is_some() && f.instance(&style.font_style).is_some() && style.font_size.is_finite() {
+            style.variations.entry("opsz".into()).or_insert(style.font_size);
         }
     };
     let ids: Vec<NodeId> = doc.nodes().filter(|n| matches!(n.kind, NodeKind::Text(_))).map(|n| n.id).collect();

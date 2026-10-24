@@ -317,12 +317,6 @@ impl Face {
             for (slot, c) in v.iter_mut().zip(&inst.coords) {
                 *slot = *c;
             }
-            // The optical size follows the text size for a named style too, as on the platforms.
-            for (slot, a) in v.iter_mut().zip(&self.axes) {
-                if a.tag == "opsz" && style.font_size.is_finite() {
-                    *slot = style.font_size;
-                }
-            }
         } else {
             let own_style = norm_style(&self.style) == norm_style(&style.font_style);
             let italic = style.font_style.to_ascii_lowercase().contains("italic") && !self.italic;
