@@ -224,9 +224,11 @@ pub struct DevItem {
 /// and so is Revert to saved, which isn't an undo step but throws the design's unsaved edits away.
 pub fn dev_mode_allows(id: &str) -> bool {
     const OWN: [&str; 6] = ["annotation.", "dev.", "devMode.", "devResource.", "codeConnect.", "comment."];
+    // Edits recorded as one grouped undo step, so their spec says no history of its own.
+    const GROUPED: [&str; 1] = ["data.fill"];
     match id.strip_prefix("tool.") {
         Some(t) => matches!(t, "move" | "hand" | "comment"),
-        None if id == "file.revert" => false,
+        None if id == "file.revert" || GROUPED.contains(&id) => false,
         None => OWN.iter().any(|p| id.starts_with(p)) || crate::cmd::find_command(id).is_none_or(|c| !c.history),
     }
 }

@@ -23,6 +23,7 @@ pub mod codegen;
 pub mod collab;
 pub mod component_codegen;
 pub mod components;
+pub mod datafill;
 pub mod dev_measurements;
 pub mod dev_resources;
 pub mod devcompare;
@@ -61,6 +62,7 @@ pub mod synthetic;
 pub mod synthetic_ds;
 pub mod templates;
 pub mod textedit;
+pub mod textfit;
 pub mod textpreview;
 pub mod token_roles;
 pub mod tools;
@@ -1657,6 +1659,8 @@ mod cursor_tests;
 #[cfg(test)]
 mod dark_page_text_tests;
 #[cfg(test)]
+mod datafill_tests;
+#[cfg(test)]
 mod design_paste_tests;
 #[cfg(test)]
 mod dev_measurements_tests;
@@ -1888,6 +1892,8 @@ mod text_motion_tests;
 mod text_style_picker_tests;
 #[cfg(test)]
 mod text_tail_tests;
+#[cfg(test)]
+mod textfit_tests;
 #[cfg(test)]
 mod theme_pages_tests;
 #[cfg(test)]

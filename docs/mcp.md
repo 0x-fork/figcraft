@@ -344,6 +344,40 @@ tips; headless, it only sets the preference.
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"export","arguments":{"format":"png","path":"dashboard.png"}}}
 ```
 
+### Filling copies with data
+
+`data.fill {id, rows, gap?, formats?, dir?, format?, scale?}` repeats a frame once per row (a carousel, a set
+of posts, a card per item) in one undo step: each key of a row names layers in the copy, and a
+string (or number) sets their text, `{text?, fill?, visible?}` sets more; `name` names the copy
+(default "<frame> <n>"). Copies go in a row to the right, `gap` apart (default 100). With `dir`, each
+copy is exported there as `<name>.<format>` (png by default) after the edits land. Returns `{ids,
+missing (keys no layer is named), files?, errors?}`. `errors` lists the exports that failed as
+`[{id, path, error}]`; the copies stay, and the files that were written are in `files`.
+
+Copy that changes length per row can size itself: `{"Headline": {"text": "…", "fit": {"maxLines": 2}}}` runs
+`text.fit` on those layers after the text is set.
+
+`formats: [{name?, width, height}]` makes every row once per size: the copy is resized so its auto layout
+reflows, named `<name>-<format name>` (default `<width>x<height>`), and placed under the row's previous
+format. Text `fit` runs after the resize. Use case: one call turns a 1080×1350 post into feed, story
+(1080×1920) and square (1080×1080) files for each slide of a carousel; the frame must be auto layout (fixed-
+position children keep their place).
+
+`text.fit {ids?, maxLines?, minSize?, orphans?}` gives a text layer with a fixed width (auto height or fixed size)
+the largest font size, down to `minSize` (default 60% of the current), at which it stays within `maxLines` lines
+and its box's height. Every style run scales by the same factor. A one-word last line (an orphan) is avoided by
+shrinking up to 8% more, else by keeping the last two words together with a no-break space. A one-word paragraph after a hard line break is not an orphan. Text never
+grows, text that already fits keeps its exact size, and sizes round to a tenth without going below `minSize`.
+Returns `{fitted: [{id, fontSize, lines, fits, orphan}]}`. Use case: a carousel slide "Lighthouse 100. Loads in under
+1s." at 96px broke into three lines with "1s." alone; with `fit: {maxLines: 3}` it is two balanced lines.
+
+```json
+{"command": "data.fill", "params": {"id": 80, "dir": "out/carousel", "scale": 1, "rows": [
+  {"name": "01-cover", "Headline": "Your website and AI chat assistant in 7 days", "Badge": {"visible": true}},
+  {"name": "02-proof", "Headline": "Lighthouse 100, loads in under a second", "Badge": {"visible": false}}
+]}}
+```
+
 ### Boards
 
 A board is a file of its own kind for thinking together: `file.newBoard {name?}` opens one (its
