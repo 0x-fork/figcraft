@@ -456,8 +456,9 @@ pub fn rect_side_strokes(w: f64, h: f64, sides: [f64; 4], align: StrokeAlign) ->
 /// Per-side stroke of a rectangle with corner radii `[tl, tr, br, bl]`, like CSS borders: the outer
 /// edge is the rounded rectangle (center and outside grow its box by half or all of each side's
 /// weight, and each non-zero radius with it); the inner edge is inset by each side's weight, with
-/// elliptical corners `max(0, R − weight)` across and down (square where either is 0). An even-odd
-/// ring whose inner edge runs against the outer one, so it is a ring under non-zero too.
+/// elliptical corners `max(0, R − weight)` across and down (square where either is 0). Corners
+/// that stay circular are smoothed like the shape's. An even-odd ring whose inner edge runs against
+/// the outer one, so it is a ring under non-zero too.
 pub fn rounded_side_strokes(w: f64, h: f64, radii: [f64; 4], smoothing: f64, sides: [f64; 4], align: StrokeAlign) -> BezPath {
     let [t, r, b, l] = sides.map(non_negative);
     if t + r + b + l <= 0.0 {
@@ -477,7 +478,7 @@ pub fn rounded_side_strokes(w: f64, h: f64, radii: [f64; 4], smoothing: f64, sid
         figcraft_geom::rounded_rect(w, h, radii, smoothing)
     } else {
         let grown = corners.map(|(rr, x, y)| if rr > 0.0 { (rr + x * f, rr + y * f) } else { (0.0, 0.0) });
-        elliptical_rect(figcraft_geom::Rect::new(-l * f, -t * f, w + r * f, h + b * f), grown)
+        corner_rect(figcraft_geom::Rect::new(-l * f, -t * f, w + r * f, h + b * f), grown, smoothing)
     };
     let k = 1.0 - f;
     let inner = figcraft_geom::Rect::new(l * k, t * k, w - r * k, h - b * k);
@@ -485,9 +486,18 @@ pub fn rounded_side_strokes(w: f64, h: f64, radii: [f64; 4], smoothing: f64, sid
         return outer;
     }
     let (inset, fit) = fit_corners(inner, corners.map(|(rr, x, y)| ((rr - x * k).max(0.0), (rr - y * k).max(0.0))));
-    // The hole's corners sit on the outer ones, inside them, unless they were shrunk to fit or the
-    // outer ones are smoothed: then it may leave the outer edge.
-    ring(outer, &elliptical_rect(inner, inset), fit < 1.0 || (align == StrokeAlign::Inside && smoothing > 0.0))
+    // The hole's corners sit on the outer ones, inside them, unless they were shrunk to fit or
+    // smoothed: then it may leave the outer edge.
+    ring(outer, &corner_rect(inner, inset, smoothing), fit < 1.0 || smoothing > 0.0)
+}
+
+/// Rectangle `r` with `(rx, ry)` corners, smoothed like `figcraft_geom::rounded_rect` where every
+/// corner is circular (smoothing is defined for those only).
+fn corner_rect(r: figcraft_geom::Rect, corners: [(f64, f64); 4], smoothing: f64) -> BezPath {
+    if smoothing > 0.0 && corners.iter().all(|(rx, ry)| rx == ry) {
+        return kurbo::Affine::translate((r.x0, r.y0)) * figcraft_geom::rounded_rect(r.width(), r.height(), corners.map(|c| c.0), smoothing);
+    }
+    elliptical_rect(r, corners)
 }
 
 fn non_negative(v: f64) -> f64 {
