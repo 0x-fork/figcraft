@@ -393,6 +393,18 @@ fn apply_order(k: &str) -> u8 {
     }
 }
 
+/// An explicit width (`is_w`) or height makes hugging or filling on that axis fixed, like typing
+/// into W or H.
+fn fix_axis(doc: &mut Document, id: NodeId, is_w: bool) -> Result<()> {
+    let n = doc.get_mut(id)?;
+    if is_w {
+        n.child_layout.sizing_h = Sizing::Fixed;
+    } else {
+        n.child_layout.sizing_v = Sizing::Fixed;
+    }
+    Ok(())
+}
+
 /// Apply a property map to one node. `x`/`y` are relative to the parent.
 pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Value>) -> Result<()> {
     let mut unknown = Vec::new();
@@ -404,8 +416,9 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
         let k = k.as_str();
         match k {
             "path" => path_offset = set_path(cmd, doc, id, v, props)?,
-            // A new path takes the size asked for as its scale (`set_path`).
-            "width" | "height" | "w" | "h" if props.contains_key("path") => {}
+            // A new path takes the size asked for as its scale (`set_path`); the size still fixes
+            // its auto layout axis.
+            "width" | "height" | "w" | "h" if props.contains_key("path") => fix_axis(doc, id, k.starts_with('w'))?,
             "x" | "y" => {
                 let val = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?;
                 let val = val + if k == "x" { path_offset.0 } else { path_offset.1 };
@@ -450,13 +463,7 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                         TextAutoResize::None
                     };
                 }
-                // Explicit width/height makes hugging/filling fixed (like typing into W/H).
-                let n = doc.get_mut(id)?;
-                if is_w {
-                    n.child_layout.sizing_h = Sizing::Fixed;
-                } else {
-                    n.child_layout.sizing_v = Sizing::Fixed;
-                }
+                fix_axis(doc, id, is_w)?;
             }
             "rotation" => {
                 let deg = f64_of(v).ok_or_else(|| bad(cmd, "`rotation` must be degrees"))?;
