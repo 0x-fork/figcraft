@@ -374,6 +374,7 @@ fn a_log_that_isnt_one_is_moved_aside() {
     assert!(store.problems().iter().any(|p| p.contains("moved aside")), "{:?}", store.problems());
     let kept = fs::read_dir(&folder).unwrap().filter_map(|e| e.ok()).any(|e| fs::read(e.path()).is_ok_and(|b| b == junk));
     assert!(kept, "the old log's bytes are kept beside the file");
+}
 
 const BIDI: [char; 12] =
     ['\u{61C}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}'];
@@ -417,7 +418,6 @@ fn a_maxed_out_generation_does_not_wrap() {
     }
     let snap = disk::check_snapshot(&fs::read(path.join(SNAPSHOT)).unwrap()).unwrap();
     assert_eq!(snap, u64::MAX);
-}
 }
 
 #[test]
