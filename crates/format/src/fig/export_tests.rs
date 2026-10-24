@@ -74,7 +74,7 @@ fn paint(r: &mut Lcg, image: &str) -> Paint {
             p.kind
         }
     };
-    Paint { kind, opacity: r.pick(&[1.0, 0.5, 0.25]), visible: r.chance(85), blend: r.pick(&BLENDS) }
+    Paint { kind, opacity: r.pick(&[1.0, 0.5, 0.25]), visible: r.chance(85), blend: r.pick(&BLENDS), color_alpha: false }
 }
 
 fn effect(r: &mut Lcg) -> Effect {
