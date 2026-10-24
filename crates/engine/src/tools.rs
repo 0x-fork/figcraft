@@ -1711,7 +1711,12 @@ impl Session {
                             let s = if img.scale_mode == ImageScaleMode::Fit { (w / rw).min(h / rh) } else { (w / rw).max(h / rh) };
                             [w / (rw * s), 0.0, 0.0, h / (rh * s), (rw * s - w) / (2.0 * rw * s), (rh * s - h) / (2.0 * rh * s)]
                         };
-                        img.crop = Some((Affine::new(crop) * to_old).as_coeffs());
+                        // A degenerate (zero-scale) layer has no inverse: its image keeps its placement.
+                        let crop = (Affine::new(crop) * to_old).as_coeffs();
+                        if !crop.iter().all(|c| c.is_finite()) {
+                            continue;
+                        }
+                        img.crop = Some(crop);
                         img.scale_mode = ImageScaleMode::Crop;
                     }
                     doc.get_mut(*id)?.fills = fills;
