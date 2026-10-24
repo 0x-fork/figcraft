@@ -135,7 +135,7 @@ pub fn encode_snapshot(generation: u64, state: &SessionState) -> Result<Vec<u8>,
     out.extend_from_slice(&0u32.to_le_bytes());
     let mut out = message::encode_into(state, out).map_err(|e| e.to_string())?;
     let sum = crc(&out[SNAP_HEADER..]);
-    out[13..SNAP_HEADER].copy_from_slice(&sum.to_le_bytes());
+    out[SNAP_HEADER - 4..SNAP_HEADER].copy_from_slice(&sum.to_le_bytes());
     Ok(out)
 }
 
