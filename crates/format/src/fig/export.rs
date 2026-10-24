@@ -296,6 +296,23 @@ fn grid_track_size(track: &GridTrack) -> Option<(&'static str, f64)> {
     }
 }
 
+/// A grid axis's track sizes, keyed by track id like the order map. A track the document doesn't
+/// set is left out, and one the format can't hold keeps its id (the import equalises it) and sets
+/// `dropped`.
+fn grid_sizing(tracks: &[GridTrack], ids: &[u32], dropped: &mut bool) -> Option<Kv<'static>> {
+    let mut entries = Vec::new();
+    for (track, id) in tracks.iter().zip(ids) {
+        match grid_track_size(track) {
+            Some((kind, value)) => {
+                let size = || o(vec![("type", e(kind)), ("value", fl(value))]);
+                entries.push(o(vec![("id", guid(AUX, *id)), ("trackSize", o(vec![("minSizing", size()), ("maxSizing", size())]))]));
+            }
+            None => *dropped = true,
+        }
+    }
+    (!entries.is_empty()).then(|| o(vec![("entries", arr(entries))]))
+}
+
 fn guid(session: u32, local: u32) -> Kv<'static> {
     o(vec![("sessionID", u(session)), ("localID", u(local))])
 }
@@ -1419,49 +1436,7 @@ impl<'d> Exporter<'d> {
             ("stackReverseZIndex", b(l.reverse_z)),
         ]);
         if grid {
-            // Instance layers share their main layer's track ids, so unchanged tracks and the cells
-            // their layers sit in still match.
-            let key = self.main_layer(n.id);
-            let (want_c, want_r) = (l.grid_columns.min(1000) as usize, l.grid_rows.min(1000) as usize);
-            let (cols, rows) = match self.tracks.get(&key) {
-                Some((c, r)) if (c.len(), r.len()) == (want_c, want_r) => (c.clone(), r.clone()),
-                _ => ((0..want_c).map(|_| self.next_aux()).collect(), (0..want_r).map(|_| self.next_aux()).collect()),
-            };
-            let map = |ids: &[u32]| {
-                o(vec![(
-                    "entries",
-                    arr(ids.iter().enumerate().map(|(i, t)| o(vec![("id", guid(AUX, *t)), ("position", s(&position(i)))])).collect()),
-                )])
-            };
-            f.extend([("gridColumnGap", fl(l.gap)), ("gridRowGap", fl(l.cross_gap)), ("gridColumns", map(&cols)), ("gridRows", map(&rows))]);
-            // Sizing is keyed by track id like the order map. A track the document doesn't set is
-            // left out, and one the format can't hold keeps its id (the import equalises it).
-            let mut dropped = false;
-            let sizing = |tracks: &[GridTrack], ids: &[u32], dropped: &mut bool| -> Option<Kv<'static>> {
-                let mut entries = Vec::new();
-                for (i, id) in ids.iter().enumerate() {
-                    let Some(track) = tracks.get(i) else { continue };
-                    match grid_track_size(track) {
-                        Some((kind, value)) => {
-                            let size = || o(vec![("type", e(kind)), ("value", fl(value))]);
-                            entries.push(o(vec![("id", guid(AUX, *id)), ("trackSize", o(vec![("minSizing", size()), ("maxSizing", size())]))]));
-                        }
-                        None => *dropped = true,
-                    }
-                }
-                (!entries.is_empty()).then(|| o(vec![("entries", arr(entries))]))
-            };
-            let column_sizing = sizing(&l.column_tracks, &cols, &mut dropped);
-            let row_sizing = sizing(&l.row_tracks, &rows, &mut dropped);
-            if dropped {
-                self.warn("grid tracks whose size the format can't hold were written as equal tracks");
-            }
-            for (name, sizing) in [("gridColumnsSizing", column_sizing), ("gridRowsSizing", row_sizing)] {
-                if let Some(v) = sizing {
-                    f.push((name, v));
-                }
-            }
-            self.tracks.insert(key, (cols, rows));
+            self.grid_layout(n, l, f);
         } else {
             let spread = l.content_align == ContentAlign::SpaceBetween;
             f.extend([
@@ -1470,6 +1445,34 @@ impl<'d> Exporter<'d> {
                 ("stackCounterAlignContent", e(if spread { "SPACE_BETWEEN" } else { "AUTO" })),
             ]);
         }
+    }
+
+    /// A grid layout's track gaps, order and sizes.
+    fn grid_layout(&mut self, n: &Node, l: &AutoLayout, f: &mut Fields) {
+        // Instance layers share their main layer's track ids, so unchanged tracks and the cells
+        // their layers sit in still match.
+        let key = self.main_layer(n.id);
+        let (want_c, want_r) = (l.grid_columns.min(1000) as usize, l.grid_rows.min(1000) as usize);
+        let (cols, rows) = match self.tracks.get(&key) {
+            Some((c, r)) if (c.len(), r.len()) == (want_c, want_r) => (c.clone(), r.clone()),
+            _ => ((0..want_c).map(|_| self.next_aux()).collect(), (0..want_r).map(|_| self.next_aux()).collect()),
+        };
+        let map = |ids: &[u32]| {
+            o(vec![("entries", arr(ids.iter().enumerate().map(|(i, t)| o(vec![("id", guid(AUX, *t)), ("position", s(&position(i)))])).collect()))])
+        };
+        f.extend([("gridColumnGap", fl(l.gap)), ("gridRowGap", fl(l.cross_gap)), ("gridColumns", map(&cols)), ("gridRows", map(&rows))]);
+        let mut dropped = false;
+        let column_sizing = grid_sizing(&l.column_tracks, &cols, &mut dropped);
+        let row_sizing = grid_sizing(&l.row_tracks, &rows, &mut dropped);
+        if dropped {
+            self.warn("grid tracks whose size the format can't hold were written as equal tracks");
+        }
+        for (name, sizing) in [("gridColumnsSizing", column_sizing), ("gridRowsSizing", row_sizing)] {
+            if let Some(v) = sizing {
+                f.push((name, v));
+            }
+        }
+        self.tracks.insert(key, (cols, rows));
     }
 
     /// How a layer sizes and sits in its auto layout parent. Min/max sizes are the layer's own
@@ -2417,7 +2420,7 @@ fn unset(key: &str) -> Option<Kv<'static>> {
         "styleIdForFill" | "styleIdForStrokeFill" | "styleIdForEffect" | "styleIdForGrid" | "styleIdForText" => {
             o(vec![("guid", guid(u32::MAX, u32::MAX))])
         }
-        "variableConsumptionMap" | "variableModeBySetMap" => o(vec![("entries", arr(Vec::new()))]),
+        "variableConsumptionMap" | "variableModeBySetMap" | "gridColumnsSizing" | "gridRowsSizing" => o(vec![("entries", arr(Vec::new()))]),
         "mask" | "rectangleCornerRadiiIndependent" | "borderStrokeWeightsIndependent" => b(false),
         "effects" | "dashPattern" | "layoutGrids" | "exportSettings" | "prototypeInteractions" | "fillGeometry" | "variableWidthPoints" => {
             arr(Vec::new())
