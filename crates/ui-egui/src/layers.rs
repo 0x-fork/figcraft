@@ -1085,8 +1085,10 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                     // Above in the list = higher z = after the target among siblings.
                     if let Some(parent) = doc.node(target).and_then(|n| n.parent) {
                         let idx = doc.index_in_parent(target).unwrap_or(0);
-                        let index = if z < 0 { idx + 1 } else { idx };
-                        app.run("node.reparent", json!({"ids": ids, "parent": parent, "index": index}));
+                        let gap = if z < 0 { idx + 1 } else { idx };
+                        // `index` is the final position: the dragged layers below the gap leave it.
+                        let below = doc.node(parent).map_or(0, |p| p.children.iter().take(gap).filter(|c| ids.contains(c)).count());
+                        app.run("node.reparent", json!({"ids": ids, "parent": parent, "index": gap - below}));
                     }
                 }
             }

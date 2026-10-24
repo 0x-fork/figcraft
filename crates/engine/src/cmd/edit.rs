@@ -216,7 +216,13 @@ pub fn specs() -> Vec<CommandSpec> {
             let i = req_id("node.get", p, "id")?;
             Ok(crate::inspect::node_json(s.doc()?, i, 1))
         }),
-        spec!("node.reparent", "Move layer into", "{ids?, parent, index?}", true, reparent),
+        spec!(
+            "node.reparent",
+            "Move layer into",
+            "{ids?, parent, index? (final position among parent's children, bottom first; default top)}",
+            true,
+            reparent
+        ),
         spec!("node.reorder", "Reorder layer", "{id, index}", true, |s, p| {
             let i = req_id("node.reorder", p, "id")?;
             let idx = req_num("node.reorder", p, "index")?.max(0.0) as usize;
@@ -1312,9 +1318,10 @@ fn reparent(s: &mut Session, p: &Value) -> Result<Value> {
     let index = num(p, "index").map(|i| i.max(0.0) as usize);
     let doc = s.doc_mut()?;
     let ids = z_sorted(doc, &roots(doc, &ids));
-    // The layers land together under the first sibling at or above `index` that stays put (none: on
-    // top), wherever they came from.
-    let above = index.and_then(|at| doc.get(parent).ok()?.children.iter().skip(at).find(|c| !ids.contains(c)).copied());
+    // `index` is where the first moved layer ends up among the parent's children (bottom first),
+    // counted after the move, the way `node.reorder` counts it. The layers land together, keeping
+    // their order, under the sibling that stays put and ends up just after them (none: on top).
+    let above = index.and_then(|at| doc.get(parent).ok()?.children.iter().filter(|c| !ids.contains(c)).nth(at).copied());
     for i in &ids {
         // Counted with the layer still in place, as `reparent` expects.
         let at = above.and_then(|a| doc.node(parent)?.children.iter().position(|c| *c == a));

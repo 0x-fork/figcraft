@@ -196,6 +196,12 @@ Or in a project's `.mcp.json`:
     the CSS `fr` unit: a track never gets less than its content (a fixed-size child bigger than
     its share keeps it; the other `fr` tracks share the rest). `inspect` reports a grid child's
     resolved `gridCell`.
+- Layer order: `node.reparent {ids?, parent, index?}` moves layers into `parent` (keeping their place
+  on the canvas, or taking their place in its auto layout flow) and `node.reorder {id, index}` moves
+  one within its parent. `index` counts the parent's children bottom first (in auto layout, the
+  first in the flow) and is where the (first) moved layer ends up after the move, in the same parent
+  or a new one; several layers land together in their stacking order. No `index`, or one past the
+  end, puts them on top (last in the flow).
 - **Every menu action is a command** (`list_commands`), and most commands act on `ids` when given,
   else on the selection. New layers become the selection.
 - Colours are `"#RRGGBB"` or `"#RRGGBBAA"`. Inside fills and strokes, `color` may also be a hex
