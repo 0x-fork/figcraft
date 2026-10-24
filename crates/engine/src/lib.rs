@@ -13,6 +13,7 @@ pub mod al_keys;
 pub mod annotations;
 pub mod arc_handles;
 pub mod background;
+pub mod board;
 pub mod booleans;
 pub mod branches;
 pub mod catalog;
@@ -414,6 +415,7 @@ impl DocState {
         }
         doc.link_layer_text_styles();
         cmd::styles::apply_paint_bindings_on_load(&mut doc);
+        components::mark_layer_modes(&mut doc);
         // Initial import settlement belongs to the saved baseline, not the user's first edit.
         let page = doc.current_page.filter(|p| doc.pages.contains(p)).or_else(|| doc.first_page()).unwrap_or(NodeId(0));
         let doc = Arc::new(doc);
@@ -937,6 +939,7 @@ impl Session {
     /// as it was.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        board::refuse_on_board(self, id)?;
         // Revert replaces the document's uid: refuse before ending previews or syncing branches.
         if id == "file.revert" && self.live().doc_uid.is_some() {
             return Err(EngineError::Disabled(id.into(), "leave the live session before reverting to the saved file".into()));
@@ -1395,7 +1398,9 @@ pub fn normalize(doc: &mut Document, before: &Document) {
         figcraft_layout::coherent_sizing(doc, id);
     }
     touched.extend(doc.take_dirty());
-    // 1. Text auto-size.
+    // 1. Text auto-size (a sticky's note first takes the size its length calls for).
+    board::settle_text(doc, before, &touched);
+    touched.extend(doc.take_dirty());
     for id in live(doc, &touched) {
         let Some(n) = doc.node(id) else { continue };
         if let Some((w, h)) = figcraft_text::auto_size(n)
@@ -1475,6 +1480,9 @@ pub fn normalize(doc: &mut Document, before: &Document) {
             doc.keep_if_unchanged(a, was_dirty);
         }
     }
+    touched.extend(doc.take_dirty());
+    // 4b. Board connectors follow the layers they join; their labels sit at their middles.
+    board::settle_routes(doc, before, &touched);
     touched.extend(doc.take_dirty());
     // 5. Ready-for-dev layers whose contents changed show "Changed".
     mark_dev_changes(doc, before, &touched);
@@ -1608,6 +1616,10 @@ mod batch_step_ref_tests;
 #[cfg(test)]
 mod binding_lists_tests;
 #[cfg(test)]
+mod board_tests;
+#[cfg(test)]
+mod board_tools_tests;
+#[cfg(test)]
 mod booleans_tests;
 #[cfg(test)]
 mod bound_alpha_tests;
@@ -1654,6 +1666,10 @@ mod devfocus_tests;
 #[cfg(test)]
 mod devinspect_tests;
 #[cfg(test)]
+mod devmode_behaviour_tests;
+#[cfg(test)]
+mod devmode_tail_tests;
+#[cfg(test)]
 mod doc_urls_tests;
 #[cfg(test)]
 mod double_click_tests;
@@ -1675,6 +1691,8 @@ mod fig_export_assets_tests;
 mod fig_export_tests;
 #[cfg(test)]
 mod fig_import_tests;
+#[cfg(test)]
+mod fill_none_tests;
 #[cfg(test)]
 mod finite_geometry_tests;
 #[cfg(test)]
@@ -1887,6 +1905,8 @@ mod variables_io_tests;
 mod variants_discovery_tests;
 #[cfg(test)]
 mod vector_behaviour_tests;
+#[cfg(test)]
+mod vector_fill_rule_tests;
 #[cfg(test)]
 mod vector_multi_behaviour_tests;
 #[cfg(test)]
