@@ -499,3 +499,31 @@ fn stale_next_id_never_overwrites_existing_nodes() {
     assert_eq!(bad.node(p).unwrap().name, snapshot.node(p).unwrap().name);
     assert!(bad.validate().is_empty(), "{:?}", bad.validate());
 }
+
+#[test]
+fn hit_test_even_odd_vector_hole_misses() {
+    let ring = |rule| {
+        let sq = |o: f64, s: f64, base: usize| {
+            (
+                [(o, o), (o + s, o), (o + s, o + s), (o, o + s)].map(|(x, y)| Vertex::new(x, y)),
+                [Segment::line(base, base + 1), Segment::line(base + 1, base + 2), Segment::line(base + 2, base + 3), Segment::line(base + 3, base)],
+            )
+        };
+        let (v1, s1) = sq(0.0, 200.0, 0);
+        let (v2, s2) = sq(60.0, 80.0, 4);
+        VectorNetwork {
+            vertices: v1.into_iter().chain(v2).collect(),
+            segments: s1.into_iter().chain(s2).collect(),
+            regions: vec![Region { loops: vec![vec![0, 1, 2, 3], vec![4, 5, 6, 7]], winding: rule }],
+        }
+    };
+    let mut d = Document::new("x");
+    let p = page(&d);
+    let eo = d.create(p, NodeKind::Vector { network: ring(WindingRule::EvenOdd) }, "V", 0.0, 0.0, 200.0, 200.0).unwrap();
+    assert_eq!(d.hit_test(p, Point::new(20.0, 100.0), 0.0, None), Some(eo));
+    assert_eq!(d.hit_test(p, Point::new(100.0, 100.0), 0.0, None), None, "the hole is not filled");
+    let mut d = Document::new("x");
+    let p = page(&d);
+    let nz = d.create(p, NodeKind::Vector { network: ring(WindingRule::NonZero) }, "V", 0.0, 0.0, 200.0, 200.0).unwrap();
+    assert_eq!(d.hit_test(p, Point::new(100.0, 100.0), 0.0, None), Some(nz));
+}
