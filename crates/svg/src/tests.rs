@@ -136,6 +136,26 @@ fn title_case_does_not_restart_words_across_fill_runs_in_live_text() {
 }
 
 #[test]
+fn side_strokes_on_rounded_corners_export_as_their_area() {
+    // border-l-4 rounded-r-lg: the stroke path is the 4 px bar (60 px tall), drawn even-odd.
+    use figcraft_geom::Shape;
+    let mut d = Document::new("t");
+    let p = d.first_page().unwrap();
+    let f = d.create(p, NodeKind::Frame, "F", 0.0, 0.0, 120.0, 60.0).unwrap();
+    let n = d.get_mut(f).unwrap();
+    n.corners.radii = [0.0, 8.0, 8.0, 0.0];
+    n.strokes = vec![Paint::solid(Color::from_hex("FF0000").unwrap())];
+    n.stroke.align = figcraft_doc::StrokeAlign::Inside;
+    n.stroke.sides = Some([0.0, 0.0, 0.0, 4.0]);
+    let svg = export_svg(&d, &[f], &SvgOptions::default()).unwrap();
+    let stroke = svg.split("<path").find(|e| e.contains("#FF0000")).unwrap();
+    assert!(stroke.contains("fill-rule=\"evenodd\""), "{stroke}");
+    let data = stroke.split("d=\"").nth(1).and_then(|s| s.split('"').next()).unwrap();
+    let area = figcraft_geom::BezPath::from_svg(data).unwrap().area().abs();
+    assert!((area - 240.0).abs() < 0.01, "{area}");
+}
+
+#[test]
 fn point_joins_equal_to_the_layer_join_keep_a_plain_stroke() {
     use figcraft_doc::{StrokeJoin, VectorNetwork};
     use figcraft_geom::kurbo::Point;
