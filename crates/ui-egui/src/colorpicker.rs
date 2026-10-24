@@ -18,6 +18,11 @@ use crate::widgets;
 #[derive(Clone, Debug, PartialEq)]
 pub enum PickerTarget {
     PageBackground,
+    SelectionColor {
+        targets: Vec<figcraft_engine::selection_colors::PaintTarget>,
+        selection: Vec<NodeId>,
+        document: u64,
+    },
     Paint {
         fills: bool,
         index: usize,
@@ -72,6 +77,13 @@ pub fn range_fills(doc: &figcraft_doc::Document, id: NodeId, start: usize) -> Op
 fn current_paint(app: &FigApp, target: &PickerTarget) -> Option<Paint> {
     let doc = app.session.doc().ok()?;
     match target {
+        PickerTarget::SelectionColor { targets, selection, document } => {
+            let ds = app.session.ds().ok()?;
+            if ds.uid != *document || ds.selection != *selection {
+                return None;
+            }
+            targets.first()?.paint(doc)
+        }
         PickerTarget::PageBackground => match &doc.node(app.session.page().ok()?)?.kind {
             NodeKind::Page { background, .. } => Some(Paint::solid(*background)),
             _ => None,
@@ -108,8 +120,7 @@ fn current_paint(app: &FigApp, target: &PickerTarget) -> Option<Paint> {
 /// Write `paint` to the target. `live` edits are part of an ongoing drag.
 fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
     if let PickerTarget::PluginField { plugin, control, .. } = target {
-        let c = paint.solid_color().unwrap_or(Color::BLACK);
-        let hex = c.with_alpha(c.a * paint.opacity).to_css_hex();
+        let hex = paint.solid_color().unwrap_or(Color::BLACK).to_css_hex();
         let (plugin, control) = (plugin.clone(), control.clone());
         if !live {
             crate::plugins_ui::set_field(app, &plugin, &control, &hex);
@@ -121,6 +132,7 @@ fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
         let _ = app.session.begin_interaction("Color");
     }
     let r = match target {
+        PickerTarget::SelectionColor { targets, .. } => app.session.execute("selection.setPaint", &json!({"targets": targets, "paint": paint})),
         PickerTarget::PageBackground => {
             let c = paint.solid_color().unwrap_or(Color::DEFAULT_PAGE);
             app.session.execute("page.setBackground", &json!({"color": c.to_css_hex()}))
@@ -140,7 +152,7 @@ fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
         }
         PickerTarget::Variable { id, mode } => {
             let c = paint.solid_color().unwrap_or(Color::BLACK);
-            app.session.execute("variable.set", &json!({"variable": id, "mode": mode, "value": c.with_alpha(c.a * paint.opacity).to_css_hex()}))
+            app.session.execute("variable.set", &json!({"variable": id, "mode": mode, "value": c.to_css_hex()}))
         }
         PickerTarget::PluginField { .. } => return,
         PickerTarget::Style { id, index } => {
@@ -423,8 +435,21 @@ fn alpha_slider(ui: &mut Ui, rect: Rect, color: Color) -> Option<(f32, bool)> {
     slider_knob(ui, rect, color.a, Id::new("cp_alpha"))
 }
 
+/// The colour picker window's area id. A fixed id (not `Window::new`'s, which egui keys by
+/// `Id::new(Some(title))`) so the style picker can tell a click inside the picker from one outside.
+pub fn window_id() -> Id {
+    Id::new("color_picker")
+}
+
 pub fn show(app: &mut FigApp, ctx: &egui::Context) {
-    let Some(target) = app.ui.picker.clone() else { return };
+    let Some(target) = app.ui.picker.clone() else {
+        // A colour sampled for a picker that has closed has no paint to go to.
+        app.session.tool.picked = None;
+        if app.session.tool.pick_only {
+            app.run("tool.move", json!({}));
+        }
+        return;
+    };
     // A layer's picker belongs to the selection it was opened for: once that changes, close it
     // rather than keep editing layers that are no longer selected.
     let stale = match &target {
@@ -434,6 +459,9 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     };
     let current = if stale { None } else { current_paint(app, &target) };
     let Some(mut paint) = current else {
+        if matches!(target, PickerTarget::SelectionColor { .. }) {
+            finish(app);
+        }
         app.ui.picker = None;
         return;
     };
@@ -448,6 +476,9 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     let mut open = true;
     let mut close_now = false;
     egui::Window::new("color_picker")
+        // A fixed area id so the style picker can tell a click in here from a click outside
+        // (`Window::new` alone would key the area by `Id::new(Some(title))`).
+        .id(window_id())
         .title_bar(false)
         .fixed_pos(pos)
         .fixed_size(vec2(240.0, 0.0))
@@ -455,6 +486,10 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         .open(&mut open)
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+            // The eyedropper's colour goes to this picker's paint (a stroke, an effect, a gradient stop...).
+            if let Some(c) = app.session.tool.picked.take() {
+                set_color(app, &target, &mut paint, c, stop_id(), ui);
+            }
             // Header.
             let (hr, _) = ui.allocate_exact_size(vec2(240.0, 40.0), Sense::hover());
             ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, tr("Custom"), semibold(11.0), t.text);
@@ -500,7 +535,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                                 image_pending = true;
                                 let target = target.clone();
                                 app.pick_open(tr("Choose image"), &["png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"], move |app, p| {
-                                    let Ok(bytes) = std::fs::read(&p) else { return };
+                                    let Ok(bytes) = figcraft_engine::file_access::read(&p) else { return };
                                     let Some(hash) = app.session.doc_mut().ok().and_then(|d| figcraft_format_add(d, bytes)) else { return };
                                     if let Some(mut paint) = current_paint(app, &target) {
                                         paint.kind = Paint::image(hash, ImageScaleMode::Fill).kind;
@@ -757,8 +792,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 )
                 .clicked()
                 {
-                    app.ui.picker = None;
-                    app.run("edit.pickColor", json!({}));
+                    app.run("edit.pickColor", json!({"apply": false}));
                     return;
                 }
                 let (c2, d2) = hue_slider(ui, hr, &mut hsb);
@@ -872,6 +906,7 @@ fn pattern_sources(app: &FigApp, target: &PickerTarget) -> Vec<(NodeId, String)>
     let Ok(doc) = app.session.doc() else { return Vec::new() };
     let painted = match target {
         PickerTarget::Paint { ids, .. } => ids.clone(),
+        PickerTarget::SelectionColor { targets, .. } => targets.iter().map(|t| t.id).collect(),
         PickerTarget::TextRange { id, .. } => vec![*id],
         _ => Vec::new(),
     };
@@ -997,7 +1032,7 @@ fn saved_preset_row(ui: &mut Ui, name: &str) -> Option<PresetAction> {
     let del_resp = ui.interact(del, ui.id().with(("cp_preset_del", name)), Sense::click()).tip(tr("Delete preset"));
     let hot = resp.hovered() || del_resp.hovered();
     if hot {
-        ui.painter().rect_filled(r, CornerRadius::same(5), crate::theme::ACCENT);
+        ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
     }
     let col = if hot { Color32::WHITE } else { t.text };
     ui.painter().text(pos2(r.min.x + 8.0, r.center().y), Align2::LEFT_CENTER, name, regular(11.5), col);
@@ -1126,6 +1161,70 @@ impl WithStops for Gradient {
             self.stops = stops;
         }
         self
+    }
+}
+
+#[cfg(test)]
+mod selection_color_tests {
+    use super::*;
+    use crate::NoServices;
+    use figcraft_engine::{Session, selection_colors::collect};
+
+    fn setup() -> (FigApp, NodeId, NodeId) {
+        let mut s = Session::new();
+        let a = NodeId(s.execute("shape.rectangle", &json!({"width":40,"height":40,"props":{"fill":"#ff0000"}})).unwrap()["id"].as_u64().unwrap());
+        let b = NodeId(s.execute("shape.rectangle", &json!({"width":40,"height":40,"props":{"fill":"#0000ff"}})).unwrap()["id"].as_u64().unwrap());
+        s.execute("select.set", &json!({"ids":[a,b]})).unwrap();
+        let mut app = FigApp::new(s, Box::new(NoServices));
+        let targets = collect(app.session.doc().unwrap(), &[a, b])[0].targets.clone();
+        crate::selection_colors::open_picker(&mut app, targets);
+        (app, a, b)
+    }
+
+    #[test]
+    fn picker_live_changes_keep_frozen_targets_and_commit_once() {
+        let (mut app, a, b) = setup();
+        let target = app.ui.picker.clone().unwrap();
+        let before = app.session.undo_depth();
+        for color in ["#0000ff", "#00ff00"] {
+            write(&mut app, &target, &Paint::solid(Color::from_hex(color).unwrap()), true);
+        }
+        assert!(app.session.recent_colors.is_empty(), "previews must not be recorded");
+        finish(&mut app);
+        assert_eq!(app.session.recent_colors, vec![Color::from_hex("#00ff00").unwrap()]);
+        assert_eq!(app.session.undo_depth().0, before.0 + 1);
+        assert_eq!(current_paint(&app, &target).unwrap().solid_color().unwrap().to_hex(), "00FF00");
+        assert_eq!(app.session.doc().unwrap().node(b).unwrap().fills[0].solid_color().unwrap().to_hex(), "0000FF");
+        app.session.undo().unwrap();
+        assert_eq!(app.session.doc().unwrap().node(a).unwrap().fills[0].solid_color().unwrap().to_hex(), "FF0000");
+    }
+
+    #[test]
+    fn writing_a_variable_keeps_its_alpha() {
+        // The picker holds a colour variable's alpha as the paint opacity; writing it back applies it once.
+        let (mut app, _, _) = setup();
+        app.session.execute("variable.createCollection", &json!({"name":"T"})).unwrap();
+        let v = app.session.execute("variable.create", &json!({"collection":"T","name":"tint","type":"color","value":"#0D6EFD80"})).unwrap();
+        let var = app.session.doc().unwrap().variables.get(v["id"].as_str().unwrap()).unwrap().clone();
+        let target = PickerTarget::Variable { id: var.id.clone(), mode: var.values.keys().next().unwrap().clone() };
+        for _ in 0..2 {
+            let paint = current_paint(&app, &target).unwrap();
+            write(&mut app, &target, &paint, false);
+        }
+        let c = current_paint(&app, &target).unwrap().solid_color().unwrap();
+        assert_eq!(c.to_css_hex().to_uppercase(), "#0D6EFD80");
+    }
+
+    #[test]
+    fn picker_does_not_follow_selection_or_document_switches() {
+        let (mut app, _, _) = setup();
+        let target = app.ui.picker.clone().unwrap();
+        app.session.execute("select.none", &json!({})).unwrap();
+        assert!(current_paint(&app, &target).is_none());
+        let (mut app, _, _) = setup();
+        let target = app.ui.picker.clone().unwrap();
+        app.session.execute("file.new", &json!({})).unwrap();
+        assert!(current_paint(&app, &target).is_none());
     }
 }
 

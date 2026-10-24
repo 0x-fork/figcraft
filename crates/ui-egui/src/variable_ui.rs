@@ -17,7 +17,7 @@ use crate::a11y::Tip;
 use crate::i18n::tr;
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular, semibold};
-use crate::widgets::{self, BindEvent, Edit, FieldEdit, Lead};
+use crate::widgets::{self, BindEvent, Edit, Empty, FieldEdit, Lead};
 
 /// What picking a variable does.
 #[derive(Clone)]
@@ -258,7 +258,23 @@ pub fn number_field_or(
     lead: Lead,
     suffix: &str,
 ) -> Option<FieldEdit> {
-    number_field_edit(app, ui, ids, field, id, value, width, empty, lead, suffix)?.settled()
+    number_field_edit(app, ui, ids, field, id, value, width, Empty::Text(empty), lead, suffix)?.settled()
+}
+
+/// [`number_field_or`] for a field where 0 is its automatic value (a layout grid's width or
+/// count): typing the word for Auto sets 0 ([`Empty::Auto`]).
+pub fn number_field_auto(
+    app: &mut FigApp,
+    ui: &mut Ui,
+    ids: &[NodeId],
+    field: &str,
+    id: Id,
+    value: Option<f64>,
+    width: f32,
+    lead: Lead,
+    suffix: &str,
+) -> Option<FieldEdit> {
+    number_field_edit(app, ui, ids, field, id, value, width, Empty::Auto, lead, suffix)?.settled()
 }
 
 /// [`number_field`] over several layers: a relative edit of mixed values comes back as one for
@@ -274,7 +290,7 @@ pub fn number_field_mixed(
     suffix: &str,
     width: f32,
 ) -> Option<Edit> {
-    number_field_edit(app, ui, ids, field, id, value, width, tr("Mixed"), lead, suffix)
+    number_field_edit(app, ui, ids, field, id, value, width, Empty::Text(tr("Mixed")), lead, suffix)
 }
 
 fn number_field_edit(
@@ -285,7 +301,7 @@ fn number_field_edit(
     id: Id,
     value: Option<f64>,
     width: f32,
-    empty: &str,
+    empty: Empty<'_>,
     lead: Lead,
     suffix: &str,
 ) -> Option<Edit> {
@@ -361,6 +377,12 @@ pub fn bound_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], field: &str, kin
     });
 }
 
+/// Whether a variable of type `have` belongs in a picker for `want` on `field`: its own type, and
+/// numbers for text content too (shown as text).
+fn kind_fits(want: Option<VariableType>, field: Option<&str>, have: VariableType) -> bool {
+    want.is_none_or(|k| have == k || (field == Some("characters") && have == VariableType::Number))
+}
+
 /// The picker popover (call once per frame).
 pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
     let Some(p) = ctx.data(|d| d.get_temp::<Picker>(picker_id())) else { return };
@@ -379,8 +401,12 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
     };
     // Prototypes and styles use this file's variables.
     let local_only = matches!(p.target, Target::Proto(_) | Target::Style { .. });
+    let field = match &p.target {
+        Target::Bind { field, .. } => Some(field.as_str()),
+        _ => None,
+    };
     let keep = |lib: Option<&PublishedLibrary>, v: &Variable| {
-        p.kind.is_none_or(|k| v.kind == k)
+        kind_fits(p.kind, field, v.kind)
             && !(local_only && lib.is_some())
             && (q.is_empty() || v.name.to_lowercase().contains(&q))
             && scope.is_none_or(|s| v.in_scope(s))
@@ -475,4 +501,20 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
 /// Whether this file or a library offers any variable of `kind` (or any variable).
 fn groups_any_kind(doc: &Document, libs: &[Arc<PublishedLibrary>], kind: Option<VariableType>) -> bool {
     !groups(doc, libs, |_, v| kind.is_none_or(|k| v.kind == k)).is_empty()
+}
+
+#[cfg(test)]
+mod kind_tests {
+    use super::*;
+
+    #[test]
+    fn text_content_offers_numbers_too() {
+        use VariableType::*;
+        assert!(kind_fits(Some(String), Some("characters"), Number), "a number shows as text");
+        assert!(kind_fits(Some(String), Some("characters"), String));
+        assert!(!kind_fits(Some(String), Some("characters"), Color));
+        assert!(!kind_fits(Some(String), Some("fontFamily"), Number), "only text content");
+        assert!(!kind_fits(Some(Number), Some("width"), String));
+        assert!(kind_fits(None, None, Boolean));
+    }
 }

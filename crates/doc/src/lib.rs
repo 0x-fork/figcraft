@@ -8,6 +8,7 @@
 //! live in higher crates.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod board;
 pub mod colors;
 pub mod comments;
 pub mod geometry;
@@ -23,6 +24,7 @@ pub mod vector;
 pub mod vector_faces;
 pub mod vector_regions;
 
+pub use board::*;
 pub use colors::*;
 pub use comments::*;
 pub use figcraft_color as color;
@@ -77,17 +79,19 @@ pub enum DocError {
 
 pub type DocResult<T> = Result<T, DocError>;
 
-/// The set of touched node ids, and whether any layer is a mask (worked out when first asked
-/// after a change: hit testing skips its mask checks without one). Never part of equality or
+/// The set of touched node ids, whether any layer is a mask (hit testing skips its mask checks
+/// without one) and the largest background blur radius (renders keep that much overlap between
+/// their bands), both worked out when first asked after a change. Never part of equality or
 /// serialisation.
 #[derive(Clone, Debug, Default)]
-pub struct Dirty(pub std::collections::BTreeSet<NodeId>, std::sync::OnceLock<bool>);
+pub struct Dirty(pub std::collections::BTreeSet<NodeId>, std::sync::OnceLock<bool>, std::sync::OnceLock<f64>);
 
 impl Dirty {
     /// Record node `id` as touched (edited, added or removed).
     fn touch(&mut self, id: NodeId) {
         self.0.insert(id);
         self.1 = std::sync::OnceLock::new();
+        self.2 = std::sync::OnceLock::new();
     }
 }
 
@@ -155,6 +159,9 @@ pub struct ImageData {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     pub name: String,
+    /// A design file or a board (files from before boards are design files).
+    #[serde(default, skip_serializing_if = "FileKind::is_design")]
+    pub kind: FileKind,
     /// Page ids in order.
     pub pages: Vec<NodeId>,
     nodes: imbl::OrdMap<NodeId, Arc<Node>>,
@@ -219,6 +226,7 @@ impl Document {
     pub fn without_pages(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            kind: FileKind::Design,
             pages: Vec::new(),
             nodes: imbl::OrdMap::new(),
             dirty: Dirty::default(),
@@ -254,6 +262,11 @@ impl Document {
         *self.dirty.1.get_or_init(|| self.nodes.values().any(|n| n.is_mask))
     }
 
+    /// The largest background blur or glass radius of any layer's effects (0 without any).
+    pub fn max_backdrop_radius(&self) -> f64 {
+        *self.dirty.2.get_or_init(|| self.nodes.values().flat_map(|n| n.effects.iter()).map(Effect::backdrop_radius).fold(0.0, f64::max))
+    }
+
     /// Node ids touched so far (without clearing).
     pub fn dirty(&self) -> &std::collections::BTreeSet<NodeId> {
         &self.dirty.0
@@ -262,7 +275,16 @@ impl Document {
     /// A fresh unused id (in this document's client space during a collaboration session; see
     /// [`set_client_id`](Self::set_client_id)).
     pub fn alloc_id(&mut self) -> NodeId {
-        self.next_id.alloc()
+        // A file's saved `next_id` can be stale (behind ids already in use): skip taken ids.
+        let mut id = self.next_id.alloc();
+        while self.nodes.contains_key(&id) {
+            let next = self.next_id.alloc();
+            if next == id {
+                break;
+            }
+            id = next;
+        }
+        id
     }
 
     /// The id [`alloc_id`](Self::alloc_id) returns next.
@@ -446,8 +468,9 @@ impl Document {
                 return true;
             }
             guard += 1;
-            if guard > 10_000 {
-                return false;
+            // More hops than nodes means the parent chain loops; fail closed so callers reject the move.
+            if guard > self.nodes.len() {
+                return true;
             }
             cur = self.node(c).and_then(|n| n.parent);
         }
@@ -814,6 +837,10 @@ impl Document {
             return Err(DocError::NotContainer(parent));
         }
         let new_root = *map.get(&root).ok_or(DocError::NoNode(root))?;
+        // Never overwrite an existing node with a copy.
+        if let Some(taken) = nodes.iter().filter_map(|n| map.get(&n.id)).find(|i| self.nodes.contains_key(*i)) {
+            return Err(DocError::Invalid(format!("node {taken} already exists")));
+        }
         for n in nodes {
             let Some(new_id) = map.get(&n.id) else { continue };
             let mut c = n.clone();
@@ -827,6 +854,10 @@ impl Document {
                 && let Some(m) = map.get(component)
             {
                 *component = *m;
+            }
+            // A connector (or label) copied with what it joins joins the copies.
+            if let Some(b) = c.board.as_mut() {
+                b.remap(map);
             }
             // A pattern tiling a layer of the copy tiles the copy's layer.
             for p in c.fills.iter_mut().chain(c.strokes.iter_mut()) {
@@ -942,56 +973,81 @@ impl Document {
         self.styles.iter().find(|s| s.id == id || s.name == id)
     }
 
-    /// The effective variable modes for a node (walking up its ancestors).
+    /// The effective variable modes for a node: the ones it sets over [`Self::inherited_modes`].
     pub fn modes_for(&self, id: NodeId) -> BTreeMap<CollectionId, ModeId> {
-        let mut out = BTreeMap::new();
-        let mut chain = vec![id];
-        chain.extend(self.ancestors(id));
-        for c in chain.into_iter().rev() {
-            if let Some(n) = self.node(c) {
-                for (k, v) in &n.var_modes {
-                    out.insert(k.clone(), v.clone());
-                }
-            }
+        let mut out = self.inherited_modes(id);
+        if let Some(n) = self.node(id) {
+            out.extend(n.var_modes.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
         out
     }
 
+    /// The modes a node is on where it sets none (Auto): its ancestors', and for an instance the
+    /// ones its main component sets, which are closer than any container's.
+    pub fn inherited_modes(&self, id: NodeId) -> BTreeMap<CollectionId, ModeId> {
+        let mut out = BTreeMap::new();
+        for c in self.ancestors(id).into_iter().rev() {
+            if let Some(n) = self.node(c) {
+                out.extend(self.main_modes(n).chain(&n.var_modes).map(|(k, v)| (k.clone(), v.clone())));
+            }
+        }
+        if let Some(n) = self.node(id) {
+            out.extend(self.main_modes(n).map(|(k, v)| (k.clone(), v.clone())));
+        }
+        out
+    }
+
+    /// The modes an instance's main component sets (none for other layers).
+    fn main_modes<'a>(&'a self, n: &Node) -> impl Iterator<Item = (&'a CollectionId, &'a ModeId)> {
+        let main = match n.kind {
+            NodeKind::Instance { component, .. } => self.node(component),
+            _ => None,
+        };
+        main.into_iter().flat_map(|m| &m.var_modes)
+    }
+
     /// Check structural invariants (used by tests and after loading untrusted files).
     pub fn validate(&self) -> Vec<String> {
+        // Hostile files can break an invariant per child; keep only the first few reports.
+        const MAX_ISSUES: usize = 100;
+        fn note(issues: &mut Vec<String>, msg: impl FnOnce() -> String) {
+            if issues.len() < MAX_ISSUES {
+                issues.push(msg());
+            }
+        }
         let mut issues = Vec::new();
         for (id, n) in self.nodes.iter() {
             if n.id != *id {
-                issues.push(format!("node key {id} has id {}", n.id));
+                note(&mut issues, || format!("node key {id} has id {}", n.id));
             }
             let mut seen = std::collections::BTreeSet::new();
             for c in &n.children {
                 if !seen.insert(*c) {
-                    issues.push(format!("child {c} listed twice in {id}"));
+                    note(&mut issues, || format!("child {c} listed twice in {id}"));
                 }
                 match self.node(*c) {
                     Some(cn) if cn.parent == Some(*id) => {}
-                    Some(_) => issues.push(format!("child {c} of {id} has another parent")),
-                    None => issues.push(format!("child {c} of {id} missing")),
+                    Some(_) => note(&mut issues, || format!("child {c} of {id} has another parent")),
+                    None => note(&mut issues, || format!("child {c} of {id} missing")),
                 }
             }
             if let Some(p) = n.parent
                 && !self.node(p).is_some_and(|pn| pn.children.contains(id))
             {
-                issues.push(format!("{id} not listed in parent {p}"));
+                note(&mut issues, || format!("{id} not listed in parent {p}"));
             }
             // The library store's root is a page that is never listed.
             let listed = self.pages.contains(id) || (n.is_page() && self.libraries.store == Some(*id));
             if n.is_page() != listed {
-                issues.push(format!("page list mismatch for {id}"));
+                note(&mut issues, || format!("page list mismatch for {id}"));
             }
             if n.is_page() && n.parent.is_some() {
-                issues.push(format!("page {id} has a parent"));
+                note(&mut issues, || format!("page {id} has a parent"));
             }
         }
         let reachable = self.reachable();
         for id in self.nodes.keys().filter(|k| !reachable.contains(*k)) {
-            issues.push(format!("{id} is not under a page (cycle or detached)"));
+            note(&mut issues, || format!("{id} is not under a page (cycle or detached)"));
         }
         issues
     }
@@ -1117,8 +1173,14 @@ impl Document {
     /// mask with the layers above it up to the next mask, or a single layer. An auto layout frame
     /// whose first child paints on top paints the runs in reverse (see [`Node::paint_order`]).
     pub fn paint_runs(&self, n: &Node) -> Vec<std::ops::Range<usize>> {
-        let kids = &n.children;
-        let node = |i: usize| kids.get(i).and_then(|k| self.node(*k));
+        let kids: Vec<Option<&Node>> = n.children.iter().map(|k| self.node(*k)).collect();
+        Self::paint_runs_of(&kids, n.layout.as_ref().is_some_and(|l| l.reverse_z))
+    }
+
+    /// [`Self::paint_runs`] of children already looked up (`None`: not in the document), last run
+    /// first when `reverse_z`.
+    pub fn paint_runs_of(kids: &[Option<&Node>], reverse_z: bool) -> Vec<std::ops::Range<usize>> {
+        let node = |i: usize| kids.get(i).copied().flatten();
         let mut runs = Vec::new();
         let mut i = 0;
         while i < kids.len() {
@@ -1131,7 +1193,7 @@ impl Document {
             runs.push(i..j);
             i = j;
         }
-        if n.layout.as_ref().is_some_and(|l| l.reverse_z) {
+        if reverse_z {
             runs.reverse();
         }
         runs

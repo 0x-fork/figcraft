@@ -107,10 +107,16 @@ const DENIED: &[&str] = &[
     "plugins.",
     "libraries.",
     "library.add",
+    // Uploads the open document to a server.
+    "library.publishToServer",
     "edit.undo",
     "edit.redo",
     "edit.repeat",
     "command.batch",
+    // Network sessions, online files and their recovery copies on disk.
+    "collab.",
+    // Opens files in new windows.
+    "window.",
     "view.theme",
 ];
 /// Read-only exceptions to [`DENIED`].
@@ -128,6 +134,20 @@ fn refusal(m: &Manifest, command: &str, params: &Value) -> Option<String> {
     if command == "image.place" && get(params, "path").is_some() {
         return Some("plugins can't read files: pass the image as `data`".into());
     }
+    if command == "text.loadFont" && get(params, "path").is_some() {
+        return Some("plugins can't read files: pass the font as `data`".into());
+    }
+    // `path` here is a file on disk (elsewhere it is a vector path or an action's place).
+    if matches!(command, "variable.export" | "codeConnect.export" | "component.playground") && get(params, "path").is_some() {
+        return Some("plugins can't write files: leave out `path` to get the result back".into());
+    }
+    if command == "codeConnect.import" && get(params, "path").is_some() {
+        return Some("plugins can't read files: pass the connections as `json`".into());
+    }
+    // Variables JSON may be given as a path: only objects and JSON text for plugins.
+    if command == "variable.import" && get(params, "variables").and_then(Value::as_str).is_some_and(|t| !t.trim_start().starts_with('{')) {
+        return Some("plugins can't read files: pass the variables JSON itself".into());
+    }
     if !m.permissions.allows(command) {
         return Some(format!("`{command}` isn't in the commands {} asked permission for", m.name));
     }
@@ -140,7 +160,8 @@ fn refusal(m: &Manifest, command: &str, params: &Value) -> Option<String> {
 /// Whether `params` set layer data (`pluginData`, anywhere in them) under a widget's own keys.
 fn writes_widget_data(params: &Value, depth: usize) -> bool {
     let own = |data: &Value| data.as_object().is_some_and(|m| m.keys().any(|k| k.starts_with(crate::widgets::DATA_PREFIX)));
-    depth < 64
+    // serde_json refuses nesting past 128, so nothing deeper can reach here.
+    depth < 128
         && match params {
             Value::Object(m) => m.iter().any(|(k, v)| (k == "pluginData" && own(v)) || writes_widget_data(v, depth + 1)),
             Value::Array(a) => a.iter().any(|v| writes_widget_data(v, depth + 1)),
@@ -236,12 +257,11 @@ pub(crate) fn installed<'a>(s: &'a Session, cmd: &str, id: &str) -> Result<&'a I
 /// Read a file of at most `max` bytes.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn read_file(path: &std::path::Path, max: usize) -> Result<Vec<u8>> {
-    let shown = path.display();
-    let meta = std::fs::metadata(path).map_err(|e| EngineError::Other(format!("{shown}: {e}")))?;
+    let meta = crate::file_access::metadata(path)?;
     if !meta.is_file() || meta.len() > max as u64 {
-        return Err(EngineError::Other(format!("{shown}: not a file of at most {} KB", max / 1024)));
+        return Err(EngineError::Other(format!("{}: not a file of at most {} KB", path.display(), max / 1024)));
     }
-    std::fs::read(path).map_err(|e| EngineError::Other(format!("{shown}: {e}")))
+    crate::file_access::read(path)
 }
 
 /// The manifest at `path` (the file, or the folder holding `figcraft-plugin.json`), its absolute
@@ -249,7 +269,7 @@ pub(crate) fn read_file(path: &std::path::Path, max: usize) -> Result<Vec<u8>> {
 #[cfg(not(target_arch = "wasm32"))]
 fn load_from_disk(cmd: &str, path: &str) -> Result<(Manifest, String, Vec<u8>)> {
     let mut file = std::path::PathBuf::from(crate::library::absolute_path(path.trim()));
-    if file.is_dir() {
+    if crate::file_access::is_dir(&file) {
         file.push(MANIFEST_FILE);
     }
     let text = read_file(&file, figcraft_plugin::manifest::MAX_MANIFEST_BYTES)?;
@@ -280,10 +300,22 @@ pub(crate) fn module_of(s: &Session, p: &InstalledPlugin) -> Result<Arc<Vec<u8>>
     let Some(path) = &p.path else {
         return Err(EngineError::Other(format!("{} was imported without a manifest file: import it again", p.manifest.name)));
     };
-    #[cfg(not(target_arch = "wasm32"))]
-    return module_file(std::path::Path::new(path), &p.manifest).map(Arc::new);
-    #[cfg(target_arch = "wasm32")]
-    return Err(EngineError::Other(format!("{path}: there are no files in the browser")));
+    module_from_disk(s, p, path)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn module_from_disk(s: &Session, p: &InstalledPlugin, path: &str) -> Result<Arc<Vec<u8>>> {
+    let file = std::path::Path::new(path);
+    let read = || module_file(file, &p.manifest).map(Arc::new);
+    // A plugin installed from a directory lives in the app's own install folder, not among the
+    // files automation roots confine.
+    let own = p.source.is_some() && s.plugins.install_dir.as_deref().is_some_and(|d| crate::file_access::within_app_folder(file, d));
+    if own { crate::file_access::app_owned(read) } else { read() }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn module_from_disk(_: &Session, _: &InstalledPlugin, path: &str) -> Result<Arc<Vec<u8>>> {
+    Err(EngineError::Other(format!("{path}: there are no files in the browser")))
 }
 
 /// The sandbox limits for a run, with `fuel` lowering the instruction budget.
@@ -565,4 +597,29 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("plugins.runLast", "Run last plugin", "{}", false, run_last),
         spec!("plugins.manage", "Manage plugins…", "{}  opens the plugins window; returns the list like `plugin.list`", false, manage),
     ]
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+
+    #[test]
+    fn read_only_plugin_cannot_publish_to_server() {
+        let m = Manifest::parse(r#"{"id":"x.y","name":"X","main":"plugin.wasm"}"#).unwrap();
+        let r = refusal(&m, "library.publishToServer", &json!({}));
+        assert!(r.is_some(), "library.publishToServer uploads the document and must be refused");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn widget_data_is_found_at_any_depth_serde_accepts() {
+        let depth = 100;
+        let text = format!("{}{{\"pluginData\":{{\"{}x\":1}}}}{}", "{\"a\":".repeat(depth), crate::widgets::DATA_PREFIX, "}".repeat(depth));
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert!(writes_widget_data(&v, 0));
+    }
 }

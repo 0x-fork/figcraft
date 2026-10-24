@@ -4,7 +4,9 @@ FigCraft without a window: inspect, export, convert and render documents, run co
 commands, serve MCP and measure performance. Build it with
 `cargo build --release -p figcraft-cli` (binary `target/release/figcraft-cli`).
 
-Bad arguments print usage and exit with code 2; failures exit with 1. The CLI never panics on input.
+`figcraft-cli --help` (or `-h`, or `help`) prints usage on stdout and exits with 0, and so does
+`--help` or `-h` after a subcommand (`figcraft-cli mcp --help`). Bad arguments print usage and exit
+with code 2; failures exit with 1. The CLI never panics on input.
 
 ## Fonts
 
@@ -29,7 +31,9 @@ be open to the public: [server.md](server.md#running-a-public-server)). See [ser
 ### `info <file> [--json]`
 
 Pages, node counts, top-level frames (id, type, name, size), style/variable/image counts. Repairs
-of a damaged file and import warnings go to stderr as `note:` lines (`notes` with `--json`).
+of a damaged file and import warnings go to stderr as `note:` lines (`notes` with `--json`). Fonts the
+file names that aren't installed are listed as `missing font` lines (`missingFonts: [{family,
+layers}]` with `--json`); their text renders in a fallback font.
 
 Every subcommand that reads a file also takes the public REST API file JSON (the response of
 `GET /v1/files/:key` or of its nodes endpoint, written to a `.json` file): it is imported on the fly.
@@ -49,6 +53,10 @@ page 1 "Screens": 380 nodes, 4 top-level
 
 - `<out>` is a directory: one file per top-level frame of the page (default the first page), named
   after the frame (`Home.png`, `Settings.png`…); with no frames, one file per top-level layer.
+  The name is kept as it is, except for the characters file systems refuse (`/ \ : * ? " < > |`
+  and control characters), which become `_`, and leading or trailing spaces and dots, which are
+  dropped. A name is cut at 100 characters. The app's export replaces the same characters (there a
+  `/` makes a folder). Two layers with the same name get `Name 2`, `Name 3`…
 - `<out>` has an image extension: one file with the given `--node`, or the whole page composited.
 - `--node` takes a layer id (`12` or `0:12`) or a layer name.
 - `--format fig` (or an `<out>` ending in `.fig`) writes the whole file as `.fig`, experimental:
@@ -103,7 +111,29 @@ Runs commands in a headless session (a new document, or `--in`), printing one JS
 {"command":"frame.create","ok":true,"result":{"id":2},"step":0}
 ```
 
-A failing step prints `"ok": false` with the error and exits with code 1 (nothing is saved).
+The whole script is **one undo step**, and it is **all-or-nothing**, exactly like running the same
+commands through `command.batch` (the MCP tool `batch`, the control channel, plugins): `{"$step": n}`
+in a step's params is the `id` in an earlier step's result, so a step can target a layer an earlier
+step of the same script created:
+
+```json
+[
+  {"command": "node.create", "params": {"type": "frame", "name": "Card", "width": 200, "height": 100}},
+  {"command": "node.create", "params": {"type": "text", "parent": {"$step": 0}, "text": "Hi"}}
+]
+```
+
+The result lines are printed once the script is through, so none of them reports work a later step
+took back.
+
+A failing step prints one line with `"ok": false`, the error and `"rolledBack": true`, writes
+nothing (`--out` is not saved, and the session's documents go back to how the script found them),
+and exits with code 1:
+
+```text
+{"step":1,"command":"node.set","ok":false,"error":"no such node 99999","rolledBack":true}
+```
+
 `--out` saves the result by extension like `convert`.
 
 Script formats: a JSON array of `{"command": id, "params": {...}}`, an object
@@ -129,15 +159,42 @@ figcraft-cli run start.json --out dashboard.figcraft
 figcraft-cli export dashboard.figcraft -o dashboard.png
 ```
 
+### Confining a run: `--automation-read-root DIR` / `--automation-write-root DIR`
+
+`info`, `export`, `convert`, `render` and `run` take these two flags, with the same meaning they
+have on [`mcp`](#mcp---attach-port---automation-read-root-dir---automation-write-root-dir): each is
+repeatable, each folder must exist, and together they confine every file that subcommand touches.
+Reads are allowed inside a read or write root, writes only inside a write root, and everything else
+is refused — so a run given only a read root cannot write at all. Without either flag a subcommand
+reads and writes as the user who started it.
+
+```sh
+# Renders in/doc.figcraft to out/ok.png and can touch nothing else.
+figcraft-cli render in/doc.figcraft -o out/ok.png \
+  --automation-read-root in --automation-write-root out
+
+figcraft-cli render in/doc.figcraft -o ./escaped.png \
+  --automation-read-root in --automation-write-root out
+# error: automation path rejected: . is outside the folders that may be written: …/out
+```
+
+This is for driving the CLI from a script or an agent that should not reach the rest of the disk;
+the flags leave the output identical when nothing strays outside the roots.
+
 ### `commands [--json] [--filter TEXT]`
 
 Every command with its label, shortcut, undoable flag (`*`) and parameter docs; `--json` for
 machines.
 
-### `mcp [--attach PORT]`
+### `mcp [--attach PORT] [--automation-read-root DIR]… [--automation-write-root DIR]…`
 
 Serve MCP on stdio: headless by default, or attached to a running app started with
-`figcraft --control PORT`. See [mcp.md](mcp.md). The headless session can host, join and publish
+`figcraft --control PORT`. See [mcp.md](mcp.md). The automation roots (each repeatable; existing
+folders) confine the files the agent's calls read (inside a read or write root) and write (inside a
+write root); everything else is refused ([mcp.md › Confining file access](mcp.md#confining-file-access)).
+They apply to the headless session only, and that is why `--attach` refuses them: an attached server
+is confined by the app it attaches to, from the flags that app was started with. The headless
+session can host, join and publish
 live sessions (`collab.*`: without a key on a server open to the public, with `collab.serverInfo`,
 `collab.manageFile` for the owner token and `collab.report`) and use plugin directories
 (`plugin.directory.*`); the one-shot `run` can't (no network link).

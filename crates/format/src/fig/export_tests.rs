@@ -74,7 +74,7 @@ fn paint(r: &mut Lcg, image: &str) -> Paint {
             p.kind
         }
     };
-    Paint { kind, opacity: r.pick(&[1.0, 0.5, 0.25]), visible: r.chance(85), blend: r.pick(&BLENDS) }
+    Paint { kind, opacity: r.pick(&[1.0, 0.5, 0.25]), visible: r.chance(85), blend: r.pick(&BLENDS), color_alpha: false }
 }
 
 fn effect(r: &mut Lcg) -> Effect {
@@ -595,6 +595,17 @@ fn normalize(n: &mut Node, ix: &dyn Fn(NodeId) -> NodeId) {
     n.source = None;
     n.overrides.clear();
     n.constrain_proportions = false;
+    // A text's resize mode is its sizing (the editor keeps them together; generated documents
+    // don't): auto width hugs both axes, auto height its height.
+    if let NodeKind::Text(t) = &n.kind {
+        let cl = &mut n.child_layout;
+        let hug = |s: &mut Sizing| *s = if *s == Sizing::Fixed { Sizing::Hug } else { *s };
+        match t.auto_resize {
+            TextAutoResize::WidthAndHeight => [&mut cl.sizing_h, &mut cl.sizing_v].into_iter().for_each(hug),
+            TextAutoResize::Height => hug(&mut cl.sizing_v),
+            _ => {}
+        }
+    }
     let fold = |ps: &mut Vec<Paint>| {
         for p in ps.iter_mut() {
             if let PaintKind::Solid { color } = &mut p.kind {
@@ -619,9 +630,6 @@ fn normalize(n: &mut Node, ix: &dyn Fn(NodeId) -> NodeId) {
         }
     }
     if let Some(l) = &mut n.layout {
-        if matches!(l.main_align, MainAlign::SpaceAround | MainAlign::SpaceEvenly) {
-            l.main_align = MainAlign::SpaceBetween;
-        }
         // Track counts only matter (and are only written) for grids.
         if l.mode != LayoutMode::Grid {
             let d = AutoLayout::default();
@@ -680,7 +688,7 @@ fn normalize(n: &mut Node, ix: &dyn Fn(NodeId) -> NodeId) {
             for r in &mut td.runs {
                 px(&mut r.style);
             }
-            td.paragraphs = (0..td.paragraph_count()).map(|p| ParaList { list: td.para_list(p).list, indent: 0 }).collect();
+            td.paragraphs = (0..td.paragraph_count()).map(|p| ParaList { indent: 0, ..td.para_list(p) }).collect();
             td.list = ListStyle::None;
         }
         NodeKind::Vector { network } => {
@@ -1012,6 +1020,45 @@ fn junk_documents_never_panic() {
             let _ = import(&bytes, "x");
         }
     }
+}
+
+/// Grid track sizes reach the file and come back: fixed px, fractional fill and hug tracks, and a
+/// track the format has no name for leaves an equal track behind instead of failing the write.
+#[test]
+fn grid_track_sizes_round_trip() {
+    let mut doc = Document::new("File");
+    let page = doc.first_page().unwrap();
+    let grid = doc.create(page, NodeKind::Frame, "Grid", 0.0, 0.0, 400.0, 200.0).unwrap();
+    {
+        let node = doc.node_mut(grid).unwrap();
+        node.layout = Some(AutoLayout {
+            mode: LayoutMode::Grid,
+            grid_columns: 3,
+            grid_rows: 2,
+            column_tracks: vec![GridTrack::fixed(120.0), GridTrack::fill(2.0), GridTrack::hug()],
+            row_tracks: vec![GridTrack::fill(1.0), GridTrack::fixed(50.0)],
+            ..AutoLayout::default()
+        });
+    }
+    let (bytes, warnings) = export(&doc, None).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let (back, iw) = import(&bytes, "File").unwrap();
+    assert!(iw.is_empty(), "{iw:?}");
+    let l = back.node(back.pages[0]).and_then(|p| p.children.first()).and_then(|c| back.node(*c)).and_then(|n| n.layout.clone()).unwrap();
+    assert_eq!(l.column_tracks, vec![GridTrack::fixed(120.0), GridTrack::fill(2.0), GridTrack::hug()]);
+    assert_eq!(l.row_tracks, vec![GridTrack::fill(1.0), GridTrack::fixed(50.0)]);
+
+    // A negative fixed track is no size the format can name: the write still succeeds, the track
+    // falls back to an equal one, and the warning says so.
+    let mut odd = doc.clone();
+    if let Some(l) = odd.node_mut(grid).and_then(|n| n.layout.as_mut()) {
+        l.column_tracks[0] = GridTrack::fixed(-5.0);
+    }
+    let (bytes, warnings) = export(&odd, None).unwrap();
+    assert_eq!(warnings, vec!["grid tracks whose size the format can't hold were written as equal tracks".to_string()]);
+    let (back, _) = import(&bytes, "File").unwrap();
+    let l = back.node(back.pages[0]).and_then(|p| p.children.first()).and_then(|c| back.node(*c)).and_then(|n| n.layout.clone()).unwrap();
+    assert_eq!(l.column_tracks[0], GridTrack::fill(1.0), "an unwritable track reads back equal");
 }
 
 /// A frame's own min/max size survives whatever its parent is, not only under auto layout.

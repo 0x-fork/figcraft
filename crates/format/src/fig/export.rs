@@ -25,10 +25,10 @@ use figcraft_doc::proto::{
     Action, Direction, Easing, GAMEPAD_BUTTONS, Interaction, KeyMods, Overflow, OverlayPosition, ScrollPosition, Transition, Trigger,
 };
 use figcraft_doc::{
-    AutoLayout, BoolOp, ContentAlign, CrossAlign, Document, EffectKind, ExportSize, GridAlign, GridKind, HConstraint, LayoutMode, LetterSpacing,
-    LineHeight, ListStyle, MainAlign, MaskType, Node, NodeId, NodeKind, NoiseMode, PropDef, Sizing, StrokeAlign, StrokeCap, StrokeJoin, StyleKind,
-    TextAlignH, TextAlignV, TextAutoResize, TextCase, TextData, TextDecoration, TextStyle, VConstraint, VariableType, VariableValue, VectorNetwork,
-    WindingRule,
+    AutoLayout, BoolOp, ContentAlign, CrossAlign, Document, EffectKind, ExportSize, GridAlign, GridKind, GridTrack, HConstraint, LayoutMode,
+    LetterSpacing, LineHeight, ListStyle, MainAlign, MaskType, Node, NodeId, NodeKind, NoiseMode, PropDef, Sizing, StrokeAlign, StrokeCap,
+    StrokeJoin, StyleKind, TextAlignH, TextAlignV, TextAutoResize, TextCase, TextData, TextDecoration, TextStyle, VConstraint, VariableType,
+    VariableValue, VectorNetwork, WindingRule,
 };
 use serde_json::Value;
 
@@ -73,7 +73,7 @@ enum StrokeJoin MITER=0 BEVEL=1 ROUND=2
 enum ConstraintType MIN=0 CENTER=1 MAX=2 STRETCH=3 SCALE=4
 enum StackMode NONE=0 HORIZONTAL=1 VERTICAL=2 GRID=3
 enum StackAlign MIN=0 CENTER=1 MAX=2 BASELINE=3
-enum StackJustify MIN=0 CENTER=1 MAX=2 SPACE_EVENLY=3 SPACE_BETWEEN=4 SPACE_AROUND=5
+enum StackJustify MIN=0 CENTER=1 MAX=2 SPACE_EVENLY=3 SPACE_BETWEEN=4 SPACE_AROUND=5 SPACE_EVENLY_CSS=6
 enum StackCounterAlign MIN=0 CENTER=1 MAX=2 STRETCH=3 AUTO=4 BASELINE=5
 enum StackSize FIXED=0 RESIZE_TO_FIT=1
 enum StackWrap NO_WRAP=0 WRAP=1
@@ -168,7 +168,12 @@ message PrototypeStartingPoint string name=1, string position=3
 message OverlayBackgroundAppearance OverlayBackgroundType backgroundType=1, Color backgroundColor=2
 message GUIDPositionMapEntry GUID id=1, string position=2
 message GUIDPositionMap GUIDPositionMapEntry[] entries=1
-message NodeChange GUID guid=1, NodePhase phase=2, ParentIndex parentIndex=3, NodeType type=4, string name=5, bool visible=6, bool locked=7, float opacity=8, BlendMode blendMode=9, Vector size=11, Matrix transform=12, bool mask=16, MaskType maskType=317, float backgroundOpacity=19, bool backgroundEnabled=15, bool internalOnly=142, string description=318, StyleType styleType=163, string sortPosition=320, StyleId styleIdForFill=332, StyleId styleIdForStrokeFill=333, StyleId styleIdForText=334, StyleId styleIdForEffect=335, StyleId styleIdForGrid=336, VariableDataMap variableConsumptionMap=307, VariableModeBySetMap variableModeBySetMap=316, VariableSetMode[] variableSetModes=312, VariableSetID variableSetID=313, VariableResolvedDataType variableResolvedType=314, VariableDataValues variableDataValues=315, VariableScope[] variableScopes=353, DocumentColorProfile documentColorProfile=349, Paint[] fillPaints=38, Paint[] strokePaints=39, float strokeWeight=26, StrokeAlign strokeAlign=29, StrokeJoin strokeJoin=31, StrokeCap strokeCap=30, float[] dashPattern=13, float miterLimit=25, bool borderStrokeWeightsIndependent=299, float borderTopWeight=295, float borderRightWeight=298, float borderBottomWeight=296, float borderLeftWeight=297, Effect[] effects=43, float cornerRadius=20, float cornerSmoothing=160, bool rectangleCornerRadiiIndependent=149, float rectangleTopLeftCornerRadius=145, float rectangleTopRightCornerRadius=146, float rectangleBottomRightCornerRadius=148, float rectangleBottomLeftCornerRadius=147, ConstraintType horizontalConstraint=28, ConstraintType verticalConstraint=37, bool frameMaskDisabled=115, bool resizeToFit=117, bool isStateGroup=225, bool sectionContentsHidden=283, Color backgroundColor=50, StackMode stackMode=105, float stackSpacing=107, float stackCounterSpacing=324, StackWrap stackWrap=323, StackCounterAlignContent stackCounterAlignContent=343, float stackHorizontalPadding=209, float stackVerticalPadding=210, float stackPaddingRight=233, float stackPaddingBottom=234, StackJustify stackPrimaryAlignItems=230, StackAlign stackCounterAlignItems=231, StackSize stackPrimarySizing=229, StackSize stackCounterSizing=221, bool bordersTakeSpace=294, bool stackReverseZIndex=271, float gridColumnGap=438, float gridRowGap=437, GUIDPositionMap gridColumns=436, GUIDPositionMap gridRows=435, float stackChildPrimaryGrow=232, StackCounterAlign stackChildAlignSelf=236, StackPositioning stackPositioning=269, OptionalVector minSize=325, OptionalVector maxSize=326, GUID gridColumnAnchor=440, GUID gridRowAnchor=439, uint gridColumnSpan=442, uint gridRowSpan=441, LayoutGrid[] layoutGrids=47, ExportSettings[] exportSettings=45, TextData textData=42, FontName fontName=41, float fontSize=21, Number lineHeight=40, Number letterSpacing=165, TextCase textCase=34, TextDecoration textDecoration=35, TextAlignHorizontal textAlignHorizontal=32, TextAlignVertical textAlignVertical=33, TextAutoResize textAutoResize=46, TextTruncation textTruncation=280, int maxLines=351, float paragraphSpacing=23, float paragraphIndent=22, Hyperlink hyperlink=223, bool autoRename=14, bool fontVariantCommonLigatures=127, bool fontVariantContextualLigatures=128, string fontVersion=202, uint textUserLayoutVersion=203, uint textExplicitLayoutVersion=396, uint textBidiVersion=279, float textTracking=27, bool textDecorationSkipInk=412, EmojiImageSet emojiImageSet=391, uint styleID=49, Path[] fillGeometry=51, Path[] strokeGeometry=52, VectorData vectorData=48, VectorMirror handleMirroring=44, uint count=10, float starInnerScale=24, ArcData arcData=195, BooleanOperation booleanOperation=36, string symbolDescription=144, VariableWidthPoint[] variableWidthPoints=447, PluginData[] pluginData=204, SymbolData symbolData=113, NodeChange[] derivedSymbolData=125, GUID overriddenSymbolID=143, ComponentPropDef[] componentPropDefs=266, ComponentPropAssignment[] componentPropAssignments=268, VariableDataMap parameterConsumptionMap=445, GUIDPath guidPath=111, PrototypeInteraction[] prototypeInteractions=226, PrototypeStartingPoint prototypeStartingPoint=249, ScrollDirection scrollDirection=159, ScrollBehavior scrollBehavior=186, OverlayPositionType overlayPositionType=198, OverlayBackgroundInteraction overlayBackgroundInteraction=200, OverlayBackgroundAppearance overlayBackgroundAppearance=201
+enum GridTrackSizingType FLEX=0 FIXED=1 HUG=2 UNKNOWN=3
+message GridTrackSizeFunction GridTrackSizingType type=1, float value=2
+message GridTrackSize GridTrackSizeFunction minSizing=1, GridTrackSizeFunction maxSizing=2
+message GridTrackSizeEntry GUID id=1, GridTrackSize trackSize=2
+message GridTrackSizeMap GridTrackSizeEntry[] entries=1
+message NodeChange GUID guid=1, NodePhase phase=2, ParentIndex parentIndex=3, NodeType type=4, string name=5, bool visible=6, bool locked=7, float opacity=8, BlendMode blendMode=9, Vector size=11, Matrix transform=12, bool mask=16, MaskType maskType=317, float backgroundOpacity=19, bool backgroundEnabled=15, bool internalOnly=142, string description=318, StyleType styleType=163, string sortPosition=320, StyleId styleIdForFill=332, StyleId styleIdForStrokeFill=333, StyleId styleIdForText=334, StyleId styleIdForEffect=335, StyleId styleIdForGrid=336, VariableDataMap variableConsumptionMap=307, VariableModeBySetMap variableModeBySetMap=316, VariableSetMode[] variableSetModes=312, VariableSetID variableSetID=313, VariableResolvedDataType variableResolvedType=314, VariableDataValues variableDataValues=315, VariableScope[] variableScopes=353, DocumentColorProfile documentColorProfile=349, Paint[] fillPaints=38, Paint[] strokePaints=39, float strokeWeight=26, StrokeAlign strokeAlign=29, StrokeJoin strokeJoin=31, StrokeCap strokeCap=30, float[] dashPattern=13, float miterLimit=25, bool borderStrokeWeightsIndependent=299, float borderTopWeight=295, float borderRightWeight=298, float borderBottomWeight=296, float borderLeftWeight=297, Effect[] effects=43, float cornerRadius=20, float cornerSmoothing=160, bool rectangleCornerRadiiIndependent=149, float rectangleTopLeftCornerRadius=145, float rectangleTopRightCornerRadius=146, float rectangleBottomRightCornerRadius=148, float rectangleBottomLeftCornerRadius=147, ConstraintType horizontalConstraint=28, ConstraintType verticalConstraint=37, bool frameMaskDisabled=115, bool resizeToFit=117, bool isStateGroup=225, bool sectionContentsHidden=283, Color backgroundColor=50, StackMode stackMode=105, float stackSpacing=107, float stackCounterSpacing=324, StackWrap stackWrap=323, StackCounterAlignContent stackCounterAlignContent=343, float stackHorizontalPadding=209, float stackVerticalPadding=210, float stackPaddingRight=233, float stackPaddingBottom=234, StackJustify stackPrimaryAlignItems=230, StackAlign stackCounterAlignItems=231, StackSize stackPrimarySizing=229, StackSize stackCounterSizing=221, bool bordersTakeSpace=294, bool stackReverseZIndex=271, float gridColumnGap=438, float gridRowGap=437, GUIDPositionMap gridColumns=436, GUIDPositionMap gridRows=435, GridTrackSizeMap gridColumnsSizing=443, GridTrackSizeMap gridRowsSizing=444, float stackChildPrimaryGrow=232, StackCounterAlign stackChildAlignSelf=236, StackPositioning stackPositioning=269, OptionalVector minSize=325, OptionalVector maxSize=326, GUID gridColumnAnchor=440, GUID gridRowAnchor=439, uint gridColumnSpan=442, uint gridRowSpan=441, LayoutGrid[] layoutGrids=47, ExportSettings[] exportSettings=45, TextData textData=42, FontName fontName=41, float fontSize=21, Number lineHeight=40, Number letterSpacing=165, TextCase textCase=34, TextDecoration textDecoration=35, TextAlignHorizontal textAlignHorizontal=32, TextAlignVertical textAlignVertical=33, TextAutoResize textAutoResize=46, TextTruncation textTruncation=280, int maxLines=351, float paragraphSpacing=23, float paragraphIndent=22, Hyperlink hyperlink=223, bool autoRename=14, bool fontVariantCommonLigatures=127, bool fontVariantContextualLigatures=128, string fontVersion=202, uint textUserLayoutVersion=203, uint textExplicitLayoutVersion=396, uint textBidiVersion=279, float textTracking=27, bool textDecorationSkipInk=412, EmojiImageSet emojiImageSet=391, uint styleID=49, Path[] fillGeometry=51, Path[] strokeGeometry=52, VectorData vectorData=48, VectorMirror handleMirroring=44, uint count=10, float starInnerScale=24, ArcData arcData=195, BooleanOperation booleanOperation=36, string symbolDescription=144, VariableWidthPoint[] variableWidthPoints=447, PluginData[] pluginData=204, SymbolData symbolData=113, NodeChange[] derivedSymbolData=125, GUID overriddenSymbolID=143, ComponentPropDef[] componentPropDefs=266, ComponentPropAssignment[] componentPropAssignments=268, VariableDataMap parameterConsumptionMap=445, GUIDPath guidPath=111, PrototypeInteraction[] prototypeInteractions=226, PrototypeStartingPoint prototypeStartingPoint=249, ScrollDirection scrollDirection=159, ScrollBehavior scrollBehavior=186, OverlayPositionType overlayPositionType=198, OverlayBackgroundInteraction overlayBackgroundInteraction=200, OverlayBackgroundAppearance overlayBackgroundAppearance=201
 struct Blob byte[] bytes
 message Message MessageType type=1, uint sessionID=2, NodeChange[] nodeChanges=4, Blob[] blobs=6
 ";
@@ -277,6 +282,20 @@ fn s(x: &str) -> Kv<'static> {
 fn b(x: bool) -> Kv<'static> {
     Kv::Bool(x)
 }
+
+/// A track's size as the format's enum name and value, when both sizing functions agree (the
+/// importer keeps only those). `None`: the format has no name for it, so an equal track stands in.
+fn grid_track_size(track: &GridTrack) -> Option<(&'static str, f64)> {
+    let value = track.value;
+    let fits = value.is_finite() && (0.0..=crate::fig::map::MAX_GRID_TRACK_VALUE).contains(&value);
+    match track.sizing {
+        Sizing::Fixed if fits => Some(("FIXED", value)),
+        Sizing::Fill if fits && value > 0.0 => Some(("FLEX", value)),
+        Sizing::Hug => Some(("HUG", 0.0)),
+        _ => None,
+    }
+}
+
 fn guid(session: u32, local: u32) -> Kv<'static> {
     o(vec![("sessionID", u(session)), ("localID", u(local))])
 }
@@ -1371,7 +1390,7 @@ impl<'d> Exporter<'d> {
             MainAlign::Max => "MAX",
             MainAlign::SpaceBetween => "SPACE_BETWEEN",
             MainAlign::SpaceAround => "SPACE_AROUND",
-            MainAlign::SpaceEvenly => "SPACE_EVENLY",
+            MainAlign::SpaceEvenly => "SPACE_EVENLY_CSS",
         };
         let cross = match l.cross_align {
             CrossAlign::Min => "MIN",
@@ -1415,8 +1434,32 @@ impl<'d> Exporter<'d> {
                 )])
             };
             f.extend([("gridColumnGap", fl(l.gap)), ("gridRowGap", fl(l.cross_gap)), ("gridColumns", map(&cols)), ("gridRows", map(&rows))]);
-            if l.column_tracks.iter().chain(&l.row_tracks).any(|t| t.sizing != Sizing::Fill) {
-                self.warn("grid tracks of fixed or content size were written as equal tracks");
+            // Sizing is keyed by track id like the order map. A track the document doesn't set is
+            // left out, and one the format can't hold keeps its id (the import equalises it).
+            let mut dropped = false;
+            let sizing = |tracks: &[GridTrack], ids: &[u32], dropped: &mut bool| -> Option<Kv<'static>> {
+                let mut entries = Vec::new();
+                for (i, id) in ids.iter().enumerate() {
+                    let Some(track) = tracks.get(i) else { continue };
+                    match grid_track_size(track) {
+                        Some((kind, value)) => {
+                            let size = || o(vec![("type", e(kind)), ("value", fl(value))]);
+                            entries.push(o(vec![("id", guid(AUX, *id)), ("trackSize", o(vec![("minSizing", size()), ("maxSizing", size())]))]));
+                        }
+                        None => *dropped = true,
+                    }
+                }
+                (!entries.is_empty()).then(|| o(vec![("entries", arr(entries))]))
+            };
+            let column_sizing = sizing(&l.column_tracks, &cols, &mut dropped);
+            let row_sizing = sizing(&l.row_tracks, &rows, &mut dropped);
+            if dropped {
+                self.warn("grid tracks whose size the format can't hold were written as equal tracks");
+            }
+            for (name, sizing) in [("gridColumnsSizing", column_sizing), ("gridRowsSizing", row_sizing)] {
+                if let Some(v) = sizing {
+                    f.push((name, v));
+                }
             }
             self.tracks.insert(key, (cols, rows));
         } else {
@@ -1502,7 +1545,6 @@ impl<'d> Exporter<'d> {
             ("textExplicitLayoutVersion", u(1)),
             ("textBidiVersion", u(1)),
             ("textTracking", fl(0.0)),
-            ("textDecorationSkipInk", b(true)),
             ("emojiImageSet", e("APPLE")),
         ]);
         if td.auto_resize == TextAutoResize::Truncate {
@@ -1565,6 +1607,20 @@ impl<'d> Exporter<'d> {
             data.extend([("characterStyleIDs", arr(ids)), ("styleOverrideTable", arr(entries))]);
         }
         let lists: Vec<ListStyle> = (0..td.paragraph_count()).map(|p| td.para_list(p).list).collect();
+        let first = |i: usize, l: &ListStyle| *l != ListStyle::None && (i == 0 || lists.get(i - 1) != Some(l));
+        // Where each line's numbered list starts counting, less one: its first item's start, on
+        // every line of the list.
+        let mut run = 0;
+        let starts: Vec<u32> = lists
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                if first(i, l) {
+                    run = td.para_list(i).start_offset;
+                }
+                if *l == ListStyle::Numbered { run } else { 0 }
+            })
+            .collect();
         // One entry per paragraph, each with every field a reader expects.
         let line = |(i, l): (usize, &ListStyle)| {
             let ty = match l {
@@ -1573,14 +1629,15 @@ impl<'d> Exporter<'d> {
                 ListStyle::Bulleted => "UNORDERED_LIST",
             };
             let listed = *l != ListStyle::None;
-            let first = listed && (i == 0 || lists.get(i - 1) != Some(l));
+            let begins = first(i, l);
+            let start = starts.get(i).copied().unwrap_or(0);
             o(vec![
                 ("lineType", e(ty)),
                 ("styleId", int(0)),
                 ("indentationLevel", int(i64::from(listed))),
                 ("sourceDirectionality", e("AUTO")),
-                ("listStartOffset", int(0)),
-                ("isFirstLineOfList", b(first)),
+                ("listStartOffset", int(i64::from(start))),
+                ("isFirstLineOfList", b(begins)),
             ])
         };
         data.push(("lines", arr(lists.iter().enumerate().map(line).collect())));
@@ -1589,7 +1646,7 @@ impl<'d> Exporter<'d> {
             self.warn("nested list levels were written as the first level");
         }
         let styles = std::iter::once(&td.style).chain(td.runs.iter().map(|r| &r.style));
-        if styles.clone().any(|st| st.decoration_look.is_some() || !st.variations.is_empty()) {
+        if styles.clone().any(|st| unsupported_decoration_look(st) || !st.variations.is_empty()) {
             self.warn("text decoration looks and variable font settings were left out");
         }
         if td.path.is_some() {
@@ -1669,7 +1726,13 @@ impl<'d> Exporter<'d> {
             let segments = net
                 .segments
                 .iter()
-                .map(|sg| network::Segment { a: sg.a, ta: (finite(sg.ta.0), finite(sg.ta.1)), b: sg.b, tb: (finite(sg.tb.0), finite(sg.tb.1)) })
+                .map(|sg| network::Segment {
+                    style: 0,
+                    a: sg.a,
+                    ta: (finite(sg.ta.0), finite(sg.ta.1)),
+                    b: sg.b,
+                    tb: (finite(sg.tb.0), finite(sg.tb.1)),
+                })
                 .collect();
             let regions = net
                 .regions
@@ -1716,7 +1779,7 @@ impl<'d> Exporter<'d> {
         let sp = &n.stroke;
         let (w, h, weight) = (n.width, n.height, sp.weight);
         let plain = n.strokes.iter().any(|p| p.visible) && sp.dashes.is_empty() && sp.sides.is_none() && sp.profile().is_none() && sp.brush.is_none();
-        if !plain || !(weight.is_finite() && weight > 0.0 && w.is_finite() && h.is_finite()) {
+        if !(plain && weight.is_finite() && weight > 0.0 && w.is_finite() && h.is_finite()) {
             return;
         }
         let whole = matches!(n.kind, NodeKind::Ellipse { sweep, inner, .. } if inner == 0.0 && sweep.abs() >= std::f64::consts::TAU - 1e-9);
@@ -1838,12 +1901,13 @@ impl<'d> Exporter<'d> {
         let named = set.is_none_or(|s| s.name != n.name);
         let root_mine: Fields = f.iter().filter(|(k, _)| !OWN.contains(k) && (named || *k != "name")).cloned().collect();
         // Each layer below: its id path, the fields that differ from the main's layer, that layer's
-        // fields, and the component a nested instance was swapped for.
+        // fields, whether its size is its own (a nested instance, a size override) and the
+        // component a nested instance was swapped for.
         struct Row {
             path: Kv<'static>,
             changed: Fields,
             theirs: Fields,
-            nested: bool,
+            sized: bool,
             swap: Option<Kv<'static>>,
         }
         let mut rows: Vec<Row> = Vec::new();
@@ -1871,8 +1935,8 @@ impl<'d> Exporter<'d> {
                 (NodeKind::Instance { component, .. }, _) => self.guid_of(*component),
                 _ => None,
             };
-            let nested = matches!(d.kind, NodeKind::Instance { .. });
-            rows.push(Row { path: o(vec![("guids", arr(guids))]), changed: changed(mine, &theirs), theirs, nested, swap });
+            let sized = matches!(d.kind, NodeKind::Instance { .. }) || d.overrides.contains("size");
+            rows.push(Row { path: o(vec![("guids", arr(guids))]), changed: changed(mine, &theirs), theirs, sized, swap });
         }
         // An instance scaled as a whole (the Scale tool) is `factor` times its main in every length:
         // sizes, places and stroke weights, its own and its layers'. A resized one keeps its weights.
@@ -1907,8 +1971,8 @@ impl<'d> Exporter<'d> {
             let (mut of, mut df): (Fields, Fields) = (vec![("guidPath", r.path.clone())], vec![("guidPath", r.path)]);
             for (k, v) in r.changed {
                 let follows = follows(k, &v, &r.theirs);
-                // A nested instance's size is its own to set.
-                if follows && r.nested && k == "size" {
+                // A nested instance's size is its own to set, as is a size the layer overrides.
+                if follows && r.sized && k == "size" {
                     of.push((k, v.clone()));
                 }
                 if follows { &mut df } else { &mut of }.push((k, v));
@@ -2196,12 +2260,13 @@ fn outlined(n: &Node) -> Option<(Node, String)> {
         NodeKind::Line | NodeKind::Vector { .. } | NodeKind::Ellipse { .. } | NodeKind::Polygon { .. } | NodeKind::Star { .. } | NodeKind::Rectangle
     );
     let shown = |paints: &[Paint]| paints.iter().any(|p| p.visible);
-    if !shape
-        || sp.brush.is_some()
-        || !sp.profile().is_some_and(one_sided)
-        || !(sp.weight.is_finite() && sp.weight > 0.0)
-        || !shown(&n.strokes)
-        || shown(&n.fills)
+    if !(shape
+        && sp.brush.is_none()
+        && sp.profile().is_some_and(one_sided)
+        && sp.weight.is_finite()
+        && sp.weight > 0.0
+        && shown(&n.strokes)
+        && !shown(&n.fills))
     {
         return None;
     }
@@ -2393,6 +2458,13 @@ fn key_codes(key: &str) -> Option<(Vec<i64>, bool)> {
     Some((codes, false))
 }
 
+/// Whether the decoration look has more than skip ink, which the file can't hold.
+fn unsupported_decoration_look(st: &TextStyle) -> bool {
+    let mut look = st.look();
+    look.skip_ink = false;
+    look != Default::default()
+}
+
 /// The text style fields of a layer or of an override table entry.
 fn style_fields(st: &TextStyle, f: &mut Fields) {
     let line_height = match st.line_height {
@@ -2425,6 +2497,9 @@ fn style_fields(st: &TextStyle, f: &mut Fields) {
         ("letterSpacing", letter_spacing),
         ("textCase", e(case)),
         ("textDecoration", e(decoration)),
+        // Skip ink only shows on an underline; other text gets the files' default (on), the value
+        // the import leaves out again.
+        ("textDecorationSkipInk", b(st.look().skip_ink || st.decoration != TextDecoration::Underline)),
     ]);
     if let Some(url) = &st.link {
         f.push(("hyperlink", o(vec![("url", s(url))])));

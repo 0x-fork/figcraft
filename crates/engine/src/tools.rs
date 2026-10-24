@@ -39,10 +39,18 @@ pub enum ToolId {
     Comment,
     Eyedropper,
     ShapeBuilder,
+    // Board tools.
+    Sticky,
+    BoardShape,
+    Connector,
+    Marker,
+    Highlighter,
+    Eraser,
+    Stamp,
 }
 
 impl ToolId {
-    pub const ALL: [ToolId; 18] = [
+    pub const ALL: [ToolId; 25] = [
         ToolId::Move,
         ToolId::Scale,
         ToolId::Hand,
@@ -61,6 +69,13 @@ impl ToolId {
         ToolId::Comment,
         ToolId::Eyedropper,
         ToolId::ShapeBuilder,
+        ToolId::Sticky,
+        ToolId::BoardShape,
+        ToolId::Connector,
+        ToolId::Marker,
+        ToolId::Highlighter,
+        ToolId::Eraser,
+        ToolId::Stamp,
     ];
     pub fn id(self) -> &'static str {
         match self {
@@ -82,6 +97,13 @@ impl ToolId {
             ToolId::Comment => "comment",
             ToolId::Eyedropper => "eyedropper",
             ToolId::ShapeBuilder => "shapeBuilder",
+            ToolId::Sticky => "sticky",
+            ToolId::BoardShape => "shape",
+            ToolId::Connector => "connector",
+            ToolId::Marker => "marker",
+            ToolId::Highlighter => "highlighter",
+            ToolId::Eraser => "eraser",
+            ToolId::Stamp => "stamp",
         }
     }
     pub fn from_id(s: &str) -> Option<ToolId> {
@@ -107,7 +129,22 @@ impl ToolId {
             ToolId::Comment => "Comment",
             ToolId::Eyedropper => "Pick color",
             ToolId::ShapeBuilder => "Shape builder",
+            ToolId::Sticky => "Sticky note",
+            ToolId::BoardShape => "Shapes",
+            ToolId::Connector => "Connector",
+            ToolId::Marker => "Marker",
+            ToolId::Highlighter => "Highlighter",
+            ToolId::Eraser => "Eraser",
+            ToolId::Stamp => "Stamp",
         }
+    }
+
+    /// The tools of a board's toolbar (a design file's toolbar has the others).
+    pub fn on_boards(self) -> bool {
+        matches!(
+            self,
+            ToolId::Sticky | ToolId::BoardShape | ToolId::Connector | ToolId::Marker | ToolId::Highlighter | ToolId::Eraser | ToolId::Stamp
+        )
     }
     /// The tool's key (from [`crate::keymap`]; empty when it has none).
     pub fn shortcut(self) -> &'static str {
@@ -344,6 +381,9 @@ pub(crate) enum Gesture {
         targets: Targets,
         duplicate: bool,
         moved: bool,
+        /// A Shift-press on this selected layer: it leaves the selection on release, unless the
+        /// press became a drag.
+        deselect: Option<NodeId>,
     },
     Resize {
         start: Point,
@@ -401,6 +441,15 @@ pub(crate) enum Gesture {
     },
     /// Dragging the rotation origin handle (see [`crate::rotation_origin`]).
     Origin,
+    /// The connector tool: dragging from `from` (pressed at `start`).
+    Connect {
+        from: figcraft_doc::End,
+        start: Point,
+    },
+    /// The eraser: the strokes it took so far.
+    Erase {
+        gone: Vec<NodeId>,
+    },
     /// Shape builder: regions collected so far (handled in `shapebuilder`).
     ShapeBuild {
         picked: Vec<usize>,
@@ -408,6 +457,13 @@ pub(crate) enum Gesture {
         start: Point,
         last: Point,
     },
+}
+
+/// Where Shift puts the Pen's next point: as far from `last` as `p` is, at the nearest 45° step.
+fn at_45_degrees(last: Point, p: Point) -> Point {
+    let v = p - last;
+    let ang = (v.atan2() / (std::f64::consts::PI / 4.0)).round() * std::f64::consts::PI / 4.0;
+    last + Vec2::from_angle(ang) * v.hypot()
 }
 
 /// The handles a pen path shows while it is drawn ([`Overlay::pen_handles`]): the last anchor's in
@@ -444,8 +500,10 @@ pub struct ToolState {
     /// removes; Alt merges).
     pub shape_builder: Option<std::sync::Arc<crate::shapebuilder::Arrangement>>,
     pub builder_remove: bool,
-    /// Show distances from the selection on hover without holding Alt (Dev mode inspection).
-    pub redlines: bool,
+    /// Dev Mode: the canvas inspects. Hovering shows distances from the selection without Alt, and
+    /// presses select, pan and comment but never edit the design (no moving, resizing, drawing,
+    /// or editing text or vectors).
+    pub dev_mode: bool,
     /// Pen snap targets, kept while hovering (see `vectoredit::point_snap`).
     pub(crate) pen_targets: Option<crate::vectoredit::point_snap::PenTargets>,
     /// The Scale tool's anchor: column and row (0 start, 1 middle, 2 end) of the point of the
@@ -459,6 +517,13 @@ pub struct ToolState {
     pub labels: Vec<(NodeId, [Point; 4])>,
     /// The brush the Pencil draws with (`tool.pencilBrush`; `None`: a plain stroke).
     pub pencil_brush: Option<figcraft_doc::Brush>,
+    /// The board tools' colours and choices.
+    pub board: crate::board::BoardTool,
+    /// The eyedropper samples for a colour picker (`edit.pickColor` with `apply: false`): the
+    /// colour goes to `picked`, for the picker to write to the paint it edits, not to the fill.
+    pub pick_only: bool,
+    /// The colour the eyedropper sampled for a colour picker, until the picker takes it.
+    pub picked: Option<figcraft_color::Color>,
 }
 
 /// Pen pressure along drawn samples as width profile points `[t, scale]`: `t` by length, at most
@@ -657,6 +722,9 @@ fn on_corner_square(doc: &Document, sel: &[NodeId], p: Point, zoom: f64) -> bool
 /// A box whose sides are both shorter than this on screen (pixels) would be covered by its
 /// handles: the canvas draws just its outline (the handles still answer just outside it).
 pub const SMALL_BOX_PX: f64 = 16.0;
+
+/// The stroke the Pencil draws: its colour and weight (the canvas previews it the same).
+pub const PENCIL_STROKE: (figcraft_color::Color, f64) = (figcraft_color::Color::BLACK, 2.0);
 
 /// The shorter and longer sides, in screen pixels, of the box with `corners` (tl, tr, br, bl).
 pub fn box_sides_px(corners: &[Point; 4], zoom: f64) -> (f64, f64) {
@@ -917,6 +985,7 @@ impl Session {
         }
         self.tool.tool = t;
         self.tool.gesture = Gesture::None;
+        self.tool.pick_only = false;
         // The tool's cursor shows before the pointer moves.
         self.tool.overlay =
             Overlay { builder_remove: self.tool.builder_remove && t == ToolId::ShapeBuilder, cursor: t.cursor(), ..Overlay::default() };
@@ -934,6 +1003,21 @@ impl Session {
         }
     }
 
+    /// The tool pointer events go to: in Dev Mode every tool but the hand and comments selects.
+    fn acting_tool(&self) -> ToolId {
+        match self.tool.tool {
+            t if self.tool.dev_mode && !matches!(t, ToolId::Hand | ToolId::Comment) => ToolId::Move,
+            t => t,
+        }
+    }
+
+    /// Drop the gesture under way (a drag, a resize, a shape being drawn), restoring the document
+    /// as Escape does; the UI calls it when Dev Mode starts, where nothing may move.
+    pub fn drop_gesture(&mut self) -> Result<()> {
+        self.tool.gesture = Gesture::None;
+        self.cancel_interaction()
+    }
+
     /// Feed one pointer event to the current tool.
     pub fn pointer(&mut self, ev: &PointerEvent) -> Result<()> {
         // A held button sends the same move every frame: running the gesture again would only
@@ -946,11 +1030,12 @@ impl Session {
             }
             self.tool.last_move = Some(ev.clone());
         }
-        let tool = self.tool.tool;
-        if matches!(tool, ToolId::Move | ToolId::Scale) && self.origin_pointer(ev)? {
+        let tool = self.acting_tool();
+        let edits = matches!(tool, ToolId::Move | ToolId::Scale) && !self.tool.dev_mode;
+        if edits && self.origin_pointer(ev)? {
             return Ok(());
         }
-        if matches!(tool, ToolId::Move | ToolId::Scale) && self.ds().is_ok_and(|d| d.vector_edit.is_some()) && self.vector_pointer(ev)? {
+        if edits && self.ds().is_ok_and(|d| d.vector_edit.is_some()) && self.vector_pointer(ev)? {
             return Ok(());
         }
         if tool == ToolId::ShapeBuilder {
@@ -981,6 +1066,7 @@ impl Session {
                     Ok(())
                 }
                 ToolId::Eyedropper => self.eyedrop(ev),
+                t if t.on_boards() => self.board_down(ev),
                 t if t.draws_shape() => self.draw_down(ev),
                 _ => Ok(()),
             },
@@ -1010,7 +1096,7 @@ impl Session {
     }
 
     fn hover(&mut self, ev: &PointerEvent) -> Result<()> {
-        let tool = self.tool.tool;
+        let tool = self.acting_tool();
         let ds = self.ds()?;
         let (doc, sel, page) = (ds.doc.clone(), ds.selection.clone(), ds.page);
         let mut cursor = tool.cursor();
@@ -1039,7 +1125,7 @@ impl Session {
         if matches!(tool, ToolId::Move | ToolId::Scale) && on_edited {
             cursor = Cursor::Text;
         } else if matches!(tool, ToolId::Move | ToolId::Scale) && arc_hover.is_none() && shape_hover.is_none() {
-            if let Some(h) = handle_at(&doc, &sel, ev.p(), ev.zoom) {
+            if let Some(h) = handle_at(&doc, &sel, ev.p(), ev.zoom).filter(|_| !self.tool.dev_mode) {
                 cursor = resize_cursor(&doc, &sel, h);
             } else {
                 let leaf = self.hit(&doc, page, ev.p(), ev.tol() * 2.0);
@@ -1048,10 +1134,10 @@ impl Session {
                 }
                 hover = label_at(&doc, page, &self.tool.labels, ev.p()).or_else(|| leaf.map(|leaf| select_target(&doc, leaf, &sel, ev.cmd)));
                 // Alt over a selected layer: a drag from here duplicates it.
-                if ev.alt && tool == ToolId::Move && hover.is_some_and(|h| sel.contains(&h) && !locked_in(&doc, h)) {
+                if ev.alt && !self.tool.dev_mode && tool == ToolId::Move && hover.is_some_and(|h| sel.contains(&h) && !locked_in(&doc, h)) {
                     cursor = Cursor::Copy;
                 }
-                if ev.alt || self.tool.redlines {
+                if ev.alt || self.tool.dev_mode {
                     use crate::distance::{Hover, guide_at, hover_lines, padding_frame, parent_of};
                     // Shift+Alt over an auto layout frame: its padding and gaps. Otherwise from the
                     // selection to a ruler guide, the hovered layer or (over empty canvas) the parent.
@@ -1079,6 +1165,8 @@ impl Session {
             guides = g;
             self.tool.overlay.cursor = Cursor::Pen(self.pen_cursor(&doc, &sel, to, ev.zoom));
             if let Some((last, _, out)) = self.tool.pen.as_ref().and_then(|pen| pen.points.last()) {
+                // With Shift the band ends where a click puts the point (#970).
+                let to = if ev.shift { at_45_degrees(*last, to) } else { to };
                 self.tool.overlay.rubber = Some([last.x, last.y, to.x, to.y]);
                 self.tool.overlay.rubber_handle = (out.hypot() > 0.0).then_some([last.x + out.x, last.y + out.y]);
             }
@@ -1132,6 +1220,7 @@ impl Session {
             textedit::end(self)?;
         }
         // Handles first: a selected ellipse's arc handles (drawn over the box), then the box's.
+        let edits = !self.tool.dev_mode;
         if self.arc_handles_shown()
             && let Some((id, handle)) = crate::arc_handles::hit(&doc, &sel, ev.p(), ev.zoom)
             && let Some(arc) = crate::arc_handles::arc_of(&doc, id)
@@ -1151,7 +1240,7 @@ impl Session {
             self.tool.overlay.shape = shape_hint(&doc, id, handle, ev.zoom);
             return Ok(());
         }
-        if let Some(h) = handle_at(&doc, &sel, ev.p(), ev.zoom) {
+        if let Some(h) = handle_at(&doc, &sel, ev.p(), ev.zoom).filter(|_| edits) {
             let ids = roots(&doc, &sel);
             if let Handle::Rotate(_) = h {
                 let Some(b) = selection_box(&doc, &ids) else { return Ok(()) };
@@ -1178,31 +1267,42 @@ impl Session {
         }
         // A frame's name label picks the frame itself. The background of a top-level frame with
         // layers in it is like the canvas (a press starts a marquee inside it) unless the frame is
-        // selected; an empty frame (or a widget) is picked and dragged.
+        // selected; an empty frame (or a widget, or a board object such as a sticky) is picked and
+        // dragged.
         let board_background = |leaf: NodeId| {
             !sel.contains(&leaf)
-                && doc
-                    .node(leaf)
-                    .is_some_and(|n| n.parent == Some(page) && n.kind.is_frame_like() && !n.children.is_empty() && !crate::widgets::is_widget(n))
+                && doc.node(leaf).is_some_and(|n| {
+                    n.parent == Some(page) && n.kind.is_frame_like() && !n.children.is_empty() && !crate::widgets::is_widget(n) && !n.is_board_atom()
+                })
         };
-        let target = label_at(&doc, page, &self.tool.labels, ev.p()).or_else(|| {
+        let label = label_at(&doc, page, &self.tool.labels, ev.p());
+        let target = label.or_else(|| {
             self.hit(&doc, page, ev.p(), ev.tol() * 2.0)
                 .filter(|leaf| ev.cmd || !board_background(*leaf))
                 .map(|leaf| select_target(&doc, leaf, &sel, ev.cmd))
         });
+        // A press inside the selection's box that reaches nothing above it (an unfilled shape's
+        // inside, or the frame or canvas behind it) drags the selection.
+        let behind_sel = |t: Option<NodeId>| t.is_none_or(|t| sel.iter().any(|s| *s != t && doc.is_ancestor(t, *s)));
+        let target = match sel.iter().copied().find(|s| !locked_in(&doc, *s)) {
+            Some(first) if label.is_none() && !ev.shift && behind_sel(target) && selection_box(&doc, &sel).is_some_and(|q| in_quad(&q, ev.p())) => {
+                Some(first)
+            }
+            _ => target,
+        };
         match target {
             Some(target) => {
                 // Clicking inside the current selection's box keeps it (drag them all).
                 let in_sel_box = sel.len() > 1 && doc.bounds_of(&sel).is_some_and(|b| b.contains(ev.p())) && !ev.shift;
+                // Shift on a selected layer takes it out on release if the press doesn't become a
+                // drag; a drag moves the selection with it. Where no drag can start, it goes now.
+                let deselect = (ev.shift && sel.contains(&target)).then_some(target);
+                let without_target = || sel.iter().copied().filter(|x| *x != target).collect::<Vec<_>>();
                 let new_sel = if in_sel_box && (sel.contains(&target) || sel.iter().any(|s| doc.is_ancestor(*s, target))) {
                     sel.clone()
-                } else if ev.shift {
+                } else if ev.shift && deselect.is_none() {
                     let mut s2 = sel.clone();
-                    if let Some(pos) = s2.iter().position(|x| *x == target) {
-                        s2.remove(pos);
-                    } else {
-                        s2.push(target);
-                    }
+                    s2.push(target);
                     s2
                 } else if sel.contains(&target) {
                     sel.clone()
@@ -1210,12 +1310,19 @@ impl Session {
                     vec![target]
                 };
                 self.set_selection(new_sel.clone());
-                if new_sel.is_empty() || doc.node(target).is_some_and(|n| n.locked) {
+                // Dev Mode only selects (Shift-click still deselects): nothing moves.
+                if !edits {
+                    if deselect.is_some() {
+                        self.set_selection(without_target());
+                    }
                     return Ok(());
                 }
                 // Locked layers selected in the layers panel stay put.
                 let ids: Vec<NodeId> = roots(&doc, &new_sel).into_iter().filter(|i| !locked_in(&doc, *i)).collect();
-                if ids.is_empty() {
+                if new_sel.is_empty() || doc.node(target).is_some_and(|n| n.locked) || ids.is_empty() {
+                    if deselect.is_some() {
+                        self.set_selection(without_target());
+                    }
                     return Ok(());
                 }
                 let mut targets = Targets::gather(&doc, page, &ids);
@@ -1225,8 +1332,13 @@ impl Session {
                 {
                     targets.add_box(b);
                 }
-                self.begin_interaction(if ev.alt { "Duplicate" } else { "Move" })?;
-                self.tool.gesture = Gesture::Move { start: ev.p(), ids, targets, duplicate: ev.alt, moved: false };
+                if let Err(e) = self.begin_interaction(if ev.alt { "Duplicate" } else { "Move" }) {
+                    if deselect.is_some() {
+                        self.set_selection(without_target());
+                    }
+                    return Err(e);
+                }
+                self.tool.gesture = Gesture::Move { start: ev.p(), ids, targets, duplicate: ev.alt, moved: false, deselect };
                 self.tool.overlay.cursor = if ev.alt { Cursor::Copy } else { Cursor::Default };
             }
             None => {
@@ -1289,8 +1401,11 @@ impl Session {
                         for i in &ids {
                             let parent = doc.get(*i)?.parent.unwrap_or(page);
                             let idx = doc.index_in_parent(*i).map(|x| x + 1);
-                            copies.push(doc.duplicate_into(*i, parent, idx)?);
+                            copies.push(crate::components::copy_in_file(doc, *i, parent, idx)?);
                         }
+                        // Connectors copied with what they join join the copies.
+                        let map = crate::board::copy_map(doc, &ids, &copies);
+                        crate::board::rejoin(doc, &crate::board::copied_items(doc, &map), &map, false);
                         moving = copies;
                         *sel = moving.clone();
                     }
@@ -1455,6 +1570,15 @@ impl Session {
                 Ok(())
             }
             Gesture::Vector(_) | Gesture::ShapeBuild { .. } | Gesture::Origin => Ok(()),
+            Gesture::Connect { from, start } => {
+                let (from, start) = (*from, *start);
+                self.connect_drag(ev, from, start);
+                return Ok(());
+            }
+            Gesture::Erase { gone } => {
+                self.tool.gesture = Gesture::Erase { gone: gone.clone() };
+                return self.erase_at(ev);
+            }
             Gesture::PenDrag { anchor } => {
                 // A click's wobble pulls out no handle.
                 let out = if within_slop(ev, *anchor) { Vec2::ZERO } else { ev.p() - *anchor };
@@ -1735,7 +1859,7 @@ impl Session {
         self.tool.overlay.drop_cell = None;
         let drop_target = self.tool.overlay.drop_target.take();
         match g {
-            Gesture::Move { ids, moved, duplicate, start, .. } => {
+            Gesture::Move { ids, moved, duplicate, start, deselect, .. } => {
                 if moved {
                     // A free move lands in the frame under the pointer (or the page) where it was
                     // dropped; layers in an auto layout frame already sit in their slot.
@@ -1777,7 +1901,11 @@ impl Session {
                     }
                 } else {
                     self.cancel_interaction()?;
-                    if !(ev.shift || ev.cmd || duplicate) {
+                    if let Some(d) = deselect {
+                        let sel = self.selection().into_iter().filter(|x| *x != d).collect();
+                        self.set_selection(sel);
+                    }
+                    if deselect.is_none() && !(ev.shift || ev.cmd || duplicate) {
                         self.widget_click(start, ev.tol() * 2.0)?;
                     }
                 }
@@ -1827,10 +1955,17 @@ impl Session {
                     self.tool.tool = t;
                 }
             }
-            Gesture::Pencil { points, pressure } => {
+            Gesture::Pencil { mut points, mut pressure } => {
                 self.tool.overlay.pen.clear();
+                // The stroke ends where the button came up, even without a move to get there.
+                if points.last().is_none_or(|l| (*l - ev.p()).hypot() > 0.5 / ev.zoom.max(1e-6)) {
+                    points.push(ev.p());
+                    pressure.push(ev.pressure);
+                }
                 self.pencil_finish(&points, &pressure)?;
             }
+            Gesture::Connect { from, start } => self.connect_up(ev, from, start)?,
+            Gesture::Erase { .. } => self.erase_up()?,
             Gesture::TextSelect { .. } | Gesture::TextBox { .. } | Gesture::Marquee { .. } | Gesture::None => {}
             Gesture::PenDrag { .. } | Gesture::ShapeBuild { .. } | Gesture::Origin => {}
             Gesture::Vector(_) => self.commit_interaction()?,
@@ -1847,8 +1982,25 @@ impl Session {
         if self.tool.tool == ToolId::Pen {
             return self.pen_finish();
         }
+        let edits = !self.tool.dev_mode;
+        // A frame's or section's name label: rename it there (the canvas puts a field over it).
+        // Labels come before widgets, as on a press; the second press began a move: undo it.
+        if edits
+            && matches!(self.tool.tool, ToolId::Move | ToolId::Scale)
+            && !(ev.shift || ev.cmd || ev.alt)
+            && let Some(id) = label_at(&doc, page, &self.tool.labels, ev.p())
+        {
+            self.tool.gesture = Gesture::None;
+            self.cancel_interaction()?;
+            if sel != [id] {
+                self.set_selection(vec![id]);
+            }
+            self.request_ui("canvas.renameLabel", serde_json::json!({"id": id}));
+            return Ok(());
+        }
         // Quick clicks on a widget's clickable part are clicks, one by one.
-        if matches!(self.tool.tool, ToolId::Move | ToolId::Scale)
+        if edits
+            && matches!(self.tool.tool, ToolId::Move | ToolId::Scale)
             && !(ev.shift || ev.cmd || ev.alt)
             && self.hit(&doc, page, ev.p(), ev.tol() * 2.0).and_then(|hit| crate::widgets::target_at(&doc, hit, ev.p())).is_some()
         {
@@ -1864,9 +2016,13 @@ impl Session {
             self.cancel_interaction()?;
         }
         let Some(leaf) = self.hit(&doc, page, ev.p(), ev.tol() * 2.0) else { return Ok(()) };
+        if matches!(self.tool.tool, ToolId::Move | ToolId::Scale) && self.board_double_click(&doc, leaf, &sel)? {
+            return Ok(());
+        }
         let target = select_target(&doc, leaf, &sel, true);
         // Text: edit at the click.
-        if doc.node(target).is_some_and(|n| matches!(n.kind, NodeKind::Text(_)))
+        if edits
+            && doc.node(target).is_some_and(|n| matches!(n.kind, NodeKind::Text(_)))
             && (sel.contains(&target) || select_target(&doc, leaf, &sel, false) == target)
         {
             // Entering a text selects all of it; in the text being edited, the word.
@@ -1881,7 +2037,7 @@ impl Session {
             return Ok(());
         }
         // Shapes and vectors: enter vector edit mode (every selected shape, the clicked one active).
-        if doc.node(target).is_some_and(|n| n.kind.is_shape()) && sel.contains(&target) {
+        if edits && doc.node(target).is_some_and(|n| n.kind.is_shape()) && sel.contains(&target) {
             let mut ids = crate::vectoredit::enter_targets(&doc, &sel).unwrap_or_default();
             ids.retain(|i| *i != target);
             ids.insert(0, target);
@@ -2003,7 +2159,9 @@ impl Session {
             255,
         );
         let sel = ds.selection.clone();
-        if !sel.is_empty() {
+        if self.tool.pick_only {
+            self.tool.picked = Some(c);
+        } else if !sel.is_empty() {
             self.execute("node.set", &json!({"ids": sel, "props": {"fill": c.to_css_hex()}}))?;
         }
         self.recent_colors.retain(|x| *x != c);
@@ -2039,13 +2197,7 @@ impl Session {
         if self.tool.pen.is_none()
             && let Some((id, v)) = selected_end_at(&doc, &self.selection(), ev.p(), 8.0 / ev.zoom.max(1e-6))
         {
-            self.set_tool(ToolId::Move);
-            crate::vectoredit::begin(self, id)?;
-            crate::vectoredit::set_tool(self, crate::vectoredit::VTool::Pen)?;
-            return crate::vectoredit::set_state(self, |e| {
-                e.anchor = Some(v);
-                e.vertices = vec![v];
-            });
+            return self.pen_edit(id, Some(v));
         }
         let pen = self.tool.pen.get_or_insert_with(PenPath::default);
         // Clicking the first anchor closes the path.
@@ -2071,9 +2223,7 @@ impl Session {
         if ev.shift
             && let Some((last, _, _)) = pen.points.last()
         {
-            let v = p - *last;
-            let ang = (v.atan2() / (std::f64::consts::PI / 4.0)).round() * std::f64::consts::PI / 4.0;
-            p = *last + Vec2::from_angle(ang) * v.hypot();
+            p = at_45_degrees(*last, p);
         }
         pen.points.push((p, Vec2::ZERO, Vec2::ZERO));
         self.tool.gesture = Gesture::PenDrag { anchor: p };
@@ -2163,7 +2313,30 @@ impl Session {
         Ok(())
     }
 
-    /// Finish the pen path (Enter/Escape/double-click).
+    /// Edit `id` as a vector with the pen, going on from point `anchor` (or, without one, starting
+    /// a new path in the same layer at the next click).
+    fn pen_edit(&mut self, id: NodeId, anchor: Option<usize>) -> Result<()> {
+        self.set_tool(ToolId::Move);
+        crate::vectoredit::begin(self, id)?;
+        crate::vectoredit::set_tool(self, crate::vectoredit::VTool::Pen)?;
+        crate::vectoredit::set_state(self, |e| {
+            e.anchor = anchor;
+            e.vertices = anchor.into_iter().collect();
+        })
+    }
+
+    /// Enter/Escape while the pen draws: the path ends but its layer stays in edit mode with the
+    /// pen, so the next path joins the same vector (another Escape leaves edit mode).
+    pub fn pen_end(&mut self) -> Result<()> {
+        let id = self.tool.pen.as_ref().and_then(|p| p.id);
+        self.pen_finish()?;
+        match id {
+            Some(id) if self.doc()?.contains(id) => self.pen_edit(id, None),
+            _ => Ok(()),
+        }
+    }
+
+    /// Finish the pen path (and keep the pen tool: double-click, Delete, a tool switch).
     pub fn pen_finish(&mut self) -> Result<()> {
         let pen = self.tool.pen.take();
         self.tool.overlay.pen.clear();
@@ -2192,14 +2365,17 @@ impl Session {
         }
         let fitted = figcraft_geom::kurbo::simplify::simplify_bezpath(poly.iter(), 0.75, &Default::default());
         let d = fitted.to_svg();
+        if matches!(self.tool.tool, ToolId::Marker | ToolId::Highlighter) {
+            return self.ink_finish(&d);
+        }
         let page = self.page()?;
         let parent = frame_at(self.doc()?, page, points.first().copied().unwrap_or_default(), &[]).unwrap_or(page);
         let pw = self.doc()?.world_transform(parent);
         let mut local = fitted.clone();
         local.apply_affine(pw.inverse());
         let _ = d;
-        let mut props =
-            json!({"fills": [], "strokes": ["#000000"], "strokeWeight": 2, "strokeCap": "round", "strokeJoin": "round", "strokeAlign": "center"});
+        let (color, weight) = PENCIL_STROKE;
+        let mut props = json!({"fills": [], "strokes": [color.to_css_hex()], "strokeWeight": weight, "strokeCap": "round", "strokeJoin": "round", "strokeAlign": "center"});
         // Pen pressure becomes the stroke's width profile (brushes follow it too).
         if let Some(points) = pressure_profile(points, pressure) {
             props["widthProfile"] = json!(points);
@@ -2217,6 +2393,10 @@ impl Session {
     /// Keys the current mode handles before menu shortcuts (vector edit mode's tools and point
     /// keys, Enter to finish the shape builder). Returns whether the key was used.
     pub fn tool_key(&mut self, name: &str, shift: bool, alt: bool, cmd: bool) -> Result<bool> {
+        // Dev Mode edits nothing: keys go to the commands (which it refuses in the app).
+        if self.tool.dev_mode {
+            return Ok(false);
+        }
         if self.ds().is_ok_and(|d| d.vector_edit.is_some()) {
             return crate::vectoredit::key(self, name, shift, alt, cmd);
         }
@@ -2308,7 +2488,7 @@ impl Session {
             return Ok(());
         }
         if self.tool.pen.is_some() {
-            return self.pen_finish();
+            return self.pen_end();
         }
         if self.tool.busy() {
             self.tool.gesture = Gesture::None;
@@ -2358,6 +2538,7 @@ impl Session {
     fn arc_handles_shown(&self) -> bool {
         let arc_drag = matches!(self.tool.gesture, Gesture::Arc { .. } | Gesture::Shape { .. });
         self.tool.tool == ToolId::Move
+            && !self.tool.dev_mode
             && (arc_drag || !self.tool.busy())
             && self.ds().is_ok_and(|ds| ds.vector_edit.is_none() && ds.text_edit.is_none())
     }

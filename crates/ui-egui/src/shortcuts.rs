@@ -94,33 +94,47 @@ fn cached_tip(label: &'static str, key: Option<&'static str>) -> &'static str {
 
 /// Run the shortcuts this frame's keys press. `typing`: a field had the keyboard when the frame
 /// began.
-pub fn handle(app: &mut FigApp, ctx: &Context, typing: bool) {
+/// `swallowed`: what this frame's Cmd/Ctrl+V chords the shell swallowed ask for ([`swallowed_paste`]).
+pub fn handle(app: &mut FigApp, ctx: &Context, typing: bool, swallowed: Swallowed) {
     note_platform(ctx);
-    // Text fields in panels own the keyboard (also the key that ends their editing).
+    // A save asked for from a field last frame: the field has committed by now.
+    if let Some(id) = app.ui.after_field.take() {
+        run_binding(app, id);
+    }
+    // Text fields in panels own the keyboard (also the key that ends their editing), except for
+    // the save shortcuts.
     if typing || crate::a11y::field_focused(ctx) || app.ui.palette.is_some() {
+        if app.ui.palette.is_none() {
+            save_from_field(app, ctx);
+        }
         return;
     }
     let events: Vec<Event> = ctx.input(|i| i.events.clone());
-    if events.is_empty() {
-        return;
-    }
+    // Every frame while editing, even one without input: a frame without the IME output turns the
+    // platform's IME off, which drops the composition (macOS then types plain letters).
     let editing = app.session.ds().map(|d| d.text_edit.is_some()).unwrap_or(false);
     if editing {
         text_keys(app, ctx, &events);
         return;
     }
-    // An image-only clipboard brings no paste event, just the key: paste from the key then.
+    if events.is_empty() {
+        return;
+    }
+    // An image-only clipboard brings no paste event: paste from the key then. The browser sends
+    // the press; the desktop shell swallows it and sends only the release.
     let paste_event = events.iter().any(|e| matches!(e, Event::Paste(_)));
-    let paste_key = events.iter().any(|e| matches!(e, Event::Key { key: Key::V, pressed: true, repeat: false, modifiers, .. } if modifiers.command && !modifiers.shift && !modifiers.alt));
-    if paste_key && !paste_event {
-        crate::menus::paste(app, None);
+    let paste_key = events.iter().any(|e| matches!(e, Event::Key { key: Key::V, pressed: true, repeat: false, modifiers, .. } if modifiers.command && v_binding(*modifiers) == Some("edit.paste")));
+    match swallowed.run.or((paste_key && !paste_event).then_some("edit.paste")) {
+        Some("edit.paste") => crate::menus::paste(app, None, None),
+        Some(id) => run_binding(app, id),
+        None => {}
     }
     let now = ctx.input(|i| i.time);
     for ev in &events {
         match ev {
             Event::Copy => crate::menus::invoke(app, "edit.copy"),
             Event::Cut => crate::menus::invoke(app, "edit.cut"),
-            Event::Paste(text) => crate::menus::paste(app, Some(text)),
+            Event::Paste(text) if !swallowed.drop_text => crate::menus::paste(app, Some(text), None),
             Event::Key { key, physical_key, pressed: true, modifiers, repeat }
                 if key_event(app, *key, *physical_key, *modifiers, *repeat, now, ctx) =>
             {
@@ -131,11 +145,115 @@ pub fn handle(app: &mut FigApp, ctx: &Context, typing: bool) {
     }
 }
 
+/// Commands whose shortcut works while a panel field has the keyboard: they don't edit text, and
+/// a file that can't be saved from a field looks like a file that can't be saved (#1157).
+const FROM_A_FIELD: [&str; 2] = ["file.save", "file.saveAs"];
+
+/// Cmd/Ctrl+S (or Shift+Cmd/Ctrl+S) pressed in a panel field: the field lets go of the keyboard,
+/// which commits what was typed as clicking away does, and the save runs next frame, after that
+/// commit.
+fn save_from_field(app: &mut FigApp, ctx: &Context) {
+    let id = ctx.input(|i| {
+        i.events.iter().find_map(|e| match e {
+            Event::Key { key, physical_key, pressed: true, repeat: false, modifiers } if modifiers.command => {
+                lookup(keymap::Context::Canvas, *key, *physical_key, *modifiers).map(|b| b.id).filter(|id| FROM_A_FIELD.contains(id))
+            }
+            _ => None,
+        })
+    });
+    if let Some(id) = id {
+        ctx.memory_mut(|m| {
+            if let Some(f) = m.focused() {
+                m.surrender_focus(f);
+            }
+        });
+        app.ui.after_field = Some(id);
+        ctx.request_repaint();
+    }
+}
+
+/// The command Cmd/Ctrl+V runs with `m` held too: `edit.paste`, `edit.pasteOver` (Shift),
+/// `edit.pasteProperties` (Alt), or `None` for a chord nothing is bound to. The keymap decides,
+/// whether the key press arrived (browser) or only a paste event and the release (desktop).
+fn v_binding(m: Modifiers) -> Option<&'static str> {
+    lookup(keymap::Context::Canvas, Key::V, Some(Key::V), Modifiers { command: true, ..m }).map(|b| b.id)
+}
+
+/// What this frame's Cmd/Ctrl+V chords ask for when the desktop shell swallowed their press
+/// ([`swallowed_paste`]).
+#[derive(Clone, Copy, Default)]
+pub struct Swallowed {
+    /// The command to run ([`v_binding`]).
+    pub run: Option<&'static str>,
+    /// This frame's paste event belongs to another command or an unbound chord: its text isn't
+    /// pasted.
+    pub drop_text: bool,
+}
+
+/// egui-winit swallows every Cmd/Ctrl+V press, Shift or Alt held or not, and sends a paste event
+/// only when the clipboard holds text. So a chord brings a paste event (text) or just its release
+/// (an image, or nothing). The browser sends the press as well, which runs the command itself.
+/// Call at the start of every frame: it reads the raw events, which keys consumed by panels or the
+/// presenter still carry.
+pub fn swallowed_paste(app: &mut FigApp, ctx: &Context) -> Swallowed {
+    let ui = &mut app.ui;
+    let mut out = Swallowed::default();
+    ctx.input(|i| {
+        for ev in &i.raw.events {
+            match ev {
+                Event::ModifiersChanged(m) => ui.held = *m,
+                // Without Cmd/Ctrl held it's another paste key (Shift+Insert, a Paste key).
+                Event::Paste(_) if ui.held.command => {
+                    let id = v_binding(ui.held);
+                    if id != Some("edit.paste") {
+                        out.drop_text = true;
+                        // Held down, the chord repeats its paste event: run once, as keys do.
+                        if !ui.v_pressed && !ui.paste_event {
+                            out.run = out.run.or(id);
+                        }
+                    }
+                    ui.paste_event = true;
+                }
+                Event::Paste(_) => ui.paste_event = true,
+                Event::Key { key: Key::V, pressed: true, .. } => ui.v_pressed = true,
+                Event::Key { key: Key::V, pressed: false, modifiers, .. } => {
+                    // Cmd was down when V went down, maybe let go first. A V held while the window
+                    // was away comes back as a release alone: without Cmd held, that's no paste.
+                    if !ui.v_pressed && !ui.paste_event && (modifiers.command || !ui.refocused) {
+                        out.run = out.run.or(v_binding(*modifiers));
+                    }
+                    ui.v_pressed = false;
+                    ui.paste_event = false;
+                    ui.refocused = false;
+                }
+                // The other keys that paste (Shift+Insert, a Paste key) end their paste event.
+                Event::Key { key: Key::Insert | Key::Paste, pressed: false, .. } => ui.paste_event = false,
+                // Keys let go in another window never come back as releases.
+                Event::WindowFocused(false) => {
+                    ui.v_pressed = false;
+                    ui.paste_event = false;
+                    ui.held = Modifiers::NONE;
+                }
+                Event::WindowFocused(true) => ui.refocused = true,
+                _ => {}
+            }
+        }
+    });
+    out
+}
+
 /// Run the command a shortcut is bound to, with the keyboard's own twists (Escape steps out
 /// before it deselects, Delete ends a pen path, Enter edits the selected text or vector).
 pub fn run_binding(app: &mut FigApp, id: &str) {
+    // Dev Mode places and edits nothing: Enter selects children.
+    let dev = app.ui.right_tab == crate::RightTab::Inspect;
     match id {
         "select.none" => {
+            if let Some(ctx) = &app.ui_context
+                && crate::proto_panel::close_editor(ctx)
+            {
+                return;
+            }
             if let Err(e) = app.session.escape() {
                 app.toast(e.to_string());
             }
@@ -145,20 +263,30 @@ pub fn run_binding(app: &mut FigApp, id: &str) {
             let _ = app.session.pen_finish();
         }
         // Enter with a shape or frame tool chosen places one in the middle of the view.
-        "select.children" if app.session.tool.tool.draws_shape() => {
+        "select.children" if !dev && app.session.tool.tool.draws_shape() => {
             app.run("tool.place", json!({}));
         }
-        "select.children" if enter_text(app) => {}
+        "select.children" if !dev && enter_text(app) => {}
         _ => crate::menus::invoke(app, id),
     }
 }
 
 fn key_event(app: &mut FigApp, key: Key, physical: Option<Key>, m: Modifiers, repeat: bool, now: f64, ctx: &Context) -> bool {
+    if key == Key::Escape && crate::proto_panel::close_editor(ctx) {
+        return true;
+    }
+    if key == Key::Escape && crate::selection_spacing::cancel(app, ctx) {
+        return true;
+    }
     if key_box(app, key, m) {
         return true;
     }
     // A gradient open in the colour picker: Delete removes its selected stop.
     if matches!(key, Key::Backspace | Key::Delete) && m.is_none() && app.ui.picker.is_some() && crate::handles::remove_selected_stop(app, ctx) {
+        return true;
+    }
+    // An interaction selected in the Prototype tab: Delete removes that interaction, not the component.
+    if matches!(key, Key::Backspace | Key::Delete) && m.is_none() && crate::proto_panel::delete_selected_interaction(app, ctx) {
         return true;
     }
     // Vector edit mode and the shape builder have their own keys (tools, nudging points, delete,
@@ -177,6 +305,9 @@ fn key_event(app: &mut FigApp, key: Key, physical: Option<Key>, m: Modifiers, re
             return true;
         }
         if !repeat || matches!(b.id, "edit.undo" | "edit.redo" | "view.zoomIn" | "view.zoomOut") {
+            if matches!(b.id, "edit.undo" | "edit.redo") && crate::selection_spacing::cancel(app, ctx) {
+                return true;
+            }
             run_binding(app, b.id);
         }
         return true;
@@ -185,7 +316,8 @@ fn key_event(app: &mut FigApp, key: Key, physical: Option<Key>, m: Modifiers, re
     if app.ui.layers_focus && !m.command && !m.alt && crate::layers::key_nav(app, key, m.shift) {
         return true;
     }
-    // Arrow nudges; with nothing selected the arrows pan the view.
+    // Arrow nudges, Alt held too (measuring stays on while the selection moves); with nothing
+    // selected the arrows pan the view.
     let (dx, dy) = match key {
         Key::ArrowLeft => (-1.0, 0.0),
         Key::ArrowRight => (1.0, 0.0),
@@ -193,9 +325,11 @@ fn key_event(app: &mut FigApp, key: Key, physical: Option<Key>, m: Modifiers, re
         Key::ArrowDown => (0.0, 1.0),
         _ => (0.0, 0.0),
     };
-    if (dx, dy) != (0.0, 0.0) && !m.alt {
+    if (dx, dy) != (0.0, 0.0) {
         if app.session.selection().is_empty() {
             app.run("view.pan", json!({"dx": dx, "dy": dy, "big": m.shift}));
+        } else if crate::menus::dev_mode_refuses(app, "transform.nudge") {
+            // Dev Mode: said so, nothing moves.
         } else if m.command {
             // Cmd/Ctrl+arrows resize: right/down grow, left/up shrink.
             app.run("transform.nudgeSize", json!({"dw": dx, "dh": dy, "big": m.shift}));
@@ -207,9 +341,9 @@ fn key_event(app: &mut FigApp, key: Key, physical: Option<Key>, m: Modifiers, re
     if m.is_none() && !repeat && opacity_digit(app, key, now) {
         return true;
     }
-    // Enter while the pen is drawing finishes it.
+    // Enter while the pen is drawing ends the path as Escape does.
     if key == Key::Enter && app.session.tool.pen.is_some() {
-        let _ = app.session.pen_finish();
+        let _ = app.session.pen_end();
         return true;
     }
     false
@@ -292,6 +426,9 @@ pub fn opacity_digit(app: &mut FigApp, key: Key, now: f64) -> bool {
     if !app.session.prefs.number_keys_opacity || app.session.selection().is_empty() {
         return false;
     }
+    if crate::menus::dev_mode_refuses(app, "object.opacityKeys") {
+        return true;
+    }
     let first = app.ui.opacity_digit.take().filter(|(_, t)| now - t <= OPACITY_CHAIN_SECS).map(|(d, _)| d);
     let digits = match first {
         Some(f) => format!("{f}{d}"),
@@ -318,6 +455,15 @@ fn enter_text(app: &mut FigApp) -> bool {
         return false;
     }
     let Some(id) = sel.first().copied() else { return false };
+    // A board object (a sticky, a shape with text, a label): type in its text.
+    match figcraft_engine::board::edit_text(&mut app.session, id) {
+        Ok(true) => return true,
+        Ok(false) => {}
+        Err(e) => {
+            app.toast(e.to_string());
+            return true;
+        }
+    }
     let kind = app.session.doc().ok().and_then(|d| d.node(id)).map(|n| (matches!(n.kind, figcraft_doc::NodeKind::Text(_)), n.kind.is_shape()));
     match kind {
         Some((true, _)) => {
@@ -368,6 +514,10 @@ fn text_keys(app: &mut FigApp, ctx: &Context, events: &[Event]) {
                 }
             }
             Event::Key { key, physical_key, pressed: true, modifiers: m, .. } => {
+                // Keys during a composition are the IME's (Enter picks a candidate, Escape cancels).
+                if app.session.ds().is_ok_and(|d| d.text_edit.as_ref().is_some_and(|te| te.preedit.is_some())) {
+                    continue;
+                }
                 if (m.command || m.alt || m.ctrl) && text_shortcut(app, *key, *physical_key, *m) {
                     skip_text = true;
                     continue;
@@ -452,7 +602,8 @@ fn ime_output(app: &FigApp, ctx: &Context) {
     ctx.output_mut(|o| {
         o.ime = Some(egui::output::IMEOutput {
             purpose: egui::IMEPurpose::Normal,
-            rect: app.canvas.rect,
+            // The desktop places the candidate window by `rect` (the web by `cursor_rect`).
+            rect: cursor_rect,
             cursor_rect,
             should_interrupt_composition: false,
         })
