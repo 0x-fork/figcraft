@@ -62,6 +62,7 @@ pub mod synthetic_ds;
 pub mod templates;
 pub mod textedit;
 pub mod textpreview;
+pub mod token_roles;
 pub mod tools;
 pub mod vectoredit;
 pub mod widgets;
