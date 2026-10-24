@@ -106,6 +106,17 @@ fn the_assets_list_shows_a_slice_with_a_preview_name_and_export_format() {
     let fmt = find(egui::accesskit::Role::ComboBox, "Format");
     assert_eq!(fmt.value(), Some("WebP"));
     assert_eq!(fmt.is_expanded(), Some(false));
+    // A format picked there stays after the document changes.
+    let at = centre(fmt);
+    click(&mut u, at);
+    let svg = tree(&mut u).into_iter().find(|n| n.label() == Some("SVG")).expect("SVG in the format menu");
+    click(&mut u, centre(&svg));
+    let revision = u.app.session.ds().unwrap().revision;
+    u.app.session.execute("node.set", &json!({"ids": [slice], "props": {"name": "Avatar"}})).unwrap();
+    u.app.session.execute("node.set", &json!({"ids": [f], "props": {"name": "Sign in"}})).unwrap();
+    assert_ne!(u.app.session.ds().unwrap().revision, revision);
+    let fmt = tree(&mut u).into_iter().find(|n| n.role() == Role::ComboBox && n.label() == Some("Format")).unwrap();
+    assert_eq!(fmt.value(), Some("SVG"));
 }
 
 /// A "Button" component whose nested "Heart" instance is its instance-swap property "Icon", a

@@ -2241,8 +2241,8 @@ pub(crate) fn prop_row(app: &mut FigApp, ui: &mut Ui, p: &figcraft_engine::devin
     }
 }
 
-/// The thumbnails and chosen export formats of the Inspect tab's assets, kept between frames and
-/// dropped when the document changes.
+/// The thumbnails and chosen export formats of the Inspect tab's assets, kept between frames: the
+/// thumbnails until the document changes, the formats for the session.
 #[derive(Clone, Default)]
 struct AssetUi {
     revision: u64,
@@ -2274,7 +2274,6 @@ fn inspect_assets(app: &mut FigApp, ui: &mut Ui, doc: &Document, assets: &[figcr
     if state.revision != revision {
         state.revision = revision;
         state.thumbs.clear();
-        state.formats.clear();
     }
     let px = ASSET_THUMB * ui.ctx().pixels_per_point();
     for a in assets {
