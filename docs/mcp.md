@@ -34,6 +34,10 @@ of the window itself (`screenshot` with `window`) needs it on screen: it is then
 
 ### Confining file access
 
+The roots below belong to the **headless** side: the session `figcraft-cli mcp` runs itself, with
+no window. A server attached with `--attach` runs the commands inside the app instead, so the app
+confines them — from the flags it was started with, not from anything passed to the CLI.
+
 ```sh
 figcraft-cli mcp --automation-read-root /work/project --automation-write-root /work/project/out
 ```
@@ -144,6 +148,8 @@ Or in a project's `.mcp.json`:
   there is none, so they are page coordinates then). Groups and boolean groups have no coordinate
   space of their own: a layer in a group is placed in the frame (or on the page) the group is in.
   `inspect_document` reports `x`/`y` the same way, plus `absoluteBounds` in page coordinates.
+  In `props`, `fill` and `stroke` also accept `"none"` (either case) or `null` as no paint, the
+  same as an empty `fills`/`strokes` list, so an outline-only shape can be made in one call.
 - Frames, groups, sections and masks: drawing a frame or section with the `pointer` tool around
   layers puts those fully inside it in it; sections go only on the page or in sections (moves,
   drags, pastes and new sections elsewhere are refused or land on the page); resizing a section
@@ -267,9 +273,11 @@ Or in a project's `.mcp.json`:
 - **Styles stay true to their layers**: editing a styled fill, stroke, effect or layout grid list
   (`node.set`, `fill.set`, `fill.add`, a bound variable…) unlinks that style (`styles.fill` etc. go
   `null`), so a later `style.update` doesn't overwrite the edit; `style.apply` replaces variables
-  bound to what the style sets; a text style goes on text layers only. Names are trimmed per `/`
-  folder part. `style.move {styles, before?, folder?}` reorders (and with `folder`, renames into it),
-  `style.duplicate {style}` adds "<name> copy" right below, `style.renameFolder {folder, name}`.
+  bound to what the style sets; a text style goes on text layers only. In one call, a style link
+  (`fillStyle`, `textStyle`…) wins over values it sets; set a deviation in a later call, which
+  unlinks it. Names are trimmed per `/` folder part. `style.move {styles, before?, folder?}`
+  reorders (and with `folder`, renames into it), `style.duplicate {style}` adds "<name> copy" right
+  below, `style.renameFolder {folder, name}`.
 - **Variables**: `variable.bind` refuses a variable of a type the field doesn't take (a colour on
   `width`); scopes only filter pickers. `variable.delete` / `variable.deleteCollection` unbind the
   layers using them (they keep their last value) and give aliases to them their values. An
@@ -330,6 +338,53 @@ tips; headless, it only sets the preference.
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"export","arguments":{"format":"png","path":"dashboard.png"}}}
 ```
 
+### Boards
+
+A board is a file of its own kind for thinking together: `file.newBoard {name?}` opens one (its
+page is light; `inspect_document` says `kind: "board"`). Board objects are ordinary layers with a
+`board` entry `get_node` shows (`{type: sticky|shape|connector|label|stamp|ink, …}`), so the usual
+commands move, resize, recolour, copy, delete and undo them. On a design file the board commands
+refuse; on a board `proto.*`, `dev.*`, `view.prototype` and `view.devMode` refuse. Each of these is
+one undo step and returns the ids it made:
+
+- `board.sticky {x, y, text?, color?, author?, parent?}` → `{id, text}`: a sticky note (a square
+  frame whose height grows with its note; its text size shrinks as the note gets longer). `color`
+  is a board colour (`yellow orange red pink violet blue green gray`) or a hex colour; `author`
+  defaults to your name (`pref.userName`, or the one a live session gave you; `false` for none).
+- `board.nextSticky {id?, side?: right|below|left|above, edit?}` → `{id, text}`: a sticky of the
+  same colour beside the selected (or edited) one; with `edit: true` the app goes on typing in it
+  (`Shift+Cmd/Ctrl+Enter` in the app does both).
+- `board.shape {shape, x, y, width?, height?, text?, color?, parent?}` → `{id, text}`: a shape with centred,
+  wrapping text: `rectangle roundedRectangle ellipse diamond triangle speechBubble chevron`.
+- `board.connector {from, to, fromSide?, toSide?, style?: straight|elbow, startCap?, endCap?, label?}`
+  → `{id, label?}`: `from`/`to` are layer ids or `{x, y}` page points; sides are `auto` (the side
+  facing the other end) or `top right bottom left`; caps are stroke caps (default an arrow at the
+  end). The connector re-routes itself whenever what it joins moves or resizes, also when someone
+  else in a live session moves it; a deleted end stays where it was as a point. `board.label {id,
+  text}` sets its label (empty removes it).
+- `board.stamp {x, y, stamp: thumbsUp|heart|plusOne|star|question|check}` → `{id}`: a round badge
+  centred there, with your name on it for hover.
+- `board.ink {path | points, highlighter?, color?, select? (default true)}` → `{id}`: a marker (or
+  wide, see-through highlighter) stroke.
+- `board.setColor {ids?, color}`: stickies and shapes take it as their fill, connectors and ink as
+  their line. `board.setStyle {ids?, shape?, fontSize?, style?, startCap?, endCap?}`: a shape's
+  outline and text size, a connector's routing and arrowheads.
+- Tools for `pointer`: `tool.sticky {color?}`, `tool.shape {shape?}`, `tool.connector {style?}`
+  (drag from one object to another), `tool.marker {color?}`, `tool.highlighter {color?}`,
+  `tool.eraser` (drag over strokes), `tool.stamp {stamp?}`; Text and Section are the usual tools.
+
+```json
+{"command": "file.newBoard", "params": {"name": "Retro"}}
+{"command": "board.sticky", "params": {"x": 0, "y": 0, "text": "Went well", "color": "green"}}
+{"command": "board.sticky", "params": {"x": 240, "y": 0, "text": "To improve", "color": "pink"}}
+{"command": "board.connector", "params": {"from": 2, "to": 4, "style": "elbow", "label": "leads to"}}
+{"command": "board.stamp", "params": {"x": 200, "y": 0, "stamp": "plusOne"}}
+```
+
+`from` and `to` are the `id`s the two `board.sticky` calls returned (here `{"id": 2, "text": 3}` and
+`{"id": 4, "text": 5}` in a new board without an author name; a sticky with its author's name takes
+one more id). In a `batch`, step references (`{"from": {"$step": 1}, "to": {"$step": 2}}`, the `id`s steps 1 and 2 returned) avoid counting.
+
 ### Sections, handoff and arrow keys
 
 `run_command` with `object.wrapInSection {ids?, name?}` (Wrap in new section: layers on the page or
@@ -364,6 +419,10 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
 - `view.designPrototype` (`Shift+E`), `view.devMode` (`Shift+D`) and `view.leftSidebar`
   (`Shift+Cmd+\`) switch the right panel's tab or hide the left sidebar in the app (no-ops headless).
 - `doc.nextTab` / `doc.previousTab` (`Ctrl+Tab` / `Ctrl+Shift+Tab`): the next or previous open file.
+- Board tools (boards only): `tool.sticky` (`Q`), `tool.shape` (`B`), `tool.connector` (`X`),
+  `tool.marker` (`M`), `tool.highlighter` (`U`), `tool.eraser` (`E`), `tool.stamp` (`W`), and
+  `board.nextSticky` (`Shift+Cmd/Ctrl+Enter`, also while typing in a sticky). Keys no design-file
+  shortcut uses; on a design file they refuse.
 - `view.pan {dx, dy, big?}`: the arrow keys with nothing selected (`key ArrowRight` does the same)
   pan the view by 20 screen pixels a step, 200 with `big` (Shift).
 - `view.multiplayerCursors {on?}` (`Alt+Cmd+\`): show or hide others' cursors in a live session.
@@ -584,7 +643,8 @@ rotation?, color?, width?, height?, responsive?}` (`None`, `iPhone 16`, `iPhone 
 `Black`, `White`, `Pink`, `Teal`, `Blue` for the iPhone 16 (an error lists them), `""` for the
 default; `width` / `height` set the custom size's screen, 1–10000 points, and pick `Custom size`,
 which is a bare screen without a body). On a device the presented frame is sized to the device's
-screen: what doesn't fit is clipped, or scrolls when the frame's `overflow` allows it, while `fixed`
+screen: a frame bigger than the screen scrolls through its whole size whatever its `overflow`, content
+past the frame's own edges scrolls only as its `overflow` allows (else it's clipped), and `fixed`
 layers stay on screen (pinned to the edges their constraints name). With `responsive: true` (saved
 in the file) the presented frame is instead resized to the device's screen, or without a device to
 the presenter's window at 100%, and its constraints and auto layout respond as when it is resized
@@ -720,7 +780,9 @@ most when it can't be reached).
 
 - `instance.swap {ids?, component}` shows another component in the instances (overrides on layers
   with matching names stay; property values with the same names too). Nested instances can be
-  swapped on their own (an override of the instance they're in).
+  swapped on their own (an override of the instance they're in); a swapped nested instance keeps
+  what its outer main overrode on matching layers as its own, so later edits of those in the main
+  don't reach it.
 - `instance.swapAt {component, x, y}` swaps the instance at a page point: of the instances under
   it (innermost first), the first showing a variant of the same component set, else the innermost
   (never one inside the dropped component); only text layers keep their overrides. The Assets
@@ -1302,7 +1364,9 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
   strings, any other `{…}` stays as written (`unknown` lists placeholder names that aren't
   properties). Then `inspect.code` on an instance or the component returns the import line and the
   snippet instead of generated code (`connected: true`), connected instances inside a generated
-  layer tree are their snippet, and `inspect.componentCode` returns `connected: {importPath, name,
+  layer tree (also in a component's definition, in the content an instance puts in its slots, and
+  the components a connected template's instance swaps place) are their snippet with their import
+  lines once each at the top of the code, per language, and `inspect.componentCode` returns `connected: {importPath, name,
   template, import, code}` with the snippet as `usage`. Example: template `<Button
   variant="primary" icon="{Has icon ? "cart" : "none"}">{label}</Button>` with import path
   `@acme/ui` gives `import { Button } from "@acme/ui";` then `<Button variant="primary" icon="none">{"Buy
@@ -1315,7 +1379,8 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
   warning). `get_node` lists a component's links as `codeLinks`. In the app, the Inspect tab's
   Connect to code section edits them in the Code section's language, with a live preview and a
   Connected badge. An editor extension isn't needed: agents and editors read the same snippets
-  through this server. Plugins whose manifest asks only for `read` also run from the Inspect tab.
+  through this server. Plugins whose manifest asks only for `read` also run from the Inspect tab,
+  with their panels (`plugin.ui`); their callbacks can only read.
 - **Dev resources:** links for developers (docs, code, tickets) on any layer, each a URL and a
   name. `devResource.add {id?, url, name?}` → `{id, index}` (no name: the URL without its scheme,
   `www.` and a trailing slash; no page title is looked up), `devResource.edit {id?, index, url?,
@@ -1354,17 +1419,23 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
   tab filters the callouts by category and edits the categories (colour, name, delete, add); each
   note has a category menu.
 - **Ready for dev:** frames at the top of a page or section, and sections, carry a handoff status
-  (`node.set {devStatus: none|readyForDev|completed}`). `inspect.readyForDev {status?:
-  readyForDev|completed|any, page?}` lists them across pages (or on one page) in page and layer
-  order: `{items: [{id, name, page, status}]}`. The Inspect tab sets the status of the selected
-  frames and, with nothing selected, lists them with a status filter (click one to go to it, or its
-  focus button to open it in the focus view).
+  (`node.set {devStatus: none|readyForDev|completed}`; other layers are refused a status).
+  `inspect.readyForDev {status?: readyForDev|changed|completed|any, page?}` lists them across pages
+  (or on one page) in page and layer order: `{items: [{id, name, page, status, changed}]}`
+  (`changed`: ready for dev and edited since). The Inspect tab sets the status of the selected
+  frames and, with nothing selected, lists them with a status filter (Ready for dev, Changed,
+  Completed, Any status; changed ones carry a Changed badge; click one to go to it, or its focus
+  button to open it in the focus view). In the app's Dev Mode the canvas only inspects: presses
+  select (and pan, and comment), never move, resize, draw or edit text and vectors, and the menus
+  and shortcuts refuse commands that edit the design (Dev Mode's own annotations, statuses, dev
+  resources, code connections and comments still work); choosing a drawing tool in the toolbar
+  goes back to the design. Commands sent over MCP or the control channel aren't affected.
 - **Compare changes:** when a layer marked Ready for dev first changes (it turns "Changed"), the
   file keeps a copy of it and everything in it as it was just before that edit (saved in the
   `.figcraft` file only while there is a change; resolving the change, marking it again, another
   status or deleting it drops the copy, so the next change compares with that state).
-  `dev.compare {id?, show?}` → `{id, name, changed, snapshot, added, removed, modified, truncated,
-  changes: [{id, name, type, change: added|removed|changed, depth, layers, properties?: [{section,
+  `dev.compare {id?, version?, show?}` → `{id, name, changed, snapshot, added, removed, modified,
+  truncated, version: {id, name, time} | null, changes: [{id, name, type, change: added|removed|changed, depth, layers, properties?: [{section,
   property, before, after, text}]}]}`: layers matched by id, added and removed ones listed as a
   whole (`layers` counts what's inside), changed ones with their properties formatted like Inspect
   (`width 120 → 136`, `fill #FF0000 → #E03030`, `text “Welcome” → “Hello”`, `parent Badge → Screen`,
@@ -1372,7 +1443,11 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
   opacity, visibility, name), nested layers and instance contents included. `snapshot: false` means
   the frame changed before copies were kept (an older file). `show: true` opens the compare view in
   the app: before and now side by side (or overlaid with a slider), changed layers outlined (added
-  green, changed orange, removed red), the list of changes and Resolve change.
+  green, changed orange, removed red), the list of changes and Resolve change. With `version` (an id
+  from `version.list`) any top-level frame or section, ready for dev or not, is compared with that
+  saved version instead (a layer the version doesn't have was added as a whole); the compare view
+  picks it at the bottom (Compare with: When marked ready, or a version; a frame that isn't ready
+  for dev compares with the newest version), and `ui.set {devCompareVersion}` sets it.
 - **Focus view:** `dev.focus {id? | direction: next|previous}` → `{id, name, page, index, count}`
   shows one top-level frame or section alone on the canvas (fitted, selected, other layers neither
   drawn nor hit), switching page when needed; `direction` steps through the ready-for-dev frames
@@ -1675,7 +1750,7 @@ other key next to `$step` fails the whole batch, which is rolled back. Only an o
 value too) is read as a reference. A step that is itself a `command.batch` is passed on as written,
 so the references in its steps are to its own steps, not the outer batch's.
 
-The end-to-end tests in `crates/mcp/tests/agent_tasks.rs` are worked examples of realistic tasks
+The end-to-end tests in `crates/mcp/tests/it/agent_tasks.rs` are worked examples of realistic tasks
 (auto layout, a card built in one batch with step references, components and overrides, gradients
 and shadows, paint styles, Light/Dark variables, align/distribute/group, boolean subtract + flatten,
 export, undo/redo, drawing with tools).
