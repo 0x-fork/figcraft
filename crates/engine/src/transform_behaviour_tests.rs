@@ -279,14 +279,16 @@ fn command_resize_leaves_fills_when_text_or_auto_layout_recomputes_the_box() {
     }
 }
 
+/// A resize is an explicit edit of the size: a size bound to a variable lets go of it (#809), so
+/// Cmd/Ctrl crops a bound layer's image as any other's; other bindings stay.
 #[test]
-fn image_crop_respects_variable_bound_dimensions() {
-    for (field, value, from, to) in [
-        ("width", 200, Point::new(200.0, 50.0), Point::new(100.0, 50.0)),
-        ("height", 100, Point::new(100.0, 100.0), Point::new(100.0, 50.0)),
-        ("w", 200, Point::new(200.0, 50.0), Point::new(100.0, 50.0)),
-        ("h", 100, Point::new(100.0, 100.0), Point::new(100.0, 50.0)),
-        ("opacity", 100, Point::new(200.0, 50.0), Point::new(100.0, 50.0)),
+fn image_crop_detaches_a_bound_size_and_crops() {
+    for (field, value, from, to, (w, h)) in [
+        ("width", 200, Point::new(200.0, 50.0), Point::new(100.0, 50.0), (100usize, 100usize)),
+        ("height", 100, Point::new(100.0, 100.0), Point::new(100.0, 50.0), (200, 50)),
+        ("w", 200, Point::new(200.0, 50.0), Point::new(100.0, 50.0), (100, 100)),
+        ("h", 100, Point::new(100.0, 100.0), Point::new(100.0, 50.0), (200, 50)),
+        ("opacity", 100, Point::new(200.0, 50.0), Point::new(100.0, 50.0), (100, 100)),
     ] {
         for mods in [CMD, NONE] {
             let mut s = session();
@@ -299,19 +301,15 @@ fn image_crop_respects_variable_bound_dimensions() {
             drag(&mut s, from, to, mods);
             let doc = s.doc().unwrap();
             let n = doc.node(layer).unwrap();
-            assert_eq!(n.bound, before.node(layer).unwrap().bound, "{field}: keep the binding");
+            assert_eq!(n.bound.is_empty(), field != "opacity", "{field}: a size binding goes, others stay");
             assert_eq!(doc.variables, before.variables, "{field}: do not edit the variable");
-            let after = figcraft_render::render_node(doc, layer, 1.0).unwrap();
-            if field != "opacity" {
-                assert_eq!((n.width, n.height), (200.0, 100.0), "{field}: the binding restores the size");
-                assert!(after.data() == pixels.data(), "{field}, cmd={}: restored bounds must not stretch a partial crop", mods.cmd);
-            } else if mods.cmd {
-                assert_eq!((n.width, n.height), (100.0, 100.0));
-                for y in 0..100usize {
-                    assert_eq!(&after.data()[y * 400..(y + 1) * 400], &pixels.data()[y * 800..y * 800 + 400], "opacity binding still allows crop");
+            assert_eq!((n.width, n.height), (w as f64, h as f64), "{field}");
+            if mods.cmd {
+                let after = figcraft_render::render_node(doc, layer, 1.0).unwrap();
+                for y in 0..h {
+                    assert_eq!(&after.data()[y * w * 4..(y + 1) * w * 4], &pixels.data()[y * 800..y * 800 + w * 4], "{field}: the image stays put");
                 }
-            }
-            if field != "opacity" || !mods.cmd {
+            } else {
                 assert_eq!(n.fills, before.node(layer).unwrap().fills, "{field}: keep the existing resize behaviour");
             }
         }

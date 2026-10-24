@@ -1683,11 +1683,11 @@ impl Session {
                 if flip_y {
                     t *= Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, nh]);
                 }
-                // Text reflow, size bindings and auto layout can recompute this box after the preview.
+                // Text reflow and auto layout can recompute this box after the preview (a size bound
+                // to a variable lets go of it: the resize is an explicit edit).
                 let n = doc.get(*id)?;
                 let crop_images = ev.cmd
                     && !matches!(n.kind, NodeKind::Text(_))
-                    && !n.bound.keys().any(|field| matches!(field.as_str(), "width" | "height" | "w" | "h"))
                     && !std::iter::once(*id).chain(doc.ancestors(*id)).any(|a| doc.node(a).is_some_and(|n| n.layout.is_some()));
                 if crop_images {
                     // Crop the layer's image fills without moving their pixels on the page.
