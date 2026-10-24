@@ -134,6 +134,9 @@ fn refusal(m: &Manifest, command: &str, params: &Value) -> Option<String> {
     if command == "image.place" && get(params, "path").is_some() {
         return Some("plugins can't read files: pass the image as `data`".into());
     }
+    if command == "text.loadFont" && get(params, "path").is_some() {
+        return Some("plugins can't read files: pass the font as `data`".into());
+    }
     // `path` here is a file on disk (elsewhere it is a vector path or an action's place).
     if matches!(command, "variable.export" | "codeConnect.export" | "component.playground") && get(params, "path").is_some() {
         return Some("plugins can't write files: leave out `path` to get the result back".into());
