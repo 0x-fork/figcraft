@@ -2030,10 +2030,11 @@ impl Session {
         }
         let hit_here = self.hit(&doc, page, ev.p(), ev.tol() * 2.0);
         // A double-click anywhere on the one selected shape edits its points, like Enter: also
-        // inside a hollow (unfilled) shape, where the hit test finds nothing under the pointer.
+        // inside a hollow (unfilled) closed shape, where the hit test finds nothing under the
+        // pointer (an open path or a line has no inside: only its stroke counts).
         if edits
             && let [id] = sel[..]
-            && doc.node(id).is_some_and(|n| n.kind.is_shape())
+            && doc.node(id).is_some_and(|n| n.kind.is_shape() && figcraft_doc::geometry::is_closed(n))
             && doc.world_bounds(id).is_some_and(|b| b.contains(ev.p()))
             && hit_here.is_none_or(|h| h == id || doc.is_ancestor(id, h))
         {
