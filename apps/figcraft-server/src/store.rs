@@ -338,10 +338,13 @@ impl Store {
     /// Use the data directory `root` (made if missing). Fails when another server or command holds
     /// it. Files that can't be read are skipped and listed in [`problems`](Self::problems).
     pub fn open(root: &Path, cfg: StoreConfig) -> Result<Store, String> {
-        Self::try_open(root, cfg)?.ok_or_else(|| format!("another figcraft-server (or a command) is using {}", root.display()))
+        let mut store = Self::try_open(root, cfg)?.ok_or_else(|| format!("another figcraft-server (or a command) is using {}", root.display()))?;
+        store.sweep();
+        Ok(store)
     }
 
-    /// [`open`](Self::open), or `None` when someone else holds the directory.
+    /// [`open`](Self::open) without the expiry sweep (for commands that only look or edit), or
+    /// `None` when someone else holds the directory.
     pub fn try_open(root: &Path, cfg: StoreConfig) -> Result<Option<Store>, String> {
         let Some(lock) = lock(root)? else { return Ok(None) };
         let key = load_key(root)?;
@@ -374,7 +377,6 @@ impl Store {
         store.scan(&dir);
         store.blocked = store.read_list::<String>(BLOCKED).iter().filter_map(|s| s.parse().ok()).map(ip_key).collect();
         store.reports = store.read_list(REPORTS);
-        store.sweep();
         Ok(Some(store))
     }
 
