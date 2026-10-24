@@ -57,18 +57,22 @@ impl Desktop {
         let flag = reduce_motion.clone();
         std::thread::spawn(move || flag.store(system_reduce_motion(), Ordering::Relaxed));
         let dark = Arc::new(AtomicU8::new(DARK_UNKNOWN));
-        // winit reports no system theme on Linux and the BSDs: the freedesktop colour scheme
-        // answers instead, read once and then watched in the background.
+        Self { clipboard: arboard::Clipboard::new().ok(), dir, prefs, reduce_motion, dark, language: system_language(), recovery }
+    }
+
+    /// winit reports no system theme on Linux and the BSDs: there the freedesktop colour scheme
+    /// answers instead, read once and then watched in the background, calling `wake` when it
+    /// changes (an idle window draws no frames). Elsewhere this does nothing.
+    pub fn follow_system_dark(&self, wake: impl Fn() + Send + 'static) {
         #[cfg(all(unix, not(target_os = "macos")))]
         if let Err(e) = std::thread::Builder::new().name("figcraft-theme".into()).spawn({
-            let dark = dark.clone();
-            move || watch_system_dark(dark)
+            let dark = self.dark.clone();
+            move || watch_system_dark(&dark, &wake)
         }) {
             log::info!("colour scheme: can't start the watcher: {e}");
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
-        let _ = dark;
-        Self { clipboard: arboard::Clipboard::new().ok(), dir, prefs, reduce_motion, dark, language: system_language(), recovery }
+        let _ = wake;
     }
 }
 
@@ -156,33 +160,44 @@ const DARK_DARK: u8 = 1;
 const DARK_LIGHT: u8 = 2;
 
 /// The desktop's colour scheme through the freedesktop settings portal
-/// (`org.freedesktop.appearance` / `color-scheme`: 1 dark, 2 light), read once and then watched
-/// for changes. Without a session bus or a portal the scheme stays unknown and the UI keeps its
-/// light fallback.
+/// (`org.freedesktop.appearance` / `color-scheme`: 1 dark, 2 light, 0 no preference, which is
+/// light), read once and then watched for changes, each one calling `wake`. Without a session bus
+/// or a portal the scheme stays unknown and the UI keeps its light fallback.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn watch_system_dark(dark: Arc<AtomicU8>) {
+fn watch_system_dark(dark: &AtomicU8, wake: &dyn Fn()) {
+    use zbus::zvariant::Value;
     const PORTAL: &str = "org.freedesktop.portal.Desktop";
     const SETTINGS: &str = "org.freedesktop.portal.Settings";
     const APPEARANCE: &str = "org.freedesktop.appearance";
-    let store = |v: u32| match v {
-        1 => dark.store(DARK_DARK, Ordering::Relaxed),
-        2 => dark.store(DARK_LIGHT, Ordering::Relaxed),
-        _ => {}
+    // `Read` (portals before 1.17, which lack `ReadOne`) wraps the value in one more variant.
+    let scheme = |v: &Value| match v {
+        Value::U32(x) => *x,
+        Value::Value(inner) => match **inner {
+            Value::U32(x) => x,
+            _ => 0,
+        },
+        _ => 0,
+    };
+    let store = |v: u32| {
+        let new = match v {
+            1 => DARK_DARK,
+            2 => DARK_LIGHT,
+            _ => DARK_UNKNOWN,
+        };
+        if dark.swap(new, Ordering::Relaxed) != new {
+            wake();
+        }
     };
     let Ok(conn) = zbus::blocking::connection::Builder::session().and_then(|b| b.build()) else {
         log::info!("colour scheme: no session bus: the system theme isn't followed");
         return;
     };
-    let read = || -> zbus::Result<u32> {
-        let reply = conn.call_method(Some(PORTAL), "/org/freedesktop/portal/desktop", Some(SETTINGS), "ReadOne", &(APPEARANCE, "color-scheme"))?;
+    let read = |method: &str| -> zbus::Result<u32> {
+        let reply = conn.call_method(Some(PORTAL), "/org/freedesktop/portal/desktop", Some(SETTINGS), method, &(APPEARANCE, "color-scheme"))?;
         let body = reply.body();
-        let value = body.deserialize::<zbus::zvariant::Value>()?;
-        match value {
-            zbus::zvariant::Value::U32(v) => Ok(v),
-            _ => Ok(0),
-        }
+        Ok(scheme(&body.deserialize::<Value>()?))
     };
-    match read() {
+    match read("ReadOne").or_else(|_| read("Read")) {
         Ok(v) => store(v),
         Err(e) => log::info!("colour scheme: can't read the system setting: {e}"),
     }
@@ -192,12 +207,9 @@ fn watch_system_dark(dark: Arc<AtomicU8>) {
         for msg in zbus::blocking::MessageIterator::for_match_rule(rule, &conn, Some(8))? {
             let msg = msg?;
             let body = msg.body();
-            let Ok((namespace, key, value)) = body.deserialize::<(String, String, zbus::zvariant::Value<'_>)>() else { continue };
-            if namespace == APPEARANCE
-                && key == "color-scheme"
-                && let zbus::zvariant::Value::U32(v) = value
-            {
-                store(v);
+            let Ok((namespace, key, value)) = body.deserialize::<(String, String, Value<'_>)>() else { continue };
+            if namespace == APPEARANCE && key == "color-scheme" {
+                store(scheme(&value));
             }
         }
         Ok(())
