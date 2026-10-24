@@ -292,7 +292,7 @@ pub fn stroke_center(path: &BezPath, width: f64, props: &StrokeProps) -> BezPath
         .with_miter_limit(props.miter_limit.clamp(1.0, 100.0))
         .with_start_cap(kcap(props.cap_start))
         .with_end_cap(kcap(props.cap_end));
-    if let Some(pat) = width::dash_pattern(props) {
+    if let Some(pat) = width::dash_pattern(props).filter(|p| width::dashes_fit(path.perimeter(1.0), p)) {
         style = style.with_dashes(0.0, pat);
     }
     kurbo::stroke(path.iter(), &style, &kurbo::StrokeOpts::default(), 0.05)
@@ -717,6 +717,19 @@ mod tests {
         let props = StrokeProps { weight: 2.0, dashes: vec![10.0, 10.0], align: StrokeAlign::Center, ..Default::default() };
         let s = stroke_center(&line, 2.0, &props);
         assert!((s.area().abs() - 100.0).abs() < 2.0, "{}", s.area());
+    }
+
+    #[test]
+    fn a_dash_pattern_too_fine_for_its_path_strokes_solid() {
+        // ~500k dashes on this line (#1060): drawn solid, as a variable width stroke is past
+        // `MAX_DASHES`, rather than one outline per dash.
+        let mut line = BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((10_000.0, 0.0));
+        let props = StrokeProps { weight: 2.0, dashes: vec![0.01, 0.01], align: StrokeAlign::Center, ..Default::default() };
+        let s = stroke_center(&line, 2.0, &props);
+        assert!(s.elements().len() < 100, "{} elements", s.elements().len());
+        assert!((s.area().abs() - 20_000.0).abs() < 10.0, "{}", s.area());
     }
 
     #[test]
