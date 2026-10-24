@@ -512,6 +512,9 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         }
         out.push(nid);
     }
+    // Board connectors copied with what they join join the copies.
+    let map = crate::board::copy_map(doc, &ids, &out);
+    crate::board::rejoin(doc, &crate::board::copied_items(doc, &map), &map, false);
     s.set_selection(out.clone());
     s.ds_mut()?.last_duplicate = Some(Duplicated { sources: ids, copies: out.clone() });
     Ok(json!({"ids": out}))
@@ -709,6 +712,10 @@ pub fn paste_into(s: &mut Session, parent: NodeId, at: Option<(f64, f64)>) -> Re
         out.push(doc.paste_nodes(&nodes, &map, *root, into, None)?);
         all.extend(map);
     }
+    // Board connectors pasted with what they join join the pasted copies.
+    let originals: Vec<(NodeId, figcraft_doc::BoardItem)> =
+        clip.nodes.iter().flat_map(|(_, nodes)| nodes).filter_map(|n| Some((*all.get(&n.id)?, n.board.clone()?))).collect();
+    crate::board::rejoin(doc, &originals, &all, !copy_local);
     if let Some(src) = foreign {
         crate::library::adopt_pasted(doc, src, clip.source_path.as_deref(), &all)?;
     }
@@ -725,7 +732,10 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     let target = id(p, "parent").or_else(|| {
         sel.first()
             .copied()
-            .filter(|i| sel.len() == 1 && doc.node(*i).is_some_and(|n| n.kind.is_frame_like() && !matches!(n.kind, NodeKind::Instance { .. })))
+            .filter(|i| {
+                sel.len() == 1
+                    && doc.node(*i).is_some_and(|n| n.kind.is_frame_like() && !matches!(n.kind, NodeKind::Instance { .. }) && !n.is_board_atom())
+            })
             .filter(|i| !copy_local || !s.clipboard.copied_components.iter().any(|root| doc.is_ancestor(*root, *i)))
     });
     let parent = target.unwrap_or(page);
@@ -1399,10 +1409,12 @@ fn paint_set(s: &mut Session, p: &Value, fills: bool) -> Result<Value> {
             slot.kind = figcraft_color::PaintKind::Solid { color: c.with_alpha(1.0) };
             if c.a < 1.0 {
                 slot.opacity = c.a;
+                slot.color_alpha = true;
             }
         }
         if let Some(o) = num(p, "opacity") {
             slot.opacity = (if o > 1.0 { o / 100.0 } else { o }).clamp(0.0, 1.0) as f32;
+            slot.color_alpha = false;
         }
         if let Some(v) = boolean(p, "visible") {
             slot.visible = v;

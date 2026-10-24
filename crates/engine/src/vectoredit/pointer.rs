@@ -272,7 +272,7 @@ impl Session {
     }
 
     /// Every edited layer's selected points (segment ends included) other than the active one's.
-    fn others_moving(doc: &Document, ve: &VectorEdit) -> Vec<(NodeId, Vec<usize>)> {
+    pub(super) fn others_moving(doc: &Document, ve: &VectorEdit) -> Vec<(NodeId, Vec<usize>)> {
         ve.others
             .iter()
             .filter_map(|o| {
@@ -320,7 +320,7 @@ impl Session {
         let Some(b) = transform::shown_box(&doc, ve) else { return Ok(()) };
         match bh {
             BoxHit::Inside => {
-                let g = self.points_gesture(ve.id, ev.p(), b.points, vec![], None, true)?;
+                let g = self.points_gesture(ve.id, ev.p(), b.points, b.others, None, true)?;
                 self.begin_interaction("Move points")?;
                 self.vgesture(g);
             }
@@ -330,7 +330,7 @@ impl Session {
                 self.vgesture(VGesture::BoxRotate { b, start_angle, angle: 0.0 });
             }
             BoxHit::Handle(handle) => {
-                let targets = Arc::new(point_snap::targets(&doc, page, Some(ve.id), &b.points, &[]));
+                let targets = Arc::new(point_snap::targets_moving(&doc, page, Some(ve.id), &b.points, &[], &b.others));
                 self.begin_interaction("Scale points")?;
                 self.vgesture(VGesture::BoxScale { b, handle, targets, pick });
             }
@@ -455,11 +455,11 @@ impl Session {
     }
 
     /// The region of the active layer a press at `ev` would take (Move tool, `h` the network's part
-    /// there). Inside the transform box around points selected in their own right, the box keeps
-    /// its drag unless the region is already selected.
+    /// there). Inside the transform box around points selected in their own right (in any edited
+    /// layer), the box keeps its drag unless the region is already selected.
     fn region_under(doc: &Document, ve: &VectorEdit, h: Option<VHit>, ev: &PointerEvent) -> Option<usize> {
         let r = region_hit(doc, ve, ev.p(), ev.zoom)?;
-        let own = !ve.shown_vertices().is_empty() || !ve.segments.is_empty();
+        let own = !ve.shown_vertices().is_empty() || !ve.segments.is_empty() || ve.others_selected();
         let in_box = !ev.shift && own && transform::box_hit(doc, ve, h, ev.p(), ev.zoom) == Some(BoxHit::Inside);
         (!in_box || ve.regions.contains(&r)).then_some(r)
     }
@@ -921,7 +921,7 @@ impl Session {
                 let q = b.frame.inverse() * (ev.p() + c);
                 let (x0, y0, x1, y1) = crate::tools::resized_box(handle, q, b.width, b.height, ev.shift, ev.alt);
                 let m = b.onto(x0, y0, x1, y1);
-                self.preview(|doc, _| transform::transform_points(doc, id, &b.points, m))?;
+                self.preview(|doc, _| transform::transform_box(doc, id, &b, m))?;
             }
             VGesture::BoxRotate { b, start_angle, .. } => {
                 let c = b.center();
@@ -930,7 +930,7 @@ impl Session {
                     angle = (angle / 15.0).round() * 15.0;
                 }
                 let m = figcraft_geom::rotate_about(Affine::IDENTITY, c, -angle);
-                self.preview(|doc, _| transform::transform_points(doc, id, &b.points, m))?;
+                self.preview(|doc, _| transform::transform_box(doc, id, &b, m))?;
                 self.tool.overlay.cursor = Cursor::Rotate((ev.p() - c).atan2().to_degrees());
                 self.vgesture(VGesture::BoxRotate { b, start_angle, angle });
             }
@@ -1048,6 +1048,10 @@ impl Session {
                         set_state(self, |e| {
                             e.vertices.clear();
                             e.segments.clear();
+                            for o in &mut e.others {
+                                o.vertices.clear();
+                                o.segments.clear();
+                            }
                         })?;
                     }
                 }
