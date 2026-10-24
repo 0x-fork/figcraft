@@ -291,7 +291,17 @@ fn valid_id(s: &str) -> bool {
 
 /// A name others may see: trimmed, no control characters, at most 256 characters.
 fn clean_name(s: &str) -> String {
-    s.trim().chars().filter(|c| !c.is_control()).take(256).collect()
+    s.trim().chars().filter(|c| !c.is_control() && !is_bidi_control(*c)).take(256).collect()
+}
+
+/// A report's reason: trimmed, control and bidi characters turned into spaces, at most `MAX_REASON` characters.
+fn clean_reason(s: &str) -> String {
+    s.trim().chars().map(|c| if c.is_control() || is_bidi_control(c) { ' ' } else { c }).take(MAX_REASON).collect()
+}
+
+/// Bidirectional format characters, which could reorder what a terminal shows.
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{61C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 /// Take the data directory's lock: `None` when someone else holds it.
@@ -785,7 +795,7 @@ impl Store {
 
     /// Keep a report about `file` (from someone who joined it with `link`, at `ip`).
     pub fn keep_report(&mut self, file: &str, link: Option<&str>, ip: IpAddr, reason: &str) -> Result<(), String> {
-        let reason: String = reason.trim().chars().map(|c| if c.is_control() { ' ' } else { c }).take(MAX_REASON).collect();
+        let reason = clean_reason(reason);
         if reason.is_empty() {
             return Err("say what is wrong with the file".into());
         }

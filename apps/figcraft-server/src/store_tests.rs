@@ -363,4 +363,20 @@ fn a_log_that_isnt_one_is_moved_aside() {
     assert!(store.problems().iter().any(|p| p.contains("moved aside")), "{:?}", store.problems());
     let kept = fs::read_dir(&folder).unwrap().filter_map(|e| e.ok()).any(|e| fs::read(e.path()).is_ok_and(|b| b == junk));
     assert!(kept, "the old log's bytes are kept beside the file");
+
+const BIDI: [char; 12] =
+    ['\u{61C}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}'];
+
+#[test]
+fn names_and_report_reasons_lose_bidi_controls() {
+    let dir = TempDir::new("bidi");
+    let mut store = Store::open(dir.path(), cfg(dir.path())).unwrap();
+    for (n, m) in BIDI.into_iter().enumerate() {
+        let ip: std::net::IpAddr = format!("192.0.2.{}", n + 1).parse().unwrap();
+        let (id, _, _) = publish(&mut store, &format!("a{m}b"));
+        assert_eq!(store.list(&|_| None)[0].name, "ab", "name U+{:04X}", m as u32);
+        store.keep_report(&id, None, ip, &format!("a{m}b")).unwrap();
+        assert_eq!(store.reports().last().unwrap().reason, "a b", "reason U+{:04X}", m as u32);
+        store.remove(&id).unwrap();
+    }
 }
