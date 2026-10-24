@@ -24,6 +24,7 @@ pub mod collab;
 pub mod component_codegen;
 pub mod components;
 pub mod datafill;
+pub mod dev_measurements;
 pub mod dev_resources;
 pub mod devcompare;
 pub mod devinspect;
@@ -1660,6 +1661,8 @@ mod dark_page_text_tests;
 mod datafill_tests;
 #[cfg(test)]
 mod design_paste_tests;
+#[cfg(test)]
+mod dev_measurements_tests;
 #[cfg(test)]
 mod dev_resources_tests;
 #[cfg(test)]
