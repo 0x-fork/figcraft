@@ -435,6 +435,12 @@ fn alpha_slider(ui: &mut Ui, rect: Rect, color: Color) -> Option<(f32, bool)> {
     slider_knob(ui, rect, color.a, Id::new("cp_alpha"))
 }
 
+/// The colour picker window's area id. A fixed id (not `Window::new`'s, which egui keys by
+/// `Id::new(Some(title))`) so the style picker can tell a click inside the picker from one outside.
+pub fn window_id() -> Id {
+    Id::new("color_picker")
+}
+
 pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     let Some(target) = app.ui.picker.clone() else {
         // A colour sampled for a picker that has closed has no paint to go to.
@@ -470,6 +476,9 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     let mut open = true;
     let mut close_now = false;
     egui::Window::new("color_picker")
+        // A fixed area id so the style picker can tell a click in here from a click outside
+        // (`Window::new` alone would key the area by `Id::new(Some(title))`).
+        .id(window_id())
         .title_bar(false)
         .fixed_pos(pos)
         .fixed_size(vec2(240.0, 0.0))
