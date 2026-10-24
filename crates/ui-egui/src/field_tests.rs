@@ -370,6 +370,58 @@ fn arithmetic_commits_tab_moves_on_and_escape_restores() {
     assert_eq!(geom(&u, a).0, 78.0);
 }
 
+/// Answers a Save as dialog with `path`, once, and counts the dialogs asked for.
+struct SaveAsPicker {
+    path: Option<std::path::PathBuf>,
+    asked: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl crate::Services for SaveAsPicker {
+    fn pick_save(&mut self, _title: &str, _name: &str, _exts: &[&str]) -> crate::DialogFuture {
+        self.asked.set(self.asked.get() + 1);
+        Box::pin(std::future::ready(self.path.take()))
+    }
+}
+
+/// The x of layer `a` in the file at `path`, opened again.
+fn saved_x(path: &std::path::Path, a: NodeId) -> f64 {
+    let mut back = Session::new();
+    back.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap();
+    back.doc().unwrap().world_bounds(a).unwrap().x0
+}
+
+#[test]
+fn the_save_shortcut_saves_from_a_field_with_what_was_typed() {
+    // Cmd/Ctrl+S with the keyboard in a panel field saved nothing (#1157). It commits the field
+    // first (as clicking away does), then saves; the field lets go of the keyboard.
+    // Shift+Cmd/Ctrl+S does the same through Save as.
+    let cmd = if cfg!(target_os = "macos") { Modifiers::COMMAND } else { Modifiers::COMMAND.plus(Modifiers::CTRL) };
+    let (mut u, a, _) = setup();
+    let dir = std::env::temp_dir().join(format!("figcraft-save-from-field-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (path, copy) = (dir.join("doc.figcraft"), dir.join("copy.figcraft"));
+    u.app.session.execute("file.saveAs", &json!({"path": path.to_string_lossy()})).unwrap();
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    u.app.services = Box::new(SaveAsPicker { path: Some(copy.clone()), asked: asked.clone() });
+    for (shortcut, mods, x, file) in [("Cmd/Ctrl+S", cmd, 77.0, &path), ("Shift+Cmd/Ctrl+S", cmd.plus(Modifiers::SHIFT), 66.0, &copy)] {
+        let (p, _) = field(&mut u, "X");
+        click(&mut u, p);
+        assert!(crate::a11y::field_focused(&u.ctx), "{shortcut}: the field has the keyboard");
+        u.frame(vec![Event::Text(x.to_string())]);
+        key(&mut u, Key::S, mods);
+        for _ in 0..3 {
+            u.frame(vec![]);
+        }
+        assert_eq!(geom(&u, a).0, x, "{shortcut}: what was typed is committed");
+        assert!(!crate::a11y::field_focused(&u.ctx), "{shortcut}: the field let go");
+        assert!(!u.app.session.ds().unwrap().is_dirty(), "{shortcut}: saved");
+        assert_eq!(saved_x(file, a), x, "{shortcut}: the file on disk has the typed value");
+    }
+    assert_eq!(asked.get(), 1, "only Save as asked where");
+    assert_eq!(saved_x(&path, a), 77.0, "Save as left the first file alone");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn mixed_values_take_edits_relative_to_each_layer() {
     let (mut u, a, b) = setup();
@@ -548,4 +600,89 @@ fn a_label_too_long_for_its_field_ends_in_an_ellipsis_before_the_value() {
     assert_eq!((value.as_str(), *value_cut), ("80%", false), "the value shows whole");
     assert!(field.contains_rect(*l) && field.contains_rect(*v), "both inside the field {field:?}: {l:?} {v:?}");
     assert!(l.max.x < v.min.x, "the label stops before the value: {l:?} {v:?}");
+}
+
+/// The middle of the field with response `id`.
+fn at(u: &Ui, id: Id) -> Pos2 {
+    u.ctx.read_response(id.with("field")).unwrap_or_else(|| panic!("no field {id:?}")).rect.center()
+}
+
+/// Type `text` into the field whose response is `id` and press Enter.
+fn type_at(u: &mut Ui, id: Id, text: &str) {
+    let p = at(u, id);
+    click(u, p);
+    u.frame(vec![Event::Text(text.into())]);
+    key(u, Key::Enter, Modifiers::NONE);
+    u.frame(vec![]);
+}
+
+/// A frame with one layout grid, its settings open in the Design panel.
+fn grid_ui(grid: serde_json::Value) -> (Ui, NodeId) {
+    let mut s = Session::new();
+    let f = id(s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 400, "height": 300})).unwrap());
+    s.execute("node.set", &json!({"ids": [f], "props": {"grids": [grid]}})).unwrap();
+    s.execute("select.set", &json!({"ids": [f]})).unwrap();
+    let mut u = Ui::new(s);
+    u.ctx.data_mut(|d| d.insert_temp(Id::new(("grid_open", 0usize)), true));
+    u.frame(vec![]);
+    (u, f)
+}
+
+/// Scroll the Design panel (over its own field `id`) until that field is on the test screen: the
+/// grid settings sit below the fold.
+fn scroll_to(u: &mut Ui, id: Id) {
+    let wheel = Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -300.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    };
+    for _ in 0..10 {
+        let p = at(u, id);
+        if p.y < 860.0 {
+            break;
+        }
+        u.frame(vec![Event::PointerMoved(pos2(p.x, 500.0)), wheel.clone()]);
+        // Let the scroll settle.
+        for _ in 0..30 {
+            u.frame(vec![]);
+        }
+    }
+}
+
+/// The word for Auto types 0 only where 0 *is* the automatic value: a fixed layout grid's count
+/// does, an auto layout's gap (Auto there is "Space between") does not. Keying it on the field's
+/// placeholder said 0 everywhere, which turned the gap's mode off.
+#[test]
+fn typing_auto_is_zero_only_where_zero_is_the_automatic_value() {
+    let count_id = Id::new(("grid_field", "count", 0usize));
+    let (mut u, f) = grid_ui(json!({"kind": "columns", "align": "min", "count": 3, "size": 8, "gutter": 10}));
+    let count = |u: &Ui| u.app.session.doc().unwrap().node(f).unwrap().grids[0].count;
+    scroll_to(&mut u, count_id);
+    type_at(&mut u, count_id, "Auto");
+    assert_eq!(count(&u), 0, "a fixed grid's count: Auto is 0");
+    type_at(&mut u, count_id, "4");
+    assert_eq!(count(&u), 4, "and a number is that count");
+    // A stretched grid works its width out from the frame: the field shows Auto and takes no edit.
+    let (mut u, f) = grid_ui(json!({"kind": "columns", "align": "stretch", "count": 3, "size": 0}));
+    let size_id = Id::new(("grid_field", "size", 0usize));
+    scroll_to(&mut u, size_id);
+    type_at(&mut u, size_id, "40");
+    assert_eq!(u.app.session.doc().unwrap().node(f).unwrap().grids[0].size, 0.0, "a stretched grid's width isn't set");
+    // Nor its count: a stretched grid has at least one band, so the word commits nothing.
+    type_at(&mut u, count_id, "Auto");
+    assert_eq!(u.app.session.doc().unwrap().node(f).unwrap().grids[0].count, 3, "a stretched grid keeps its count");
+
+    // The auto layout's gap: its placeholder says Auto, but Auto is a mode, not 0.
+    let mut s = Session::new();
+    let f = id(s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 400, "height": 300})).unwrap());
+    s.execute("layout.add", &json!({"ids": [f], "direction": "vertical"})).unwrap();
+    s.execute("node.set", &json!({"ids": [f], "props": {"mainAlign": "spaceBetween"}})).unwrap();
+    s.execute("select.set", &json!({"ids": [f]})).unwrap();
+    let mut u = Ui::new(s);
+    u.frame(vec![]);
+    let gap = |u: &Ui| u.app.session.doc().unwrap().node(f).unwrap().layout.as_ref().unwrap().gap;
+    let before = gap(&u);
+    type_at(&mut u, Id::new("al_gap"), "Auto");
+    assert_eq!(gap(&u), before, "the word isn't a value where Auto is a mode");
 }
