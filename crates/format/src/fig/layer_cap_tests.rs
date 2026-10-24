@@ -136,3 +136,13 @@ fn a_whole_file_past_the_cap_keeps_its_library_links_and_says_so_once() {
     assert!(!warnings.iter().any(|w| w.contains("aren't in the file")), "{warnings:?}");
     assert!(linked_to(&doc, "Library main") >= 190, "{warnings:?}");
 }
+
+#[test]
+fn a_library_main_larger_than_the_cap_leaves_the_pages_room() {
+    // A main of 300 layers with room for 100: mapped first, it took the whole budget and the page
+    // came out empty.
+    let (doc, warnings) = import_at(&library_message(5, 300), 100);
+    let page = doc.nodes().find(|n| n.name == "Screens").expect("the page");
+    let top = page.children.len();
+    assert!(top >= 1, "the page kept {top} layers: {warnings:?}");
+}
