@@ -27,7 +27,7 @@ pub enum Section {
 
 impl Section {
     /// The sidebar, top to bottom.
-    const ALL: [(Section, Icon, &'static str); 3] = [
+    const ALL: [(Section, Icon, &str); 3] = [
         (Section::Recents, Icon::Home, tr_noop("Recents")),
         (Section::Online, Icon::Online, tr_noop("Online")),
         (Section::Templates, Icon::Assets, tr_noop("Templates")),
@@ -180,19 +180,11 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
 fn dropped(app: &mut FigApp, ctx: &egui::Context) {
     let files = ctx.input(|i| i.raw.dropped_files.clone());
     for f in files {
-        let path = f.path().to_path_buf();
-        if !crate::opens(&path) {
+        if !crate::opens(f.path()) {
             app.toast(tr("Drop a .figcraft, .fig, .json, .svg or image file."));
             continue;
         }
-        // `opens` saw an extension, so there is a file name to tell the format by.
-        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        let (params, read) = if path.exists() {
-            (json!({"path": path.to_string_lossy()}), None)
-        } else {
-            (json!({"name": name}), Some(crate::dropped_bytes(&f, &name)))
-        };
-        app.ui.pending_opens.push(crate::pending_open::PendingOpen { label: name, params, command: "file.open", target: None, read });
+        crate::pending_open::open_dropped(app, &f);
     }
 }
 
@@ -329,13 +321,14 @@ fn action_card(ui: &mut Ui, t: &Tokens, icon: Icon, title: &str, sub: &str) -> b
 
 fn recents(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
     heading(ui, t, tr("Recents"));
-    let (mut new_file, mut open) = (false, false);
-    ui.horizontal(|ui| {
-        new_file = action_card(ui, t, Icon::Plus, tr("New design file"), tr("Start from a blank canvas"));
+    let (mut new_file, mut new_board, mut open) = (false, false, false);
+    ui.horizontal_wrapped(|ui| {
+        new_file = action_card(ui, t, Icon::PenNib, tr("New design file"), tr("Start from a blank canvas"));
+        new_board = action_card(ui, t, Icon::Board, tr("New board"), tr("Sticky notes, shapes and connectors"));
         open = action_card(ui, t, Icon::Page, tr("Open file"), tr("Open .figcraft, .svg or images"));
     });
-    if new_file {
-        app.run("file.new", json!({}));
+    if new_file || new_board {
+        app.run(if new_board { "file.newBoard" } else { "file.new" }, json!({}));
         app.ui.home = false;
     }
     if open {
@@ -384,8 +377,14 @@ fn open_files(app: &mut FigApp, ui: &mut Ui, t: &Tokens, query: &str) -> usize {
     let mut switch = None;
     for (i, d) in app.session.docs.iter().enumerate().filter(|(_, d)| hit(d)) {
         let detail = d.path.as_deref().unwrap_or_default();
-        let row =
-            FileRow { mark: Some((Icon::Logo, ACCENT)), name: &d.doc.name, ink: t.text, detail, detail_size: 11.0, detail_ink: t.text_secondary };
+        let row = FileRow {
+            mark: Some((icons::file_mark(d.doc.kind), ACCENT)),
+            name: &d.doc.name,
+            ink: t.text,
+            detail,
+            detail_size: 11.0,
+            detail_ink: t.text_secondary,
+        };
         if listed(ui, t, ui.id().with(("open", d.uid)), 36.0, &row) {
             switch = Some(i);
         }

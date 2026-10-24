@@ -131,7 +131,8 @@ component/instance links, overrides, `slot` (a slot layer's property name), boun
 `devStatus` (handoff status), `devChanged` (changed since it was marked ready for dev),
 `annotations` (Dev Mode notes: `[{label, properties, category?}]`), `codeLinks` (a component's
 links to code: `[{language, importPath, name, template}]`), `devResources` (links for developers,
-its own and inherited: `[{name, url, index?, from?}]`), `pluginData` (layer data written with
+its own and inherited: `[{name, url, index?, from?}]`), `measurements` (Dev Mode measurements
+starting from the layer: `[{to} | {side}]`), `pluginData` (layer data written with
 `node.set {props: {pluginData: {key: value}}}`, pages included: `{key: value}`, values as strings;
 only when there is some). The auto layout props
 that `node.set` accepts are listed in [mcp.md](mcp.md#conventions-agents-must-know).
@@ -256,7 +257,7 @@ separate calls. Returns `{queued}`.
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, homeSection?, homeSearch?, homeRecentsView?, homeRecentsSort?, homeRecentsOrder?, palette?, mainMenu?, focusRegion?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, devCompare?, devCompareMode?, devCompareSplit?, annotationFilter?, resetFrameStats?, pluginsWindow?, pluginsTab?, pluginConfirm?, pluginForm?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, homeSection?, homeSearch?, homeRecentsView?, homeRecentsSort?, homeRecentsOrder?, palette?, mainMenu?, focusRegion?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, devCompare?, devCompareMode?, devCompareSplit?, annotationFilter?, resetFrameStats?, pluginsWindow?, pluginsTab?, pluginConfirm?, pluginForm?, devCompareVersion?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
 `home` (bool), `homeSection` (`recents`, `online` or `templates`: which section the home screen shows, as `ui.inspect` reports it; opening
@@ -293,13 +294,14 @@ closes it), `commentDraft` (`{x, y}`: start a new comment there), `commentFilter
 text, focused with the cursor at its end: an `@` there shows the mention picker), `commentEdit` (a
 message index of the open thread to edit, 0 for the first; `null` stops), `presentComments` (bool:
 the presenter shows the presented frame's comments, also Shift+C there). Dev Mode: `devCompare` (a
-ready-for-dev frame or section id opens the Compare changes view, like `dev.compare {id, show:
-true}`; `null` closes it) with `devCompareMode` (`sideBySide|overlay`) and `devCompareSplit` (the
+frame or section id opens the Compare changes view, like `dev.compare {id, show:
+true}`; `null` closes it) with `devCompareVersion` (a version id to compare with; `null`: when it
+was marked ready for dev), `devCompareMode` (`sideBySide|overlay`) and `devCompareSplit` (the
 overlay slider, 0–1), `annotationFilter` (`all`, `none` for uncategorised, or a category id or name:
 the annotations the canvas shows). `resetFrameStats` (true: start `framesDrawn` and
 `repaintCauses` over). Returns `ui.inspect` (which reports `stylePicker`,
 `stylePickerView`, `comments`: `open`, `draft`, `filter`, `sort`, `search`, `editing` and the
-`mentions` the picker offers, `devCompare` (`{id, mode, split}` or `null`), `devFocus` (the frame the
+`mentions` the picker offers, `devCompare` (`{id, mode, split, version}` or `null`), `devFocus` (the frame the
 focus view shows, or `null`) and `annotationFilter`).
 
 ### `ui.screenshot {path?}`
