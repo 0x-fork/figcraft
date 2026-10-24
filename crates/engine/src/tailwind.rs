@@ -105,9 +105,22 @@ fn arb(v: &str) -> String {
     format!("[{}]", v.trim().replace('_', "\\_").replace(' ', "_"))
 }
 
-/// The custom property a `var(--name, fallback)` value reads.
+/// The custom property a `var(--name, fallback)` value reads, when that one call is the whole
+/// value (not `var(--a, 4px) 8px`, four corners of which only the first is a variable).
 fn var_name(v: &str) -> Option<&str> {
     let inner = v.trim().strip_prefix("var(")?;
+    let mut depth = 1usize;
+    let close = inner.char_indices().find_map(|(i, c)| {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+        (depth == 0).then_some(i)
+    })?;
+    if close + 1 != inner.len() {
+        return None;
+    }
     Some(inner.split([',', ')']).next()?.trim())
 }
 
