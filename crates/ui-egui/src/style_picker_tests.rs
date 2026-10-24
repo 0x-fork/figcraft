@@ -105,7 +105,7 @@ fn text_styles_preview_on_hover_and_apply_on_click() {
     for _ in 0..3 {
         frame(&ctx, &mut app, &mut time);
     }
-    let area = ctx.memory(|m| m.area_rect(Id::new("style_picker_area"))).expect("the picker shows");
+    let area = ctx.memory(|m| m.area_rect(Id::unique("style_picker_area"))).expect("the picker shows");
     let size = |app: &FigApp| app.session.doc().unwrap().node(t).unwrap().kind.text().unwrap().style.font_size;
     let undo = app.session.ds().unwrap().history.undo.len();
     // Down the popover until a style row previews on the canvas: the heading (listed first).
@@ -165,6 +165,34 @@ fn chars_linked_to_several_styles_show_mixed() {
 }
 
 #[test]
+fn a_click_in_the_colour_picker_keeps_the_style_editor_open() {
+    use crate::layers_drag_tests::Ui;
+    let mut s = Session::new();
+    s.execute("style.create", &json!({"type": "paint", "name": "Brand", "value": [{"type": "solid", "color": "#0D99FF"}]})).unwrap();
+    let mut u = Ui::new(s);
+    open_for_selection(&mut u.app, StyleSlot::Fill, Some("Brand"));
+    for _ in 0..3 {
+        u.frame(vec![]);
+    }
+    let id = u.app.session.doc().unwrap().style("Brand").unwrap().id.clone();
+    u.app.ui.picker = Some(crate::colorpicker::PickerTarget::Style { id, index: 0 });
+    for _ in 0..3 {
+        u.frame(vec![]);
+    }
+    let cp = u.ctx.memory(|m| m.area_rect(crate::colorpicker::window_id())).expect("colour picker shows");
+    let p = cp.center();
+    u.button(p, true);
+    u.button(p, false);
+    u.frame(vec![]);
+    assert!(u.app.ui.style_picker.is_some(), "the style editor stays open while the colour picker is used");
+    assert!(
+        matches!(u.app.ui.picker, Some(crate::colorpicker::PickerTarget::Style { .. })),
+        "the colour picker stays open too: {:?}",
+        u.app.ui.picker
+    );
+}
+
+#[test]
 fn local_style_drops_move_into_the_folder_above() {
     let st = |id: &str, name: &str| Style {
         id: id.into(),
@@ -216,7 +244,7 @@ fn edit_local_for_test(app: &mut FigApp, ctx: &egui::Context) {
 /// returns the redefined style, if any.
 fn commit_text_field(def: &TextStyle, field: &str, typed: &str) -> Option<TextStyle> {
     let ctx = egui::Context::default();
-    ctx.data_mut(|d| d.insert_temp(Id::new((field, "S")).with("editing"), typed.to_string()));
+    ctx.data_mut(|d| d.insert_temp(Id::unique((field, "S")).with("editing"), typed.to_string()));
     let enter = egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() };
     let input = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 400.0))), events: vec![enter], ..Default::default() };
     let mut f = Frame { act: None, hover: None, budget: 0 };

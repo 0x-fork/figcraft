@@ -60,7 +60,7 @@ fn export_rows_offer_a_size_for_images_only() {
     s.execute("select.set", &json!({"ids": [r]})).unwrap();
     s.execute("export.add", &json!({"ids": [r]})).unwrap();
     let mut u = crate::layers_drag_tests::Ui::new(s);
-    let size_menu = |u: &crate::layers_drag_tests::Ui| u.ctx.read_response(egui::Id::new(("export_size", 0)).with("menu")).is_some();
+    let size_menu = |u: &crate::layers_drag_tests::Ui| u.ctx.read_response(egui::Id::unique(("export_size", 0)).with("menu")).is_some();
     u.frame(vec![]);
     assert!(size_menu(&u), "PNG has sizes");
     for format in ["svg", "pdf"] {

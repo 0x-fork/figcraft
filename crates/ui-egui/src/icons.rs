@@ -83,6 +83,11 @@ icons! {
     FlipH,
     FlipV,
     CornerRadius,
+    /// Individual corners: the rounded corner each field sets.
+    CornerTopLeft,
+    CornerTopRight,
+    CornerBottomRight,
+    CornerBottomLeft,
     Angle,
     IndependentCorners,
     /// Individual padding: a frame with one inward tick per side, each set alone.
@@ -719,7 +724,10 @@ fn draw(p: &P, icon: Icon) {
             p.poly(&[(3.5, 5.5), (12.5, 5.5), (12.5, 1.5)], true);
             p.fill(&[(3.0, 9.0), (13.0, 9.0), (13.0, 14.0)]);
         }
-        CornerRadius => p.corner(2.5, 2.5, 1.0, 1.0, 11.5, 6.0),
+        CornerRadius | CornerTopLeft => p.corner(2.5, 2.5, 1.0, 1.0, 11.5, 6.0),
+        CornerTopRight => p.corner(13.5, 2.5, -1.0, 1.0, 11.5, 6.0),
+        CornerBottomRight => p.corner(13.5, 13.5, -1.0, -1.0, 11.5, 6.0),
+        CornerBottomLeft => p.corner(2.5, 13.5, 1.0, -1.0, 11.5, 6.0),
         Angle => {
             // Two rays from a vertex, the arc between them marking the angle (all unhinted, so
             // the arc meets the rays at every size).
@@ -1259,7 +1267,7 @@ pub fn paint_outlines(painter: &Painter, rect: Rect, size: f64, parts: &[(&figcr
 /// Every icon at the sizes the UI uses, labelled: for reviewing the set (`ui.set {iconGallery}`).
 pub fn gallery(ctx: &egui::Context) {
     let t = crate::theme::Tokens::get(ctx);
-    egui::Area::new(egui::Id::new("icon_gallery")).order(egui::Order::Foreground).fixed_pos(Pos2::ZERO).show(ctx, |ui| {
+    egui::Area::new(egui::Id::unique("icon_gallery")).order(egui::Order::Foreground).fixed_pos(Pos2::ZERO).show(ctx, |ui| {
         let screen = ctx.content_rect();
         let (r, _) = ui.allocate_exact_size(screen.size(), egui::Sense::click());
         ui.painter().rect_filled(r, 0.0, t.panel);
@@ -1357,7 +1365,7 @@ mod tests {
         let mut u = crate::layers_drag_tests::Ui::new(s);
         u.frame(vec![]);
         let shapes = u.frame_output(vec![]).shapes;
-        let lead = |name: &str| u.ctx.read_response(egui::Id::new(name).with("lead")).map(|r| r.rect).unwrap_or_else(|| panic!("{name} is shown"));
+        let lead = |name: &str| u.ctx.read_response(egui::Id::unique(name).with("lead")).map(|r| r.rect).unwrap_or_else(|| panic!("{name} is shown"));
         let (rotation, radius) = (marks(&shapes, lead("pos_rot")), marks(&shapes, lead("ap_rad")));
         assert!(!rotation.is_empty() && !radius.is_empty(), "both draw an icon");
         assert_ne!(rotation, radius);
@@ -1416,5 +1424,19 @@ mod tests {
         };
         let inside = (0..h.len()).all(|i| side(i) >= 0.0) || (0..h.len()).all(|i| side(i) <= 0.0);
         assert!(inside, "the handle covers the blade's base at {base:?}");
+    }
+
+    /// Each corner's icon shows its own corner: no two of the four draw alike.
+    #[test]
+    fn corner_icons_differ() {
+        let drawn: Vec<String> = [Icon::CornerTopLeft, Icon::CornerTopRight, Icon::CornerBottomRight, Icon::CornerBottomLeft]
+            .iter()
+            .map(|&icon| format!("{:?}", shapes_at_32(icon)))
+            .collect();
+        for (i, a) in drawn.iter().enumerate() {
+            for b in &drawn[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
     }
 }

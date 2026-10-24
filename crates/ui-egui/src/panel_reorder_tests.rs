@@ -94,6 +94,7 @@ fn effects_and_grids_drag_too_and_mixed_lists_dont() {
     // The layout grid section is below the fold: scroll the panel.
     let wheel = Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,
+        source: egui::MouseWheelSource::Unknown,
         delta: egui::vec2(0.0, -400.0),
         phase: egui::TouchPhase::Move,
         modifiers: Default::default(),

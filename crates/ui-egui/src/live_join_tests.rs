@@ -15,7 +15,7 @@ fn escape(h: &mut Harness) {
 }
 
 fn link_focused(h: &Harness) -> bool {
-    h.ctx.memory(|m| m.has_focus(egui::Id::new("live_join_link")))
+    h.ctx.memory(|m| m.has_focus(egui::Id::unique("live_join_link")))
 }
 
 #[test]

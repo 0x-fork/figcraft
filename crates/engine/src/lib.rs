@@ -325,6 +325,17 @@ pub struct TextEdit {
     pub anchor: usize,
     /// The node was created by this edit (deleted if left empty).
     pub created: bool,
+    /// Identity of this editing session (`textedit::begin` assigns a fresh one).
+    ///
+    /// The IME owner is `(document uid, node)`, which stays the same through ordinary edits
+    /// and caret moves; this token changes only when editing is started again, so an IME
+    /// context is never silently inherited by a replaced target that reuses the same node.
+    ///
+    /// It is deliberately not serialized: current consumers only inspect a live session. A
+    /// serialized `TextEdit` restored from data would get zero here, so it must not be restored
+    /// into a live editor without minting (or otherwise invalidating) a new session.
+    #[serde(default, skip_serializing)]
+    pub editing_session: u64,
     /// An IME composition in progress, shown inline at the caret; the document gets it on commit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preedit: Option<Preedit>,
@@ -414,6 +425,7 @@ impl DocState {
         }
         doc.link_layer_text_styles();
         cmd::styles::apply_paint_bindings_on_load(&mut doc);
+        components::mark_layer_modes(&mut doc);
         // Initial import settlement belongs to the saved baseline, not the user's first edit.
         let page = doc.current_page.filter(|p| doc.pages.contains(p)).or_else(|| doc.first_page()).unwrap_or(NodeId(0));
         let doc = Arc::new(doc);
@@ -765,6 +777,10 @@ pub struct Clipboard {
     pub source_doc: u64,
     /// Copied component/set roots, excluding cuts and originals discarded by undo (ids are reused).
     pub copied_components: std::collections::BTreeSet<NodeId>,
+    /// Monotonic generation of the copied layers (contents, images, bounds and source). A UI
+    /// clipboard mirror records it, so a later programmatic copy that never touched the system
+    /// clipboard is not mistaken for the user's own copy just because the text still matches.
+    pub layers_generation: u64,
     /// The document copied from (pastes into other files follow its mains) and its file path.
     pub source: Option<Arc<Document>>,
     pub source_path: Option<String>,
@@ -1690,6 +1706,8 @@ mod fig_export_tests;
 #[cfg(test)]
 mod fig_import_tests;
 #[cfg(test)]
+mod fill_none_tests;
+#[cfg(test)]
 mod finite_geometry_tests;
 #[cfg(test)]
 mod frame_guides_tests;
@@ -1901,6 +1919,8 @@ mod variables_io_tests;
 mod variants_discovery_tests;
 #[cfg(test)]
 mod vector_behaviour_tests;
+#[cfg(test)]
+mod vector_fill_rule_tests;
 #[cfg(test)]
 mod vector_multi_behaviour_tests;
 #[cfg(test)]

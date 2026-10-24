@@ -290,7 +290,7 @@ struct Frame {
 /// An icon button on the dark popover.
 fn menu_icon(ui: &mut Ui, rect: Rect, icon: Icon, tip: &str, on: bool) -> Response {
     let t = Tokens::get(ui.ctx());
-    let resp = ui.interact(rect, ui.id().with(("style_picker_btn", tip)), Sense::click()).tip(tip);
+    let resp = ui.interact(rect, ui.scope_id().with(("style_picker_btn", tip)), Sense::click()).tip(tip);
     if on || resp.hovered() {
         ui.painter().rect_filled(rect, CornerRadius::same(5), t.menu_hover);
     }
@@ -664,7 +664,7 @@ fn binding_cell(ui: &mut Ui, doc: &Document, style: &Style, field: &str, kind: f
         }
         return ui.rect_contains_pointer(b);
     };
-    let id = Id::new(("style_binding", &style.id, field));
+    let id = Id::unique(("style_binding", &style.id, field));
     let shown = widgets::elide_font(ui, leaf(name), 90.0, regular(10.0));
     let w = ui.painter().layout_no_wrap(shown.clone(), regular(10.0), t.menu_dim).size().x + 22.0;
     let chip = Rect::from_min_max(pos2(row.max.x - w - 4.0, row.min.y + 4.0), pos2(row.max.x - 4.0, row.max.y - 4.0));
@@ -727,18 +727,18 @@ fn text_properties(ui: &mut Ui, id: &str, def: &TextStyle, out: &mut Frame) {
         ui.horizontal(|ui| {
             style_resp = Some(widgets::dropdown(ui, &def.font_style, half, None).on_hover_text(tr("Font style")));
             if let Some(widgets::FieldEdit::Set(v) | widgets::FieldEdit::Scrub(v, true)) =
-                widgets::number_field(ui, Id::new(("ts_size", id)), widgets::Lead::Text(tr("Size")), Some(def.font_size), "", half, 1.0)
+                widgets::number_field(ui, Id::unique(("ts_size", id)), widgets::Lead::Text(tr("Size")), Some(def.font_size), "", half, 1.0)
             {
                 set(out, &|d| d.font_size = v.clamp(1.0, 5000.0));
             }
         });
         ui.horizontal(|ui| {
-            if let Some(v) = widgets::text_field(ui, Id::new(("ts_lh", id)), &def.line_height.label(), half, tr("Line height"))
+            if let Some(v) = widgets::text_field(ui, Id::unique(("ts_lh", id)), &def.line_height.label(), half, tr("Line height"))
                 && let Some(lh) = crate::typography::parse_line_height(&v, Some(def.line_height)).and_then(|v| crate::typography::line_height_of(&v))
             {
                 set(out, &|d| d.line_height = lh);
             }
-            if let Some(v) = widgets::text_field(ui, Id::new(("ts_ls", id)), &def.letter_spacing.label(), half, tr("Letter spacing"))
+            if let Some(v) = widgets::text_field(ui, Id::unique(("ts_ls", id)), &def.letter_spacing.label(), half, tr("Letter spacing"))
                 && let Some(ls) =
                     crate::typography::parse_letter_spacing(&v, Some(def.letter_spacing)).and_then(|v| crate::typography::letter_spacing_of(&v))
             {
@@ -889,7 +889,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     }
     let y = p.y.clamp(screen.min.y + 48.0, (screen.max.y - 460.0).max(screen.min.y + 48.0));
     let mut out = Frame { act: None, hover: None, budget: 4 };
-    let area = egui::Area::new(Id::new("style_picker_area")).order(egui::Order::Foreground).fixed_pos(pos2(x, y)).show(ctx, |ui| {
+    let area = egui::Area::new(Id::unique("style_picker_area")).order(egui::Order::Foreground).fixed_pos(pos2(x, y)).show(ctx, |ui| {
         egui::Frame::NONE.fill(t.menu).corner_radius(CornerRadius::same(10)).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
             ui.set_width(W);
             if p.edit.is_some() {
@@ -900,7 +900,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         });
     });
     let rect = area.response.rect;
-    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new("style_picker_border"))).rect_stroke(
+    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::unique("style_picker_border"))).rect_stroke(
         rect,
         CornerRadius::same(10),
         Stroke::new(1.0, Color32::from_black_alpha(40)),
@@ -909,7 +909,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     // Clicks in the colour picker editing this picker's style, or in a menu the editor opened,
     // keep it open.
     let picker_rect =
-        app.ui.picker.as_ref().filter(|t| matches!(t, PickerTarget::Style { .. })).and(ctx.memory(|m| m.area_rect(Id::new("color_picker"))));
+        app.ui.picker.as_ref().filter(|t| matches!(t, PickerTarget::Style { .. })).and(ctx.memory(|m| m.area_rect(crate::colorpicker::window_id())));
     // So do clicks in the variable picker binding one of its fields (Escape closes that first).
     let variables = crate::variable_ui::picker_rect(ctx);
     let in_popup = egui::Popup::is_any_open(ctx) || variables.is_some();
@@ -1018,7 +1018,7 @@ fn drop_move(shown: &[&Style], from: usize, to: usize) -> Option<Value> {
 
 /// The id of the folder caption being renamed in the Local styles list (temp data).
 fn folder_rename_id() -> Id {
-    Id::new("local_style_folder_rename")
+    Id::unique("local_style_folder_rename")
 }
 
 /// The Design panel's Local styles (shown with nothing selected): this file's styles by type

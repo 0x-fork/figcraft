@@ -158,6 +158,7 @@ fn a_rename_scrolled_out_of_view_goes_on() {
     let p = egui::pos2(150.0, 400.0);
     let wheel = Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,
+        source: egui::MouseWheelSource::Unknown,
         delta: egui::vec2(0.0, -400.0),
         phase: egui::TouchPhase::Move,
         modifiers: Modifiers::NONE,

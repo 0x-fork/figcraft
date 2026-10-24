@@ -93,7 +93,7 @@ fn titlebar_close_asks_over_the_presenter_when_a_file_is_unsaved() {
     let commands = u.click(window_button(2));
     assert!(!commands.contains(&ViewportCommand::Close));
     assert!(u.app.ui.confirm_close);
-    assert!(u.ctx.memory(|memory| memory.area_rect(egui::Id::new(Some(crate::i18n::tr("Unsaved changes")))).is_some()));
+    assert!(u.ctx.memory(|memory| memory.area_rect(egui::Id::unique(Some(crate::i18n::tr("Unsaved changes")))).is_some()));
 }
 
 #[test]

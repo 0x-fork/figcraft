@@ -68,7 +68,7 @@ fn crop_corners(app: &FigApp, id: NodeId, r: (f64, f64, f64, f64)) -> Option<[Po
 }
 
 fn drag_id() -> Id {
-    Id::new("figcraft_handle_drag")
+    Id::unique("figcraft_handle_drag")
 }
 
 /// The gradient being edited (single node, picker open on a gradient paint).

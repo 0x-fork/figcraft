@@ -77,6 +77,7 @@ fn report(layers: usize) {
     rows.push(("hover over the canvas", b.mean(60, |i| pts[i].clone())));
     let wheel = |d: f32| Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,
+        source: egui::MouseWheelSource::Unknown,
         delta: vec2(0.0, d),
         phase: egui::TouchPhase::Move,
         modifiers: Default::default(),
@@ -180,7 +181,13 @@ fn design_system(icons: usize, instances: usize) -> (Document, figcraft_engine::
 }
 
 fn wheel(d: f32) -> Event {
-    Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: vec2(0.0, d), phase: egui::TouchPhase::Move, modifiers: Default::default() }
+    Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        source: egui::MouseWheelSource::Unknown,
+        delta: vec2(0.0, d),
+        phase: egui::TouchPhase::Move,
+        modifiers: Default::default(),
+    }
 }
 
 /// UI frames with a large design system: the Assets panel listing its components and the Design

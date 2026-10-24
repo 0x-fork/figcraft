@@ -128,7 +128,7 @@ fn path_row(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], ids: 
     let flip = paths.iter().all(|p| p.1);
     row(ui, 32.0, |ui| {
         let lead = Lead::Icon(Icon::Pen, tr("Start on path"));
-        match widgets::number_field(ui, Id::new("ty_path_start"), lead, start.map(|s| s * 100.0), "%", 96.0, 1.0) {
+        match widgets::number_field(ui, Id::unique("ty_path_start"), lead, start.map(|s| s * 100.0), "%", 96.0, 1.0) {
             Some(FieldEdit::Set(v)) => {
                 app.run("text.pathOptions", json!({"ids": ids, "start": v / 100.0}));
             }
@@ -225,9 +225,9 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
         ui.spacing_mut().item_spacing.x = 0.0;
         // The whole layer's size can follow a variable; a selected range just takes a value.
         let e = if editing {
-            widgets::number_field(ui, Id::new("ty_size"), Lead::None, size, "", half - 20.0, 1.0)
+            widgets::number_field(ui, Id::unique("ty_size"), Lead::None, size, "", half - 20.0, 1.0)
         } else {
-            crate::variable_ui::number_field(app, ui, ids, "fontSize", Id::new("ty_size"), Lead::None, size, "", half - 20.0)
+            crate::variable_ui::number_field(app, ui, ids, "fontSize", Id::unique("ty_size"), Lead::None, size, "", half - 20.0)
         };
         match e {
             Some(FieldEdit::Set(v)) => apply_style(app, "fontSize", json!(v.clamp(1.0, 5000.0))),
@@ -256,7 +256,7 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
     row(ui, 32.0, |ui| {
         let lh = uniform(styles, |s| s.line_height);
         let lh_label = lh.map(|l| l.label()).unwrap_or_else(|| tr(MIXED).into());
-        let field = SpacingField { field: "lineHeight", id: Id::new("ty_lh"), glyph: LeadGlyph::LineHeight, tip: tr("Line height") };
+        let field = SpacingField { field: "lineHeight", id: Id::unique("ty_lh"), glyph: LeadGlyph::LineHeight, tip: tr("Line height") };
         if let Some(edit) = spacing_field(app, ui, ids, &field, &lh_label, half, editing)
             && let Some(v) = parse_line_height(&edit.text(), lh)
         {
@@ -264,7 +264,7 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
         }
         let ls = uniform(styles, |s| s.letter_spacing);
         let ls_label = ls.map(|l| l.label()).unwrap_or_else(|| tr(MIXED).into());
-        let field = SpacingField { field: "letterSpacing", id: Id::new("ty_ls"), glyph: LeadGlyph::LetterSpacing, tip: tr("Letter spacing") };
+        let field = SpacingField { field: "letterSpacing", id: Id::unique("ty_ls"), glyph: LeadGlyph::LetterSpacing, tip: tr("Letter spacing") };
         if let Some(edit) = spacing_field(app, ui, ids, &field, &ls_label, half, editing)
             && let Some(v) = parse_letter_spacing(&edit.text(), ls)
         {
@@ -289,7 +289,7 @@ fn paragraph_rows(
     row(ui, 32.0, |ui| {
         let ps_label = ps.map(trim_num).unwrap_or_else(|| tr(MIXED).into());
         let field =
-            SpacingField { field: "paragraphSpacing", id: Id::new("ty_ps"), glyph: LeadGlyph::ParagraphSpacing, tip: tr("Paragraph spacing") };
+            SpacingField { field: "paragraphSpacing", id: Id::unique("ty_ps"), glyph: LeadGlyph::ParagraphSpacing, tip: tr("Paragraph spacing") };
         if let Some(edit) = spacing_input(ui, &field, &ps_label, half)
             && let Some(v) = widgets::eval(&edit.text(), ps)
         {
@@ -338,7 +338,7 @@ fn paragraph_rows(
             let v = ["top", "middle", "bottom"].get(i).copied().unwrap_or("top");
             app.set_props(ids, json!({"textAlignVertical": v}));
         }
-        let open_id = Id::new("ty_settings_open");
+        let open_id = Id::unique("ty_settings_open");
         let open = egui::Popup::is_id_open(ui.ctx(), open_id);
         let more = icons::button(ui, Icon::Dots, 24.0, open, tr("Type settings"));
         egui::Popup::from_toggle_button_response(&more)
@@ -385,7 +385,7 @@ fn type_settings(
     apply_style: &dyn Fn(&mut FigApp, &str, Value),
 ) {
     let t = Tokens::get(ui.ctx());
-    let tab_id = Id::new("ty_settings_tab");
+    let tab_id = Id::unique("ty_settings_tab");
     let vf = variable_face(styles);
     let tabs = &TABS[..if vf.is_some() { 3 } else { 2 }];
     let mut tab: usize = ui.data(|d| d.get_temp(tab_id)).filter(|i| *i < tabs.len()).unwrap_or(0);
@@ -458,7 +458,7 @@ fn type_settings(
         let spacing = common(doc, ids, |n| n.kind.text().map(|t| t.list_spacing.to_bits())).flatten().map(f64::from_bits);
         field_row(ui, tr("List spacing"), |ui, fw| {
             if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
-                widgets::number_field(ui, Id::new("ty_list_spacing"), Lead::None, spacing, "", fw, 1.0)
+                widgets::number_field(ui, Id::unique("ty_list_spacing"), Lead::None, spacing, "", fw, 1.0)
             {
                 app.set_props(ids, json!({"listSpacing": v.clamp(0.0, 10_000.0)}));
             }
@@ -468,17 +468,15 @@ fn type_settings(
         // Indent applies to start-aligned text only; elsewhere the field stays visible but off.
         let start_aligned =
             common(doc, ids, |n| n.kind.text().map(|t| t.align_h != TextAlignH::Center && t.align_h != TextAlignH::Justified)).flatten();
-        ui.horizontal(|ui| {
-            ui.add_enabled_ui(start_aligned != Some(false), |ui| {
-                ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new(tr("Paragraph indent")).font(regular(11.0)).color(t.text)));
-                let field = widgets::number_field(ui, Id::new("ty_indent"), Lead::None, indent, "", w - 118.0, 1.0);
-                if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) = field {
-                    app.set_props(ids, json!({"paragraphIndent": v.clamp(0.0, 10_000.0)}));
-                }
-            })
-            .response
-            .on_disabled_hover_text(tr("Paragraph indent applies to left-aligned text"));
-        });
+        ui.add_enabled_ui(start_aligned != Some(false), |ui| {
+            let field =
+                field_row(ui, tr("Paragraph indent"), |ui, fw| widgets::number_field(ui, Id::unique("ty_indent"), Lead::None, indent, "", fw, 1.0));
+            if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) = field {
+                app.set_props(ids, json!({"paragraphIndent": v.clamp(0.0, 10_000.0)}));
+            }
+        })
+        .response
+        .on_disabled_hover_text(tr("Paragraph indent applies to left-aligned text"));
         ui.add_space(4.0);
         for (key, label) in [("hangingPunctuation", tr("Hanging punctuation")), ("hangingList", tr("Hanging list"))] {
             let all_on = ids.iter().all(|i| {
@@ -508,16 +506,13 @@ fn type_settings(
         if resize == Some(TextAutoResize::Truncate) {
             let max = common(doc, ids, |n| n.kind.text().map(|t| t.max_lines)).flatten();
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new(tr("Max lines")).font(regular(11.0)).color(t.text)));
-                let shown = max.map(f64::from).filter(|m| *m > 0.0);
-                let empty = if max.is_some() { tr("Auto") } else { tr(MIXED) };
-                if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
-                    widgets::number_field_or(ui, Id::new("ty_maxlines"), shown, empty, w - 118.0, 1.0)
-                {
-                    app.run("text.maxLines", json!({"ids": ids, "lines": v.round().clamp(0.0, 10_000.0)}));
-                }
-            });
+            let shown = max.map(f64::from).filter(|m| *m > 0.0);
+            let empty = if max.is_some() { tr("Auto") } else { tr(MIXED) };
+            if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
+                field_row(ui, tr("Max lines"), |ui, fw| widgets::number_field_or(ui, Id::unique("ty_maxlines"), shown, empty, fw, 1.0))
+            {
+                app.run("text.maxLines", json!({"ids": ids, "lines": v.round().clamp(0.0, 10_000.0)}));
+            }
         }
     } else if let (2, Some(face)) = (tab, &vf) {
         variable_axes(app, ui, ids, styles, face);
@@ -542,13 +537,14 @@ fn type_settings(
     }
 }
 
-/// A Type settings row: a label, then `add` with the rest of the width.
-fn field_row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui, f32) -> R) -> R {
+/// A Type settings row: a label, then `add` with the rest of the width. A label wider than its
+/// column (French, say) narrows the field rather than the row outgrowing the popover, which then
+/// widened every frame (#1029).
+pub(crate) fn field_row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui, f32) -> R) -> R {
     let t = Tokens::get(ui.ctx());
-    let w = ui.available_width();
     ui.horizontal(|ui| {
         ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new(label).font(regular(11.0)).color(t.text)));
-        add(ui, w - 118.0)
+        add(ui, ui.available_width())
     })
     .inner
 }
@@ -577,7 +573,7 @@ fn decoration_details(app: &mut FigApp, ui: &mut Ui, styles: &[TextStyle], apply
             let auto = value == Some(DecorationLength::Auto);
             let field_w = if auto { fw } else { fw - 36.0 };
             if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
-                widgets::number_field_or(ui, Id::new(("ty_deco", key)), shown, &empty, field_w, 0.5)
+                widgets::number_field_or(ui, Id::unique(("ty_deco", key)), shown, &empty, field_w, 0.5)
             {
                 // A thickness of 0 or less goes back to the font's.
                 let v = if key == "textDecorationThickness" && v <= 0.0 { json!("auto") } else { json!(v.clamp(-1000.0, 1000.0)) };
@@ -609,7 +605,7 @@ fn decoration_details(app: &mut FigApp, ui: &mut Ui, styles: &[TextStyle], apply
             Some(c) => (c.clone().unwrap_or_default(), tr("Auto")),
             None => (String::new(), tr(MIXED)),
         };
-        if let Some(s) = widgets::text_field(ui, Id::new("ty_deco_color"), &value, fw, hint) {
+        if let Some(s) = widgets::text_field(ui, Id::unique("ty_deco_color"), &value, fw, hint) {
             let s = s.trim();
             if s.is_empty() || s.eq_ignore_ascii_case("auto") {
                 apply_style(app, "textDecorationColor", json!("auto"));
@@ -640,7 +636,7 @@ fn variable_axes(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextSt
     let field_w = 52.0;
     let label_w = 84.0;
     let slider_w = (w - label_w - field_w - 12.0).max(40.0);
-    let cancel_id = Id::new("ty_axis_cancelled");
+    let cancel_id = Id::unique("ty_axis_cancelled");
     // A cancelled gesture ends when the pointer is let go.
     if !ui.input(|i| i.pointer.any_down()) {
         ui.data_mut(|d| d.remove::<bool>(cancel_id));
@@ -649,7 +645,7 @@ fn variable_axes(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextSt
         let first = per_style.first().cloned().flatten().and_then(|v| v.get(i).copied());
         let value = first.filter(|v0| per_style.iter().all(|vs| vs.as_ref().and_then(|v| v.get(i)).is_some_and(|v| (v - v0).abs() < 1e-9)));
         // While a drag previews, the controls show the dragged value (the panel shows the document).
-        let live_id = Id::new(("ty_axis_live", &axis.tag));
+        let live_id = Id::unique(("ty_axis_live", &axis.tag));
         if app.ui.text_preview.is_none() {
             ui.data_mut(|d| d.remove::<f64>(live_id));
         }
@@ -671,15 +667,15 @@ fn variable_axes(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextSt
                     ("default", &trim_num(axis.default)),
                 ],
             );
-            ui.interact(lr, Id::new(("ty_axis_label", &axis.tag)), Sense::hover()).on_hover_text(tip);
+            ui.interact(lr, Id::unique(("ty_axis_label", &axis.tag)), Sense::hover()).on_hover_text(tip);
             ui.painter().galley(pos2(lr.min.x, lr.center().y - name.size().y / 2.0), name, t.text);
-            match axis_slider(ui, Id::new(("ty_axis_slider", &axis.tag)), axis, shown, slider_w) {
+            match axis_slider(ui, Id::unique(("ty_axis_slider", &axis.tag)), axis, shown, slider_w) {
                 Some((Some(v), done)) => set = Some((json!(round_axis(axis, v)), done)),
                 Some((None, _)) => set = Some((Value::Null, true)),
                 None => {}
             }
             let step = if axis.max - axis.min > 20.0 { 1.0 } else { 0.1 };
-            match widgets::number_field(ui, Id::new(("ty_axis_field", &axis.tag)), Lead::None, shown, "", field_w, step) {
+            match widgets::number_field(ui, Id::unique(("ty_axis_field", &axis.tag)), Lead::None, shown, "", field_w, step) {
                 Some(FieldEdit::Set(v)) => set = Some((json!(axis.clamp(round_axis(axis, v))), true)),
                 Some(FieldEdit::Scrub(v, done)) => set = Some((json!(axis.clamp(round_axis(axis, v))), done)),
                 None => {}
@@ -741,7 +737,7 @@ fn named_instances(
     };
     ui.add_space(4.0);
     // An inline list (a menu would close the Type settings popover it opens from).
-    let open_id = Id::new("ty_instances_open");
+    let open_id = Id::unique("ty_instances_open");
     let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
     if widgets::dropdown(ui, &label, ui.available_width(), None).on_hover_text(tr("Named instance")).clicked() {
         open = !open;
@@ -823,7 +819,7 @@ fn text_seg(ui: &mut Ui, salt: &str, items: &[(&str, &str)], active: Option<usiz
     let mut out = None;
     for (i, (label, tip)) in items.iter().enumerate() {
         let r = Rect::from_min_size(pos2(rect.min.x + i as f32 * cell, rect.min.y), vec2(cell, FIELD_H));
-        let resp = ui.interact(r, Id::new(("ty_seg", salt, i)), Sense::click()).on_hover_text(tr(tip));
+        let resp = ui.interact(r, Id::unique(("ty_seg", salt, i)), Sense::click()).on_hover_text(tr(tip));
         crate::a11y::toggle(&resp, tr(tip), active == Some(i));
         if active == Some(i) {
             ui.painter().rect_filled(r.shrink(2.0), CornerRadius::same(4), t.panel);
@@ -1138,12 +1134,12 @@ const ROW: f32 = 26.0;
 const LIST_HEIGHT: f32 = 380.0;
 
 fn recent_families(ctx: &egui::Context) -> Vec<String> {
-    ctx.data_mut(|d| d.get_persisted::<Vec<String>>(Id::new(RECENT_KEY))).unwrap_or_default()
+    ctx.data_mut(|d| d.get_persisted::<Vec<String>>(Id::unique(RECENT_KEY))).unwrap_or_default()
 }
 
 fn remember_family(ctx: &egui::Context, family: &str) {
     ctx.data_mut(|d| {
-        let v = d.get_persisted_mut_or_default::<Vec<String>>(Id::new(RECENT_KEY));
+        let v = d.get_persisted_mut_or_default::<Vec<String>>(Id::unique(RECENT_KEY));
         v.retain(|f| !f.eq_ignore_ascii_case(family));
         v.insert(0, family.to_string());
         v.truncate(8);
@@ -1170,9 +1166,9 @@ pub(crate) struct FontPick {
 /// Hovering a family previews it on the canvas (closing without picking restores the original).
 pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool) -> FontPick {
     let t = Tokens::get(ui.ctx());
-    let q_id = Id::new("font_query");
+    let q_id = Id::unique("font_query");
     // The row Up and Down are on, and the search it is a row of.
-    let hi_id = Id::new("font_highlight");
+    let hi_id = Id::unique("font_highlight");
     let mut q: String = ui.data(|d| d.get_temp(q_id)).unwrap_or_default();
     if just_opened {
         q.clear();
@@ -1309,7 +1305,7 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
             }
         }
     });
-    ui.data_mut(|d| d.insert_temp(hi_id.with("view"), (shown.state.offset.y, shown.inner_rect.height())));
+    ui.data_mut(|d| d.insert_temp(hi_id.with("view"), (shown.state.clamped_offset().y, shown.inner_rect.height())));
     FontPick { highlighted: hi.and_then(family), picked, hovered: hovered_family }
 }
 

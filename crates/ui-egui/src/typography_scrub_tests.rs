@@ -45,7 +45,7 @@ impl Fields {
         out.platform_output.cursor_icon
     }
     fn lead(&self, key: &str) -> Pos2 {
-        let rect = self.ctx.read_response(Id::new(key).with("click")).unwrap().rect;
+        let rect = self.ctx.read_response(Id::unique(key).with("click")).unwrap().rect;
         Pos2::new(rect.min.x + 12.0, rect.center().y)
     }
     fn drag(&mut self, key: &str, by: f32, modifiers: Modifiers) {
@@ -168,15 +168,15 @@ fn typography_spacing_fields_still_accept_typed_units_and_escape_cancels() {
         );
     }
     f.frame(vec![], Modifiers::NONE);
-    assert!(f.ctx.data(|d| d.get_temp::<String>(Id::new("ty_lh").with("editing"))).is_some(), "click starts typing");
-    f.ctx.memory_mut(|m| m.request_focus(Id::new("ty_lh").with("te")));
+    assert!(f.ctx.data(|d| d.get_temp::<String>(Id::unique("ty_lh").with("editing"))).is_some(), "click starts typing");
+    f.ctx.memory_mut(|m| m.request_focus(Id::unique("ty_lh").with("te")));
     f.frame(
         vec![Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::COMMAND }],
         Modifiers::COMMAND,
     );
     f.frame(vec![Event::Text("150%".into())], Modifiers::NONE);
     assert_eq!(
-        f.ctx.data(|d| d.get_temp::<String>(Id::new("ty_lh").with("editing"))).as_deref(),
+        f.ctx.data(|d| d.get_temp::<String>(Id::unique("ty_lh").with("editing"))).as_deref(),
         Some("150%"),
         "keyboard selects and replaces the field text"
     );
@@ -192,7 +192,7 @@ fn typography_spacing_fields_still_accept_typed_units_and_escape_cancels() {
             Modifiers::NONE,
         );
     }
-    f.ctx.memory_mut(|m| m.request_focus(Id::new("ty_lh").with("te")));
+    f.ctx.memory_mut(|m| m.request_focus(Id::unique("ty_lh").with("te")));
     f.frame(vec![Event::Text("999".into())], Modifiers::NONE);
     f.frame(
         vec![Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }],

@@ -50,12 +50,12 @@ struct Placed {
 }
 
 fn drag_id() -> Id {
-    Id::new("guide_drag")
+    Id::unique("guide_drag")
 }
 
 /// The dragged guide as it would land.
 fn preview_id() -> Id {
-    Id::new("guide_preview")
+    Id::unique("guide_preview")
 }
 
 /// The page's guides and those of its top-level frames (frames last, so they're found first).

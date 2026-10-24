@@ -13,6 +13,13 @@ fn main() {
     if let Some(dir) = std::env::var_os("CRAFT_FONTS_DIR").map(PathBuf::from) {
         let mut ok = false;
         for manifest in ["fonts/latin-manifest.txt", "fonts/manifest.txt"] {
+            // Presentation faces are an optional extension of craft-fonts. Required mode
+            // validates the core manifest and every extension that is actually supplied.
+            let path = dir.join(manifest);
+            if manifest == "fonts/latin-manifest.txt" && !path.exists() {
+                watch(&path);
+                continue;
+            }
             match craft_fonts(&dir, manifest) {
                 Ok(entries) => {
                     ok = true;

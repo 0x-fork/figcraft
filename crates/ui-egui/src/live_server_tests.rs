@@ -21,7 +21,7 @@ fn key(h: &mut Harness, key: Key) {
 }
 
 fn focused(h: &Harness, id: &str) -> bool {
-    h.ctx.memory(|m| m.has_focus(egui::Id::new(id)))
+    h.ctx.memory(|m| m.has_focus(egui::Id::unique(id)))
 }
 
 /// Joined through a server's link with `access`: the welcome and the document (a new tab).

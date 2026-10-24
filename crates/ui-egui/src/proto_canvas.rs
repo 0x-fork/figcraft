@@ -21,7 +21,7 @@ struct Drag {
 }
 
 fn drag_id() -> Id {
-    Id::new("proto_canvas_drag")
+    Id::unique("proto_canvas_drag")
 }
 
 /// One drawn connection.
@@ -61,7 +61,7 @@ struct Sources {
 
 pub(crate) fn sources(ctx: &egui::Context, doc: &Arc<Document>, page: NodeId) -> Arc<Vec<NodeId>> {
     ctx.data_mut(|d| {
-        let c = d.get_temp_mut_or_default::<Sources>(Id::new("proto_canvas_sources"));
+        let c = d.get_temp_mut_or_default::<Sources>(Id::unique("proto_canvas_sources"));
         if !(c.doc.as_ref().is_some_and(|d| Arc::ptr_eq(d, doc)) && c.page == Some(page)) {
             let ids = doc.subtree(page).into_iter().filter(|i| doc.node(*i).is_some_and(|n| !n.interactions.is_empty())).collect();
             *c = Sources { doc: Some(doc.clone()), page: Some(page), ids: Arc::new(ids) };

@@ -535,6 +535,7 @@ pub fn copy_to_clipboard(s: &mut Session, cmd: &str, ids: &[NodeId]) -> Result<(
     s.clipboard.nodes = nodes;
     s.clipboard.images = images;
     s.clipboard.bounds = bounds;
+    s.clipboard.layers_generation = s.clipboard.layers_generation.wrapping_add(1);
     Ok(())
 }
 
@@ -610,8 +611,18 @@ fn paste_design_layers(s: &mut Session, p: &Value) -> Result<Value> {
     let (nodes, images, bounds) = copied(&doc, &tops);
     let props = s.clipboard.props.take();
     // No open file has id 0. So paste treats this copy as a copy from a different file.
-    s.clipboard =
-        crate::Clipboard { nodes, images, props, bounds, source_doc: 0, source: Some(doc), source_path: None, copied_components: BTreeSet::new() };
+    let layers_generation = s.clipboard.layers_generation.wrapping_add(1);
+    s.clipboard = crate::Clipboard {
+        nodes,
+        images,
+        props,
+        bounds,
+        source_doc: 0,
+        source: Some(doc),
+        source_path: None,
+        copied_components: BTreeSet::new(),
+        layers_generation,
+    };
     let mut out = paste(s, p)?;
     if !other.issues.is_empty() {
         out["warnings"] = json!(other.issues);
@@ -1375,10 +1386,12 @@ fn paint_set(s: &mut Session, p: &Value, fills: bool) -> Result<Value> {
             slot.kind = figcraft_color::PaintKind::Solid { color: c.with_alpha(1.0) };
             if c.a < 1.0 {
                 slot.opacity = c.a;
+                slot.color_alpha = c.a;
             }
         }
         if let Some(o) = num(p, "opacity") {
             slot.opacity = (if o > 1.0 { o / 100.0 } else { o }).clamp(0.0, 1.0) as f32;
+            slot.color_alpha = 1.0;
         }
         if let Some(v) = boolean(p, "visible") {
             slot.visible = v;

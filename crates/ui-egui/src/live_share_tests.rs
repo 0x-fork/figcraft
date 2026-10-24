@@ -391,7 +391,7 @@ fn the_join_field_takes_a_code_or_a_link_and_enter_joins() {
     let shapes = open(&mut h);
     // Click into the field (its hint), type a code the way people type it, press Enter.
     click(&mut h, &shapes, "Code or invite link");
-    assert!(h.ctx.memory(|m| m.has_focus(egui::Id::new("live_join_code"))));
+    assert!(h.ctx.memory(|m| m.has_focus(egui::Id::unique("live_join_code"))));
     type_text(&mut h, " k7m 2qx-9td ");
     assert_eq!(crate::live::inspect(&h.app)["joinField"], " k7m 2qx-9td ");
     key(&mut h, Key::Enter);
@@ -456,7 +456,7 @@ fn the_join_dialog_is_the_same_field() {
     crate::menus::invoke(&mut h.app, "collab.join");
     let shapes = h.frames(2);
     assert!(has_text(&shapes, "Type the join code you were given, or paste an invite link.") && has_text(&shapes, "Code or invite link"));
-    assert!(h.ctx.memory(|m| m.has_focus(egui::Id::new("live_join_link"))), "the field has the keyboard");
+    assert!(h.ctx.memory(|m| m.has_focus(egui::Id::unique("live_join_link"))), "the field has the keyboard");
     type_text(&mut h, "4fh j8r 2wn");
     key(&mut h, Key::Enter);
     h.frames(1);

@@ -317,6 +317,7 @@ fn clicking_an_avatar_follows_and_escape_stops() {
     h.frame(vec![Event::PointerMoved(pos2(700.0, 500.0))]);
     h.frame(vec![Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,
+        source: egui::MouseWheelSource::Unknown,
         delta: vec2(0.0, -40.0),
         phase: egui::TouchPhase::Move,
         modifiers: Default::default(),

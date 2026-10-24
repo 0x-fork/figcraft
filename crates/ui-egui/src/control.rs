@@ -1,6 +1,7 @@
 //! The control channel's UI-thread side. The app crate accepts JSON lines on a localhost socket
-//! and queues [`ControlRequest`]s; [`drain`] runs them at the start of a frame so replies reflect
-//! the real UI. Methods:
+//! and queues [`ControlRequest`]s. [`background`] runs the phase-safe part from every logic
+//! callback; [`drain`] admits and answers the UI-only work inside a real frame so replies reflect
+//! the drawn UI. Methods:
 //!
 //! - `engine.execute {command, params}` — run any command (no dialogs open)
 //! - `engine.commands {}` — every command with its params doc
@@ -16,8 +17,9 @@
 //!   prototype playing (presenter or preview pane)
 //! - `ui.menu.invoke {id}` — a menu item exactly like clicking it (may open a dialog)
 //! - `ui.set {rightTab?, leftTab?, theme?, home?, homeSection?, homeSearch?, homeRecentsView?, homeRecentsSort?, homeRecentsOrder?, palette?, focusRegion?, preview?, presentScroll?, …}`
-//! - `ui.screenshot {path?}` — PNG of the window (needs a visible window), written to `path` or
-//!   returned as base64 `data`
+//! - `ui.screenshot {path?}` — PNG of the window, written to `path` or returned as base64 `data`;
+//!   a hidden window is asked to paint (`RequestPaintWhileHidden`) and the request expires once at
+//!   its deadline (native; the shared web runner does not implement hidden paint yet)
 //! - `ui.render {path?, scale?, ids?}` — PNG of the document (no UI chrome; works without a
 //!   window), written to `path` or returned as base64 `data`
 //! - `window.new {path?, index?}` → `{window}` / `window.list {}` / `window.focus {id}` — several
@@ -26,6 +28,9 @@
 //!
 //! Any method takes `window` (an id from `window.list`) to run in that window, with its tabs and
 //! panels; without it, requests go to the window last in front.
+
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 
 use egui::Context;
 use figcraft_engine::cmd::comment::{Filter, Sort};
@@ -54,54 +59,497 @@ impl ControlRequest {
     }
 }
 
-/// Pending screenshot replies.
-pub struct PendingShot {
+/// One screenshot's completion slot.
+///
+/// The renderer's one-shot callback only stores the raw image here and wakes the captured
+/// viewport; it never encodes or writes a file, and it holds only a [`std::sync::Weak`] reference, so a late
+/// capture after the request (or the app) is gone is a no-op. The live request owns the only
+/// strong reference, together with the viewport `Context` clone used for the wakeup.
+pub struct CaptureSlot {
+    inner: Mutex<SlotInner>,
+    ctx: Context,
+    viewport: egui::ViewportId,
+}
+
+#[derive(Default)]
+struct SlotInner {
+    image: Option<Arc<egui::ColorImage>>,
+    closed: bool,
+    /// The one image was already handed to a frame (a second callback cannot store another).
+    taken: bool,
+}
+
+impl CaptureSlot {
+    fn new(ctx: &Context, viewport: egui::ViewportId) -> Arc<Self> {
+        Arc::new(Self { inner: Mutex::new(SlotInner::default()), ctx: ctx.clone(), viewport })
+    }
+
+    /// The one-shot callback for `ViewportCommand::Screenshot`.
+    fn callback(slot: &Arc<Self>) -> egui::ScreenshotCallback {
+        let weak = Arc::downgrade(slot);
+        egui::ScreenshotCallback::new(move |image| {
+            if let Some(slot) = weak.upgrade() {
+                slot.complete(image);
+            }
+        })
+    }
+
+    pub(crate) fn complete(&self, image: Arc<egui::ColorImage>) {
+        {
+            let mut inner = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if inner.closed || inner.image.is_some() || inner.taken {
+                return;
+            }
+            inner.image = Some(image);
+        }
+        // The lock is released before waking: the wakeup may draw the frame that drains this slot.
+        self.ctx.request_repaint_of(self.viewport);
+    }
+
+    /// The captured image, once: a second callback or drain finds the slot taken.
+    fn take(&self) -> Option<Arc<egui::ColorImage>> {
+        let mut inner = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if inner.taken {
+            return None;
+        }
+        let image = inner.image.take();
+        inner.taken = image.is_some();
+        image
+    }
+
+    /// Whether the renderer delivered the image. A hidden window's frame must be asked to paint
+    /// again to drain it: the capture command's own paint was the one that produced it.
+    fn has_result(&self) -> bool {
+        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).image.is_some()
+    }
+
+    /// Forget a cancelled, timed-out or superseded request: a late callback finds it closed.
+    fn close(&self) {
+        let mut inner = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner.closed = true;
+        inner.image = None;
+    }
+}
+
+/// A screenshot's capture-time geometry (the viewport surface and the scale it was admitted at).
+/// Pixels are derived from these dimensions, never from a stale `ViewportInfo::inner_rect` or a
+/// previous pass's viewport rectangle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CaptureSpec {
+    pub viewport: egui::ViewportId,
+    /// Expected readback pixels.
+    pub size_px: [usize; 2],
+    pub pixels_per_point: f32,
+    pub zoom: f32,
+}
+
+/// Slack allowed for PNG headers and chunk framing past the raw pixel bytes.
+const SHOT_PNG_OVERHEAD: usize = 64 * 1024;
+
+impl CaptureSpec {
+    fn bytes(&self) -> Option<usize> {
+        self.size_px[0].checked_mul(self.size_px[1])?.checked_mul(4)
+    }
+
+    /// The bytes this capture may hold at its peak.
+    ///
+    /// `shot_reply` first holds the readback image, the straight-RGBA copy handed to the encoder
+    /// and the PNG being built (two raw buffers plus the PNG), then drops the copy and builds the
+    /// base64 reply from the PNG (readback plus PNG plus four thirds of the PNG). The budget is the
+    /// larger of those phases, never a sum of all four buffers at once. The reservation is a bound,
+    /// not an estimate of the encoded size; `shot_reply` enforces the reply side of it and must
+    /// drop the straight-RGBA copy before encoding base64.
+    fn cost(&self) -> Option<usize> {
+        let raw = self.bytes()?;
+        let png = raw.checked_add(SHOT_PNG_OVERHEAD)?;
+        let encode_phase = raw.checked_mul(2)?.checked_add(png)?;
+        let reply = png.checked_div(3)?.checked_add(1)?.checked_mul(4)?;
+        let reply_phase = raw.checked_add(png)?.checked_add(reply)?;
+        Some(encode_phase.max(reply_phase))
+    }
+}
+
+/// One admitted screenshot: its deadline, capture identity and completion slot.
+pub struct ShotRequest {
     pub id: Value,
     /// Where to write the PNG; `None`: return it as data.
     pub path: Option<String>,
     pub reply: std::sync::mpsc::Sender<ControlReply>,
-    /// When it was asked for (UI clock, seconds).
-    pub since: f64,
-    /// The window it captures.
+    pub cancelled: Arc<AtomicBool>,
+    /// Monotonic seconds ([`crate::FrameClock`]); covers admission, settling, retries and arrival.
+    pub deadline: f64,
     pub viewport: egui::ViewportId,
+    /// The window whose document generation the capture belongs to.
+    pub window: u64,
+    /// The document UID shown when the request was admitted.
+    pub document: u64,
+    /// That presentation's monotonic generation (the UID alone cannot tell A→B→A apart).
+    pub presentation: u64,
+    pub spec: Option<CaptureSpec>,
+    /// The geometry epoch at issuance; a resize/DPI/zoom change rejects the pixels.
+    pub epoch: u64,
+    /// Completed, presented UI frames since admission (hidden logic ticks never count; a
+    /// discarded sizing pass inside a frame does not count separately from that frame's final
+    /// presented pass).
+    pub settle: u8,
+    /// The last completed-frame number counted into `settle`; `None` until the first observed
+    /// pass anchors the count. A frame is counted only once it has completed, so its first pass
+    /// is never treated as settled before the frame has presented a layout.
+    pub settle_frame: Option<u64>,
+    pub issued: bool,
+    pub slot: Option<Arc<CaptureSlot>>,
+    /// Image bytes reserved for this request (in flight or completed but undrained).
+    pub reserved: usize,
+    pub retries: u8,
+}
+
+impl ShotRequest {
+    fn release(&mut self) {
+        if let Some(slot) = self.slot.take() {
+            slot.close();
+        }
+        self.reserved = 0;
+    }
+}
+
+/// Screenshot state owned by the app: pending requests and the geometry epoch they were admitted
+/// against. Pending and completed-but-undrained images both count toward the budget.
+#[derive(Default)]
+pub struct CaptureState {
+    pub(crate) shots: Vec<ShotRequest>,
+    /// The last UI geometry of each viewport and the epoch it defines (a resize, DPI change or
+    /// zoom change — even back — bumps it). Per viewport: one window's frames must not invalidate
+    /// another's captures.
+    pub(crate) geometry: std::collections::HashMap<egui::ViewportId, (CaptureSpec, u64)>,
+    pub(crate) epoch: u64,
 }
 
 /// How long a screenshot waits for the window to deliver it (the control server gives up then too).
-const SHOT_TIMEOUT: f64 = 60.0;
+pub(crate) const SHOT_TIMEOUT: f64 = 60.0;
 
-fn pending(ctx: &Context) -> std::sync::Arc<std::sync::Mutex<Vec<PendingShot>>> {
-    ctx.data_mut(|d| d.get_temp_mut_or_insert_with(egui::Id::new("pending_shots"), || std::sync::Arc::new(std::sync::Mutex::new(Vec::new()))).clone())
+/// Completed real UI frames a capture waits for before it is issued, so fonts, layout and the
+/// renderer have settled (hidden logic ticks do not count; a frame counts once, after presenting
+/// its final pass).
+const SHOT_SETTLE_PASSES: u8 = 3;
+
+/// The suite's capture budget, counted over in-flight and completed-but-undrained images.
+pub(crate) const MAX_SHOTS: usize = 4;
+const MAX_SHOT_IMAGE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_SHOT_TOTAL_BYTES: usize = 256 * 1024 * 1024;
+/// A PNG larger than this is refused before its base64 reply is built (a PNG cannot normally grow
+/// past its raw pixels, so only pathological content reaches it).
+const MAX_SHOT_REPLY_BYTES: usize = 192 * 1024 * 1024;
+
+/// The capture geometry of the UI pass drawing now, if the surface size is known. The screenshot
+/// is the whole viewport surface (a notch's area is still read back), and pixel bounds are rounded
+/// up: a fractional DPI must not turn a valid surface into a one-pixel mismatch.
+fn current_spec(ctx: &Context, viewport: egui::ViewportId) -> Option<CaptureSpec> {
+    let surface = ctx.viewport_rect();
+    let rect = if surface.width() >= 1.0 && surface.height() >= 1.0 { surface } else { ctx.content_rect() };
+    let ppp = ctx.pixels_per_point();
+    let zoom = ctx.zoom_factor();
+    if !(rect.width().is_finite() && rect.height().is_finite() && ppp.is_finite() && zoom.is_finite()) {
+        return None;
+    }
+    let w = (rect.width() * ppp).ceil();
+    let h = (rect.height() * ppp).ceil();
+    if w < 1.0 || h < 1.0 || w > 32768.0 || h > 32768.0 {
+        return None;
+    }
+    Some(CaptureSpec { viewport, size_px: [w as usize, h as usize], pixels_per_point: ppp, zoom })
 }
 
-pub fn drain(app: &mut FigApp, ctx: &Context) {
-    let now = ctx.input(|i| i.time);
-    let list = pending(ctx);
-    // Finish screenshots that arrived (a window's capture can arrive in any window's input).
-    let shots: Vec<(egui::ViewportId, std::sync::Arc<egui::ColorImage>)> = ctx.input(|i| {
-        i.events
-            .iter()
-            .filter_map(|e| match e {
-                egui::Event::Screenshot { viewport_id, image, .. } => Some((*viewport_id, image.clone())),
-                _ => None,
-            })
-            .collect()
-    });
-    for (vp, img) in &shots {
-        list.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|p| {
-            if p.viewport != *vp {
-                return true;
-            }
-            let res = shot_reply(img, p.path.as_deref());
-            let _ = p.reply.send(ControlReply { id: p.id.clone(), result: res });
-            false
-        });
+fn reply(r: &mut ShotRequest, result: Result<Value, String>) {
+    let _ = r.reply.send(ControlReply { id: r.id.clone(), result });
+}
+
+/// Admit a screenshot request. Geometry is filled in on the next UI pass; until then the request
+/// is only counted, so a hidden window's capture can wait for its forced paint without inventing
+/// geometry from a stale pass.
+fn admit(app: &mut FigApp, r: ControlRequest, window: u64, now: f64) {
+    let canceled = r.is_cancelled();
+    let ControlRequest { id, method: _, params, reply: tx, cancelled } = r;
+    if app.capture.shots.len() >= MAX_SHOTS {
+        if !canceled {
+            let _ = tx.send(ControlReply { id, result: Err(format!("too many screenshots are pending (at most {MAX_SHOTS})")) });
+        }
+        return;
     }
-    let reqs = std::mem::take(&mut app.control_queue);
-    for r in reqs {
+    let path = params.get("path").and_then(Value::as_str).map(str::to_string);
+    let (document, presentation) = app.windows.presentation(&app.session, window);
+    app.capture.shots.push(ShotRequest {
+        id,
+        path,
+        reply: tx,
+        cancelled,
+        deadline: now + SHOT_TIMEOUT,
+        viewport: crate::windows::viewport(window),
+        window,
+        document,
+        presentation,
+        spec: None,
+        epoch: app.capture.epoch,
+        settle: 0,
+        settle_frame: None,
+        issued: false,
+        slot: None,
+        reserved: 0,
+        retries: 0,
+    });
+}
+
+/// Expire requests whose whole lifetime (admission, settling, retries, arrival) is over, exactly
+/// once, and release their image reservation.
+fn expire(app: &mut FigApp, ctx: &Context, now: f64) {
+    let mut i = 0;
+    while i < app.capture.shots.len() {
+        let (deadline, cancelled, window) = {
+            let r = &app.capture.shots[i];
+            (r.deadline, r.cancelled.load(std::sync::atomic::Ordering::Relaxed), r.window)
+        };
+        let closed = !app.windows.exists(window);
+        if now >= deadline || cancelled || closed {
+            let mut r = app.capture.shots.remove(i);
+            r.release();
+            if !cancelled {
+                let why = if closed {
+                    "the window closed before the screenshot was captured"
+                } else {
+                    "the window didn't deliver a screenshot (is it visible?)"
+                };
+                reply(&mut r, Err(why.into()));
+            }
+            ctx.request_repaint();
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Whether the platform reports window `id` as visible; `None` means it has not said (a
+/// minimised window can report no `visible` flag at all).
+fn visibility(ctx: &Context, id: u64) -> Option<bool> {
+    ctx.input(|i| {
+        let info = i.raw.viewports.get(&crate::windows::viewport(id))?;
+        // Some platforms report `visible: true` for a minimised window; `minimized` is the more
+        // specific signal there. No information at all stays `None` (unknown), never visible.
+        if info.minimized == Some(true) {
+            return Some(false);
+        }
+        info.visible()
+    })
+}
+
+/// Whether window `id` draws no frames now: minimised, or covered by other windows (on macOS also
+/// on another Space).
+fn hidden(ctx: &Context, id: u64) -> bool {
+    visibility(ctx, id) == Some(false)
+}
+
+/// Send `RequestPaintWhileHidden` for work that needs a real UI pass (a queued capture or
+/// synthetic input), and schedule a wakeup for the next capture deadline. Native eframe honours
+/// this command; the shared web runner does not implement it yet, so a hidden browser tab remains
+/// an explicit, recorded qualification gap (see `docs/egui-037-local-followups.md`).
+fn request_paint(app: &FigApp, ctx: &Context) {
+    for r in &app.capture.shots {
+        if !app.windows.exists(r.window) {
+            continue;
+        }
+        // A capture that is still settling needs the real UI pass its geometry comes from; one
+        // whose pixels arrived while the window was hidden needs the pass that drains the slot.
+        // The capture command's own paint was drained when it produced the image.
+        if !r.issued || r.slot.as_ref().is_some_and(|s| s.has_result()) {
+            ctx.send_viewport_cmd_to(r.viewport, egui::ViewportCommand::RequestPaintWhileHidden);
+        }
+    }
+    for r in &app.control_queue {
+        if r.method == "ui.input" {
+            let target = r.params.get("window").and_then(Value::as_u64).unwrap_or(app.windows.focused);
+            if hidden(ctx, target) {
+                ctx.send_viewport_cmd_to(crate::windows::viewport(target), egui::ViewportCommand::RequestPaintWhileHidden);
+            }
+        }
+    }
+    // A batch queued for a frame that has not drawn it yet also keeps asking. During a child
+    // window's pass `app.control_input` is that window's live pane; from the main window's logic
+    // it is the root's, so the viewport drawing now is the one to wake.
+    if !app.control_input.is_empty() {
+        ctx.send_viewport_cmd_to(ctx.viewport_id(), egui::ViewportCommand::RequestPaintWhileHidden);
+    }
+    for viewport in app.windows.pending_input_viewports() {
+        ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::RequestPaintWhileHidden);
+    }
+    // A batch already handed to a hidden window's raw input (a logic-only pass takes it, egui
+    // saves it for the next pass) still needs the real pass that applies and acknowledges it.
+    if let Some(viewport) = app.applied_frame {
+        ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::RequestPaintWhileHidden);
+    }
+    if let Some(d) = app.capture.shots.iter().map(|r| r.deadline).reduce(f64::min) {
+        crate::repaint_in(ctx, (d - app.clock.now()).clamp(0.0, SHOT_TIMEOUT));
+    }
+}
+
+/// Work a logic-only callback can do safely: expire deadlines, admit or park screenshot requests,
+/// and answer state-only control requests for hidden windows. Input/geometry are never read here.
+pub fn background(app: &mut FigApp, ctx: &Context) {
+    let now = app.clock.now();
+    expire(app, ctx, now);
+    for r in std::mem::take(&mut app.control_queue) {
         if r.is_cancelled() {
             continue;
         }
-        // Requests for another window wait for its frame.
+        let target = r.params.get("window").and_then(Value::as_u64).unwrap_or(app.windows.focused);
+        if !app.windows.exists(target) {
+            let _ = r.reply.send(ControlReply { id: r.id, result: Err(format!("no window {target}")) });
+            continue;
+        }
+        let is_hidden = hidden(ctx, target);
+        if r.method == "ui.screenshot" && visibility(ctx, target) != Some(true) {
+            // Hidden, minimised, or with visibility the platform has not reported: admit it now
+            // so the request gets its deadline and a forced paint. Waiting for a frame that may
+            // never draw would leave it queued past the transport's own timeout with no reply.
+            admit(app, r, target, now);
+            continue;
+        }
+        if !is_hidden && target == app.windows.current {
+            // The window's frame admits and issues it against real geometry.
+            app.control_queue.push(r);
+            continue;
+        }
+        if !is_hidden {
+            // Another visible window draws only when asked.
+            ctx.request_repaint_of(crate::windows::viewport(target));
+            app.control_queue.push(r);
+            continue;
+        }
+        if r.method == "ui.input" {
+            // Keep one synthetic batch until a real UI pass consumes it.
+            app.control_queue.push(r);
+            continue;
+        }
+        if r.method == "window.new" {
+            let error = format!("window {target} is minimised or hidden: `window.new` needs it on screen");
+            let _ = r.reply.send(ControlReply { id: r.id, result: Err(error) });
+            continue;
+        }
+        // Outside a frame, so outside the frame's guard: within the window's swap, a panic still
+        // ends in recovery copies and leaves every window its own state.
+        let res = crate::windows::as_window(app, target, |app| {
+            let mut res = Err("internal error".to_string());
+            // Every control-channel gesture is fenced from the user's system clipboard.
+            let before = app.control_synthetic;
+            app.control_synthetic = true;
+            crate::windows::guard(app, ctx, |app| res = handle(app, ctx, &r.method, &r.params));
+            app.control_synthetic = before;
+            res
+        });
+        let _ = r.reply.send(ControlReply { id: r.id, result: res.unwrap_or_else(|| Err(format!("no window {target}"))) });
+    }
+    request_paint(app, ctx);
+}
+
+/// The UI phase's control work: drain completed captures, admit and settle queued screenshots
+/// against this pass's geometry, and run state-only requests for the window drawing now.
+pub fn drain(app: &mut FigApp, ctx: &Context) {
+    let now = app.clock.now();
+    let viewport = ctx.viewport_id();
+    // This pass's geometry defines the epoch: a resize, DPI change or zoom change (back or not)
+    // invalidates captures issued under the old one.
+    let spec = current_spec(ctx, viewport);
+    if let Some(spec) = spec {
+        let changed = app.capture.geometry.get(&viewport).is_none_or(|(old, _)| *old != spec);
+        if changed {
+            app.capture.epoch = app.capture.epoch.wrapping_add(1);
+            app.capture.geometry.insert(viewport, (spec, app.capture.epoch));
+        }
+    }
+    let epoch = app.capture.geometry.get(&viewport).map_or(0, |(_, e)| *e);
+    expire(app, ctx, now);
+
+    // Drain completed captures first, so their budget is free before new requests are admitted.
+    let mut i = 0;
+    while i < app.capture.shots.len() {
+        // Each viewport drains its own captures: their geometry and document differ.
+        if app.capture.shots[i].viewport != viewport {
+            i += 1;
+            continue;
+        }
+        let Some(slot) = app.capture.shots[i].slot.clone() else {
+            i += 1;
+            continue;
+        };
+        let Some(image) = slot.take() else {
+            i += 1;
+            continue;
+        };
+        let mut r = app.capture.shots.remove(i);
+        r.release();
+        let cancelled = r.cancelled.load(std::sync::atomic::Ordering::Relaxed);
+        let current = current_spec(ctx, viewport);
+        let (document, presentation) = app.windows.presentation(&app.session, r.window);
+        if cancelled {
+            // The transport stopped waiting: no reply, no file.
+        } else if now >= r.deadline {
+            reply(&mut r, Err("the window didn't deliver a screenshot in time (is it visible?)".into()));
+        } else if r.window != app.windows.current || r.document != document || r.presentation != presentation {
+            reply(&mut r, Err("the document changed while the screenshot was being captured".into()));
+        } else if current.is_none() {
+            // Fail closed: with no representable current geometry the pixels cannot be proven to
+            // belong to the surface that was admitted, so they are never the capture's reply.
+            reply(&mut r, Err("the window's current geometry is unavailable (is it minimised?)".into()));
+        } else if let Some(current) = current
+            && (r.epoch != epoch || r.spec.is_none_or(|s| s.size_px != current.size_px || s.pixels_per_point != current.pixels_per_point))
+        {
+            // Geometry moved between issuance and arrival (even back): retry against the new pass,
+            // never accept the old pixels. Document changes are errors above.
+            if r.retries >= 2 {
+                reply(&mut r, Err("the window kept changing size while the screenshot was captured".into()));
+            } else {
+                r.retries += 1;
+                r.spec = Some(current);
+                r.epoch = epoch;
+                r.reserved = r.spec.and_then(|s| s.cost()).unwrap_or(0);
+                r.settle = 0;
+                r.settle_frame = None;
+                r.issued = false;
+                app.capture.shots.push(r);
+            }
+        } else if let (Some(current), Some(spec)) = (current, r.spec)
+            // The admitted surface is in whole UI points; the readback is in physical pixels. Up
+            // to one pixel of rounding either way is the same surface, not a scale change. The
+            // difference is absolute: an undersized readback is a scale mismatch too.
+            && (image.size[0].abs_diff(spec.size_px[0]) > 1 || image.size[1].abs_diff(spec.size_px[1]) > 1)
+        {
+            if r.retries >= 2 {
+                reply(
+                    &mut r,
+                    Err(format!(
+                        "the screenshot is {}x{} but the window is {}x{} (a scale mismatch)",
+                        image.size[0], image.size[1], spec.size_px[0], spec.size_px[1]
+                    )),
+                );
+            } else {
+                r.retries += 1;
+                r.spec = Some(current);
+                r.epoch = epoch;
+                r.reserved = r.spec.and_then(|s| s.cost()).unwrap_or(0);
+                r.settle = 0;
+                r.settle_frame = None;
+                r.issued = false;
+                app.capture.shots.push(r);
+            }
+        } else {
+            let result = shot_reply(&image, r.path.as_deref());
+            reply(&mut r, result);
+        }
+        ctx.request_repaint();
+    }
+
+    // Admit queued captures for the window drawing now; other windows keep waiting for their frame.
+    for r in std::mem::take(&mut app.control_queue) {
+        if r.is_cancelled() {
+            continue;
+        }
         let target = r.params.get("window").and_then(Value::as_u64).unwrap_or(app.windows.focused);
         if target != app.windows.current {
             if app.windows.exists(target) {
@@ -113,97 +561,132 @@ pub fn drain(app: &mut FigApp, ctx: &Context) {
             continue;
         }
         if r.method == "ui.screenshot" {
-            let path = r.params.get("path").and_then(Value::as_str).map(str::to_string);
-            let viewport = ctx.viewport_id();
-            list.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(PendingShot { id: r.id, path, reply: r.reply, since: now, viewport });
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            admit(app, r, target, now);
             continue;
         }
+        // Every control-channel gesture is fenced from the user's system clipboard (the flag is
+        // restored so a batch already in a frame's raw input keeps its own provenance).
+        let before = app.control_synthetic;
+        app.control_synthetic = true;
         let res = handle(app, ctx, &r.method, &r.params);
-        let _ = r.reply.send(ControlReply { id: r.id, result: res });
+        app.control_synthetic = before;
+        if r.method == "ui.input" && std::mem::take(&mut app.control_input_queued) {
+            // Acknowledge once the pass that applies the batch is presented, never from a sizing
+            // pass whose input is thrown away.
+            app.input_acks.push(crate::PendingAck { viewport, tx: r.reply, reply: ControlReply { id: r.id, result: res } });
+        } else {
+            let _ = r.reply.send(ControlReply { id: r.id, result: res });
+        }
         ctx.request_repaint();
     }
-    // The window delivers a screenshot some frames after it was asked for (once the GPU has copied
-    // it back), and only while frames are drawn: keep drawing until it arrives (a hidden window
-    // never delivers; its requests expire).
-    let mut list = list.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    list.retain(|p| {
-        let live = now - p.since < SHOT_TIMEOUT;
-        if !live {
-            let _ = p.reply.send(ControlReply { id: p.id.clone(), result: Err("the window didn't deliver a screenshot (is it visible?)".into()) });
-        }
-        live
-    });
-    if !list.is_empty() {
-        ctx.request_repaint();
-    }
-}
 
-/// Methods only a drawn frame can answer: a capture of the window, raw window input and a new
-/// window (the main window's frame opens it). Everything else acts on the app's state, which a
-/// hidden window answers without a frame (#269, #720).
-const NEEDS_FRAME: &[&str] = &["ui.screenshot", "ui.input", "window.new"];
-
-/// Whether window `id` draws no frames now: minimised, or covered by other windows (on macOS also
-/// on another Space).
-fn hidden(ctx: &Context, id: u64) -> bool {
-    ctx.input(|i| i.raw.viewports.get(&crate::windows::viewport(id)).and_then(egui::ViewportInfo::visible)) == Some(false)
-}
-
-/// A hidden window (minimised, or covered by other windows) draws no frames, but the desktop app's
-/// `logic` still runs, for the main window even while every window is hidden: it answers the
-/// requests for any hidden window, in that window's file, so an attached agent can edit, inspect,
-/// type and save while the app is out of sight. What needs a frame ([`NEEDS_FRAME`]) is an error at
-/// once instead of waiting for the window to show. A request for a window on screen waits for its
-/// frame; another window on screen is asked to draw, which the main window's frame would do but
-/// doesn't while it is hidden. A request for a window that doesn't exist is an error at once.
-pub fn drain_hidden(app: &mut FigApp, ctx: &Context) {
-    for r in std::mem::take(&mut app.control_queue) {
-        if r.is_cancelled() {
-            continue;
-        }
-        let target = r.params.get("window").and_then(Value::as_u64).unwrap_or(app.windows.focused);
-        if !app.windows.exists(target) {
-            let _ = r.reply.send(ControlReply { id: r.id, result: Err(format!("no window {target}")) });
-            continue;
-        }
-        if !hidden(ctx, target) {
-            // Another window on screen draws only when asked: while the main window is hidden no
-            // frame of it does that (`drain`), so ask here.
-            if target != app.windows.current {
-                ctx.request_repaint_of(crate::windows::viewport(target));
+    // Fill in this pass's geometry, enforce the byte budget (a post-callback check alone would
+    // not bound peak memory), and release anything over it before issuing.
+    let mut i = 0;
+    while i < app.capture.shots.len() {
+        let total: usize = app.capture.shots.iter().map(|s| s.reserved).sum();
+        let mut remove = false;
+        {
+            let r = &mut app.capture.shots[i];
+            if r.viewport != viewport {
+                i += 1;
+                continue;
             }
-            app.control_queue.push(r);
-            continue;
+            if !r.issued && r.spec != spec {
+                // A request can resize during its settling frames. Reserve and validate this
+                // actual surface before issuance, never the old (possibly much smaller) one.
+                r.spec = spec;
+                r.settle = 0;
+                r.settle_frame = None;
+                if spec.is_none() {
+                    r.reserved = 0;
+                }
+            }
+            if let Some(spec) = r.spec {
+                let raw = spec.bytes().unwrap_or(usize::MAX);
+                let cost = spec.cost().unwrap_or(usize::MAX);
+                if raw > MAX_SHOT_IMAGE_BYTES || total.saturating_sub(r.reserved).saturating_add(cost) > MAX_SHOT_TOTAL_BYTES {
+                    reply(r, Err(format!("the screenshot needs {cost} bytes, over the capture budget")));
+                    remove = true;
+                } else if r.reserved != cost {
+                    r.reserved = cost;
+                }
+            }
         }
-        if NEEDS_FRAME.contains(&r.method.as_str()) {
-            let error =
-                format!("window {target} is minimised or hidden: `{}` needs it on screen (`ui.render` draws the document without it)", r.method);
-            let _ = r.reply.send(ControlReply { id: r.id, result: Err(error) });
-            continue;
+        if remove {
+            let mut r = app.capture.shots.remove(i);
+            r.release();
+        } else {
+            i += 1;
         }
-        // Outside a frame, so outside the frame's guard: within the window's swap, a panic still
-        // ends in recovery copies and leaves every window its own state.
-        let res = crate::windows::as_window(app, target, |app| {
-            let mut res = Err("internal error".to_string());
-            crate::windows::guard(app, ctx, |app| res = handle(app, ctx, &r.method, &r.params));
-            res
-        });
-        let _ = r.reply.send(ControlReply { id: r.id, result: res.unwrap_or_else(|| Err(format!("no window {target}"))) });
     }
+
+    // Settle on completed UI frames only, then issue once. (The screenshot command itself forces
+    // the paint that delivers it.) The request's document and window were fixed at admission and
+    // are never rewritten here: a tab switched during settling is an error, not a capture of the
+    // new one.
+    //
+    // `cumulative_frame_nr` counts frames whose final (presented) pass has finished. A frame whose
+    // first pass calls `request_discard` is therefore counted once, after it presents its layout,
+    // not when its discarded sizing pass runs. Passes after the first (`current_pass_index > 0`)
+    // belong to such a frame and never add another count.
+    let first_pass = ctx.current_pass_index() == 0;
+    let frame_nr = ctx.cumulative_frame_nr_for(viewport);
+    for r in &mut app.capture.shots {
+        if !first_pass || r.viewport != viewport || r.issued || r.spec.is_none() {
+            continue;
+        }
+        if r.cancelled.load(std::sync::atomic::Ordering::Relaxed) || now >= r.deadline {
+            continue;
+        }
+        match r.settle_frame {
+            None => {
+                // Anchor the count at the first pass that sees this request's geometry; this
+                // frame has not completed yet.
+                r.settle_frame = Some(frame_nr);
+                continue;
+            }
+            Some(seen) if frame_nr > seen => {
+                r.settle_frame = Some(frame_nr);
+                r.settle = r.settle.saturating_add(1);
+            }
+            _ => continue,
+        }
+        if r.settle < SHOT_SETTLE_PASSES {
+            continue;
+        }
+        let slot = CaptureSlot::new(ctx, viewport);
+        r.slot = Some(slot.clone());
+        r.epoch = epoch;
+        // Issued against this pass's surface: the size the readback is expected at.
+        if let Some(spec) = spec {
+            r.spec = Some(spec);
+        }
+        r.issued = true;
+        ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Screenshot(CaptureSlot::callback(&slot)));
+    }
+    request_paint(app, ctx);
 }
 
 /// A screenshot's reply: the PNG written to `path` (through the automation roots, when the app
 /// has them), or returned as base64 `data`.
 fn shot_reply(img: &egui::ColorImage, path: Option<&str>) -> Result<Value, String> {
     let [w, h] = img.size;
-    let mut rgba = Vec::with_capacity(w * h * 4);
+    let raw = w.checked_mul(h).and_then(|n| n.checked_mul(4)).ok_or("bad screenshot size")?;
+    if raw > MAX_SHOT_IMAGE_BYTES {
+        return Err(format!("the screenshot is {raw} bytes, over the capture budget"));
+    }
+    let mut rgba = Vec::with_capacity(raw);
     for p in &img.pixels {
         rgba.extend_from_slice(&p.to_srgba_unmultiplied());
     }
     let buf = image::RgbaImage::from_raw(w as u32, h as u32, rgba).ok_or("bad screenshot buffer")?;
     let mut png = std::io::Cursor::new(Vec::new());
     buf.write_to(&mut png, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    // The encoder copy is not needed once the PNG exists. Drop it before the (possibly bigger)
+    // base64 reply is built so the peak is the larger phase accounted by `CaptureSpec::cost`,
+    // not the sum of all four buffers.
+    drop(buf);
     let png = png.into_inner();
     match path {
         Some(path) => {
@@ -211,6 +694,10 @@ fn shot_reply(img: &egui::ColorImage, path: Option<&str>) -> Result<Value, Strin
             Ok(json!({"path": path, "width": w, "height": h}))
         }
         None => {
+            if png.len() > MAX_SHOT_REPLY_BYTES {
+                // Refuse before the base64 string (4/3 of the PNG) is allocated.
+                return Err(format!("the encoded screenshot is {} bytes, over the reply budget", png.len()));
+            }
             use base64::Engine as _;
             Ok(json!({"format": "png", "width": w, "height": h, "data": base64::engine::general_purpose::STANDARD.encode(&png)}))
         }
@@ -238,11 +725,16 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
         "engine.execute" => {
             let cmd = p.get("command").and_then(Value::as_str).ok_or("`command` required")?;
             let params = p.get("params").cloned().unwrap_or(json!({}));
+            let layers_generation = app.session.clipboard.layers_generation;
             let r = app.session.execute(cmd, &params).map_err(|e| e.to_string());
             app.clear_comment_draft_after_tool_set(cmd, r.is_ok());
+            app.invalidate_synthetic_copy(layers_generation);
             // Programmatic calls never open dialogs.
             app.session.ui_requests.retain(|u| !u.kind.starts_with("dialog."));
             app.handle_ui_requests();
+            // A programmatic `doc.switch` changes the presented file just like a tab click: the
+            // capture generation must see it even though this path bypasses `FigApp::run`.
+            app.observe_presentation();
             r
         }
         "engine.commands" => Ok(Value::Array(
@@ -320,8 +812,9 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                     app.session.execute(cmd, &params).map_err(|e| e.to_string())
                 }
                 _ => {
-                    // Number keys: opacity (two in quick succession make an exact percentage).
-                    let now = ctx.input(|i| i.time);
+                    // Number keys: opacity (two in quick succession make an exact percentage). A
+                    // hidden window's logic tick has a stale `ctx.input(i.time)`.
+                    let now = app.clock.now();
                     match egui::Key::from_name(name) {
                         Some(k) if m.is_none() && crate::shortcuts::opacity_digit(app, k, now) => Ok(json!({"opacity": true})),
                         _ => Err(format!("no shortcut `{key}`")),
@@ -336,7 +829,8 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                 .ok_or("`events` required: [{move|down|up: [x, y]} | {key, shift?, alt?, cmd?} | {text} | {leave: true}]")?;
             let pos = |v: &Value| -> Option<egui::Pos2> {
                 let a = v.as_array()?;
-                Some(egui::pos2(a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32))
+                let p = egui::pos2(a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32);
+                p.is_finite().then_some(p)
             };
             let mut events = Vec::new();
             let mut pads = Vec::new();
@@ -366,6 +860,7 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                     // Content moves by `d` points (negative y scrolls down, like a wheel turned towards you).
                     events.push(egui::Event::MouseWheel {
                         unit: egui::MouseWheelUnit::Point,
+                        source: egui::MouseWheelSource::Wheel,
                         delta: d.to_vec2(),
                         phase: egui::TouchPhase::Move,
                         modifiers: mods,
@@ -396,7 +891,7 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                     (None, None) => return Err("controller buttons go to a prototype that is playing: run proto.present or proto.preview".into()),
                 }
             }
-            app.control_input.extend(events);
+            app.control_input_queued = app.push_control_input(events);
             ctx.request_repaint();
             Ok(json!({"queued": list.len().min(256)}))
         }
@@ -763,3 +1258,7 @@ fn pointer(app: &mut FigApp, p: &Value) -> Result<Value, String> {
 #[cfg(test)]
 #[path = "control_roots_tests.rs"]
 mod roots_tests;
+
+#[cfg(test)]
+#[path = "control_capture_tests.rs"]
+mod capture_tests;

@@ -168,7 +168,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     app.canvas.rect = rect;
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
-    let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
+    let resp = ui.interact(rect, ui.scope_id().with("canvas"), Sense::click_and_drag());
     let key_box = app.ui.key_box;
     crate::a11y::canvas(&mut app.ui.nav, &resp, || key_box.map_or_else(|| describe(&app.session), describe_box));
     if let Ok(ds) = app.session.ds_mut()

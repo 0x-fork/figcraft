@@ -36,6 +36,7 @@ impl Harness {
     /// One frame with `events`, 1/60 s after the last; returns the repaint delay it asked for.
     fn frame(&mut self, events: Vec<Event>) -> Duration {
         self.time += 1.0 / 60.0;
+        self.app.clock.set_test_now(Some(self.time));
         let input =
             RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))), time: Some(self.time), events, ..Default::default() };
         let app = &mut self.app;
@@ -268,13 +269,18 @@ fn control_requests_and_screenshots_wake_an_idle_ui() {
     let params = json!({"path": path.to_string_lossy()});
     h.app.control_queue.push(ControlRequest { id: json!(2), method: "ui.screenshot".into(), params, reply: tx, cancelled: Default::default() });
     for _ in 0..5 {
-        assert_eq!(h.frame(vec![]), Duration::ZERO, "waiting for the screenshot");
+        let delay = h.frame(vec![]);
+        assert!(delay <= Duration::from_secs_f64(crate::control::SHOT_TIMEOUT), "waiting for the screenshot");
     }
     assert!(rx.try_recv().is_err(), "not delivered yet");
-    let image = Arc::new(egui::ColorImage::filled([4, 4], egui::Color32::RED));
-    h.frame(vec![Event::Screenshot { viewport_id: ViewportId::ROOT, user_data: egui::UserData::default(), image }]);
+    // The settled UI issued the viewport capture command; the renderer completes its one-shot
+    // slot, and the next UI pass writes the reply.
+    let spec = h.app.capture.shots.first().and_then(|r| r.spec).expect("admitted against real geometry");
+    let slot = h.app.capture.shots.first().and_then(|r| r.slot.clone()).expect("issued after settling");
+    slot.complete(Arc::new(egui::ColorImage::filled(spec.size_px, egui::Color32::RED)));
+    h.frame(vec![]);
     let reply = rx.try_recv().unwrap();
-    assert_eq!(reply.result.unwrap()["width"], json!(4));
+    assert_eq!(reply.result.unwrap()["width"], json!(spec.size_px[0]));
     let _ = std::fs::remove_file(&path);
     h.assert_idle("after a screenshot");
 }
@@ -358,18 +364,24 @@ fn a_hidden_window_answers_at_once() {
     h.app.control_queue.push(request(3, "ui.screenshot", json!({"path": dir.join("shot.png").to_string_lossy()})));
     let mut hidden = RawInput::default();
     hidden.viewports.insert(ViewportId::ROOT, egui::ViewportInfo { minimized: Some(true), ..Default::default() });
-    let app = &mut h.app;
-    let _ = h.ctx.run_logic(&hidden, |ctx| crate::control::drain_hidden(app, ctx));
+    let ctx = h.ctx.clone();
+    let _ = ctx.run_logic(&hidden, |ctx| crate::control::background(&mut h.app, ctx));
     let saved = rx.try_recv().unwrap();
     assert_eq!(saved.id, json!(1));
     assert!(saved.result.is_ok() && path.exists(), "saved while hidden: {:?}", saved.result);
     let inspected = rx.try_recv().unwrap();
     assert_eq!(inspected.id, json!(2));
     assert!(inspected.result.is_ok(), "the interface's state: {:?}", inspected.result);
-    let shot = rx.try_recv().unwrap();
-    assert_eq!(shot.id, json!(3));
-    assert!(shot.result.unwrap_err().contains("minimised or hidden"), "a capture needs the window on screen");
+    assert!(rx.try_recv().is_err(), "a capture queues for a forced hidden paint");
+    assert_eq!(h.app.capture.shots.len(), 1, "one admitted capture");
     assert!(h.app.control_queue.is_empty(), "nothing waits for the window");
+    // Its deadline expires it once, with the same error the transport used to get.
+    h.app.clock.set_test_now(Some(crate::control::SHOT_TIMEOUT + 1.0));
+    let _ = ctx.run_logic(&hidden, |ctx| crate::control::background(&mut h.app, ctx));
+    let shot = rx.try_recv().expect("expired");
+    assert_eq!(shot.id, json!(3));
+    assert!(shot.result.unwrap_err().contains("didn't deliver a screenshot"), "a capture needs paint");
+    assert!(h.app.capture.shots.is_empty(), "released after its deadline");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -407,4 +419,45 @@ fn auto_save_writes_a_changed_file_then_rests() {
     assert!(ds.doc.page_content_bounds(ds.page).unwrap().x1 >= 640.0, "the new rectangles are in the file");
     h.assert_idle("an auto-saved file");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_hidden_logic_tick_runs_background_work_but_counts_no_ui_frame() {
+    let (mut h, _) = document();
+    h.settle();
+    let frames = h.app.frame_stats.frames;
+    let deadline_before = h.app.ui.next_autosave;
+    h.time += crate::AUTOSAVE_SECS + 1.0;
+    h.app.clock.set_test_now(Some(h.time));
+    let mut input = RawInput::default();
+    input.viewports.insert(ViewportId::ROOT, egui::ViewportInfo { minimized: Some(true), ..Default::default() });
+    let ctx = h.ctx.clone();
+    let _ = ctx.run_logic(&input, |ctx| h.app.background_tick(ctx));
+    assert_eq!(h.app.frame_stats.frames, frames, "a logic-only tick is not a UI frame");
+    let deadline = h.app.ui.next_autosave;
+    assert!(deadline > deadline_before + crate::AUTOSAVE_SECS - 1.0, "the autosave deadline advanced");
+    // Repeating the same due instant does not advance it again (consumed/deadline-driven work).
+    let _ = ctx.run_logic(&input, |ctx| h.app.background_tick(ctx));
+    assert_eq!(h.app.ui.next_autosave, deadline, "idempotent at the same monotonic time");
+}
+
+#[test]
+fn a_discarded_sizing_pass_sets_up_and_counts_one_frame_only() {
+    let (mut h, _) = document();
+    h.settle();
+    let frames = h.app.frame_stats.frames;
+    let input =
+        RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))), time: Some(h.time + 1.0 / 60.0), ..Default::default() };
+    let mut passes = 0;
+    let app = &mut h.app;
+    let mut out = h.ctx.run_ui(input, |ui| {
+        passes += 1;
+        app.ui(ui);
+        if passes == 1 {
+            ui.ctx().request_discard("test sizing pass");
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(passes, 2, "egui reran the frame");
+    assert_eq!(app.frame_stats.frames, frames + 1, "one frame was drawn, not one per pass");
 }
