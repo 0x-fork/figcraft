@@ -446,8 +446,8 @@ fn paint_path(cx: &mut Ctx, p: &usvg::Path, mut n: Node, transform: Affine, worl
 const CLOSE_TOLERANCE: f64 = 1e-3;
 
 /// `path` with the subpaths that end within `tol` of their start closed onto it and, with `all`
-/// (SVG fills every subpath as if closed), every other subpath of two or more segments closed
-/// with a straight segment.
+/// (SVG fills every subpath as if closed), every other subpath that can enclose an area (two or
+/// more segments, or one curve) closed with a straight segment.
 fn closed_for_fill(path: &BezPath, tol: f64, all: bool) -> BezPath {
     use figcraft_geom::kurbo::PathEl;
     let mut out = BezPath::new();
@@ -462,7 +462,8 @@ fn closed_for_fill(path: &BezPath, tol: f64, all: bool) -> BezPath {
         };
         let open = !matches!(sub.last(), Some(PathEl::ClosePath));
         let segments = sub.len() - 1;
-        if open && segments >= 2 {
+        let curve = matches!(sub.last(), Some(PathEl::QuadTo(..) | PathEl::CurveTo(..)));
+        if open && (segments >= 2 || curve) {
             let near = sub.last().and_then(|e| e.end_point()).is_some_and(|end| (end - start).hypot() <= tol);
             if near && let Some(last) = sub.last_mut() {
                 match last {
