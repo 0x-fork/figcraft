@@ -830,9 +830,10 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize, spare: BT
     }
     // Nested instances showing another main than the main's copy (swapped): rebuild from it,
     // with the old layers below them this rebuild didn't reuse.
-    let unused: BTreeMap<NodeId, std::sync::Arc<Node>> = old.into_iter().filter(|(i, _)| !used.contains(i) && !doc.contains(*i)).collect();
+    let unused: BTreeMap<NodeId, std::sync::Arc<Node>> =
+        old.iter().filter(|(i, _)| !used.contains(*i) && !doc.contains(**i)).map(|(i, x)| (*i, x.clone())).collect();
     for n in nested {
-        let below: BTreeMap<NodeId, std::sync::Arc<Node>> = unused
+        let mut below: BTreeMap<NodeId, std::sync::Arc<Node>> = unused
             .iter()
             .filter(|(_, x)| {
                 let mut cur = x.parent;
@@ -847,7 +848,74 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize, spare: BT
             })
             .map(|(i, x)| (*i, x.clone()))
             .collect();
+        take_placing_overrides(doc, n, &old, &mut below);
         sync_instance_depth(doc, n, depth + 1, below);
+    }
+}
+
+/// Before swapped nested instance `n` is rebuilt from its new main: each of its old layers (the
+/// copies just made of the outer main's, and `below`) takes the overrides held along the source
+/// chain it had before this rebuild (`before`), through layers inside instances in the mains that
+/// place `n`. Matched by name, they carry onto the new main's layers as the instance's own, so a
+/// swap takes what the outer main set once: later rebuilds find layers mirroring the new main.
+/// Geometry and slot content follow the new main; groups the layer overrides itself keep its value.
+fn take_placing_overrides(
+    doc: &mut Document,
+    n: NodeId,
+    before: &BTreeMap<NodeId, std::sync::Arc<Node>>,
+    below: &mut BTreeMap<NodeId, std::sync::Arc<Node>>,
+) {
+    let placing = placing_mains(doc, n);
+    for id in doc.subtree(n).into_iter().filter(|i| *i != n) {
+        let held = before.get(&id).map(|b| held_along(doc, b, &placing)).unwrap_or_default();
+        if let Some(layer) = doc.node_mut(id) {
+            take(layer, &held);
+        }
+    }
+    for layer in below.values_mut() {
+        let held = held_along(doc, layer, &placing);
+        if !held.is_empty() {
+            take(std::sync::Arc::make_mut(layer), &held);
+        }
+    }
+}
+
+/// The mains placing nested instance `n`: those of the layers it mirrors, outward.
+fn placing_mains(doc: &Document, n: NodeId) -> BTreeSet<NodeId> {
+    let mut out = BTreeSet::new();
+    let mut cur = doc.node(n).and_then(|x| x.source);
+    for _ in 0..=MAX_DEPTH {
+        let Some(s) = cur.and_then(|c| doc.node(c)).filter(|s| !matches!(s.kind, NodeKind::Component { .. })) else { break };
+        out.extend(owning_component(doc, s.id));
+        cur = s.source;
+    }
+    out
+}
+
+/// The overrides but geometry and slot content held along `layer`'s source chain while it runs
+/// through layers inside instances in `placing` mains, each with the nearest layer holding it.
+fn held_along(doc: &Document, layer: &Node, placing: &BTreeSet<NodeId>) -> BTreeMap<String, std::sync::Arc<Node>> {
+    let mut out = BTreeMap::new();
+    let mut cur = layer.source;
+    for _ in 0..=MAX_DEPTH {
+        let Some(s) = cur.and_then(|c| doc.node_arc(c)) else { break };
+        if !inside_instance(doc, s.id) || !owning_component(doc, s.id).is_some_and(|m| placing.contains(&m)) {
+            break;
+        }
+        for g in s.overrides.iter().filter(|g| !matches!(g.as_str(), "size" | "position" | SLOT)) {
+            out.entry(g.clone()).or_insert_with(|| s.clone());
+        }
+        cur = s.source;
+    }
+    out
+}
+
+/// Give `layer` the `held` groups it has no override of its own for.
+fn take(layer: &mut Node, held: &BTreeMap<String, std::sync::Arc<Node>>) {
+    for (g, from) in held {
+        if layer.overrides.insert(g.clone()) {
+            copy_group(from, layer, g);
+        }
     }
 }
 
