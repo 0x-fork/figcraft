@@ -512,6 +512,11 @@ pub struct ToolState {
     pub pencil_brush: Option<figcraft_doc::Brush>,
     /// The board tools' colours and choices.
     pub board: crate::board::BoardTool,
+    /// The eyedropper samples for a colour picker (`edit.pickColor` with `apply: false`): the
+    /// colour goes to `picked`, for the picker to write to the paint it edits, not to the fill.
+    pub pick_only: bool,
+    /// The colour the eyedropper sampled for a colour picker, until the picker takes it.
+    pub picked: Option<figcraft_color::Color>,
 }
 
 /// Pen pressure along drawn samples as width profile points `[t, scale]`: `t` by length, at most
@@ -973,6 +978,7 @@ impl Session {
         }
         self.tool.tool = t;
         self.tool.gesture = Gesture::None;
+        self.tool.pick_only = false;
         // The tool's cursor shows before the pointer moves.
         self.tool.overlay =
             Overlay { builder_remove: self.tool.builder_remove && t == ToolId::ShapeBuilder, cursor: t.cursor(), ..Overlay::default() };
@@ -2134,7 +2140,9 @@ impl Session {
             255,
         );
         let sel = ds.selection.clone();
-        if !sel.is_empty() {
+        if self.tool.pick_only {
+            self.tool.picked = Some(c);
+        } else if !sel.is_empty() {
             self.execute("node.set", &json!({"ids": sel, "props": {"fill": c.to_css_hex()}}))?;
         }
         self.recent_colors.retain(|x| *x != c);

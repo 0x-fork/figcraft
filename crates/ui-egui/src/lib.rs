@@ -90,6 +90,8 @@ mod canvas_fixes_tests;
 #[cfg(test)]
 mod canvas_image_rect_tests;
 #[cfg(test)]
+mod colorpicker_eyedropper_tests;
+#[cfg(test)]
 mod colorpicker_selection_tests;
 #[cfg(test)]
 mod comments_tests;

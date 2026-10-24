@@ -436,7 +436,14 @@ fn alpha_slider(ui: &mut Ui, rect: Rect, color: Color) -> Option<(f32, bool)> {
 }
 
 pub fn show(app: &mut FigApp, ctx: &egui::Context) {
-    let Some(target) = app.ui.picker.clone() else { return };
+    let Some(target) = app.ui.picker.clone() else {
+        // A colour sampled for a picker that has closed has no paint to go to.
+        app.session.tool.picked = None;
+        if app.session.tool.pick_only {
+            app.run("tool.move", json!({}));
+        }
+        return;
+    };
     // A layer's picker belongs to the selection it was opened for: once that changes, close it
     // rather than keep editing layers that are no longer selected.
     let stale = match &target {
@@ -470,6 +477,10 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         .open(&mut open)
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+            // The eyedropper's colour goes to this picker's paint (a stroke, an effect, a gradient stop...).
+            if let Some(c) = app.session.tool.picked.take() {
+                set_color(app, &target, &mut paint, c, stop_id(), ui);
+            }
             // Header.
             let (hr, _) = ui.allocate_exact_size(vec2(240.0, 40.0), Sense::hover());
             ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, tr("Custom"), semibold(11.0), t.text);
@@ -772,8 +783,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 )
                 .clicked()
                 {
-                    app.ui.picker = None;
-                    app.run("edit.pickColor", json!({}));
+                    app.run("edit.pickColor", json!({"apply": false}));
                     return;
                 }
                 let (c2, d2) = hue_slider(ui, hr, &mut hsb);
