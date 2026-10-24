@@ -1,14 +1,15 @@
 # Prototyping parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-17 · **Change:** minor (Change to, set variable and set variable mode lay out what they change in the player, as the canvas does; presentation tabs, one per page of a file; a Present tab with device and scale controls (#537); core editor leftovers: delays on mouse triggers and manual overlay offsets; controller buttons on key/gamepad triggers, widgets that react in prototypes, `proto.evaluate` and the mode lookup rules pinned) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-23 · **Change:** patch (top-level frames bigger than the device's screen scroll in the player; Change to, set variable and set variable mode lay out what they change in the player, as the canvas does; presentation tabs, one per page of a file; a Present tab with device and scale controls (#537); core editor leftovers: delays on mouse triggers and manual overlay offsets; controller buttons on key/gamepad triggers, widgets that react in prototypes, `proto.evaluate` and the mode lookup rules pinned) · **Target:** Figma Design (desktop app 126.10.7)
 
 **Breadth ~92%, ready ~74% (estimated).** Every Figma trigger except media, every action except
 media control, every transition and easing exist; key/gamepad triggers take controller buttons,
 read from controllers on Windows and in the browser. Every rule of the public
 documentation on triggers, actions, overlays, animations, easing, scrolling and interactive
 components is a test case with what it implies (`crates/engine/src/proto_behaviour_tests.rs`, 7
-tests on the model, and `crates/ui-egui/src/present_behaviour_tests.rs`, 12 tests driving the
-player, 21 gestures among them; the tail: `crates/engine/src/proto_tail_tests.rs`, 4 tests, and
+tests on the model, and `crates/ui-egui/src/present_behaviour_tests.rs`, 14 tests driving the
+player, 21 gestures among them; presentation tabs: `crates/ui-egui/src/present_tab_tests.rs`, 6
+tests; the tail: `crates/engine/src/proto_tail_tests.rs`, 4 tests, and
 `crates/ui-egui/src/present_tail_tests.rs`, 5 tests), and all pass. Not yet checked against
 larger real prototypes. Remaining: 2–5 h.
 
@@ -88,7 +89,7 @@ case pins the current behaviour).
 | Widgets react to clicks in a presented prototype | done | clicks only, like on the canvas |
 | Interactive components: instances play their variant's interactions, overridden per trigger | done | |
 | Drag-driven animations that follow the pointer, in their direction | done | |
-| Presenter: device frames and colours, rotation, custom sizes, fit/fill/100%, responsive frames | done | device bodies drawn in code. Presenting opens its own Present tab, which keeps its screen and history while you go back to the design, with a thumbnail of the current frame, previous / next, device presets and scale choices; the frame is laid out again for the device's screen on the prototype's copy (constraints and auto layout; the file is untouched); on phones and tablets overflowing content drags while the device stays put: a top-level frame bigger than the screen always scrolls (as in Figma, with no overflow setting), content past the frame's own edges as its overflow setting allows ("No scrolling" clips it); closing the window asks about unsaved changes above the presentation (#537). Devices not compared with Figma's |
+| Presenter: device frames and colours, rotation, custom sizes, fit/fill/100%, responsive frames | done | device bodies drawn in code. Presenting opens a tab for the page, named "file - page", which keeps its screen and history while you go back to the design, with a thumbnail of the current frame, previous / next, device presets and scale choices; the frame is laid out again for the device's screen on the prototype's copy (constraints and auto layout; the file is untouched); on phones and tablets overflowing content drags while the device stays put: a top-level frame bigger than the screen always scrolls (as in Figma, with no overflow setting), content past the frame's own edges as its overflow setting allows ("No scrolling" clips it); closing the window asks about unsaved changes above the presentation (#537). Devices not compared with Figma's |
 | Hotspot hints, inspect panel in the presenter, comments in the presenter | done | |
 | Preview pane following edits live | done | |
 | Edit interactions on several layers at once | done | |
