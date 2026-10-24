@@ -2,7 +2,7 @@
 //! refusals, presence relay and throttling, leaving and dropping, limits, malformed frames, and
 //! reconnecting. Every test stops its host and closes its sockets.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -671,15 +671,16 @@ fn a_welcome_over_the_size_limit_says_the_file_is_too_large() {
     host.stop();
 }
 
-#[test]
-fn pings_do_not_keep_a_connection_without_a_hello_alive() {
+/// How long a connection that never says hello stays open while `poke` sends it something every
+/// 300 ms (told whether it's the first time); `None`: still open after 6 s.
+fn pre_hello_lifetime(mut poke: impl FnMut(&mut Raw, bool) -> bool) -> Option<Duration> {
     let (mut host, _hp, invite) = start_with(NetLimits { hello_timeout: Duration::from_secs(1), ..fast_limits() }, Limits::default());
     let addr: SocketAddr = invite.server.host.parse().unwrap();
     let mut r = Raw::connect(addr);
     let t0 = Instant::now();
-    let mut closed = None;
+    let (mut closed, mut first) = (None, true);
     while t0.elapsed() < Duration::from_secs(6) {
-        if r.0.send(Message::Ping(Bytes::new())).is_err() || r.0.flush().is_err() {
+        if !poke(&mut r, std::mem::take(&mut first)) {
             closed = Some(t0.elapsed());
             break;
         }
@@ -698,6 +699,20 @@ fn pings_do_not_keep_a_connection_without_a_hello_alive() {
             _ => {}
         }
     }
-    assert!(closed.is_some_and(|t| t < Duration::from_secs(3)), "pinged pre-hello connection survived: {closed:?}");
     host.stop();
+    closed
+}
+
+#[test]
+fn pings_do_not_keep_a_connection_without_a_hello_alive() {
+    let closed = pre_hello_lifetime(|r, _| r.0.send(Message::Ping(Bytes::new())).is_ok() && r.0.flush().is_ok());
+    assert!(closed.is_some_and(|t| t < Duration::from_secs(3)), "pinged pre-hello connection survived: {closed:?}");
+}
+
+#[test]
+fn a_hello_trickled_in_fragments_does_not_outlast_the_deadline() {
+    // A binary message begun and never finished: one masked byte per frame, each in time for the
+    // read timeout.
+    let closed = pre_hello_lifetime(|r, first| r.0.get_mut().write_all(&[if first { 0x02 } else { 0x00 }, 0x81, 0, 0, 0, 0, b'x']).is_ok());
+    assert!(closed.is_some_and(|t| t < Duration::from_secs(3)), "trickled pre-hello connection survived: {closed:?}");
 }
