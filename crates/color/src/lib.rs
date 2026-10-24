@@ -549,7 +549,7 @@ pub enum PaintKind {
 }
 
 /// One fill or stroke paint.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Paint {
     #[serde(flatten)]
     pub kind: PaintKind,
@@ -559,6 +559,17 @@ pub struct Paint {
     pub visible: bool,
     #[serde(default)]
     pub blend: BlendMode,
+    /// The opacity holds the alpha of a typed solid colour (see [`Paint::solid`]) rather than an
+    /// opacity set on its own: a colour variable bound to the paint replaces it.
+    #[serde(default, rename = "colorAlpha", skip_serializing_if = "std::ops::Not::not")]
+    pub color_alpha: bool,
+}
+
+/// Paints compare by what they paint; where the opacity came from doesn't matter.
+impl PartialEq for Paint {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind && self.opacity == other.opacity && self.visible == other.visible && self.blend == other.blend
+    }
 }
 
 fn yes() -> bool {
@@ -567,11 +578,17 @@ fn yes() -> bool {
 
 impl Paint {
     pub fn solid(color: Color) -> Self {
-        Self { kind: PaintKind::Solid { color: color.with_alpha(1.0) }, opacity: color.a, visible: true, blend: BlendMode::Normal }
+        Self {
+            kind: PaintKind::Solid { color: color.with_alpha(1.0) },
+            opacity: color.a,
+            visible: true,
+            blend: BlendMode::Normal,
+            color_alpha: color.a < 1.0,
+        }
     }
 
     pub fn gradient(g: Gradient) -> Self {
-        Self { kind: PaintKind::Gradient(g), opacity: 1.0, visible: true, blend: BlendMode::Normal }
+        Self { kind: PaintKind::Gradient(g), opacity: 1.0, visible: true, blend: BlendMode::Normal, color_alpha: false }
     }
 
     pub fn image(hash: impl Into<String>, mode: ImageScaleMode) -> Self {
@@ -587,12 +604,13 @@ impl Paint {
             opacity: 1.0,
             visible: true,
             blend: BlendMode::Normal,
+            color_alpha: false,
         }
     }
 
     /// Layer `source` (a node id) tiled at its own size.
     pub fn pattern(source: u64) -> Self {
-        Self { kind: PaintKind::Pattern(PatternPaint::new(source)), opacity: 1.0, visible: true, blend: BlendMode::Normal }
+        Self { kind: PaintKind::Pattern(PatternPaint::new(source)), opacity: 1.0, visible: true, blend: BlendMode::Normal, color_alpha: false }
     }
 
     /// The solid colour (with the paint opacity folded into alpha), if solid.

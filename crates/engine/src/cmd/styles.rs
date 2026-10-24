@@ -805,9 +805,9 @@ pub fn bind(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A colour variable bound to a solid paint owns its whole colour, alpha included. Binding restarts
-/// the opacity (which holds the alpha a typed colour had, see `Paint::solid`) at 1, so the
-/// variable's alpha applies once; unbinding moves the colour's alpha back into the opacity, where a
-/// typed colour keeps it. An opacity set while bound multiplies on top and stays.
+/// an opacity that holds the alpha a typed colour had (see `Paint::solid`) at 1, so the variable's
+/// alpha applies once; an opacity set on its own, before or while bound, multiplies on top and
+/// stays. Unbinding moves the colour's alpha back into the opacity, where a typed colour keeps it.
 pub(crate) fn rebind_paint_alpha(fills: &mut [Paint], strokes: &mut [Paint], field: &str, bind: bool) {
     use super::lists::{BoundList, list_binding};
     let Some((list, i, "color")) = list_binding(field) else { return };
@@ -819,7 +819,15 @@ pub(crate) fn rebind_paint_alpha(fills: &mut [Paint], strokes: &mut [Paint], fie
     if let Some(p) = paints.get_mut(i)
         && let PaintKind::Solid { color } = &mut p.kind
     {
-        p.opacity = if bind { 1.0 } else { p.opacity * color.a };
+        if bind {
+            if p.color_alpha {
+                p.opacity = 1.0;
+            }
+            p.color_alpha = false;
+        } else if color.a < 1.0 {
+            p.opacity *= color.a;
+            p.color_alpha = true;
+        }
         color.a = 1.0;
     }
 }
