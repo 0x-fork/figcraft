@@ -114,6 +114,30 @@ fn run_export_info_convert() {
     std::fs::remove_dir_all(&d).ok();
 }
 
+/// `export` into a folder names the files as the app's export does (#1154): brackets, `+`, `&`,
+/// `%`, `#` and commas stay, what file systems refuse becomes `_`.
+#[test]
+fn export_file_names_keep_what_the_app_keeps() {
+    let d = tmp("names");
+    let script = d.join("s.json");
+    let names = ["Homepage - desktop (live + verbeteringen)", "Q&A, 50% #1 [v2]", "a:b*c?d|e"];
+    let steps: Vec<serde_json::Value> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| serde_json::json!({"command": "frame.create", "params": {"x": i * 200, "y": 0, "width": 20, "height": 20, "name": n}}))
+        .collect();
+    std::fs::write(&script, serde_json::to_string(&steps).unwrap()).unwrap();
+    let file = d.join("doc.figcraft");
+    assert!(bin().arg("run").arg(&script).arg("--out").arg(&file).output().unwrap().status.success());
+    let dir = d.join("out");
+    let out = bin().arg("export").arg(&file).arg("-o").arg(&dir).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    for want in ["Homepage - desktop (live + verbeteringen).png", "Q&A, 50% #1 [v2].png", "a_b_c_d_e.png"] {
+        assert!(dir.join(want).is_file(), "{want} in {:?}", std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect::<Vec<_>>());
+    }
+    std::fs::remove_dir_all(&d).ok();
+}
+
 #[test]
 fn run_takes_the_documented_gradient_shorthand() {
     // #252: only MCP used to accept it; `run` said "`fills` must be paints or colours".
