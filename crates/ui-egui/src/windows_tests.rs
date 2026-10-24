@@ -254,6 +254,21 @@ fn save_saves_a_file_with_a_path_and_then_closes() {
 }
 
 #[test]
+fn save_waits_for_a_panel_field_to_commit() {
+    // The click on Save takes the keyboard from a panel field, which commits what was typed next
+    // frame: the save comes after that commit (stood in for by a command run before the frame).
+    let d = temp_dir("field");
+    let path = d.join("a.figcraft");
+    let (ctx, mut app, _) = asking(Some(&path), vec![]);
+    crate::windows::answer_close(&mut app, &ctx, crate::windows::CloseAnswer::Save);
+    app.session.execute("shape.rectangle", &json!({"x": 20, "y": 0, "width": 10, "height": 10})).unwrap();
+    settle(&ctx, &mut app);
+    assert_eq!(rects_in(&path), 2, "the committed edit is saved too");
+    assert!(app.ui.quit);
+    std::fs::remove_dir_all(&d).ok();
+}
+
+#[test]
 fn save_asks_where_for_an_untitled_file_and_closes_once_saved() {
     let d = temp_dir("untitled");
     let path = d.join("new.figcraft");

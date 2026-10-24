@@ -679,6 +679,9 @@ pub struct UiState {
     /// The file a Save as started from the unsaved-changes question is saving: the window closes
     /// once it is saved, and stays open if the dialog is cancelled or the save fails.
     pub close_after_save_as: Option<u64>,
+    /// Save was answered: the files save next frame, once a panel field the click took the
+    /// keyboard from has committed what was typed (as [`UiState::after_field`]).
+    pub save_on_close: bool,
 }
 
 impl Default for UiState {
@@ -786,6 +789,7 @@ impl Default for UiState {
             online: online::OnlineUi::default(),
             confirm_close: false,
             close_after_save_as: None,
+            save_on_close: false,
         }
     }
 }

@@ -336,6 +336,10 @@ pub(crate) enum CloseAnswer {
 /// The unsaved-changes question when a window closes: Don't Save / Cancel / Save, as the other
 /// Craft apps ask it.
 pub(crate) fn confirm_close(app: &mut FigApp, ctx: &Context) {
+    if std::mem::take(&mut app.ui.save_on_close) {
+        save_then_close(app, ctx);
+        return;
+    }
     // A Save as this question started: once its dialog is answered, closing goes on if the file
     // was saved; cancelled or failed, the window stays open.
     if let Some(uid) = app.ui.close_after_save_as {
@@ -394,7 +398,10 @@ pub(crate) fn answer_close(app: &mut FigApp, ctx: &Context, answer: CloseAnswer)
     match answer {
         CloseAnswer::Cancel => {}
         CloseAnswer::DontSave => close_current(app, ctx),
-        CloseAnswer::Save => save_then_close(app, ctx),
+        CloseAnswer::Save => {
+            app.ui.save_on_close = true;
+            ctx.request_repaint();
+        }
     }
 }
 
@@ -407,12 +414,10 @@ fn save_then_close(app: &mut FigApp, ctx: &Context) {
     for uid in files {
         let Some(i) = app.session.docs.iter().position(|d| d.uid == uid) else { continue };
         app.session.active = i;
-        let native = app
-            .session
-            .docs
-            .get(i)
-            .and_then(|d| d.path.as_deref())
-            .is_some_and(|p| !std::path::Path::new(p).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("fig")));
+        let native =
+            app.session.docs.get(i).and_then(|d| d.path.as_deref()).is_some_and(|p| {
+                !std::path::Path::new(p).extension().and_then(std::ffi::OsStr::to_str).is_some_and(|e| e.eq_ignore_ascii_case("fig"))
+            });
         if !native {
             app.ui.close_after_save_as = Some(uid);
             app.save_as_dialog();
