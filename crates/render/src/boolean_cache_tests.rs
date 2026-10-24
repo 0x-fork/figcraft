@@ -253,3 +253,23 @@ fn stroke_only_text_operands_use_glyphs_instead_of_the_text_box() {
     text.characters = "   ".into();
     assert!(outline(&d, b).elements().is_empty(), "spaces have no stroked glyphs");
 }
+
+#[test]
+fn rounded_side_borders_follow_their_corners_in_booleans() {
+    use figcraft_doc::StrokeAlign;
+    use figcraft_geom::Point;
+    let mut d = Document::new("rounded borders");
+    let page = d.first_page().unwrap();
+    let b = d.create(page, NodeKind::BooleanOp { op: BoolOp::Union }, "B", 0.0, 0.0, 100.0, 100.0).unwrap();
+    let id = d.create(b, NodeKind::Rectangle, "operand", 0.0, 0.0, 100.0, 100.0).unwrap();
+    let n = d.get_mut(id).unwrap();
+    n.fills.clear();
+    n.strokes = vec![Paint::solid(Color::BLACK)];
+    n.stroke.align = StrokeAlign::Inside;
+    n.stroke.sides = Some([8.0; 4]);
+    n.corners.radii = [30.0; 4];
+    let p = outline(&d, b);
+    assert_ne!(p.winding(Point::new(50.0, 4.0)), 0, "top border");
+    assert_eq!(p.winding(Point::new(3.0, 3.0)), 0, "the rounded corner leaves the square's tip out");
+    assert_eq!(p.winding(Point::new(50.0, 50.0)), 0, "hollow inside");
+}
