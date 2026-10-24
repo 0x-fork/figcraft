@@ -663,8 +663,10 @@ fn path_candidates(doc: &Document, id: NodeId, p: Point, reach: f64, depth: usiz
         return;
     }
     for c in n.paint_order().rev() {
-        if !figcraft_doc::geometry::masked_out(doc, n, c, p) {
-            path_candidates(doc, c, p, reach, depth + 1, out);
+        let before = out.len();
+        path_candidates(doc, c, p, reach, depth + 1, out);
+        if out.len() > before && figcraft_doc::geometry::masked_out(doc, n, c, p) {
+            out.truncate(before);
         }
     }
     if n.children.is_empty() && !n.is_mask && doc.world_bounds(id).is_some_and(|b| b.inflate(reach, reach).contains(p)) {
