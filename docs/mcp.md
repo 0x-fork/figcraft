@@ -196,6 +196,12 @@ Or in a project's `.mcp.json`:
     the CSS `fr` unit: a track never gets less than its content (a fixed-size child bigger than
     its share keeps it; the other `fr` tracks share the rest). `inspect` reports a grid child's
     resolved `gridCell`.
+- Layer order: `node.reparent {ids?, parent, index?}` moves layers into `parent` (keeping their place
+  on the canvas, or taking their place in its auto layout flow) and `node.reorder {id, index}` moves
+  one within its parent. `index` counts the parent's children bottom first (in auto layout, the
+  first in the flow) and is where the (first) moved layer ends up after the move, in the same parent
+  or a new one; several layers land together in their stacking order. No `index`, or one past the
+  end, puts them on top (last in the flow).
 - **Every menu action is a command** (`list_commands`), and most commands act on `ids` when given,
   else on the selection. New layers become the selection.
 - Colours are `"#RRGGBB"` or `"#RRGGBBAA"`. Inside fills and strokes, `color` may also be a hex
@@ -336,6 +342,40 @@ tips; headless, it only sets the preference.
 ```json
 {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"file.newFromTemplate","params":{"template":"dashboard"}}}}
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"export","arguments":{"format":"png","path":"dashboard.png"}}}
+```
+
+### Filling copies with data
+
+`data.fill {id, rows, gap?, formats?, dir?, format?, scale?}` repeats a frame once per row (a carousel, a set
+of posts, a card per item) in one undo step: each key of a row names layers in the copy, and a
+string (or number) sets their text, `{text?, fill?, visible?}` sets more; `name` names the copy
+(default "<frame> <n>"). Copies go in a row to the right, `gap` apart (default 100). With `dir`, each
+copy is exported there as `<name>.<format>` (png by default) after the edits land. Returns `{ids,
+missing (keys no layer is named), files?, errors?}`. `errors` lists the exports that failed as
+`[{id, path, error}]`; the copies stay, and the files that were written are in `files`.
+
+Copy that changes length per row can size itself: `{"Headline": {"text": "…", "fit": {"maxLines": 2}}}` runs
+`text.fit` on those layers after the text is set.
+
+`formats: [{name?, width, height}]` makes every row once per size: the copy is resized so its auto layout
+reflows, named `<name>-<format name>` (default `<width>x<height>`), and placed under the row's previous
+format. Text `fit` runs after the resize. Use case: one call turns a 1080×1350 post into feed, story
+(1080×1920) and square (1080×1080) files for each slide of a carousel; the frame must be auto layout (fixed-
+position children keep their place).
+
+`text.fit {ids?, maxLines?, minSize?, orphans?}` gives a text layer with a fixed width (auto height or fixed size)
+the largest font size, down to `minSize` (default 60% of the current), at which it stays within `maxLines` lines
+and its box's height. Every style run scales by the same factor. A one-word last line (an orphan) is avoided by
+shrinking up to 8% more, else by keeping the last two words together with a no-break space. A one-word paragraph after a hard line break is not an orphan. Text never
+grows, text that already fits keeps its exact size, and sizes round to a tenth without going below `minSize`.
+Returns `{fitted: [{id, fontSize, lines, fits, orphan}]}`. Use case: a carousel slide "Lighthouse 100. Loads in under
+1s." at 96px broke into three lines with "1s." alone; with `fit: {maxLines: 3}` it is two balanced lines.
+
+```json
+{"command": "data.fill", "params": {"id": 80, "dir": "out/carousel", "scale": 1, "rows": [
+  {"name": "01-cover", "Headline": "Your website and AI chat assistant in 7 days", "Badge": {"visible": true}},
+  {"name": "02-proof", "Headline": "Lighthouse 100, loads in under a second", "Badge": {"visible": false}}
+]}}
 ```
 
 ### Boards
@@ -506,6 +546,17 @@ the geometry to the size asked for (with both, each side independently; with one
 its proportion). A path or point set that draws nothing is refused instead of making an invisible
 0×0 layer, as is a size on an axis the geometry has none of (except 0, such as a horizontal line's
 height) and a size of 0 or less on an axis it has, which would flatten it.
+
+`node.set {path}` (or `set_properties`) replaces a vector's geometry with new SVG path data and
+keeps the layer: its id, name, place in the layer list, paints, effects, styles, variable bindings
+and constraints. The path is read as `vector.create` reads it, and `width`/`height` in the same call
+scale it the same way. The path's own box goes at the layer's current x/y (rotation and flips
+stay); with `x`/`y` in the same call it goes at `x` + its left edge and `y` + its top, as
+`vector.create` places it. Points' own settings (per-point corner radius, caps, joins) go with the
+old geometry. On several layers, layers that aren't vectors are skipped with a warning; on a
+single one, or when none is a vector, the call is refused (convert shapes with
+`vector.edit.begin` or Flatten first). A layer inside an instance is refused too: its geometry
+comes from its main component, so edit that or detach the instance. Undo brings the old path back.
 
 Vector edit mode is driven with `run_command` (or `pointer`/`key` for gestures):
 `vector.edit.begin {id? | ids?}` (default the selection; converts shapes to vectors; several layers
@@ -773,6 +824,14 @@ most when it can't be reached).
   moves the chosen variant there, `{name, index}` reorders variant properties (the variants'
   names follow). `component.properties` on a set reports `conflicts`: variants sharing one
   combination of values.
+- **Boolean properties**: on the main component, a boolean property's value is the visibility of
+  the layers bound to it. `component.addProperty {type: "boolean", default, layer}`,
+  `component.bindProperty {field: "visible"}` and `component.editProperty {name, default}` show or
+  hide the main's bound layers to match the default (without `default`, `addProperty` takes the
+  bound layer's visibility). Showing or hiding a bound layer on the main sets the default, and the
+  property's other bound layers (in every variant of a set) follow. New instances start from the
+  default; existing instances keep the values they have. Files open as saved: a main whose bound
+  layer disagrees with the default stays that way until one of them is edited.
 - `component.pushChanges {id?}` copies the instance's overrides into its main (from a layer of a
   nested instance too: always into the outer instance's main).
 
@@ -1410,6 +1469,22 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
   are clipped to 200 characters; a layer holds at most 32 links. Links are data: never fetched or
   opened by the engine (the app opens one when it is clicked). `get_node` and `inspect_document`
   list them as `devResources`; the Inspect tab lists, adds, edits and removes them.
+- **Measurements kept on the canvas:** distances a developer leaves on the canvas for everyone.
+  `devMode.addMeasurement {from? (default the first selected layer), to?, side?}` → `{from, index,
+  lines}` places one between `from` and `to` (a layer on the same page), along one side of `from`
+  (`side`: `top`, `right`, `bottom` or `left`: that side's length) or, with neither, to the layer
+  around `from`; `devMode.removeMeasurement {from?, index?}` → `{removed}` (no index: every one
+  starting from the layer); both undoable. `devMode.measurements {page?, id?}` → `[{from, fromName,
+  index, to?, toName?, side?, labels, lines: [{x0, y0, x1, y1, label, dashed}]}]` lists those on a
+  page (default the current one; `id`: only those from or to that layer), with their lines in page
+  space measured from the layers' current bounds, so they follow the layers. A measurement is
+  stored on the layer it starts from (`get_node` lists them as `measurements: [{to} | {side}]`),
+  saved with the file and synced; the same two layers are measured once (either way round), a
+  layer starts at most 64. One whose other layer was deleted or moved to another page isn't listed
+  or drawn (an undo brings it back); a copy keeps the side measurements and those to layers copied
+  with it. In the app, Dev Mode draws them with the hover redlines, and the Inspect tab lists them
+  (with nothing selected, every one on the page), selects a measurement's layer on a click, removes
+  one with −, and places new ones from its Add measurement menu.
 - **Annotations:** notes for developers on any layer, each with optional pinned properties that
   Dev Mode shows with their current values (and the style or variable behind them).
   `annotation.add {id?, label?, properties?}` (a note, pinned properties or both; returns `{id,
@@ -1446,8 +1521,8 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
   button to open it in the focus view). In the app's Dev Mode the canvas only inspects: presses
   select (and pan, and comment), never move, resize, draw or edit text and vectors, and the menus
   and shortcuts refuse commands that edit the design (Dev Mode's own annotations, statuses, dev
-  resources, code connections and comments still work); choosing a drawing tool in the toolbar
-  goes back to the design. Commands sent over MCP or the control channel aren't affected.
+  resources, measurements, code connections and comments still work); choosing a drawing tool in
+  the toolbar goes back to the design, and the layers panel only selects and expands. Commands sent over MCP or the control channel aren't affected.
 - **Compare changes:** when a layer marked Ready for dev first changes (it turns "Changed"), the
   file keeps a copy of it and everything in it as it was just before that edit (saved in the
   `.figcraft` file only while there is a change; resolving the change, marking it again, another
