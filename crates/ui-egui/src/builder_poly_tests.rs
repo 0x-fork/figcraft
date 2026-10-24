@@ -1,4 +1,4 @@
-﻿//! The shape builder's region outlines: repeats dropped and sub-pixel slivers left out, so the
+//! The shape builder's region outlines: repeats dropped and sub-pixel slivers left out, so the
 //! tessellator never sees a zero-length segment at a hairpin (that draws a spike across the canvas).
 
 use super::clean_poly;
