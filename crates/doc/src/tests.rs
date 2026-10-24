@@ -464,3 +464,38 @@ fn text_style_empty_range_links_and_unlinks_all() {
     e.unlink_text_style(0, 0);
     assert!(e.style.style_id.is_none());
 }
+
+#[test]
+fn stale_next_id_never_overwrites_existing_nodes() {
+    let mut d = Document::new("x");
+    let p = page(&d);
+    let f = d.create(p, NodeKind::Frame, "F", 0.0, 0.0, 100.0, 100.0).unwrap();
+    let a = d.create(f, NodeKind::Rectangle, "A", 0.0, 0.0, 10.0, 10.0).unwrap();
+    let mut v = serde_json::to_value(&d).unwrap();
+    v["next_id"] = serde_json::json!(1);
+    let mut bad: Document = serde_json::from_value(v).unwrap();
+    let before: Vec<(NodeId, String, Option<NodeId>)> =
+        [p, f, a].iter().map(|i| (*i, bad.node(*i).unwrap().name.clone(), bad.node(*i).unwrap().parent)).collect();
+    let n = bad.node_count();
+    let copy = bad.duplicate_into(f, p, None).unwrap();
+    assert!(![p, f, a].contains(&copy));
+    assert_eq!(bad.node_count(), n + 2);
+    let copies = bad.duplicate_all_into(&[f], p).unwrap();
+    assert_eq!(bad.node_count(), n + 4);
+    assert!(copies.iter().all(|c| ![p, f, a, copy].contains(c)));
+    for (i, name, parent) in &before {
+        let node = bad.node(*i).unwrap();
+        assert_eq!((&node.name, node.parent), (name, *parent));
+    }
+    assert!(bad.validate().is_empty(), "{:?}", bad.validate());
+
+    // A paste whose id map points at an existing node fails and changes nothing.
+    let nodes: Vec<Node> = bad.subtree(f).into_iter().filter_map(|i| bad.node(i).cloned()).collect();
+    let mut map: BTreeMap<NodeId, NodeId> = nodes.iter().map(|n| (n.id, bad.alloc_id())).collect();
+    map.insert(a, p);
+    let snapshot = bad.clone();
+    assert!(bad.paste_nodes(&nodes, &map, f, p, None).is_err());
+    assert_eq!(bad, snapshot);
+    assert_eq!(bad.node(p).unwrap().name, snapshot.node(p).unwrap().name);
+    assert!(bad.validate().is_empty(), "{:?}", bad.validate());
+}
