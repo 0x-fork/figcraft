@@ -393,6 +393,7 @@ pub(crate) fn register(s: &mut Session, entry: InstalledPlugin, wasm: Vec<u8>) -
     match list.iter_mut().find(|x| x.manifest.id == id) {
         Some(slot) => {
             *slot = entry;
+            s.prefs.plugin_settings.remove(&id);
             true
         }
         None => {

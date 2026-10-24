@@ -406,3 +406,13 @@ fn a_full_undo_history_keeps_its_steps_and_tampered_manifests_are_refused() {
     s.prefs.plugins[0].manifest.main = "../../elsewhere.wasm".into();
     assert!(matches!(s.execute("plugin.run", &json!({"id": "org.test.many"})), Err(EngineError::BadParams { .. })));
 }
+
+#[test]
+fn reinstalling_under_an_existing_id_drops_the_old_settings() {
+    let mut s = Session::new();
+    let m = manifest("org.test.reuse", "read", &[]);
+    install(&mut s, m.clone(), &script(&[], OnRefusal::Fail, ""));
+    s.prefs.plugin_settings.entry("org.test.reuse".into()).or_default().insert("key".into(), json!("v"));
+    install(&mut s, m, &script(&[], OnRefusal::Fail, ""));
+    assert!(!s.prefs.plugin_settings.contains_key("org.test.reuse"), "{:?}", s.prefs.plugin_settings);
+}
