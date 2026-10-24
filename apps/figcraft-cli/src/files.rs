@@ -208,11 +208,12 @@ pub fn info(path: &str, as_json: bool) -> CliResult<ExitCode> {
 }
 
 /// The file name a layer exports to: the app's rule ([`figcraft_engine::cmd::file::safe_file_name`],
-/// so `/` becomes `_` too), without leading or trailing spaces and dots, at most 100 characters.
+/// so `/` becomes `_` too), without leading or trailing spaces and dots, at most 100 characters
+/// and 200 bytes (file systems allow 255, and a number and the extension still fit).
 fn sanitize(name: &str) -> String {
     let s = figcraft_engine::cmd::file::safe_file_name(name);
-    let s = s.trim_matches(|c: char| c == '.' || c.is_whitespace()).to_string();
-    if s.is_empty() { "layer".into() } else { s.chars().take(100).collect() }
+    let s = s.trim_matches(|c: char| c == '.' || c.is_whitespace());
+    if s.is_empty() { "layer".into() } else { s.char_indices().take(100).take_while(|(i, c)| i + c.len_utf8() <= 200).map(|(_, c)| c).collect() }
 }
 
 /// What `export` exports and how.
@@ -420,6 +421,7 @@ mod tests {
         assert_eq!(sanitize(" .hidden. "), "hidden");
         assert_eq!(sanitize(" . .name. . "), "name", "spaces and dots at the edges, mixed");
         assert_eq!(sanitize(&"x".repeat(300)).chars().count(), 100);
+        assert_eq!(sanitize(&"\u{1F600}".repeat(100)), "\u{1F600}".repeat(50), "at most 200 bytes, whole characters");
     }
 
     #[test]
