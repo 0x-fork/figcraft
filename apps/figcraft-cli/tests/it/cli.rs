@@ -39,6 +39,40 @@ fn bad_arguments_exit_2_without_panicking() {
     assert_eq!(out.status.code(), Some(1));
 }
 
+/// `--help` / `-h` after a subcommand prints the usage on stdout and exits 0, as it does first
+/// (#1155), whatever else is on the line; nothing runs.
+#[test]
+fn help_after_a_subcommand_prints_the_usage() {
+    for args in [
+        &["--help"][..],
+        &["-h"],
+        &["help"],
+        &["mcp", "--help"],
+        &["mcp", "-h"],
+        &["info", "--help"],
+        &["export", "--help"],
+        &["export", "x.figcraft", "-o", "out", "--help"],
+        &["convert", "-h"],
+        &["render", "--help"],
+        &["run", "--help"],
+        &["commands", "--help"],
+        &["plugin", "publish", "--help"],
+        &["perf", "--help"],
+        &["mcp", "--attach", "notaport", "--help"],
+        &["mcp", "--bogus", "--help"],
+    ] {
+        let out = bin().args(args).stdin(Stdio::null()).output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("USAGE") && text.contains("figcraft-cli mcp"), "{args:?}: {text}");
+        assert!(out.stderr.is_empty(), "{args:?}: nothing on stderr, got {}", String::from_utf8_lossy(&out.stderr));
+    }
+    // A value that happens to be `-h` is still a value, not a request for help.
+    let out = bin().args(["commands", "--filter", "--help"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("USAGE"), "--filter took `--help` as its text");
+}
+
 #[test]
 fn run_export_info_convert() {
     let d = tmp("run");

@@ -27,7 +27,7 @@ USAGE:
   figcraft-cli mcp [--attach PORT] [--automation-read-root DIR]... [--automation-write-root DIR]...
   figcraft-cli plugin publish <folder> --server ws://host:port/[?key=KEY]
   figcraft-cli perf [--layers N[,N...]] [--instances N[,N...]]
-  figcraft-cli help | --help | --version
+  figcraft-cli help | --help | --version   (a subcommand followed by --help or -h prints this too)
 
 Every subcommand takes --no-system-fonts (or set FIGCRAFT_NO_SYSTEM_FONTS=1): text uses only the
 fonts built into FigCraft, for renders that match on every machine. Otherwise installed fonts are
@@ -74,6 +74,10 @@ fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     match run(&argv) {
         Ok(code) => code,
+        Err(CliError::Help) => {
+            println!("{USAGE}");
+            ExitCode::SUCCESS
+        }
         Err(CliError::Usage(msg)) => {
             eprintln!("error: {msg}\n\n{USAGE}");
             ExitCode::from(2)
@@ -87,6 +91,8 @@ fn main() -> ExitCode {
 
 #[derive(Debug)]
 pub enum CliError {
+    /// `--help` or `-h` after a subcommand: usage on stdout, exit code 0.
+    Help,
     /// Bad arguments: usage is printed, exit code 2.
     Usage(String),
     /// The operation failed: exit code 1.
