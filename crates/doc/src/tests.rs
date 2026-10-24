@@ -512,6 +512,12 @@ fn stale_next_id_never_overwrites_existing_nodes() {
     assert_eq!(bad, snapshot);
     assert_eq!(bad.node(p).unwrap().name, snapshot.node(p).unwrap().name);
     assert!(bad.validate().is_empty(), "{:?}", bad.validate());
+
+    // So does one that maps two nodes to the same new id.
+    let mut map: BTreeMap<NodeId, NodeId> = nodes.iter().map(|n| (n.id, bad.alloc_id())).collect();
+    map.insert(a, map[&f]);
+    assert!(bad.paste_nodes(&nodes, &map, f, p, None).is_err());
+    assert_eq!(bad, snapshot);
 }
 
 #[test]

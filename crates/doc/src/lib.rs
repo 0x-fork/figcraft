@@ -837,8 +837,9 @@ impl Document {
             return Err(DocError::NotContainer(parent));
         }
         let new_root = *map.get(&root).ok_or(DocError::NoNode(root))?;
-        // Never overwrite an existing node with a copy.
-        if let Some(taken) = nodes.iter().filter_map(|n| map.get(&n.id)).find(|i| self.nodes.contains_key(*i)) {
+        // Never overwrite an existing node, or another copy, with a copy.
+        let mut copied = std::collections::BTreeSet::new();
+        if let Some(taken) = nodes.iter().filter_map(|n| map.get(&n.id)).find(|i| self.nodes.contains_key(*i) || !copied.insert(**i)) {
             return Err(DocError::Invalid(format!("node {taken} already exists")));
         }
         for n in nodes {
