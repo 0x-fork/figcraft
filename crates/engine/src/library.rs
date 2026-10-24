@@ -491,6 +491,11 @@ impl Cache {
                 None => Err(EngineError::Other(crate::library_server::NOT_FETCHED.into())),
             };
         }
+        // The path comes from a document: a network share would be contacted (and on Windows get
+        // the opener's credentials) by the stat below.
+        if !craft_docpath::is_local(path) {
+            return Err(EngineError::Other(format!("{path}: a library is opened only from this computer")));
+        }
         let stamp = stat(path);
         // Checked before the cache: the limit is the caller's.
         if let Ok(st) = &stamp
