@@ -208,3 +208,14 @@ fn unique_id_is_linear_for_repeated_names() {
     assert_eq!(w.unique_id("Rectangle"), "Rectangle_30001");
     assert!(start.elapsed() < std::time::Duration::from_secs(2), "unique_id is quadratic: {:?}", start.elapsed());
 }
+
+#[test]
+fn layer_ids_never_clash_with_generated_ids() {
+    let mut d = Document::new("t");
+    let p = d.first_page().unwrap();
+    let f = d.create(p, NodeKind::Frame, "clip1", 0.0, 0.0, 100.0, 100.0).unwrap();
+    d.get_mut(f).unwrap().clip = true;
+    d.create(f, NodeKind::Rectangle, "R", 0.0, 0.0, 50.0, 50.0).unwrap();
+    let svg = export_svg(&d, &[f], &SvgOptions { include_ids: true, ..SvgOptions::default() }).unwrap();
+    assert_eq!(svg.matches("id=\"clip1\"").count(), 1, "{svg}");
+}
