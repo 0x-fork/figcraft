@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use figcraft_collab::message::{self, ClientMsg, Hello, Presence, ServerMsg, Signal};
 use figcraft_collab::{Client, Limits};
 use figcraft_doc::{Document, NodeId};
-use figcraft_engine::live::{Event, PEOPLE, Status};
+use figcraft_engine::live::{Event, PEOPLE, Status, TOO_LARGE_TO_JOIN};
 use tungstenite::protocol::WebSocket;
 use tungstenite::{Bytes, Message};
 
@@ -641,4 +641,63 @@ fn the_host_removes_someone_and_they_cant_come_back() {
     hp.wait("Bo's cursor", |e| e.iter().any(|e| matches!(e, Event::Presence(id, _) if *id == bo)));
     host.stop();
     assert_eq!(host.connections(), 0);
+}
+
+#[test]
+fn a_welcome_over_the_size_limit_says_the_file_is_too_large() {
+    let mut doc = Document::new("B".repeat(1 << 20));
+    doc.repair();
+    let probe = Probe::new();
+    let cfg = HostConfig {
+        addr: SocketAddr::from(([127, 0, 0, 1], 0)),
+        any_port_if_taken: false,
+        file: FILE.into(),
+        token: TOKEN.into(),
+        doc,
+        name: "Hana".into(),
+        limits: fast_limits(),
+        core: Limits::default(),
+    };
+    let mut host = Host::start(cfg, probe.inbox.clone()).unwrap();
+    let invite = Invite::new(host.addr().to_string(), FILE, TOKEN);
+
+    let mut guest_cfg = quick(GuestConfig::new(invite, "Ada".into()));
+    guest_cfg.limits = NetLimits { max_server_message: 1 << 20, ..fast_limits() };
+    let mut gp = Probe::new();
+    let _g = Guest::start(guest_cfg, gp.inbox.clone()).unwrap();
+    let too_large = TOO_LARGE_TO_JOIN.replace("{mb}", "1");
+    gp.wait("the file too large to join", |e| e.iter().any(|ev| matches!(ev, Event::Status(Status::Failed { reason }) if *reason == too_large)));
+    assert!(!welcomed(&gp.events));
+    host.stop();
+}
+
+#[test]
+fn pings_do_not_keep_a_connection_without_a_hello_alive() {
+    let (mut host, _hp, invite) = start_with(NetLimits { hello_timeout: Duration::from_secs(1), ..fast_limits() }, Limits::default());
+    let addr: SocketAddr = invite.server.host.parse().unwrap();
+    let mut r = Raw::connect(addr);
+    let t0 = Instant::now();
+    let mut closed = None;
+    while t0.elapsed() < Duration::from_secs(6) {
+        if r.0.send(Message::Ping(Bytes::new())).is_err() || r.0.flush().is_err() {
+            closed = Some(t0.elapsed());
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        // Drain what the host sent back (pongs, the close); an error means it hung up.
+        r.0.get_mut().set_read_timeout(Some(Duration::from_millis(10))).unwrap();
+        match r.0.read() {
+            Ok(Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
+                closed = Some(t0.elapsed());
+                break;
+            }
+            Err(tungstenite::Error::Io(e)) if !matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                closed = Some(t0.elapsed());
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(closed.is_some_and(|t| t < Duration::from_secs(3)), "pinged pre-hello connection survived: {closed:?}");
+    host.stop();
 }
