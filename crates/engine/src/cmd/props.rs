@@ -377,14 +377,16 @@ fn paint_none(v: &Value) -> bool {
     v.is_null() || v.as_str().is_some_and(|s| s.eq_ignore_ascii_case("none"))
 }
 
-/// The order [`apply`] takes keys in: geometry first so rotation applies to the final size, variable
-/// bindings last so paints set in the same call don't detach them.
+/// The order [`apply`] takes keys in: geometry first so rotation applies to the final size, style
+/// links after the values so a link wins over values its style sets, variable bindings last so
+/// paints set in the same call don't detach them.
 fn apply_order(k: &str) -> u8 {
     match k {
         "width" | "height" | "w" | "h" => 0,
         "rotation" => 2,
         "x" | "y" => 3,
-        "boundVariables" => 4,
+        "fillStyle" | "strokeStyle" | "effectStyle" | "textStyle" | "gridStyle" => 4,
+        "boundVariables" => 5,
         _ => 1,
     }
 }
