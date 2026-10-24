@@ -5,11 +5,11 @@
 //! with a no-break space. Every style run scales by the same factor, so mixed sizes keep their
 //! proportions.
 
-use figcraft_doc::*;
+use figcraft_doc::{NodeKind, TextAutoResize, TextData};
 use serde_json::{Value, json};
 
 use crate::cmd::CommandSpec;
-use crate::params::*;
+use crate::params::{boolean, num, req_targets};
 use crate::{Result, Session, bad, spec};
 
 const CMD: &str = "text.fit";

@@ -6,7 +6,7 @@
 use serde_json::{Value, json};
 
 use crate::cmd::CommandSpec;
-use crate::params::*;
+use crate::params::{get, id, id_of, num_or, string};
 use crate::{Result, Session, bad, spec};
 
 const CMD: &str = "data.fill";
