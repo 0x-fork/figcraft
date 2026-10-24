@@ -151,11 +151,13 @@ fn dev_mode_layers_panel_selects_and_expands_but_edits_nothing() {
     let doc = u.app.session.doc().unwrap();
     assert!(doc.node(b).unwrap().visible && !doc.node(b).unwrap().locked, "not hidden or locked");
     assert_eq!(u.app.session.selection(), [b]);
-    // Dragging a row doesn't reorder.
+    // Dragging a row doesn't reorder, and says why.
+    u.app.ui.toast = None;
     u.drag_to(ra, rb + egui::vec2(0.0, 6.0));
     u.button(rb + egui::vec2(0.0, 6.0), false);
     rest(&mut u);
     assert_eq!(order(&u), before, "not reordered");
+    assert!(u.app.ui.toast.as_ref().is_some_and(|(m, _)| m.contains("Shift+D")), "the drag says why");
     // Back in the design, the same double click renames.
     u.app.ui.right_tab = crate::RightTab::Design;
     u.frame(vec![]);
@@ -205,11 +207,12 @@ fn dev_mode_pages_list_opens_pages_but_edits_none() {
     assert!(u.app.ui.rename_page.is_none(), "no rename");
     assert!(said_why(&mut u));
     rest(&mut u);
-    // Dragging a page doesn't reorder.
+    // Dragging a page doesn't reorder, and says why.
     u.drag_to(rs, rh - egui::vec2(0.0, 10.0));
     u.button(rh - egui::vec2(0.0, 10.0), false);
     rest(&mut u);
     assert_eq!(pages(&u), [home, specs], "not reordered");
+    assert!(said_why(&mut u), "the drag says why");
     // The add button adds no page, and says why.
     click(&mut u, add);
     assert_eq!(pages(&u), [home, specs], "no page added");

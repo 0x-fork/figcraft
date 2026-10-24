@@ -246,8 +246,11 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
             if filtering && (divider || !name.to_lowercase().contains(&filter)) {
                 continue;
             }
-            let sense = if filtering || dev { Sense::click() } else { Sense::click_and_drag() };
+            let sense = if filtering { Sense::click() } else { Sense::click_and_drag() };
             let (r, resp) = ui.allocate_exact_size(vec2(w, 32.0), sense);
+            if dev && resp.drag_started() {
+                crate::menus::dev_mode_refuses(app, "page.move");
+            }
             if id == cur {
                 current_row_rendered = true;
                 if scroll_to_cur {
@@ -846,7 +849,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
         let ui = &mut band_ui;
         for row in rows.iter().take(last).skip(first) {
             let Some(n) = doc.node(row.id) else { continue };
-            let (r, resp) = ui.allocate_exact_size(vec2(w, ROW), if dev { Sense::click() } else { Sense::click_and_drag() });
+            let (r, resp) = ui.allocate_exact_size(vec2(w, ROW), Sense::click_and_drag());
             let selected = sel.contains(&row.id);
             a11y::layer_row(&mut app.ui.nav, &resp);
             if sel.last() == Some(&row.id) {
@@ -990,7 +993,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                 app.ui.context_menu = Some((pos, vec![row.id]));
             }
             // Drag to reorder.
-            if resp.drag_started() {
+            if resp.drag_started() && !crate::menus::dev_mode_refuses(app, "node.reparent") {
                 ui.data_mut(|d| d.insert_temp(drag_id, row.id));
             }
             let over = dragging.is_some() && ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| r.contains(p));
