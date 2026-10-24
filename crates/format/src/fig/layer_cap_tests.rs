@@ -5,7 +5,7 @@
 use figcraft_doc::{Document, NodeKind};
 
 use super::kiwi::{Kv, Schema};
-use super::*;
+use super::{MAX_FIG_NODES, export, import, layer_budget, map};
 
 type Fields = Vec<(&'static str, Kv<'static>)>;
 
@@ -36,7 +36,7 @@ fn instance(id: u64, page: u64, main: u64) -> Kv<'static> {
 }
 
 /// A main `id` of `layers` rectangles under `parent`.
-fn main(id: u64, parent: u64, name: &str, layers: u64) -> Vec<Kv<'static>> {
+fn main_component(id: u64, parent: u64, name: &str, layers: u64) -> Vec<Kv<'static>> {
     let mut out = vec![node(id, Some(parent), "SYMBOL", name, vec![("size", xy(10.0, 10.0))])];
     out.extend((1..=layers).map(|i| node(id * 10_000 + i, Some(id), "RECTANGLE", "R", vec![("size", xy(1.0, 1.0))])));
     out
@@ -50,7 +50,7 @@ fn library_message(count: u64, main_layers: u64) -> Kv<'static> {
         node(2, Some(1), "CANVAS", "Screens", vec![]),
         node(3, Some(1), "CANVAS", "Internal", vec![("internalOnly", Kv::Bool(true))]),
     ];
-    nodes.extend(main(20, 3, "Library main", main_layers));
+    nodes.extend(main_component(20, 3, "Library main", main_layers));
     nodes.extend((0..count).map(|i| instance(1_000 + i, 2, 20)));
     o(vec![("nodeChanges", Kv::Array(nodes))])
 }
@@ -96,7 +96,7 @@ fn instances_of_a_main_the_cap_kept_out_say_so() {
     // file has it.
     let mut nodes = vec![node(1, None, "DOCUMENT", "Document", vec![]), node(2, Some(1), "CANVAS", "Page", vec![])];
     nodes.extend((0..20).map(|i| instance(100 + i, 2, 900)));
-    nodes.extend(main(900, 2, "Local main", 10));
+    nodes.extend(main_component(900, 2, "Local main", 10));
     let (doc, warnings) = import_at(&o(vec![("nodeChanges", Kv::Array(nodes))]), 60);
     assert!(warnings.iter().any(|w| w.starts_with("instances whose component was past the layer limit were imported as frames")), "{warnings:?}");
     assert!(!warnings.iter().any(|w| w.contains("aren't in the file")), "{warnings:?}");
@@ -115,8 +115,8 @@ fn swap_defaults_the_cap_kept_out_say_so() {
     ]);
     let mut nodes = vec![node(1, None, "DOCUMENT", "Document", vec![]), node(2, Some(1), "CANVAS", "Page", vec![])];
     nodes.push(node(50, Some(2), "SYMBOL", "Card", vec![("size", xy(10.0, 10.0)), ("componentPropDefs", Kv::Array(vec![swap]))]));
-    nodes.extend(main(60, 2, "Filler", 40));
-    nodes.extend(main(900, 2, "Icon main", 10));
+    nodes.extend(main_component(60, 2, "Filler", 40));
+    nodes.extend(main_component(900, 2, "Icon main", 10));
     let (doc, warnings) = import_at(&o(vec![("nodeChanges", Kv::Array(nodes))]), 30);
     assert!(doc.nodes().any(|n| n.name == "Card"));
     assert!(!doc.nodes().any(|n| n.name == "Icon main"));
