@@ -366,6 +366,9 @@ impl Store {
     /// `None` when someone else holds the directory.
     pub fn try_open(root: &Path, cfg: StoreConfig) -> Result<Option<Store>, String> {
         let Some(lock) = lock(root)? else { return Ok(None) };
+        for name in [KEY, BLOCKED, REPORTS] {
+            let _ = fs::remove_file(disk::temp_of(&root.join(name)));
+        }
         let key = load_key(root)?;
         let dir = root.join(FILES);
         fs::create_dir_all(&dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
@@ -446,10 +449,18 @@ impl Store {
     /// A file folder's description and links, after checking its snapshot and log. Leftover
     /// temporary files (writes cut short) are removed.
     fn check(&self, path: &Path) -> Result<Entry, String> {
-        for name in [SNAPSHOT, LOG, META, LINKS] {
+        for name in [SNAPSHOT, LOG, META, LINKS, USAGE] {
             let tmp = disk::temp_of(&path.join(name));
             if tmp.exists() {
                 let _ = fs::remove_file(&tmp);
+            }
+        }
+        if let Ok(entries) = fs::read_dir(path) {
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if name.starts_with("library-") && name.ends_with(".bin.tmp") {
+                    let _ = fs::remove_file(e.path());
+                }
             }
         }
         let meta: Meta = serde_json::from_slice(&disk::read_capped(&path.join(META), 1 << 20)?).map_err(|e| format!("{META} is damaged ({e})"))?;

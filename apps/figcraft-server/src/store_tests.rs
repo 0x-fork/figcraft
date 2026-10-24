@@ -418,3 +418,30 @@ fn a_maxed_out_generation_does_not_wrap() {
     let snap = disk::check_snapshot(&fs::read(path.join(SNAPSHOT)).unwrap()).unwrap();
     assert_eq!(snap, u64::MAX);
 }
+}
+
+#[test]
+fn every_leftover_temporary_file_is_removed_at_startup() {
+    let dir = TempDir::new("leftovers");
+    let id = {
+        let mut store = Store::open(dir.path(), cfg(dir.path())).unwrap();
+        let id = publish(&mut store, "A").0;
+        store.flush();
+        id
+    };
+    let folder = dir.path().join(FILES).join(&id);
+    let leftovers = [
+        dir.path().join("blocked.json.tmp"),
+        dir.path().join("reports.json.tmp"),
+        dir.path().join("server.key.tmp"),
+        folder.join("usage.json.tmp"),
+        folder.join("library-1.bin.tmp"),
+    ];
+    for path in &leftovers {
+        fs::write(path, b"half").unwrap();
+    }
+    let _store = Store::open(dir.path(), cfg(dir.path())).unwrap();
+    for path in &leftovers {
+        assert!(!path.exists(), "leftover not cleaned at startup: {}", path.display());
+    }
+}
