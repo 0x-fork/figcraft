@@ -773,6 +773,14 @@ most when it can't be reached).
   moves the chosen variant there, `{name, index}` reorders variant properties (the variants'
   names follow). `component.properties` on a set reports `conflicts`: variants sharing one
   combination of values.
+- **Boolean properties**: on the main component, a boolean property's value is the visibility of
+  the layers bound to it. `component.addProperty {type: "boolean", default, layer}`,
+  `component.bindProperty {field: "visible"}` and `component.editProperty {name, default}` show or
+  hide the main's bound layers to match the default (without `default`, `addProperty` takes the
+  bound layer's visibility). Showing or hiding a bound layer on the main sets the default, and the
+  property's other bound layers (in every variant of a set) follow. New instances start from the
+  default; existing instances keep the values they have. Files open as saved: a main whose bound
+  layer disagrees with the default stays that way until one of them is edited.
 - `component.pushChanges {id?}` copies the instance's overrides into its main (from a layer of a
   nested instance too: always into the outer instance's main).
 
