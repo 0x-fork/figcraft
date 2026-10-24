@@ -34,9 +34,9 @@ fonts built into FigCraft, for renders that match on every machine. Otherwise in
 indexed the first time text is laid out, as in the app.
 
 Files: .figcraft (native), .json (FigCraft or REST API file JSON), .fig (best effort; `info` lists what
-wasn't imported), .svg, .png/.jpg/.webp/.gif/.bmp (open as an image layer). `export` writes one file
-per top-level frame into the <out> directory, or one file when <out> has an image extension or --node
-is given (`fig`, or an <out> ending in .fig: the whole file as .fig, experimental; other apps may
+wasn't imported), .sketch (Sketch 48 or newer, best effort), .svg, .png/.jpg/.webp/.gif/.bmp (open as an
+image layer). `export` writes one file per top-level frame into the <out> directory, or one file when
+<out> has an image extension or --node is given (`fig`, or an <out> ending in .fig: the whole file as .fig, experimental; other apps may
 not open every file); PDFs take print options (a bleed like 3mm or 0.125in,
 crop and bleed marks, CMYK colour). `run` executes a JSON array (or JSON lines) of
 {\"command\": id, \"params\": {...}} in a headless session and prints one JSON result line per step.
