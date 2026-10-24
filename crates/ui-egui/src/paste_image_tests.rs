@@ -196,7 +196,10 @@ fn cmd_v_fills_a_selected_oval_without_adding_a_layer() {
     let node = doc.node(oval).unwrap();
     assert_eq!(doc.node_count(), before);
     assert!(matches!(node.kind, figcraft_doc::NodeKind::Ellipse { .. }));
-    assert!(matches!(node.fills[0].kind, figcraft_color::PaintKind::Image(_)));
+    // Added on top: the oval's own fill stays under it.
+    assert_eq!(node.fills.len(), original_fill.len() + 1);
+    assert_eq!(node.fills[..original_fill.len()], original_fill[..]);
+    assert!(matches!(node.fills.last().unwrap().kind, figcraft_color::PaintKind::Image(_)));
     assert_eq!((node.width, node.height), (120.0, 80.0));
     assert_eq!(w.app.session.selection(), vec![oval]);
     let png = figcraft_engine::cmd::file::export_bytes(doc, &[oval], figcraft_doc::ExportFormat::Png, 1.0).unwrap();
@@ -209,7 +212,7 @@ fn cmd_v_fills_a_selected_oval_without_adding_a_layer() {
 }
 
 #[test]
-fn pasting_an_image_detaches_the_replaced_fill_variable() {
+fn pasting_an_image_keeps_the_other_fills_variables() {
     let mut w = Win::new();
     let oval =
         NodeId(w.app.session.execute("shape.ellipse", &json!({"x": 200, "y": 100, "width": 120, "height": 80})).unwrap()["id"].as_u64().unwrap());
@@ -221,12 +224,14 @@ fn pasting_an_image_detaches_the_replaced_fill_variable() {
     w.copy_image_elsewhere();
     w.cmd_v(CMD);
     let node = w.app.session.doc().unwrap().node(oval).unwrap();
-    assert!(matches!(node.fills[0].kind, figcraft_color::PaintKind::Image(_)));
-    assert!(node.bound.is_empty(), "the old colour variable must not remain on the image fill");
+    assert!(matches!(node.fills.last().unwrap().kind, figcraft_color::PaintKind::Image(_)));
+    assert!(matches!(node.fills[0].kind, figcraft_color::PaintKind::Solid { .. }));
+    assert!(!node.bound.is_empty(), "the colour fill under the image keeps its variable");
 }
 
+/// An image layer copied in FigCraft pastes as a layer, a selected shape or not.
 #[test]
-fn cmd_v_fills_a_selected_oval_with_an_image_copied_in_figcraft() {
+fn an_image_layer_copied_in_figcraft_pastes_as_a_layer() {
     let mut w = Win::new();
     w.copy_image_elsewhere();
     w.cmd_v(CMD);
@@ -235,14 +240,15 @@ fn cmd_v_fills_a_selected_oval_with_an_image_copied_in_figcraft() {
 
     let oval =
         NodeId(w.app.session.execute("shape.ellipse", &json!({"x": 200, "y": 100, "width": 120, "height": 80})).unwrap()["id"].as_u64().unwrap());
+    let fills = w.app.session.doc().unwrap().node(oval).unwrap().fills.clone();
     let before = w.app.session.doc().unwrap().node_count();
     w.cmd_v(CMD);
 
     let doc = w.app.session.doc().unwrap();
-    assert_eq!(doc.node_count(), before);
+    assert_eq!(doc.node_count(), before + 1);
     assert!(doc.contains(source));
-    assert!(matches!(doc.node(oval).unwrap().fills[0].kind, figcraft_color::PaintKind::Image(_)));
-    assert_eq!(w.app.session.selection(), vec![oval]);
+    assert_eq!(doc.node(oval).unwrap().fills, fills);
+    assert_ne!(w.app.session.selection(), vec![oval]);
 }
 
 #[test]

@@ -83,7 +83,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "image.place",
             "Place image",
-            "{data (base64) | path, x?, y?, width?, height?, parent?, target? (an existing shape to fill instead of making a layer), mode? (fill|fit|crop|tile)} → {id, image, width, height, imageProfile (its embedded colour profile; null: taken as sRGB)}",
+            "{data (base64) | path, x?, y?, width?, height?, parent?, target? (an existing layer: the image is added on top of its fills instead of making a layer), mode? (fill|fit|crop|tile)} → {id, image, width, height, imageProfile (its embedded colour profile; null: taken as sRGB)}",
             true,
             place_image
         ),
@@ -378,10 +378,10 @@ pub fn accepts_image_fill(kind: &NodeKind) -> bool {
     kind.is_shape() || kind.is_frame_like() || matches!(kind, NodeKind::Text(_) | NodeKind::BooleanOp { .. })
 }
 
-/// Replace the fill list and detach variable bindings on paints that the image replaces.
-pub(crate) fn replace_with_image_fill(node: &mut Node, image: String, mode: ImageScaleMode) {
-    node.fills = vec![Paint::image(image, mode)];
-    node.bound.retain(|key, _| !matches!(super::lists::list_binding(key), Some((super::lists::BoundList::Fills, _, _))));
+/// Add an image fill on top of the layer's fills: the others keep their place and variable
+/// bindings; a linked fill style no longer describes the list, so the link goes.
+fn add_image_fill(node: &mut Node, image: String, mode: ImageScaleMode) {
+    node.fills.push(Paint::image(image, mode));
     node.styles.fill = None;
 }
 
@@ -415,7 +415,7 @@ pub fn place_image(s: &mut Session, p: &Value) -> Result<Value> {
         let (hash, _, _) = figcraft_format::add_image(doc, bytes).map_err(|e| bad(cmd, e.to_string()))?;
         let profile = figcraft_render::images::profile_name(&hash, doc.images.get(&hash));
         let node = doc.get_mut(id)?;
-        replace_with_image_fill(node, hash.clone(), mode);
+        add_image_fill(node, hash.clone(), mode);
         return Ok(json!({"id": id, "image": hash, "width": node.width, "height": node.height, "imageProfile": profile}));
     }
     let page = s.page()?;
