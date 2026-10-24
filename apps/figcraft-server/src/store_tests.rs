@@ -313,3 +313,54 @@ fn edits_confirmed_after_a_compaction_cut_short_survive_a_restart() {
     let name = page_name(&restored);
     assert!(at(&name) >= at(&confirmed), "restored {name:?}, confirmed {confirmed:?}");
 }
+
+#[test]
+fn a_log_that_cant_be_read_is_never_overwritten() {
+    let dir = TempDir::new("unreadlog");
+    let c = StoreConfig { compact_after: 1000, ..cfg(dir.path()) };
+    let log_path = dir.path().join(FILES);
+    let last = "Confirmed page name number 39 with some padding";
+    let id = {
+        let mut store = Store::open(dir.path(), c.clone()).unwrap();
+        let (id, _, _) = publish(&mut store, "Busy");
+        let mut server = store.open(&id).unwrap();
+        let mut a = join(&mut server, Access::Edit);
+        store.changed(&id, &mut server);
+        for i in 0..40 {
+            rename(&mut server, &mut a, &format!("Confirmed page name number {i} with some padding"));
+            store.changed(&id, &mut server);
+        }
+        assert!(store.flush().is_empty());
+        id
+    };
+    let log_path = log_path.join(&id).join(LOG);
+    let before = fs::read(&log_path).unwrap();
+    // The cap lowered just under the log: it can't be read now, but it must still be there after.
+    let lowered = StoreConfig { max_file_bytes: before.len() as u64 - 1, ..c.clone() };
+    {
+        let mut store = Store::open(dir.path(), lowered).unwrap();
+        let opened = store.open(&id);
+        assert!(opened.is_err(), "the file isn't opened without its log");
+        assert!(!store.problems().is_empty(), "the problem is reported");
+        assert_eq!(fs::read(&log_path).unwrap(), before, "the log is left as it was");
+    }
+    let mut store = Store::open(dir.path(), c).unwrap();
+    let server = store.open(&id).unwrap();
+    assert_eq!(page_name(&server), last, "every confirmed edit comes back");
+}
+
+#[test]
+fn a_log_that_isnt_one_is_moved_aside() {
+    let dir = TempDir::new("badlog");
+    let mut store = Store::open(dir.path(), cfg(dir.path())).unwrap();
+    let (id, _, _) = publish(&mut store, "Busy");
+    let folder = dir.path().join(FILES).join(&id);
+    let junk = b"not a log at all, but maybe worth keeping".to_vec();
+    fs::write(folder.join(LOG), &junk).unwrap();
+    drop(store);
+    let mut store = Store::open(dir.path(), cfg(dir.path())).unwrap();
+    store.open(&id).unwrap();
+    assert!(store.problems().iter().any(|p| p.contains("moved aside")), "{:?}", store.problems());
+    let kept = fs::read_dir(&folder).unwrap().filter_map(|e| e.ok()).any(|e| fs::read(e.path()).is_ok_and(|b| b == junk));
+    assert!(kept, "the old log's bytes are kept beside the file");
+}
