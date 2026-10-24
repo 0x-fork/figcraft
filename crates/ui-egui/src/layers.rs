@@ -1080,7 +1080,10 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
         let (released, down) = ui.input(|i| (i.pointer.any_released(), i.pointer.primary_down()));
         if released {
             let (cmd, key) = if sw.lock { ("object.toggleLock", "locked") } else { ("object.toggleVisible", "visible") };
-            app.run(cmd, json!({"ids": sw.ids, key: if sw.lock { sw.on } else { !sw.on }}));
+            // A sweep started in the design can end after a switch to Dev Mode.
+            if !crate::menus::dev_mode_refuses(app, cmd) {
+                app.run(cmd, json!({"ids": sw.ids, key: if sw.lock { sw.on } else { !sw.on }}));
+            }
         }
         // A sweep whose release the panel never saw (it wasn't shown) is dropped.
         if released || !down {
@@ -1094,7 +1097,10 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             d.remove::<NodeId>(drag_id);
             d.remove::<(NodeId, f64)>(Id::new("layer_drag_hold"));
         });
-        if let (Some(_), Some((target, zone))) = (dragging, drop) {
+        // A drag started in the design can end after a switch to Dev Mode.
+        if let (Some(_), Some((target, zone))) = (dragging, drop)
+            && !crate::menus::dev_mode_refuses(app, "node.reparent")
+        {
             let ids = moving.clone();
             match zone {
                 0 => {

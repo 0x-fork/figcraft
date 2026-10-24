@@ -164,6 +164,31 @@ fn dev_mode_layers_panel_selects_and_expands_but_edits_nothing() {
     click(&mut u, ra);
     click(&mut u, ra);
     assert!(u.app.ui.rename.is_some_and(|r| r.id == a));
+    // A drag started in the design and dropped after switching to Dev Mode doesn't reorder either.
+    u.app.ui.rename = None;
+    rest(&mut u);
+    u.app.ui.toast = None;
+    let rf = u.row_at(f);
+    u.drag_to(ra, rf);
+    u.app.ui.right_tab = crate::RightTab::Inspect;
+    u.frame(vec![]);
+    u.button(rf, false);
+    rest(&mut u);
+    assert_eq!(order(&u), before, "not reordered after the switch");
+    assert!(u.app.ui.toast.as_ref().is_some_and(|(m, _)| m.contains("Shift+D")), "the drop says why");
+    // So does a sweep down the eye column.
+    u.app.ui.right_tab = crate::RightTab::Design;
+    rest(&mut u);
+    u.app.ui.toast = None;
+    let (ea, eb) = (Pos2::new(eye, u.row_at(a).y), Pos2::new(eye, u.row_at(b).y));
+    u.drag_to(ea, eb);
+    u.app.ui.right_tab = crate::RightTab::Inspect;
+    u.frame(vec![]);
+    u.button(eb, false);
+    rest(&mut u);
+    let doc = u.app.session.doc().unwrap();
+    assert!(doc.node(a).unwrap().visible && doc.node(b).unwrap().visible, "not hidden after the switch");
+    assert!(u.app.ui.toast.as_ref().is_some_and(|(m, _)| m.contains("Shift+D")), "the sweep says why");
 }
 
 #[test]
