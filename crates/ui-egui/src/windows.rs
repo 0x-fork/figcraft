@@ -248,7 +248,7 @@ fn exchange(app: &mut FigApp, p: &mut Pane) {
 /// file, at screen point `at` (else beside this window). Returns its id. With one window (the
 /// browser) or a screen reader running, a file opens as a tab here instead (and the error says so).
 pub fn open(app: &mut FigApp, ctx: &Context, index: Option<usize>, path: Option<&str>, at: Option<Pos2>) -> Result<u64, String> {
-    // shortcut: eframe 0.36 gives only the main window an AccessKit adapter, so other windows have
+    // shortcut: eframe 0.37 gives only the main window an AccessKit adapter, so other windows have
     // no screen-reader tree; while a screen reader runs files stay tabs here. Upgrade when eframe
     // adapts every viewport.
     let one = if ctx.embed_viewports() {

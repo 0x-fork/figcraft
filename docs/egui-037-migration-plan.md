@@ -1088,10 +1088,10 @@ agent/model/tool signature; contributor credit remains username-only (`@skylarta
     real evidence exists.
 12. **Lockfile resolution:** one egui family, one winit, one wgpu, one craft-window. If
     Cargo chooses two versions, stop and fix the pins rather than accepting a duplicate.
-13. **AccessKit per-viewport:** 0.37's eframe integrations initialize adapters per created viewport
-    in the inspected source; this may remove the 0.36 “main window only” limitation, but it has not
-    been exercised with a screen reader here. Keep the tab fallback until a real test says
-    otherwise.
+13. **AccessKit per-viewport:** the pinned 0.37 fork initializes the native AccessKit adapter only
+    for the root viewport; creating a secondary viewport does not initialize an adapter. The
+    “main window only” limitation remains, and no real screen-reader qualification is claimed.
+    Keep the tab fallback until secondary-window accessibility is implemented and tested.
 14. **Automation screenshot thread:** the callback must not write files outside `file_access`
     confinement. The shared completion-slot design in 6.3 is required, not optional.
 
