@@ -63,6 +63,7 @@ pub mod theme;
 pub mod toolbar;
 pub mod typography;
 pub mod ui_scale;
+pub mod updates_ui;
 pub mod variable_ui;
 pub mod variables_panel;
 pub mod vector_panel;
@@ -915,6 +916,8 @@ pub struct FigApp {
     ui_frame_stamp: Option<(egui::ViewportId, u64)>,
     /// IME owner/generation/change-cause state for the on-canvas text editor, per viewport.
     pub(crate) ime: egui::ime_context::ImeContextTracker,
+    /// The check for a newer release and its prompt (desktop; [`updates_ui`]).
+    pub(crate) updates_rt: updates_ui::Runtime,
     /// Test-only count of the one IME observation each viewport pass makes.
     #[cfg(test)]
     pub(crate) ime_observations: u32,
@@ -964,6 +967,7 @@ impl FigApp {
             logic_ticked: false,
             ui_frame_stamp: None,
             ime: egui::ime_context::ImeContextTracker::new(),
+            updates_rt: updates_ui::Runtime::default(),
             #[cfg(test)]
             ime_observations: 0,
         }
@@ -1633,6 +1637,7 @@ impl FigApp {
         let now = self.clock.now();
         self.autosave_tick(ctx, now);
         self.auto_save_tick(ctx, now);
+        updates_ui::tick(self, ctx);
         self.logic_ticked = true;
     }
 
@@ -1910,6 +1915,7 @@ impl FigApp {
             dialogs::keys(self, &ctx);
             present::show(self, ui);
             dialogs::show(self, &ctx);
+            updates_ui::show(self, &ctx);
             // What went wrong while presenting (a widget's plugin failing) shows over it.
             self.toast_ui(&ctx);
             windows::requests(self, &ctx);
@@ -1924,6 +1930,7 @@ impl FigApp {
             self.ui.shortcuts_panel = false;
             dialogs::keys(self, &ctx);
             dialogs::show(self, &ctx);
+            updates_ui::show(self, &ctx);
             self.toast_ui(&ctx);
             windows::requests(self, &ctx);
             shortcuts::clear_field_save_marker(&ctx);
@@ -2019,6 +2026,7 @@ impl FigApp {
         self.end_unwanted_text_preview(&ctx);
         self.end_pen_outside_design();
         dialogs::show(self, &ctx);
+        updates_ui::show(self, &ctx);
         self.toast_ui(&ctx);
         // A rename started after the layers panel drew (Cmd/Ctrl+R, a double-click) opens its field
         // next frame.
