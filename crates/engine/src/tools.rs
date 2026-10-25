@@ -2232,8 +2232,11 @@ impl Session {
         n.transform = pn.transform;
         n.constraints = pn.constraints;
         n.child_layout = pn.child_layout.clone();
-        n.effects = pn.effects.clone();
-        n.styles.effect = pn.styles.effect.clone();
+        let effects = !pn.effects.is_empty();
+        if effects {
+            n.effects = pn.effects.clone();
+            n.styles.effect = pn.styles.effect.clone();
+        }
         // A path drawn with a stroke only has no fill to give: the text gets the usual one.
         let filled = pn.fills.iter().any(|f| f.visible);
         if filled {
@@ -2242,7 +2245,12 @@ impl Session {
         } else if let Some(fills) = readable_text_fills(d, parent) {
             n.fills = fills;
         }
-        let carried = |k: &str| k.starts_with("effects/") || (filled && (k == "fill" || k.starts_with("fills/")));
+        // As `text.onPath`: a binding goes with the list it binds into (`fill`, `fills`, `fills/N/…`).
+        let carried = |k: &str| match crate::cmd::lists::list_binding(k) {
+            Some((crate::cmd::lists::BoundList::Fills, ..)) => filled,
+            Some((crate::cmd::lists::BoundList::Effects, ..)) => effects,
+            _ => false,
+        };
         n.bound = pn.bound.iter().filter(|(k, _)| carried(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
         if let NodeKind::Text(t) = &mut n.kind {
             let mut tp = TextPath::new(&geom);

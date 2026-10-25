@@ -351,3 +351,18 @@ fn a_pattern_of_itself_draws_nothing_instead_of_recursing() {
     assert!(figcraft_svg::export_svg(doc, &[r], &figcraft_svg::SvgOptions::default()).is_some());
     assert!(figcraft_pdf::export_nodes_pdf(doc, &[r]).is_ok());
 }
+
+#[test]
+fn the_text_on_a_path_tool_carries_a_fill_bound_through_fills() {
+    let mut s = Session::new();
+    let v = id(s.execute("vector.create", &json!({"path": "M0 0 L200 0", "x": 40, "y": 100, "props": {"fill": "#FF0000"}})).unwrap());
+    s.execute("variable.createCollection", &json!({"name": "Paint"})).unwrap();
+    s.execute("variable.create", &json!({"collection": "Paint", "name": "ink", "type": "color", "value": "#00FF00"})).unwrap();
+    s.execute("variable.bind", &json!({"ids": [v], "field": "fills", "variable": "ink"})).unwrap();
+    let bound = s.doc().unwrap().node(v).unwrap().bound.clone();
+    assert!(bound.contains_key("fills"));
+    s.set_tool(crate::tools::ToolId::TextOnPath);
+    click(&mut s, 90.0, 103.0);
+    let t = editing(&s).expect("typing starts on the path");
+    assert_eq!(s.doc().unwrap().node(t).unwrap().bound, bound, "the fill keeps following its variable");
+}
