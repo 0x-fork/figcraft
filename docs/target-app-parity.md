@@ -423,7 +423,7 @@ Hours in this narrative are the builders' estimates; the tables above supersede 
    presenter) and variables (the local variables JSON passed along, next to the file or embedded:
    collections, modes, aliases, scopes, layer bindings and explicit modes).
    Export panel: a row per export setting (typed or preset sizes like `2x` / `512w` / `512h`, PNG,
-   JPG, WebP, SVG and PDF, suffix, advanced options: contents only, include bounding box, and for
+   JPG, WebP, SVG and PDF, suffix, advanced options: ignore overlapping layers, include bounding box for text layers, and for
    SVG outline text, id attributes and simplified strokes), a preview, and "Export N layers" (`file.exportLayers`) in the
    panel and the Export dialog. Paste from other apps: images, SVG and text (the newest clipboard
    content wins over our own copy; pasted SVG lands centred in the view), and layers copied from
