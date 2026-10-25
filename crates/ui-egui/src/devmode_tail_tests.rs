@@ -432,3 +432,20 @@ fn dev_mode_assets_panel_accepts_no_library_updates() {
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_dir(&dir);
 }
+
+#[test]
+fn dev_mode_publishes_no_library() {
+    let mut s = Session::new();
+    s.execute("style.create", &json!({"type": "paint", "name": "Brand", "value": [{"type": "solid", "color": "#0D99FF"}]})).unwrap();
+    let mut u = crate::layers_drag_tests::Ui::new(s);
+    u.app.ui.left_tab = crate::LeftTab::Assets;
+    u.app.ui.libraries = true;
+    u.app.ui.right_tab = crate::RightTab::Inspect;
+    let s = crate::live_tests::flat(&u.frame_output(vec![]).shapes);
+    let at = crate::live_tests::text_center(&s, "Publish");
+    u.button(at, true);
+    u.button(at, false);
+    u.frame(vec![]);
+    assert!(u.app.session.doc().unwrap().published.is_none(), "Publish in Dev Mode publishes nothing");
+    assert!(u.app.ui.toast.as_ref().is_some_and(|(m, _)| m.contains("Shift+D")));
+}

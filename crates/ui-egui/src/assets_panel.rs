@@ -936,7 +936,10 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         None => {}
     }
     let params = (publish || to_server).then(|| json!({"description": form.description.clone().unwrap_or(description), "include": include}));
-    if publish && let Some(r) = params.clone().and_then(|p| app.run("library.publish", p)) {
+    if publish
+        && !crate::menus::dev_mode_refuses(app, "library.publish")
+        && let Some(r) = params.clone().and_then(|p| app.run("library.publish", p))
+    {
         form = PublishForm::default();
         // Other files read the saved file.
         app.save();
