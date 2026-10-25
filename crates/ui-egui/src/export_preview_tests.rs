@@ -33,6 +33,23 @@ fn a_slice_previews_the_content_under_it() {
     assert!(paints(&pix), "the rectangle under the slice shows");
 }
 
+/// The preview follows the slice's first export setting: with Ignore overlapping layers (contents
+/// only) on, a slice in a frame shows only the frame's content, as its export does.
+#[test]
+fn a_slice_in_a_frame_previews_only_the_frame() {
+    let mut s = Session::new();
+    let new = |s: &mut Session, p: Value| NodeId(s.execute("node.create", &p).unwrap()["id"].as_u64().unwrap());
+    let f = new(&mut s, json!({"type": "frame", "x": 0, "y": 0, "width": 200, "height": 100, "props": {"fills": []}}));
+    let slice = new(&mut s, json!({"type": "slice", "x": 0, "y": 0, "width": 200, "height": 100, "parent": f}));
+    new(&mut s, json!({"type": "rectangle", "x": 0, "y": 0, "width": 200, "height": 100}));
+    let pix = thumbnail_pixmap(s.doc().unwrap(), slice, 200.0).expect("the slice previews");
+    assert_eq!([pix.width(), pix.height()], [200, 100]);
+    assert!(!paints(&pix), "the rectangle on the page above the empty frame is left out");
+    s.execute("export.add", &json!({"ids": [slice], "setting": {"size": "1x", "contentsOnly": false}})).unwrap();
+    let pix = thumbnail_pixmap(s.doc().unwrap(), slice, 200.0).expect("the slice previews");
+    assert!(paints(&pix), "with the option off, the rectangle shows");
+}
+
 #[test]
 fn a_slice_with_nothing_under_it_is_blank() {
     let (doc, ids) = doc_after(&[("node.create", json!({"type": "slice", "x": 0, "y": 0, "width": 200, "height": 100}))]);
