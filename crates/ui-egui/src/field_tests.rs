@@ -872,148 +872,146 @@ fn a_prepared_field_save_cannot_commit_into_a_same_pass_replacement_document() {
     for route in ["control", "tab"] {
         for save_as in [false, true] {
             for discard in [false, true] {
-                let (mut u, a, _) = setup();
-                let dir = std::env::temp_dir().join(format!("figcraft-field-save-owner-{}-{route}-{save_as}-{discard}", std::process::id()));
-                std::fs::create_dir_all(&dir).unwrap();
-                let (path, other, copy) = (dir.join("a.figcraft"), dir.join("b.figcraft"), dir.join("copy.figcraft"));
-                u.app.session.execute("file.saveAs", &json!({"path": path.to_string_lossy()})).unwrap();
-                let owner = u.app.session.ds().unwrap().uid;
-                let owner_bytes = std::fs::read(&path).unwrap();
-                u.app.session.execute("file.new", &json!({"name": "Same-pass B"})).unwrap();
-                let b = id(u.app.session.execute("shape.rectangle", &json!({"x": 200, "y": 40, "width": 30, "height": 30})).unwrap());
-                u.app.session.execute("file.saveAs", &json!({"path": other.to_string_lossy()})).unwrap();
-                u.app.session.execute("shape.rectangle", &json!({"x": 300, "y": 0, "width": 10, "height": 10})).unwrap();
-                u.app.session.execute("select.set", &json!({"ids": [b]})).unwrap();
-                let other_index = u.app.session.active;
-                let other_uid = u.app.session.ds().unwrap().uid;
-                let other_name = u.app.session.doc().unwrap().name.clone();
-                let other_model = u.app.session.ds().unwrap().doc.clone();
-                let before_switch_revision = u.app.session.ds().unwrap().revision;
-                let other_history = u.app.session.undo_depth();
-                let other_selection = u.app.session.ds().unwrap().selection.clone();
-                let other_dirty = u.app.session.ds().unwrap().is_dirty();
-                let other_bytes = std::fs::read(&other).unwrap();
-                assert!(other_dirty, "B has independent unsaved content");
-                let owner_index = u.app.session.docs.iter().position(|d| d.uid == owner).unwrap();
-                u.app.session.execute("doc.switch", &json!({"index": owner_index})).unwrap();
-                // Every command bumps the outgoing document's revision, even a nonediting switch.
-                let other_revision = u.app.session.docs.iter().find(|d| d.uid == other_uid).unwrap().revision;
-                assert_eq!(other_revision, before_switch_revision + 1, "the setup switch advances only B's command revision");
-                let asked = std::rc::Rc::new(std::cell::Cell::new(0));
-                u.app.services = Box::new(SaveAsPicker { path: Some(copy.clone()), asked: asked.clone() });
-                let output = u.frame_output(vec![]);
-                let nodes = output.platform_output.accesskit_update.unwrap().nodes;
-                let tab = nodes
-                    .iter()
-                    .map(|(_, node)| node)
-                    .find(|node| node.role() == Role::Tab && node.label() == Some(other_name.as_str()))
-                    .expect("the actual B tab");
-                let bounds = tab.bounds().unwrap();
-                let tab_at = pos2(((bounds.x0 + bounds.x1) / 2.0) as f32, ((bounds.y0 + bounds.y1) / 2.0) as f32);
-                let (at, _) = field(&mut u, "X");
-                click(&mut u, at);
-                assert_eq!(u.ctx.memory(|m| m.focused()), Some(Id::unique("pos_x").with("te")));
-                assert!(u.ctx.text_edit_focused());
-                u.frame(vec![Event::Text("77".into())]);
-                assert_eq!(u.ctx.data(|d| d.get_temp::<String>(Id::unique("pos_x").with("editing"))), Some("77".into()));
-                assert_eq!(geom(&u, a).0, 10.0, "A's raw draft is not committed yet");
-                assert_eq!(u.app.session.ds().unwrap().uid, owner, "the save begins with A presented");
-                let reply = if route == "control" {
-                    let (reply, rx) = std::sync::mpsc::channel();
-                    u.app.control_queue.push(crate::ControlRequest {
-                        id: json!("same-pass-switch"),
-                        method: "engine.execute".into(),
-                        params: json!({"command": "doc.switch", "params": {"index": other_index}, "window": 0}),
-                        reply,
-                        cancelled: Default::default(),
-                    });
-                    Some(rx)
-                } else {
-                    None
-                };
-                let mut modifiers = if cfg!(target_os = "macos") { Modifiers::COMMAND } else { Modifiers::COMMAND.plus(Modifiers::CTRL) };
-                if save_as {
-                    modifiers = modifiers.plus(Modifiers::SHIFT);
-                }
-                let mut events = vec![
-                    Event::Key { key: Key::S, physical_key: Some(Key::S), pressed: true, repeat: false, modifiers },
-                    Event::Key { key: Key::S, physical_key: Some(Key::S), pressed: false, repeat: false, modifiers },
-                ];
-                if route == "tab" {
-                    events.push(Event::PointerMoved(tab_at));
-                    for pressed in [true, false] {
-                        events.push(Event::PointerButton {
-                            pos: tab_at,
-                            button: egui::PointerButton::Primary,
-                            pressed,
-                            modifiers: Default::default(),
-                        });
-                    }
-                }
-                if discard {
-                    events.insert(0, Event::ModifiersChanged(modifiers));
-                    u.frame_raw_with_discard(egui::RawInput { events, ..Default::default() });
-                } else {
-                    u.frame_with(events, modifiers);
-                }
-                if let Some(reply) = reply {
-                    let reply = reply.try_recv().expect("real control::drain acknowledged doc.switch in this pass");
-                    assert!(reply.result.is_ok(), "{:?}", reply.result);
-                }
-                let unchanged = |u: &Ui| {
-                    assert_eq!(u.app.session.ds().unwrap().uid, other_uid, "the real same-pass route presents B");
-                    assert_eq!(
-                        geom(u, b),
-                        (200.0, 40.0, 30.0, 30.0),
-                        "A's draft cannot enter B's field: route={route}, save_as={save_as}, discard={discard}"
-                    );
-                    assert!(std::sync::Arc::ptr_eq(&u.app.session.ds().unwrap().doc, &other_model), "B's model is untouched");
-                    assert_eq!(u.app.session.ds().unwrap().revision, other_revision);
-                    assert_eq!(u.app.session.undo_depth(), other_history, "B's undo/redo history is unchanged");
-                    assert_eq!(u.app.session.ds().unwrap().selection, other_selection);
-                    assert_eq!(u.app.session.ds().unwrap().is_dirty(), other_dirty);
-                    assert_eq!(std::fs::read(&other).unwrap(), other_bytes);
-                    assert_eq!(std::fs::read(&path).unwrap(), owner_bytes);
-                    assert_eq!(u.app.session.docs.iter().find(|d| d.uid == owner).unwrap().doc.world_bounds(a).unwrap().x0, 10.0);
-                    assert_eq!(asked.get(), 0, "the cancelled request never asks for a path");
-                    assert!(!copy.exists());
-                    assert!(u.app.ui.after_field.is_none(), "cancel before late fallback or queueing");
-                };
-                unchanged(&u);
-                for _ in 0..3 {
-                    u.frame(vec![]);
-                    unchanged(&u);
-                }
-                // A cancelled draft is not a permanent veto: B accepts a later real field edit
-                // and saves its own value through the same focused-field shortcut path.
-                let (at, _) = field(&mut u, "X");
-                click(&mut u, at);
-                assert_eq!(u.ctx.memory(|m| m.focused()), Some(Id::unique("pos_x").with("te")));
-                u.frame(vec![Event::Text("88".into())]);
-                assert_eq!(geom(&u, b).0, 200.0, "fresh B text still waits for a normal commit");
-                assert_eq!(u.ctx.data(|d| d.get_temp::<String>(Id::unique("pos_x").with("editing"))), Some("88".into()));
-                u.frame_with(
-                    vec![
-                        Event::Key { key: Key::S, physical_key: Some(Key::S), pressed: true, repeat: false, modifiers },
-                        Event::Key { key: Key::S, physical_key: Some(Key::S), pressed: false, repeat: false, modifiers },
-                    ],
-                    modifiers,
-                );
-                assert_eq!(geom(&u, b).0, 88.0, "a fresh B field commits normally");
-                assert!(u.app.ui.after_field.is_some());
-                for _ in 0..3 {
-                    u.frame(vec![]);
-                }
-                assert_eq!(u.app.session.ds().unwrap().uid, other_uid);
-                assert_eq!(saved_x(if save_as { &copy } else { &other }, b), 88.0, "a later valid save belongs to B");
-                if save_as {
-                    assert_eq!(std::fs::read(&other).unwrap(), other_bytes);
-                }
-                assert_eq!(std::fs::read(&path).unwrap(), owner_bytes, "A stays unsaved");
-                assert_eq!(asked.get(), usize::from(save_as));
-                assert!(u.app.ui.after_field.is_none());
-                std::fs::remove_dir_all(&dir).ok();
+                prepared_save_cannot_enter_a_replacement(route, save_as, discard);
             }
         }
     }
+}
+
+/// One route/save-as/discard combination of the same-pass replacement test: a save prepared for A
+/// must not commit A's cached X editor into B when routing presents B before the fields draw,
+/// even though both panels use the same widget ID.
+fn prepared_save_cannot_enter_a_replacement(route: &str, save_as: bool, discard: bool) {
+    let (mut u, a, _) = setup();
+    let dir = std::env::temp_dir().join(format!("figcraft-field-save-owner-{}-{route}-{save_as}-{discard}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (path, other, copy) = (dir.join("a.figcraft"), dir.join("b.figcraft"), dir.join("copy.figcraft"));
+    u.app.session.execute("file.saveAs", &json!({"path": path.to_string_lossy()})).unwrap();
+    let owner = u.app.session.ds().unwrap().uid;
+    let owner_bytes = std::fs::read(&path).unwrap();
+    u.app.session.execute("file.new", &json!({"name": "Same-pass B"})).unwrap();
+    let b = id(u.app.session.execute("shape.rectangle", &json!({"x": 200, "y": 40, "width": 30, "height": 30})).unwrap());
+    u.app.session.execute("file.saveAs", &json!({"path": other.to_string_lossy()})).unwrap();
+    u.app.session.execute("shape.rectangle", &json!({"x": 300, "y": 0, "width": 10, "height": 10})).unwrap();
+    u.app.session.execute("select.set", &json!({"ids": [b]})).unwrap();
+    let other_index = u.app.session.active;
+    let other_uid = u.app.session.ds().unwrap().uid;
+    let other_name = u.app.session.doc().unwrap().name.clone();
+    let other_model = u.app.session.ds().unwrap().doc.clone();
+    let before_switch_revision = u.app.session.ds().unwrap().revision;
+    let other_history = u.app.session.undo_depth();
+    let other_selection = u.app.session.ds().unwrap().selection.clone();
+    let other_dirty = u.app.session.ds().unwrap().is_dirty();
+    let other_bytes = std::fs::read(&other).unwrap();
+    assert!(other_dirty, "B has independent unsaved content");
+    let owner_index = u.app.session.docs.iter().position(|d| d.uid == owner).unwrap();
+    u.app.session.execute("doc.switch", &json!({"index": owner_index})).unwrap();
+    // Every command bumps the outgoing document's revision, even a nonediting switch.
+    let other_revision = u.app.session.docs.iter().find(|d| d.uid == other_uid).unwrap().revision;
+    assert_eq!(other_revision, before_switch_revision + 1, "the setup switch advances only B's command revision");
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    u.app.services = Box::new(SaveAsPicker { path: Some(copy.clone()), asked: asked.clone() });
+    let output = u.frame_output(vec![]);
+    let nodes = output.platform_output.accesskit_update.unwrap().nodes;
+    let tab = nodes
+        .iter()
+        .map(|(_, node)| node)
+        .find(|node| node.role() == Role::Tab && node.label() == Some(other_name.as_str()))
+        .expect("the actual B tab");
+    let bounds = tab.bounds().unwrap();
+    let tab_at = pos2(((bounds.x0 + bounds.x1) / 2.0) as f32, ((bounds.y0 + bounds.y1) / 2.0) as f32);
+    let (at, _) = field(&mut u, "X");
+    click(&mut u, at);
+    assert_eq!(u.ctx.memory(|m| m.focused()), Some(Id::unique("pos_x").with("te")));
+    assert!(u.ctx.text_edit_focused());
+    u.frame(vec![Event::Text("77".into())]);
+    assert_eq!(u.ctx.data(|d| d.get_temp::<String>(Id::unique("pos_x").with("editing"))), Some("77".into()));
+    assert_eq!(geom(&u, a).0, 10.0, "A's raw draft is not committed yet");
+    assert_eq!(u.app.session.ds().unwrap().uid, owner, "the save begins with A presented");
+    let reply = if route == "control" {
+        let (reply, rx) = std::sync::mpsc::channel();
+        u.app.control_queue.push(crate::ControlRequest {
+            id: json!("same-pass-switch"),
+            method: "engine.execute".into(),
+            params: json!({"command": "doc.switch", "params": {"index": other_index}, "window": 0}),
+            reply,
+            cancelled: Default::default(),
+        });
+        Some(rx)
+    } else {
+        None
+    };
+    let mut modifiers = if cfg!(target_os = "macos") { Modifiers::COMMAND } else { Modifiers::COMMAND.plus(Modifiers::CTRL) };
+    if save_as {
+        modifiers = modifiers.plus(Modifiers::SHIFT);
+    }
+    let mut events = vec![
+        Event::Key { key: Key::S, physical_key: Some(Key::S), pressed: true, repeat: false, modifiers },
+        Event::Key { key: Key::S, physical_key: Some(Key::S), pressed: false, repeat: false, modifiers },
+    ];
+    if route == "tab" {
+        events.push(Event::PointerMoved(tab_at));
+        for pressed in [true, false] {
+            events.push(Event::PointerButton { pos: tab_at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() });
+        }
+    }
+    if discard {
+        events.insert(0, Event::ModifiersChanged(modifiers));
+        u.frame_raw_with_discard(egui::RawInput { events, ..Default::default() });
+    } else {
+        u.frame_with(events, modifiers);
+    }
+    if let Some(reply) = reply {
+        let reply = reply.try_recv().expect("real control::drain acknowledged doc.switch in this pass");
+        assert!(reply.result.is_ok(), "{:?}", reply.result);
+    }
+    let unchanged = |u: &Ui| {
+        assert_eq!(u.app.session.ds().unwrap().uid, other_uid, "the real same-pass route presents B");
+        assert_eq!(geom(u, b), (200.0, 40.0, 30.0, 30.0), "A's draft cannot enter B's field: route={route}, save_as={save_as}, discard={discard}");
+        assert!(std::sync::Arc::ptr_eq(&u.app.session.ds().unwrap().doc, &other_model), "B's model is untouched");
+        assert_eq!(u.app.session.ds().unwrap().revision, other_revision);
+        assert_eq!(u.app.session.undo_depth(), other_history, "B's undo/redo history is unchanged");
+        assert_eq!(u.app.session.ds().unwrap().selection, other_selection);
+        assert_eq!(u.app.session.ds().unwrap().is_dirty(), other_dirty);
+        assert_eq!(std::fs::read(&other).unwrap(), other_bytes);
+        assert_eq!(std::fs::read(&path).unwrap(), owner_bytes);
+        assert_eq!(u.app.session.docs.iter().find(|d| d.uid == owner).unwrap().doc.world_bounds(a).unwrap().x0, 10.0);
+        assert_eq!(asked.get(), 0, "the cancelled request never asks for a path");
+        assert!(!copy.exists());
+        assert!(u.app.ui.after_field.is_none(), "cancel before late fallback or queueing");
+    };
+    unchanged(&u);
+    for _ in 0..3 {
+        u.frame(vec![]);
+        unchanged(&u);
+    }
+    // A cancelled draft is not a permanent veto: B accepts a later real field edit
+    // and saves its own value through the same focused-field shortcut path.
+    let (at, _) = field(&mut u, "X");
+    click(&mut u, at);
+    assert_eq!(u.ctx.memory(|m| m.focused()), Some(Id::unique("pos_x").with("te")));
+    u.frame(vec![Event::Text("88".into())]);
+    assert_eq!(geom(&u, b).0, 200.0, "fresh B text still waits for a normal commit");
+    assert_eq!(u.ctx.data(|d| d.get_temp::<String>(Id::unique("pos_x").with("editing"))), Some("88".into()));
+    u.frame_with(
+        vec![
+            Event::Key { key: Key::S, physical_key: Some(Key::S), pressed: true, repeat: false, modifiers },
+            Event::Key { key: Key::S, physical_key: Some(Key::S), pressed: false, repeat: false, modifiers },
+        ],
+        modifiers,
+    );
+    assert_eq!(geom(&u, b).0, 88.0, "a fresh B field commits normally");
+    assert!(u.app.ui.after_field.is_some());
+    for _ in 0..3 {
+        u.frame(vec![]);
+    }
+    assert_eq!(u.app.session.ds().unwrap().uid, other_uid);
+    assert_eq!(saved_x(if save_as { &copy } else { &other }, b), 88.0, "a later valid save belongs to B");
+    if save_as {
+        assert_eq!(std::fs::read(&other).unwrap(), other_bytes);
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), owner_bytes, "A stays unsaved");
+    assert_eq!(asked.get(), usize::from(save_as));
+    assert!(u.app.ui.after_field.is_none());
+    std::fs::remove_dir_all(&dir).ok();
 }

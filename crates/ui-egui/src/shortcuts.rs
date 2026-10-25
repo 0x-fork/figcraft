@@ -674,153 +674,185 @@ fn text_keys(app: &mut FigApp, ctx: &Context, events: &[Event], ime_input: Optio
         }
         match ev {
             Event::Text(t) => {
-                if skip_text {
-                    skip_text = false;
-                    continue;
-                }
-                let before = ime_stamp(app);
-                if let Err(e) = figcraft_engine::textedit::insert(&mut app.session, t) {
-                    app.toast(e.to_string());
-                }
-                if ime_stamp(app) != before {
-                    note_ime_application_change(app, ctx);
+                if !std::mem::take(&mut skip_text) {
+                    insert_text(app, ctx, t);
                 }
             }
-            // An accepted IME commit earns an explicit receipt only around the exact mutation.
-            // List AutoFormat inside the same command is an application transformation.
-            Event::Ime(egui::ImeEvent::Commit(t)) => {
-                let before = ime_stamp(app);
-                match figcraft_engine::textedit::insert_ime_commit(&mut app.session, t) {
-                    Ok(ImeInsertion::Plain) => ime_receipt(app, ctx, before),
-                    Ok(ImeInsertion::Transformed) => note_ime_application_change(app, ctx),
-                    Ok(ImeInsertion::Nothing) => {}
-                    Err(e) => app.toast(e.to_string()),
-                }
-            }
-            // The composition shows inline at the caret; the document gets it on Commit.
-            Event::Ime(egui::ImeEvent::Preedit { text, active_range_chars }) => {
-                let cursor = active_range_chars.as_ref().map(|r| r.start);
-                if let Err(e) = figcraft_engine::textedit::preedit(&mut app.session, text, cursor) {
-                    app.toast(e.to_string());
-                }
-            }
-            // An IME replacing text around the caret (0.37's incoming byte-counted deletion)
-            // deletes it before the paired Commit inserts the replacement.
-            Event::Ime(egui::ImeEvent::DeleteSurroundingBytes { before_bytes, after_bytes }) => {
-                let before = ime_stamp(app);
-                match figcraft_engine::textedit::delete_surrounding_bytes(&mut app.session, *before_bytes, *after_bytes) {
-                    Ok(true) => ime_receipt(app, ctx, before),
-                    Ok(false) => {}
-                    Err(e) => app.toast(e.to_string()),
-                }
-            }
-            Event::Ime(egui::ImeEvent::DeleteSurrounding { before_chars, after_chars }) => {
-                let before = ime_stamp(app);
-                match figcraft_engine::textedit::delete_surrounding_chars(&mut app.session, *before_chars, *after_chars) {
-                    Ok(true) => ime_receipt(app, ctx, before),
-                    Ok(false) => {}
-                    Err(e) => app.toast(e.to_string()),
-                }
-            }
-            Event::Paste(t) => {
-                // Plain text only: the engine normalises line endings and drops control chars.
-                let before = ime_stamp(app);
-                if let Err(e) = figcraft_engine::textedit::insert(&mut app.session, t) {
-                    app.toast(e.to_string());
-                }
-                if ime_stamp(app) != before {
-                    note_ime_application_change(app, ctx);
-                }
-            }
-            Event::Copy | Event::Cut => {
-                let before = ime_stamp(app);
-                let selected = figcraft_engine::textedit::selected_text(&app.session).filter(|t| !t.is_empty());
-                // Input injected through the control channel must never read or replace the user's
-                // system clipboard. It may still edit the document: a synthetic Cut deletes the
-                // selection exactly like a user's Cut; only the OS clipboard write is fenced.
-                if !app.control_synthetic
-                    && let Some(text) = &selected
-                {
-                    app.clipboard_set_text(text);
-                }
-                if matches!(ev, Event::Cut) && selected.is_some() {
-                    let _ = figcraft_engine::textedit::key(&mut app.session, "Delete", false, false, false);
-                }
-                if ime_stamp(app) != before {
-                    note_ime_application_change(app, ctx);
-                }
-            }
-            Event::Key { key, physical_key, pressed: true, modifiers: m, .. } => {
-                // Keys during a composition are the IME's (Enter picks a candidate, Escape cancels).
-                if app.session.ds().is_ok_and(|d| d.text_edit.as_ref().is_some_and(|te| te.preedit.is_some())) {
-                    continue;
-                }
-                if m.command || m.alt || m.ctrl {
-                    let before = ime_stamp(app);
-                    if text_shortcut(app, *key, *physical_key, *m) {
-                        // A text shortcut that changed the committed text/selection (a list,
-                        // Bold, alignment) is an application edit; Save and friends are not.
-                        if ime_stamp(app) != before {
-                            note_ime_application_change(app, ctx);
-                        }
-                        skip_text = true;
-                        continue;
-                    }
-                }
-                let name = match key {
-                    Key::Backspace => "Backspace",
-                    Key::Delete => "Delete",
-                    Key::ArrowLeft => "Left",
-                    Key::ArrowRight => "Right",
-                    Key::ArrowUp => "Up",
-                    Key::ArrowDown => "Down",
-                    Key::Home => "Home",
-                    Key::End => "End",
-                    Key::Enter => "Enter",
-                    Key::Escape => "Escape",
-                    Key::Tab => "Tab",
-                    Key::A if m.command => "SelectAll",
-                    Key::Z if m.command => {
-                        note_ime_application_change(app, ctx);
-                        let _ = figcraft_engine::textedit::end(&mut app.session);
-                        app.run(if m.shift { "edit.redo" } else { "edit.undo" }, json!({}));
-                        continue;
-                    }
-                    _ => continue,
-                };
-                if name == "Enter" && m.command {
-                    let _ = figcraft_engine::textedit::end(&mut app.session);
-                    continue;
-                }
-                let before = ime_stamp(app);
-                let (word, line) = keymap::text_motion(platform(), name, mods(*m));
-                if let Err(e) = figcraft_engine::textedit::key(&mut app.session, name, m.shift, word, line) {
-                    app.toast(e.to_string());
-                }
-                if ime_stamp(app) != before {
-                    note_ime_application_change(app, ctx);
-                }
+            Event::Ime(ime) => ime_event(app, ctx, ime),
+            Event::Paste(t) => insert_text(app, ctx, t),
+            Event::Copy => copy_or_cut(app, ctx, false),
+            Event::Cut => copy_or_cut(app, ctx, true),
+            Event::Key { key, physical_key, pressed: true, modifiers: m, .. } if text_key_event(app, ctx, *key, *physical_key, *m) => {
+                skip_text = true;
             }
             _ => {}
         }
     }
     // Triple-click on the edited text selects its line (double-click is handled by the engine).
-    if ctx.input(|i| i.pointer.button_triple_clicked(egui::PointerButton::Primary))
-        && let Some(pos) = ctx.input(|i| i.pointer.interact_pos())
-        && app.canvas.rect.contains(pos)
-        && let Some(te) = app.session.ds().ok().and_then(|d| d.text_edit.clone())
-    {
-        let p = app.to_page(pos);
-        let inside = app.session.doc().ok().and_then(|d| d.world_bounds(te.id)).is_some_and(|b| b.contains(p));
-        if inside && let Ok(idx) = app.session.text_index_at(te.id, p) {
+    triple_click_line(app, ctx);
+    app.sync_preedit();
+}
+
+/// Insert plain text (the engine normalises line endings and drops control chars) into the edit,
+/// noting the application change the mutation caused.
+fn insert_text(app: &mut FigApp, ctx: &Context, t: &str) {
+    let before = ime_stamp(app);
+    if let Err(e) = figcraft_engine::textedit::insert(&mut app.session, t) {
+        app.toast(e.to_string());
+    }
+    if ime_stamp(app) != before {
+        note_ime_application_change(app, ctx);
+    }
+}
+
+/// An IME commit, preedit or surrounding-text deletion for the edit.
+fn ime_event(app: &mut FigApp, ctx: &Context, ev: &egui::ImeEvent) {
+    match ev {
+        // An accepted IME commit earns an explicit receipt only around the exact mutation.
+        // List AutoFormat inside the same command is an application transformation.
+        egui::ImeEvent::Commit(t) => {
             let before = ime_stamp(app);
-            app.run("text.edit.selectLine", json!({"index": idx}));
+            match figcraft_engine::textedit::insert_ime_commit(&mut app.session, t) {
+                Ok(ImeInsertion::Plain) => ime_receipt(app, ctx, before),
+                Ok(ImeInsertion::Transformed) => note_ime_application_change(app, ctx),
+                Ok(ImeInsertion::Nothing) => {}
+                Err(e) => app.toast(e.to_string()),
+            }
+        }
+        // The composition shows inline at the caret; the document gets it on Commit.
+        egui::ImeEvent::Preedit { text, active_range_chars } => {
+            let cursor = active_range_chars.as_ref().map(|r| r.start);
+            if let Err(e) = figcraft_engine::textedit::preedit(&mut app.session, text, cursor) {
+                app.toast(e.to_string());
+            }
+        }
+        // An IME replacing text around the caret (0.37's incoming byte-counted deletion)
+        // deletes it before the paired Commit inserts the replacement.
+        egui::ImeEvent::DeleteSurroundingBytes { before_bytes, after_bytes } => {
+            let before = ime_stamp(app);
+            match figcraft_engine::textedit::delete_surrounding_bytes(&mut app.session, *before_bytes, *after_bytes) {
+                Ok(true) => ime_receipt(app, ctx, before),
+                Ok(false) => {}
+                Err(e) => app.toast(e.to_string()),
+            }
+        }
+        egui::ImeEvent::DeleteSurrounding { before_chars, after_chars } => {
+            let before = ime_stamp(app);
+            match figcraft_engine::textedit::delete_surrounding_chars(&mut app.session, *before_chars, *after_chars) {
+                Ok(true) => ime_receipt(app, ctx, before),
+                Ok(false) => {}
+                Err(e) => app.toast(e.to_string()),
+            }
+        }
+        // Legacy Enabled/Disabled events were ignored by the original event dispatcher too.
+        _ => {}
+    }
+}
+
+/// Copy or cut the edit's selection. Input injected through the control channel must never read
+/// or replace the user's system clipboard; it may still edit the document: a synthetic Cut
+/// deletes the selection exactly like a user's Cut; only the OS clipboard write is fenced.
+fn copy_or_cut(app: &mut FigApp, ctx: &Context, cut: bool) {
+    let before = ime_stamp(app);
+    let selected = figcraft_engine::textedit::selected_text(&app.session).filter(|t| !t.is_empty());
+    if !app.control_synthetic
+        && let Some(text) = &selected
+    {
+        app.clipboard_set_text(text);
+    }
+    if cut && selected.is_some() {
+        let _ = figcraft_engine::textedit::key(&mut app.session, "Delete", false, false, false);
+    }
+    if ime_stamp(app) != before {
+        note_ime_application_change(app, ctx);
+    }
+}
+
+/// A text-editing key press. `true` when it ran a shortcut, whose following Text event is
+/// swallowed (a shortcut that changed committed text/selection is also an application edit).
+fn text_key_event(app: &mut FigApp, ctx: &Context, key: Key, physical: Option<Key>, m: Modifiers) -> bool {
+    // Keys during a composition are the IME's (Enter picks a candidate, Escape cancels).
+    if app.session.ds().is_ok_and(|d| d.text_edit.as_ref().is_some_and(|te| te.preedit.is_some())) {
+        return false;
+    }
+    if m.command || m.alt || m.ctrl {
+        let before = ime_stamp(app);
+        if text_shortcut(app, key, physical, m) {
+            // A text shortcut that changed the committed text/selection (a list,
+            // Bold, alignment) is an application edit; Save and friends are not.
             if ime_stamp(app) != before {
                 note_ime_application_change(app, ctx);
             }
+            return true;
         }
     }
-    app.sync_preedit();
+    if key == Key::Z && m.command {
+        note_ime_application_change(app, ctx);
+        let _ = figcraft_engine::textedit::end(&mut app.session);
+        app.run(if m.shift { "edit.redo" } else { "edit.undo" }, json!({}));
+        return false;
+    }
+    let Some(name) = text_key_name(key, m.command) else { return false };
+    if name == "Enter" && m.command {
+        let _ = figcraft_engine::textedit::end(&mut app.session);
+        return false;
+    }
+    let before = ime_stamp(app);
+    let (word, line) = keymap::text_motion(platform(), name, mods(m));
+    if let Err(e) = figcraft_engine::textedit::key(&mut app.session, name, m.shift, word, line) {
+        app.toast(e.to_string());
+    }
+    if ime_stamp(app) != before {
+        note_ime_application_change(app, ctx);
+    }
+    false
+}
+
+/// The text-edit command a named key runs, if any.
+fn text_key_name(key: Key, command: bool) -> Option<&'static str> {
+    Some(match key {
+        Key::Backspace => "Backspace",
+        Key::Delete => "Delete",
+        Key::ArrowLeft => "Left",
+        Key::ArrowRight => "Right",
+        Key::ArrowUp => "Up",
+        Key::ArrowDown => "Down",
+        Key::Home => "Home",
+        Key::End => "End",
+        Key::Enter => "Enter",
+        Key::Escape => "Escape",
+        Key::Tab => "Tab",
+        Key::A if command => "SelectAll",
+        _ => return None,
+    })
+}
+
+/// Triple-click on the edited text selects its line (double-click is handled by the engine).
+fn triple_click_line(app: &mut FigApp, ctx: &Context) {
+    if !ctx.input(|i| i.pointer.button_triple_clicked(egui::PointerButton::Primary)) {
+        return;
+    }
+    let Some(pos) = ctx.input(|i| i.pointer.interact_pos()).filter(|pos| app.canvas.rect.contains(*pos)) else {
+        return;
+    };
+    let Some(te) = app.session.ds().ok().and_then(|d| d.text_edit.clone()) else { return };
+    let p = app.to_page(pos);
+    if let Some(idx) = text_line_index(app, te.id, p) {
+        let before = ime_stamp(app);
+        app.run("text.edit.selectLine", json!({"index": idx}));
+        if ime_stamp(app) != before {
+            note_ime_application_change(app, ctx);
+        }
+    }
+}
+
+/// The text index of the line under `p`, when the edit's node contains it.
+fn text_line_index(app: &FigApp, id: figcraft_doc::NodeId, p: figcraft_geom::Point) -> Option<usize> {
+    let inside = app.session.doc().ok().and_then(|d| d.world_bounds(id)).is_some_and(|b| b.contains(p));
+    if !inside {
+        return None;
+    }
+    app.session.text_index_at(id, p).ok()
 }
 
 /// Shortcuts live while editing text (Bold, lists, alignment, size/weight/spacing steps, Save…).

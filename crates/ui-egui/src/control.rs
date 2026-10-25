@@ -455,171 +455,18 @@ pub fn drain(app: &mut FigApp, ctx: &Context) {
     let viewport = ctx.viewport_id();
     // This pass's geometry defines the epoch: a resize, DPI change or zoom change (back or not)
     // invalidates captures issued under the old one.
-    let spec = current_spec(ctx, viewport);
-    if let Some(spec) = spec {
-        let changed = app.capture.geometry.get(&viewport).is_none_or(|(old, _)| *old != spec);
-        if changed {
-            app.capture.epoch = app.capture.epoch.wrapping_add(1);
-            app.capture.geometry.insert(viewport, (spec, app.capture.epoch));
-        }
-    }
-    let epoch = app.capture.geometry.get(&viewport).map_or(0, |(_, e)| *e);
+    let (spec, epoch) = pass_geometry(app, ctx, viewport);
     expire(app, ctx, now);
 
     // Drain completed captures first, so their budget is free before new requests are admitted.
-    let mut i = 0;
-    while i < app.capture.shots.len() {
-        // Each viewport drains its own captures: their geometry and document differ.
-        if app.capture.shots[i].viewport != viewport {
-            i += 1;
-            continue;
-        }
-        let Some(slot) = app.capture.shots[i].slot.clone() else {
-            i += 1;
-            continue;
-        };
-        let Some(image) = slot.take() else {
-            i += 1;
-            continue;
-        };
-        let mut r = app.capture.shots.remove(i);
-        r.release();
-        let cancelled = r.cancelled.load(std::sync::atomic::Ordering::Relaxed);
-        let current = current_spec(ctx, viewport);
-        let (document, presentation) = app.windows.presentation(&app.session, r.window);
-        if cancelled {
-            // The transport stopped waiting: no reply, no file.
-        } else if now >= r.deadline {
-            reply(&mut r, Err("the window didn't deliver a screenshot in time (is it visible?)".into()));
-        } else if r.window != app.windows.current || r.document != document || r.presentation != presentation {
-            reply(&mut r, Err("the document changed while the screenshot was being captured".into()));
-        } else if current.is_none() {
-            // Fail closed: with no representable current geometry the pixels cannot be proven to
-            // belong to the surface that was admitted, so they are never the capture's reply.
-            reply(&mut r, Err("the window's current geometry is unavailable (is it minimised?)".into()));
-        } else if let Some(current) = current
-            && (r.epoch != epoch || r.spec.is_none_or(|s| s.size_px != current.size_px || s.pixels_per_point != current.pixels_per_point))
-        {
-            // Geometry moved between issuance and arrival (even back): retry against the new pass,
-            // never accept the old pixels. Document changes are errors above.
-            if r.retries >= 2 {
-                reply(&mut r, Err("the window kept changing size while the screenshot was captured".into()));
-            } else {
-                r.retries += 1;
-                r.spec = Some(current);
-                r.epoch = epoch;
-                r.reserved = r.spec.and_then(|s| s.cost()).unwrap_or(0);
-                r.settle = 0;
-                r.settle_frame = None;
-                r.issued = false;
-                app.capture.shots.push(r);
-            }
-        } else if let (Some(current), Some(spec)) = (current, r.spec)
-            // The admitted surface is in whole UI points; the readback is in physical pixels. Up
-            // to one pixel of rounding either way is the same surface, not a scale change. The
-            // difference is absolute: an undersized readback is a scale mismatch too.
-            && (image.size[0].abs_diff(spec.size_px[0]) > 1 || image.size[1].abs_diff(spec.size_px[1]) > 1)
-        {
-            if r.retries >= 2 {
-                reply(
-                    &mut r,
-                    Err(format!(
-                        "the screenshot is {}x{} but the window is {}x{} (a scale mismatch)",
-                        image.size[0], image.size[1], spec.size_px[0], spec.size_px[1]
-                    )),
-                );
-            } else {
-                r.retries += 1;
-                r.spec = Some(current);
-                r.epoch = epoch;
-                r.reserved = r.spec.and_then(|s| s.cost()).unwrap_or(0);
-                r.settle = 0;
-                r.settle_frame = None;
-                r.issued = false;
-                app.capture.shots.push(r);
-            }
-        } else {
-            let result = shot_reply(&image, r.path.as_deref());
-            reply(&mut r, result);
-        }
-        ctx.request_repaint();
-    }
+    drain_completed(app, ctx, viewport, now, epoch);
 
     // Admit queued captures for the window drawing now; other windows keep waiting for their frame.
-    for r in std::mem::take(&mut app.control_queue) {
-        if r.is_cancelled() {
-            continue;
-        }
-        let target = r.params.get("window").and_then(Value::as_u64).unwrap_or(app.windows.focused);
-        if target != app.windows.current {
-            if app.windows.exists(target) {
-                ctx.request_repaint_of(crate::windows::viewport(target));
-                app.control_queue.push(r);
-            } else {
-                let _ = r.reply.send(ControlReply { id: r.id, result: Err(format!("no window {target}")) });
-            }
-            continue;
-        }
-        if r.method == "ui.screenshot" {
-            admit(app, r, target, now);
-            continue;
-        }
-        // Every control-channel gesture is fenced from the user's system clipboard (the flag is
-        // restored so a batch already in a frame's raw input keeps its own provenance).
-        let before = app.control_synthetic;
-        app.control_synthetic = true;
-        let res = handle(app, ctx, &r.method, &r.params);
-        app.control_synthetic = before;
-        if r.method == "ui.input" && std::mem::take(&mut app.control_input_queued) {
-            // Acknowledge once the pass that applies the batch is presented, never from a sizing
-            // pass whose input is thrown away.
-            app.input_acks.push(crate::PendingAck { viewport, tx: r.reply, reply: ControlReply { id: r.id, result: res } });
-        } else {
-            let _ = r.reply.send(ControlReply { id: r.id, result: res });
-        }
-        ctx.request_repaint();
-    }
+    admit_queued(app, ctx, viewport, now);
 
     // Fill in this pass's geometry, enforce the byte budget (a post-callback check alone would
     // not bound peak memory), and release anything over it before issuing.
-    let mut i = 0;
-    while i < app.capture.shots.len() {
-        let total: usize = app.capture.shots.iter().map(|s| s.reserved).sum();
-        let mut remove = false;
-        {
-            let r = &mut app.capture.shots[i];
-            if r.viewport != viewport {
-                i += 1;
-                continue;
-            }
-            if !r.issued && r.spec != spec {
-                // A request can resize during its settling frames. Reserve and validate this
-                // actual surface before issuance, never the old (possibly much smaller) one.
-                r.spec = spec;
-                r.settle = 0;
-                r.settle_frame = None;
-                if spec.is_none() {
-                    r.reserved = 0;
-                }
-            }
-            if let Some(spec) = r.spec {
-                let raw = spec.bytes().unwrap_or(usize::MAX);
-                let cost = spec.cost().unwrap_or(usize::MAX);
-                if raw > MAX_SHOT_IMAGE_BYTES || total.saturating_sub(r.reserved).saturating_add(cost) > MAX_SHOT_TOTAL_BYTES {
-                    reply(r, Err(format!("the screenshot needs {cost} bytes, over the capture budget")));
-                    remove = true;
-                } else if r.reserved != cost {
-                    r.reserved = cost;
-                }
-            }
-        }
-        if remove {
-            let mut r = app.capture.shots.remove(i);
-            r.release();
-        } else {
-            i += 1;
-        }
-    }
+    enforce_capture_budget(app, viewport, spec);
 
     // Settle on completed UI frames only, then issue once. (The screenshot command itself forces
     // the paint that delivers it.) The request's document and window were fixed at admission and
@@ -630,6 +477,243 @@ pub fn drain(app: &mut FigApp, ctx: &Context) {
     // first pass calls `request_discard` is therefore counted once, after it presents its layout,
     // not when its discarded sizing pass runs. Passes after the first (`current_pass_index > 0`)
     // belong to such a frame and never add another count.
+    settle_and_issue(app, ctx, viewport, now, epoch, spec);
+    request_paint(app, ctx);
+}
+
+/// Establish this pass's screenshot geometry and epoch: a resize, DPI change or zoom change (even
+/// back) bumps the epoch captures issued under the old one were admitted against.
+fn pass_geometry(app: &mut FigApp, ctx: &Context, viewport: egui::ViewportId) -> (Option<CaptureSpec>, u64) {
+    let spec = current_spec(ctx, viewport);
+    if let Some(spec) = spec {
+        let changed = app.capture.geometry.get(&viewport).is_none_or(|(old, _)| *old != spec);
+        if changed {
+            app.capture.epoch = app.capture.epoch.wrapping_add(1);
+            app.capture.geometry.insert(viewport, (spec, app.capture.epoch));
+        }
+    }
+    let epoch = app.capture.geometry.get(&viewport).map_or(0, |(_, e)| *e);
+    (spec, epoch)
+}
+
+/// Take the image delivery for the shot at `index`; `None` when no image has arrived yet.
+fn arrived_shot(app: &mut FigApp, index: usize) -> Option<(ShotRequest, Arc<egui::ColorImage>)> {
+    let slot = app.capture.shots.get(index)?.slot.clone()?;
+    let image = slot.take()?;
+    let mut r = app.capture.shots.remove(index);
+    r.release();
+    Some((r, image))
+}
+
+/// Drain images delivered for this viewport: reply, re-queue for a geometry retry, or drop a
+/// cancelled capture. Each viewport drains its own captures: their geometry and document differ.
+fn drain_completed(app: &mut FigApp, ctx: &Context, viewport: egui::ViewportId, now: f64, epoch: u64) {
+    let mut i = 0;
+    while i < app.capture.shots.len() {
+        if app.capture.shots[i].viewport != viewport {
+            i += 1;
+            continue;
+        }
+        let Some((r, image)) = arrived_shot(app, i) else {
+            i += 1;
+            continue;
+        };
+        settle_arrival(app, ctx, viewport, now, epoch, r, &image);
+        ctx.request_repaint();
+    }
+}
+
+/// Whether the pass geometry differs from the one the capture was issued at (even back to an old
+/// size): the pixels cannot be accepted for the admitted surface.
+fn geometry_moved(r: &ShotRequest, current: CaptureSpec, epoch: u64) -> bool {
+    r.epoch != epoch || r.spec.is_none_or(|s| s.size_px != current.size_px || s.pixels_per_point != current.pixels_per_point)
+}
+
+/// The admitted surface is in whole UI points; the readback is in physical pixels. Up to one
+/// pixel of rounding either way is the same surface, not a scale change. The difference is
+/// absolute: an undersized readback is a scale mismatch too.
+fn scale_mismatch(image: &egui::ColorImage, spec: CaptureSpec) -> bool {
+    image.size[0].abs_diff(spec.size_px[0]) > 1 || image.size[1].abs_diff(spec.size_px[1]) > 1
+}
+
+/// Re-queue a capture against the new pass, or hand it back when its retries are exhausted.
+fn requeue_capture(app: &mut FigApp, mut r: ShotRequest, current: CaptureSpec, epoch: u64) -> Option<ShotRequest> {
+    if r.retries >= 2 {
+        return Some(r);
+    }
+    r.retries += 1;
+    r.spec = Some(current);
+    r.epoch = epoch;
+    r.reserved = r.spec.and_then(|s| s.cost()).unwrap_or(0);
+    r.settle = 0;
+    r.settle_frame = None;
+    r.issued = false;
+    app.capture.shots.push(r);
+    None
+}
+
+/// Settle an arrived image: reply with it, retry against the new pass on a geometry/scale change,
+/// or drop it when the transport cancelled or the window/document moved on.
+fn settle_arrival(app: &mut FigApp, ctx: &Context, viewport: egui::ViewportId, now: f64, epoch: u64, mut r: ShotRequest, image: &egui::ColorImage) {
+    let cancelled = r.cancelled.load(std::sync::atomic::Ordering::Relaxed);
+    let current = current_spec(ctx, viewport);
+    let (document, presentation) = app.windows.presentation(&app.session, r.window);
+    if cancelled {
+        // The transport stopped waiting: no reply, no file.
+        return;
+    }
+    if now >= r.deadline {
+        reply(&mut r, Err("the window didn't deliver a screenshot in time (is it visible?)".into()));
+        return;
+    }
+    if r.window != app.windows.current || r.document != document || r.presentation != presentation {
+        reply(&mut r, Err("the document changed while the screenshot was being captured".into()));
+        return;
+    }
+    let Some(current) = current else {
+        // Fail closed: with no representable current geometry the pixels cannot be proven to
+        // belong to the surface that was admitted, so they are never the capture's reply.
+        reply(&mut r, Err("the window's current geometry is unavailable (is it minimised?)".into()));
+        return;
+    };
+    if geometry_moved(&r, current, epoch) {
+        // Geometry moved between issuance and arrival (even back): retry against the new pass,
+        // never accept the old pixels. Document changes are errors above.
+        if let Some(mut r) = requeue_capture(app, r, current, epoch) {
+            reply(&mut r, Err("the window kept changing size while the screenshot was captured".into()));
+        }
+        return;
+    }
+    if let Some(spec) = r.spec
+        && scale_mismatch(image, spec)
+    {
+        if let Some(mut r) = requeue_capture(app, r, current, epoch) {
+            reply(
+                &mut r,
+                Err(format!(
+                    "the screenshot is {}x{} but the window is {}x{} (a scale mismatch)",
+                    image.size[0], image.size[1], spec.size_px[0], spec.size_px[1]
+                )),
+            );
+        }
+        return;
+    }
+    let result = shot_reply(image, r.path.as_deref());
+    reply(&mut r, result);
+}
+
+/// Admit queued captures for the window drawing now; other windows keep waiting for their frame.
+fn admit_queued(app: &mut FigApp, ctx: &Context, viewport: egui::ViewportId, now: f64) {
+    for r in std::mem::take(&mut app.control_queue) {
+        route_queued(app, ctx, viewport, now, r);
+    }
+}
+
+/// Route one queued control request: retarget another window, admit a capture, or run a
+/// state-only request for the window drawing now.
+fn route_queued(app: &mut FigApp, ctx: &Context, viewport: egui::ViewportId, now: f64, r: ControlRequest) {
+    if r.is_cancelled() {
+        return;
+    }
+    let target = r.params.get("window").and_then(Value::as_u64).unwrap_or(app.windows.focused);
+    if target != app.windows.current {
+        if app.windows.exists(target) {
+            ctx.request_repaint_of(crate::windows::viewport(target));
+            app.control_queue.push(r);
+        } else {
+            let _ = r.reply.send(ControlReply { id: r.id, result: Err(format!("no window {target}")) });
+        }
+        return;
+    }
+    if r.method == "ui.screenshot" {
+        admit(app, r, target, now);
+        return;
+    }
+    // Every control-channel gesture is fenced from the user's system clipboard (the flag is
+    // restored so a batch already in a frame's raw input keeps its own provenance).
+    let before = app.control_synthetic;
+    app.control_synthetic = true;
+    let res = handle(app, ctx, &r.method, &r.params);
+    app.control_synthetic = before;
+    if r.method == "ui.input" && std::mem::take(&mut app.control_input_queued) {
+        // Acknowledge once the pass that applies the batch is presented, never from a sizing
+        // pass whose input is thrown away.
+        app.input_acks.push(crate::PendingAck { viewport, tx: r.reply, reply: ControlReply { id: r.id, result: res } });
+    } else {
+        let _ = r.reply.send(ControlReply { id: r.id, result: res });
+    }
+    ctx.request_repaint();
+}
+
+/// Reserve this request's actual surface against the capture budget; `true` when it must be
+/// removed for exceeding it.
+fn reserve_for_spec(r: &mut ShotRequest, spec: Option<CaptureSpec>, total: usize) -> bool {
+    if !r.issued && r.spec != spec {
+        // A request can resize during its settling frames. Reserve and validate this
+        // actual surface before issuance, never the old (possibly much smaller) one.
+        r.spec = spec;
+        r.settle = 0;
+        r.settle_frame = None;
+        if spec.is_none() {
+            r.reserved = 0;
+        }
+    }
+    let Some(spec) = r.spec else { return false };
+    let raw = spec.bytes().unwrap_or(usize::MAX);
+    let cost = spec.cost().unwrap_or(usize::MAX);
+    if raw > MAX_SHOT_IMAGE_BYTES || total.saturating_sub(r.reserved).saturating_add(cost) > MAX_SHOT_TOTAL_BYTES {
+        reply(r, Err(format!("the screenshot needs {cost} bytes, over the capture budget")));
+        return true;
+    }
+    if r.reserved != cost {
+        r.reserved = cost;
+    }
+    false
+}
+
+/// Fill in this pass's geometry and enforce the byte budget (a post-callback check alone would
+/// not bound peak memory), releasing anything over it before issuing.
+fn enforce_capture_budget(app: &mut FigApp, viewport: egui::ViewportId, spec: Option<CaptureSpec>) {
+    let mut i = 0;
+    while i < app.capture.shots.len() {
+        let total: usize = app.capture.shots.iter().map(|s| s.reserved).sum();
+        let remove = {
+            let r = &mut app.capture.shots[i];
+            if r.viewport != viewport {
+                i += 1;
+                continue;
+            }
+            reserve_for_spec(r, spec, total)
+        };
+        if remove {
+            let mut r = app.capture.shots.remove(i);
+            r.release();
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Count one completed frame into the capture's settling, reporting whether it may now be issued.
+fn settled_for_issue(r: &mut ShotRequest, frame_nr: u64) -> bool {
+    match r.settle_frame {
+        None => {
+            // Anchor the count at the first pass that sees this request's geometry; this
+            // frame has not completed yet.
+            r.settle_frame = Some(frame_nr);
+            false
+        }
+        Some(seen) if frame_nr > seen => {
+            r.settle_frame = Some(frame_nr);
+            r.settle = r.settle.saturating_add(1);
+            r.settle >= SHOT_SETTLE_PASSES
+        }
+        _ => false,
+    }
+}
+
+/// Settle on completed UI frames only, then issue once (against this pass's surface).
+fn settle_and_issue(app: &mut FigApp, ctx: &Context, viewport: egui::ViewportId, now: f64, epoch: u64, spec: Option<CaptureSpec>) {
     let first_pass = ctx.current_pass_index() == 0;
     let frame_nr = ctx.cumulative_frame_nr_for(viewport);
     for r in &mut app.capture.shots {
@@ -639,20 +723,7 @@ pub fn drain(app: &mut FigApp, ctx: &Context) {
         if r.cancelled.load(std::sync::atomic::Ordering::Relaxed) || now >= r.deadline {
             continue;
         }
-        match r.settle_frame {
-            None => {
-                // Anchor the count at the first pass that sees this request's geometry; this
-                // frame has not completed yet.
-                r.settle_frame = Some(frame_nr);
-                continue;
-            }
-            Some(seen) if frame_nr > seen => {
-                r.settle_frame = Some(frame_nr);
-                r.settle = r.settle.saturating_add(1);
-            }
-            _ => continue,
-        }
-        if r.settle < SHOT_SETTLE_PASSES {
+        if !settled_for_issue(r, frame_nr) {
             continue;
         }
         let slot = CaptureSlot::new(ctx, viewport);
@@ -665,7 +736,6 @@ pub fn drain(app: &mut FigApp, ctx: &Context) {
         r.issued = true;
         ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Screenshot(CaptureSlot::callback(&slot)));
     }
-    request_paint(app, ctx);
 }
 
 /// A screenshot's reply: the PNG written to `path` (through the automation roots, when the app
