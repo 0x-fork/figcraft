@@ -1,7 +1,7 @@
 //! The Export section's Preview row: a slice paints nothing itself, so its preview must show the
 //! page content under it — the same thing exporting the slice writes — and not a blank
 //! transparency checkerboard next to a correct export. And its setting rows: a size only for
-//! images.
+//! images, and advanced options named as the reference app names them.
 
 use figcraft_doc::{Document, NodeId};
 use figcraft_engine::Session;
@@ -92,4 +92,34 @@ fn export_rows_offer_a_size_for_images_only() {
         u.frame(vec![]);
         assert!(size_menu(&u), "{format} has sizes again");
     }
+}
+
+/// The advanced options: Ignore overlapping layers (the `contentsOnly` setting), and Include
+/// bounding box for text layers only. A setting that already has the bounding box on keeps it, and
+/// the option stays so it can be turned off.
+#[test]
+fn advanced_options_offer_the_bounding_box_for_text_layers() {
+    let mut s = Session::new();
+    let r = crate::present_tests::id(&s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 100, "height": 80})).unwrap());
+    let t = crate::present_tests::id(&s.execute("text.create", &json!({"text": "Hi", "x": 200, "y": 0})).unwrap());
+    s.execute("export.add", &json!({"ids": [r]})).unwrap();
+    s.execute("export.add", &json!({"ids": [t]})).unwrap();
+    let mut u = crate::layers_drag_tests::Ui::new(s);
+    let options = |u: &mut crate::layers_drag_tests::Ui, id: NodeId| {
+        u.app.run("select.set", json!({"ids": [id]}));
+        u.frame(vec![]);
+        egui::Popup::open_id(&u.ctx, egui::Id::new(("export_more", 0)));
+        u.frame(vec![]);
+        crate::import_report_tests::shown_texts(u.frame_output(vec![]).shapes)
+    };
+    let shown = options(&mut u, r);
+    assert!(shown.iter().any(|s| s == "Ignore overlapping layers"), "the reference app's name: {shown:?}");
+    assert!(!shown.iter().any(|s| s == "Contents only"));
+    assert!(!shown.iter().any(|s| s == "Include bounding box"), "a rectangle has no bounding box option");
+    let shown = options(&mut u, t);
+    assert!(shown.iter().any(|s| s == "Include bounding box"), "a text layer has it: {shown:?}");
+    u.app.run("export.update", json!({"ids": [r], "index": 0, "includeBoundingBox": true}));
+    let shown = options(&mut u, r);
+    assert!(shown.iter().any(|s| s == "Include bounding box"), "a rectangle that has it on shows it: {shown:?}");
+    assert!(u.app.session.doc().unwrap().node(r).unwrap().exports[0].include_bounding_box, "the setting is kept");
 }
