@@ -633,4 +633,19 @@ mod scope_tests {
             check(&texts, shown, hidden, &format!("{slot:?}"));
         }
     }
+
+    #[test]
+    fn a_mixed_selections_fill_picker_offers_variables_scoped_to_every_layer() {
+        let mut s = session();
+        let r = s.selection()[0];
+        let f = s.doc().unwrap().nodes().find(|n| matches!(n.kind, figcraft_doc::NodeKind::Frame)).unwrap().id;
+        run(&mut s, "variable.create", json!({"collection": "Tokens", "name": "both fills", "type": "color", "values": {"Base": "#FFFF00"}}));
+        run(&mut s, "variable.update", json!({"variable": "both fills", "scopes": ["FRAME_FILL", "SHAPE_FILL"]}));
+        // The frame first: its scope alone would offer "frame fill" for the rectangle too.
+        run(&mut s, "select.set", json!({"ids": [f, r]}));
+        let mut u = TestUi::new(s);
+        crate::style_picker::open_for_selection(&mut u.app, StyleSlot::Fill, None);
+        u.frame(vec![]);
+        check(&drawn(&mut u), &["both fills"], &["frame fill", "shape fill"], "frame and rectangle");
+    }
 }

@@ -14,7 +14,7 @@ use crate::layers_drag_tests::Ui;
 
 fn push(u: &mut Ui, id: u64, params: serde_json::Value) -> std::sync::mpsc::Receiver<ControlReply> {
     let (tx, rx) = std::sync::mpsc::channel();
-    u.app.control_queue.push(ControlRequest { id: json!(id), method: "ui.screenshot".into(), params, reply: tx, cancelled: Default::default() });
+    u.app.control_queue.push(ControlRequest { id: json!(id), method: "ui.screenshot".into(), params, reply: tx, state: Default::default() });
     rx
 }
 
@@ -74,11 +74,102 @@ fn a_cancelled_capture_never_replies_or_writes() {
     settle_to_issue(&mut u, 1);
     let spec = u.app.capture.shots[0].spec.expect("geometry");
     let slot = u.app.capture.shots[0].slot.clone().expect("issued");
-    u.app.capture.shots[0].cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+    u.app.capture.shots[0].state.cancel_if_open();
     slot.complete(Arc::new(egui::ColorImage::filled(spec.size_px, egui::Color32::BLUE)));
     u.frame(vec![]);
     assert!(rx.try_recv().is_err(), "a cancelled transport gets no reply");
     assert!(u.app.capture.shots.is_empty(), "the slot is released");
+}
+
+/// A unique directory for a commit test; the caller removes it.
+fn commit_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("figcraft-capture-commit-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    dir
+}
+
+#[test]
+fn a_cancellation_after_encoding_prevents_the_final_write() {
+    let dir = commit_dir("cancelled");
+    let path = dir.join("shot.png");
+    let gate = crate::control::RequestGate::new();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let clock = crate::FrameClock::default();
+    let img = egui::ColorImage::filled([2, 2], egui::Color32::RED);
+    // Encoding is complete before the transport cancels: the final gate must still refuse the file.
+    let encoded = super::encode_shot(&img, Some(path.to_str().expect("utf-8 path"))).expect("encoded");
+    assert!(!path.exists(), "encoding alone does not write");
+    assert_eq!(gate.cancel_if_open(), crate::control::RequestState::Cancelled);
+    assert!(!super::commit_shot(&gate, &json!(40), &tx, 100.0, &clock, Ok(encoded)), "a cancelled request does not commit");
+    assert!(!path.exists(), "the cancellation landed before the final write");
+    assert!(rx.try_recv().is_err(), "a cancelled transport gets no reply");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_real_arrival_that_crosses_the_deadline_does_not_write_its_png() {
+    let mut u = Ui::new(Session::empty());
+    let dir = commit_dir("settle-expired");
+    let path = dir.join("shot.png");
+    let rx = push(&mut u, 60, json!({"path": path.to_string_lossy()}));
+    settle_to_issue(&mut u, 1);
+    let spec = u.app.capture.shots[0].spec.expect("geometry");
+    let slot = u.app.capture.shots[0].slot.clone().expect("issued");
+    let deadline = u.app.capture.shots[0].deadline;
+    let epoch = u.app.capture.shots[0].epoch;
+    slot.complete(Arc::new(egui::ColorImage::filled(spec.size_px, egui::Color32::RED)));
+    // A frame's saved time may precede encoding; the final write must use a fresh clock.
+    let stale_now = u.app.clock.now();
+    u.app.clock.set_test_now(Some(deadline + 1.0));
+    super::drain_completed(&mut u.app, &u.ctx, egui::ViewportId::ROOT, stale_now, epoch);
+    let reply = rx.try_recv().expect("the late commit reports a timeout");
+    assert!(reply.result.unwrap_err().contains("didn't deliver"));
+    assert!(!path.exists(), "the final deadline check must precede the PNG write");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_expiry_during_encoding_prevents_the_final_write_and_reports_timeout() {
+    let dir = commit_dir("expired");
+    let path = dir.join("shot.png");
+    let gate = crate::control::RequestGate::new();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut clock = crate::FrameClock::default();
+    clock.set_test_now(Some(5.0));
+    let img = egui::ColorImage::filled([2, 2], egui::Color32::RED);
+    let encoded = super::encode_shot(&img, Some(path.to_str().expect("utf-8 path"))).expect("encoded");
+    // The gate is open, but the fresh clock read under it is already at the deadline.
+    assert!(super::commit_shot(&gate, &json!(41), &tx, 5.0, &clock, Ok(encoded)), "the open request is settled once");
+    let reply = rx.try_recv().expect("a timeout reply");
+    assert_eq!(reply.id, json!(41));
+    assert!(reply.result.unwrap_err().contains("didn't deliver"), "the late commit reports the same timeout");
+    assert!(!path.exists(), "an expired request never writes its file");
+    assert!(gate.is_replied(), "the timeout reply was committed under the gate");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_commit_before_the_deadline_writes_and_queues_its_reply_once() {
+    let dir = commit_dir("committed");
+    let path = dir.join("shot.png");
+    let gate = crate::control::RequestGate::new();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut clock = crate::FrameClock::default();
+    clock.set_test_now(Some(1.0));
+    let img = egui::ColorImage::filled([2, 2], egui::Color32::GREEN);
+    let encoded = super::encode_shot(&img, Some(path.to_str().expect("utf-8 path"))).expect("encoded");
+    assert!(super::commit_shot(&gate, &json!(42), &tx, 10.0, &clock, Ok(encoded)), "an open request commits");
+    let reply = rx.try_recv().expect("the committed reply");
+    assert_eq!(reply.id, json!(42));
+    assert_eq!(reply.result.expect("written")["path"], json!(path.to_string_lossy()));
+    assert!(path.is_file(), "the file is written under the gate");
+    assert!(gate.is_replied(), "a timeout now consumes the committed reply");
+    // A second commit is refused: the gate is no longer open.
+    let again = super::encode_shot(&img, Some(path.to_str().expect("utf-8 path"))).expect("encoded");
+    assert!(!super::commit_shot(&gate, &json!(43), &tx, 10.0, &clock, Ok(again)));
+    assert!(rx.try_recv().is_err(), "no duplicate reply");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -422,7 +513,7 @@ fn push_input(u: &mut Ui, id: u64) -> std::sync::mpsc::Receiver<ControlReply> {
         method: "ui.input".into(),
         params: json!({"events": [{"move": [10.0, 10.0]}]}),
         reply: tx,
-        cancelled: Default::default(),
+        state: Default::default(),
     });
     rx
 }
@@ -488,7 +579,7 @@ fn injected_text_lands_once_across_a_discarded_sizing_pass() {
         method: "ui.input".into(),
         params: json!({"events": [{"text": "abc"}]}),
         reply: tx,
-        cancelled: Default::default(),
+        state: Default::default(),
     });
     u.frame(vec![]);
     let events = crate::windows::take_input(&mut u.app, egui::ViewportId::ROOT);

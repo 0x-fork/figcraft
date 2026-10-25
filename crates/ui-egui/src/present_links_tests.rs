@@ -191,3 +191,35 @@ fn a_prototype_cannot_open_a_script_or_handler_url() {
         assert!(opens_after_a_delay(url).is_empty(), "{url:?} must never reach the opener");
     }
 }
+
+#[test]
+fn the_prototype_takes_no_clicks_while_the_notice_shows() {
+    let mut s = Session::new();
+    let a = id(&ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 300, "height": 400, "name": "A"})));
+    let b = id(&ex(&mut s, "frame.create", json!({"x": 400, "y": 0, "width": 300, "height": 400, "name": "B"})));
+    let layer = id(&ex(&mut s, "shape.rectangle", json!({"x": 10, "y": 10, "width": 30, "height": 30, "parent": a})));
+    let link = json!({"type": "openUrl", "url": "https://example.com/a"});
+    ex(&mut s, "proto.interaction.add", json!({"id": layer, "trigger": {"type": "afterDelay", "ms": 100}, "action": link}));
+    let to_b = json!({"type": "navigate", "dest": b});
+    ex(&mut s, "proto.interaction.add", json!({"id": a, "trigger": {"type": "onClick"}, "action": to_b, "transition": {"type": "instant"}}));
+    let mut u = Harness::new(s);
+    u.app.services = Box::new(Opened::default());
+    u.run("proto.present", json!({"start": a}));
+    u.frames(40, Vec::new);
+    assert_eq!(notice(&u), "https://example.com/a");
+    // On the frame, above the notice.
+    let at = egui::pos2(700.0, 290.0);
+    u.button(at, true);
+    u.button(at, false);
+    u.frames(5, Vec::new);
+    assert_eq!(u.app.inspect()["presenter"]["current"], json!(a), "the click behind the notice did not navigate");
+    assert_eq!(notice(&u), "https://example.com/a", "the notice still waits");
+    let shapes = crate::live_tests::flat(&u.frame_output(vec![]).shapes);
+    crate::live_tests::text_center(&shapes, "Open link");
+    u.key(egui::pos2(700.0, 450.0), egui::Key::Escape);
+    assert!(notice(&u).is_null());
+    u.button(at, true);
+    u.button(at, false);
+    u.frames(5, Vec::new);
+    assert_eq!(u.app.inspect()["presenter"]["current"], json!(b), "with the notice gone the same click navigates");
+}

@@ -91,7 +91,7 @@ fn a_synthetic_copy_shortcut_leaves_the_system_clipboard_alone() {
         // Shift+Cmd+C: `edit.copyAsPng`, which wrote the OS clipboard directly before the fence.
         params: json!({"events": [{"key": "C", "shift": true, "cmd": true}]}),
         reply: tx,
-        cancelled: Default::default(),
+        state: Default::default(),
     });
     w.frame(vec![]);
     let events = crate::windows::take_input(&mut w.app, egui::ViewportId::ROOT);

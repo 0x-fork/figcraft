@@ -248,8 +248,8 @@ fn unbind_slot(n: &mut figcraft_doc::Node, fills: bool, index: usize) -> bool {
 }
 
 /// Why `variable` can't be applied to `targets` (`selection.bindColorVariable`), if it can't: a
-/// variable that isn't a color, a gradient, or a slot outside the variable's scopes (a variable
-/// hidden from pickers has none).
+/// variable that isn't a color, or a gradient. Scopes don't refuse, as with `variable.bind`; they
+/// only filter what the menu offers ([`in_scope`]).
 pub fn bind_refusal(doc: &Document, targets: &[PaintTarget], variable: &str) -> Option<String> {
     let Some(var) = doc.variables.get(variable) else { return Some("no such variable".into()) };
     if var.kind != VariableType::Color {
@@ -264,13 +264,19 @@ pub fn bind_refusal(doc: &Document, targets: &[PaintTarget], variable: &str) -> 
         if !crate::cmd::variables::field_takes(doc, target.id, &field, var.kind) {
             return Some(format!("`{field}` doesn't take a color variable"));
         }
-        if let Some(scope) = crate::cmd::variables::field_scope(doc, target.id, &field)
-            && !var.in_scope(scope)
-        {
-            return Some(format!("the variable isn't scoped to {scope}"));
-        }
     }
     None
+}
+
+/// Whether `variable`'s scopes cover every slot of `targets` (a variable hidden from pickers has
+/// none), so the Selection colors menu offers it there.
+pub fn in_scope(doc: &Document, targets: &[PaintTarget], variable: &str) -> bool {
+    let Some(var) = doc.variables.get(variable) else { return false };
+    targets.iter().all(|target| {
+        let list = if target.fills { BoundList::Fills } else { BoundList::Strokes };
+        let field = format!("{}/{}/color", list.prefix(), target.index);
+        crate::cmd::variables::field_scope(doc, target.id, &field).is_none_or(|scope| var.in_scope(scope))
+    })
 }
 
 fn bind_variable(s: &mut Session, p: &Value) -> Result<Value> {

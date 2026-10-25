@@ -203,7 +203,7 @@ fn a_document_switch_rejects_the_old_compositions_delete_and_commit_batch() {
         method: "engine.execute".into(),
         params: json!({"window": 0, "command": "doc.switch", "params": {"index": 1}}),
         reply: tx,
-        cancelled: Default::default(),
+        state: Default::default(),
     });
     ime(&mut u, vec![Event::Ime(ImeEvent::DeleteSurroundingBytes { before_bytes: 1, after_bytes: 0 }), Event::Ime(ImeEvent::Commit("Q".into()))]);
     assert!(rx.try_recv().unwrap().result.is_ok(), "production control drain switched the document");

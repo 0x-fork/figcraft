@@ -1,6 +1,6 @@
 # FigCraft egui 0.37 migration plan
 
-Status update (2026-10-25): Move FigCraft to immutable egui 0.37, winit and craft-window revisions, preserving main `9f788753` and its document/vector changes. Adapt UI lifecycle, screenshot callbacks and IME ownership; keep deferred field saves tied to the correct document and window. Validation: refreshed host CI passed with 3,247 passing test executions, zero failures and nine ignored across 70 summaries. The final run uses bundled fonts plus licensed DejaVu fallback without the optional craft-fonts input; earlier bundled-font configuration checks also passed. WASM and all three plugin bundles passed; outputs are preserved and hash-verified. The current-main integration passed independent review. Native visible GUI/browser workflows, native IME, paired app performance and current-source platform/release installation remain open. Human review and human merge are required.
+Status update (2026-10-25): The migration integrates main `92682728` and pins egui 0.37, winit and craft-window. Required-font CI run `egui037-fig-review-full-ci-20261025-0803` passed 3,306 test executions, zero failures and nine ignored across 71 summaries, including WASM and all three plugin bundles. Screenshot encoding now precedes a shared final-write/reply gate: timeout cancellation cannot overtake a committed file, and a fresh deadline check rejects a late write. A regression through the actual arrival path failed with the previous write behavior and passed with the gate. Native visible GUI/browser workflows, native IME, paired app performance and current-source platform/release installation remain open. Human review and human merge are required.
 
 The original planning record below is historical.
 
@@ -1186,11 +1186,11 @@ web hidden paint remains a recorded prerequisite, not a fake.
 No build/test/GUI/browser/performance run was performed for this stage; the parent runs managed
 validation and generates the lockfile from its local dependency config.
 
-## Current local qualification — 2026-10-25
+## Historical local qualification — 2026-10-25
 
-Historical qualification: the following counts apply to the earlier `10702311`
-integration. The current `9f788753` refresh and its 3,247 passing executions are
-recorded in the status update above.
+The following counts apply to the earlier `10702311` integration, not the later
+`2a3b7d4f` qualification in the status update above. The intervening `9f788753`
+refresh passed 3,247 executions; the runs listed below passed 3,242.
 
 The migration preserves captured main `10702311f345393ee1d8868c3257679befcfa14d`
 (53 commits and 114 paths beyond the first integration). The final review commit records

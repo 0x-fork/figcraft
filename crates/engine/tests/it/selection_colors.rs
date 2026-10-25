@@ -399,7 +399,7 @@ fn color_variables_refuse_gradients_other_types_and_unknown_names() {
 }
 
 #[test]
-fn color_variables_apply_only_within_their_scopes() {
+fn scopes_filter_the_menu_but_the_command_binds_anyway() {
     let mut s = Session::new();
     let a = rectangle(&mut s, "#ff0000");
     run(&mut s, "stroke.add", json!({"id":a,"color":"#ff0000"}));
@@ -410,11 +410,14 @@ fn color_variables_apply_only_within_their_scopes() {
     let red = group(&s, &[a], "FF0000");
     let fill_slot: Vec<_> = red.targets.iter().filter(|t| t.fills).cloned().collect();
     let stroke_slot: Vec<_> = red.targets.iter().filter(|t| !t.fills).cloned().collect();
-    for (targets, variable) in [(&red.targets, "Line"), (&fill_slot, "Line"), (&stroke_slot, "Hidden")] {
-        assert!(s.execute("selection.bindColorVariable", &json!({"targets":targets,"variable":variable})).is_err());
-    }
-    assert!(s.doc().unwrap().node(a).unwrap().bound.is_empty());
+    let doc = s.doc().unwrap();
+    let offered = |targets: &[figcraft_engine::selection_colors::PaintTarget], v: &str| figcraft_engine::selection_colors::in_scope(doc, targets, v);
+    assert!(offered(&stroke_slot, "Line"));
+    assert!(!offered(&red.targets, "Line") && !offered(&fill_slot, "Line") && !offered(&stroke_slot, "Hidden"));
     run(&mut s, "selection.bindColorVariable", json!({"targets":stroke_slot,"variable":"Line"}));
     assert_eq!(s.doc().unwrap().node(a).unwrap().strokes[0].solid_color().unwrap().to_hex(), "00FF00");
     assert_eq!(fill(&s, a), "FF0000");
+    // As with `variable.bind`, the command itself binds outside the scopes.
+    run(&mut s, "selection.bindColorVariable", json!({"targets":fill_slot,"variable":"Line"}));
+    assert_eq!(fill(&s, a), "00FF00");
 }

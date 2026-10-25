@@ -1627,7 +1627,8 @@ Pass the returned target list to:
   to those solid fill and stroke slots, as `variable.bind` does with `fills/<i>/color` or
   `strokes/<i>/color`. A color style on the list and an earlier binding of the slot are removed.
   Text ranges with fills of their own take the variable's value in the layer's modes, without a
-  binding. Gradients, other variable types and slots outside the variable's scopes are refused.
+  binding. Gradients and other variable types are refused; scopes only filter what the Selection
+  colors menu offers, as for `variable.bind`.
 - `selection.detachColor {targets}` to unlink the color style and the color variable of those
   slots, keeping their values.
 

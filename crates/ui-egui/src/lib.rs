@@ -254,7 +254,7 @@ use figcraft_doc::NodeId;
 use figcraft_engine::Session;
 use serde_json::{Value, json};
 
-pub use control::{ControlReply, ControlRequest};
+pub use control::{ControlReply, ControlRequest, RequestGate, RequestState};
 
 /// Platform services the app crate provides (file dialogs, clipboard, URLs).
 pub trait Services {

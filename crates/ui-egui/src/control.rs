@@ -29,7 +29,6 @@
 //! Any method takes `window` (an id from `window.list`) to run in that window, with its tabs and
 //! panels; without it, requests go to the window last in front.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use egui::Context;
@@ -44,18 +43,86 @@ pub struct ControlReply {
     pub result: Result<Value, String>,
 }
 
+/// Which side has finished a control request.
+///
+/// The transport and the UI race to settle one request: while it is `Open`, either may cancel it
+/// (the transport's timeout) or commit it (the UI's final reply). Once settled, neither side may
+/// change it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RequestState {
+    #[default]
+    Open,
+    /// The transport stopped waiting: no file may be written and no reply is wanted.
+    Cancelled,
+    /// The UI wrote the file (if any) and queued the reply before releasing the gate.
+    Replied,
+}
+
+/// The gate the transport's timeout and the UI's final reply share for one request.
+///
+/// Encoding happens outside it, so a slow PNG never blocks the timeout. The final file write and
+/// reply enqueue happen under it, after rechecking cancellation and the deadline, so a timeout
+/// cannot overtake a committed file and a cancellation cannot slip between the check and the
+/// write. It is never held across socket I/O.
+#[derive(Clone, Default)]
+pub struct RequestGate {
+    state: Arc<Mutex<RequestState>>,
+}
+
+impl RequestGate {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn state(&self) -> RequestState {
+        *self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.state() == RequestState::Cancelled
+    }
+
+    pub fn is_replied(&self) -> bool {
+        self.state() == RequestState::Replied
+    }
+
+    /// Cancel an open request, as the transport's timeout does. Returns the resulting state so a
+    /// timeout that lost the race knows to consume the already-queued reply.
+    pub fn cancel_if_open(&self) -> RequestState {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *state == RequestState::Open {
+            *state = RequestState::Cancelled;
+        }
+        *state
+    }
+
+    /// Run the final commit (file write and reply enqueue) only while the request is still open,
+    /// then mark it replied before releasing the gate. `None` means the transport cancelled it or
+    /// it was already committed; the closure must not have run then.
+    pub fn commit<T>(&self, finish: impl FnOnce() -> T) -> Option<T> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *state != RequestState::Open {
+            return None;
+        }
+        let value = finish();
+        *state = RequestState::Replied;
+        Some(value)
+    }
+}
+
 pub struct ControlRequest {
     pub id: Value,
     pub method: String,
     pub params: Value,
     pub reply: std::sync::mpsc::Sender<ControlReply>,
-    /// The transport stops waiting after its timeout; discard requests still queued then.
-    pub cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The transport stops waiting after its timeout; discard requests still queued then. The UI
+    /// passes the same gate to its screenshot's final commit.
+    pub state: RequestGate,
 }
 
 impl ControlRequest {
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
+        self.state.is_cancelled()
     }
 }
 
@@ -175,7 +242,8 @@ pub struct ShotRequest {
     /// Where to write the PNG; `None`: return it as data.
     pub path: Option<String>,
     pub reply: std::sync::mpsc::Sender<ControlReply>,
-    pub cancelled: Arc<AtomicBool>,
+    /// The transport's timeout and this request's final write share this gate.
+    pub state: RequestGate,
     /// Monotonic seconds ([`crate::FrameClock`]); covers admission, settling, retries and arrival.
     pub deadline: f64,
     pub viewport: egui::ViewportId,
@@ -268,7 +336,7 @@ fn reply(r: &mut ShotRequest, result: Result<Value, String>) {
 /// geometry from a stale pass.
 fn admit(app: &mut FigApp, r: ControlRequest, window: u64, now: f64) {
     let canceled = r.is_cancelled();
-    let ControlRequest { id, method: _, params, reply: tx, cancelled } = r;
+    let ControlRequest { id, method: _, params, reply: tx, state } = r;
     if app.capture.shots.len() >= MAX_SHOTS {
         if !canceled {
             let _ = tx.send(ControlReply { id, result: Err(format!("too many screenshots are pending (at most {MAX_SHOTS})")) });
@@ -281,7 +349,7 @@ fn admit(app: &mut FigApp, r: ControlRequest, window: u64, now: f64) {
         id,
         path,
         reply: tx,
-        cancelled,
+        state,
         deadline: now + SHOT_TIMEOUT,
         viewport: crate::windows::viewport(window),
         window,
@@ -305,7 +373,7 @@ fn expire(app: &mut FigApp, ctx: &Context, now: f64) {
     while i < app.capture.shots.len() {
         let (deadline, cancelled, window) = {
             let r = &app.capture.shots[i];
-            (r.deadline, r.cancelled.load(std::sync::atomic::Ordering::Relaxed), r.window)
+            (r.deadline, r.state.is_cancelled(), r.window)
         };
         let closed = !app.windows.exists(window);
         if now >= deadline || cancelled || closed {
@@ -555,7 +623,7 @@ fn requeue_capture(app: &mut FigApp, mut r: ShotRequest, current: CaptureSpec, e
 /// Settle an arrived image: reply with it, retry against the new pass on a geometry/scale change,
 /// or drop it when the transport cancelled or the window/document moved on.
 fn settle_arrival(app: &mut FigApp, ctx: &Context, viewport: egui::ViewportId, now: f64, epoch: u64, mut r: ShotRequest, image: &egui::ColorImage) {
-    let cancelled = r.cancelled.load(std::sync::atomic::Ordering::Relaxed);
+    let cancelled = r.state.is_cancelled();
     let current = current_spec(ctx, viewport);
     let (document, presentation) = app.windows.presentation(&app.session, r.window);
     if cancelled {
@@ -598,8 +666,11 @@ fn settle_arrival(app: &mut FigApp, ctx: &Context, viewport: egui::ViewportId, n
         }
         return;
     }
-    let result = shot_reply(image, r.path.as_deref());
-    reply(&mut r, result);
+    // Encode outside the shared gate: a slow PNG must not hold the transport's timeout. The
+    // fresh clock read and final write happen under the gate, so a timeout that arrives while the
+    // image is being encoded either wins (no file, no reply) or finds the committed reply.
+    let encoded = encode_shot(image, r.path.as_deref());
+    commit_shot(&r.state, &r.id, &r.reply, r.deadline, &app.clock, encoded);
 }
 
 /// Admit queued captures for the window drawing now; other windows keep waiting for their frame.
@@ -720,7 +791,7 @@ fn settle_and_issue(app: &mut FigApp, ctx: &Context, viewport: egui::ViewportId,
         if !first_pass || r.viewport != viewport || r.issued || r.spec.is_none() {
             continue;
         }
-        if r.cancelled.load(std::sync::atomic::Ordering::Relaxed) || now >= r.deadline {
+        if r.state.is_cancelled() || now >= r.deadline {
             continue;
         }
         if !settled_for_issue(r, frame_nr) {
@@ -738,9 +809,37 @@ fn settle_and_issue(app: &mut FigApp, ctx: &Context, viewport: egui::ViewportId,
     }
 }
 
+/// An encoded screenshot that has not been written or returned yet. Encoding is the expensive
+/// part, so it is done before the request's shared commit gate is taken.
+enum EncodedShot {
+    /// The PNG for a `path` request; writing it is part of the final commit.
+    File { path: String, png: Vec<u8>, width: usize, height: usize },
+    /// The complete base64 reply for a request without a path.
+    Data(Value),
+}
+
+impl EncodedShot {
+    fn finish(self) -> Result<Value, String> {
+        match self {
+            Self::File { path, png, width, height } => {
+                figcraft_engine::file_access::write(&path, &png).map_err(|e| e.to_string())?;
+                Ok(json!({"path": path, "width": width, "height": height}))
+            }
+            Self::Data(result) => Ok(result),
+        }
+    }
+}
+
 /// A screenshot's reply: the PNG written to `path` (through the automation roots, when the app
-/// has them), or returned as base64 `data`.
+/// has them), or returned as base64 `data`. Control requests split this into [`encode_shot`] and
+/// [`commit_shot`]; encoding and automation-root tests use the whole operation.
+#[cfg(test)]
 fn shot_reply(img: &egui::ColorImage, path: Option<&str>) -> Result<Value, String> {
+    encode_shot(img, path)?.finish()
+}
+
+/// Encode the straight-alpha PNG and the data reply. No request gate is held here.
+fn encode_shot(img: &egui::ColorImage, path: Option<&str>) -> Result<EncodedShot, String> {
     let [w, h] = img.size;
     let raw = w.checked_mul(h).and_then(|n| n.checked_mul(4)).ok_or("bad screenshot size")?;
     if raw > MAX_SHOT_IMAGE_BYTES {
@@ -759,19 +858,42 @@ fn shot_reply(img: &egui::ColorImage, path: Option<&str>) -> Result<Value, Strin
     drop(buf);
     let png = png.into_inner();
     match path {
-        Some(path) => {
-            figcraft_engine::file_access::write(path, &png).map_err(|e| e.to_string())?;
-            Ok(json!({"path": path, "width": w, "height": h}))
-        }
+        Some(path) => Ok(EncodedShot::File { path: path.to_string(), png, width: w, height: h }),
         None => {
             if png.len() > MAX_SHOT_REPLY_BYTES {
                 // Refuse before the base64 string (4/3 of the PNG) is allocated.
                 return Err(format!("the encoded screenshot is {} bytes, over the reply budget", png.len()));
             }
             use base64::Engine as _;
-            Ok(json!({"format": "png", "width": w, "height": h, "data": base64::engine::general_purpose::STANDARD.encode(&png)}))
+            Ok(EncodedShot::Data(json!({"format": "png", "width": w, "height": h, "data": base64::engine::general_purpose::STANDARD.encode(&png)})))
         }
     }
+}
+
+/// Commit an encoded screenshot's file and reply while holding the request's shared gate. The
+/// cancellation and a fresh deadline are rechecked under the gate: if the transport gave up while
+/// the image was being encoded, no file is written; a commit that gets there first queues its
+/// reply before the timeout can mark the request cancelled.
+fn commit_shot(
+    gate: &RequestGate,
+    id: &Value,
+    reply: &std::sync::mpsc::Sender<ControlReply>,
+    deadline: f64,
+    clock: &crate::FrameClock,
+    encoded: Result<EncodedShot, String>,
+) -> bool {
+    gate.commit(|| {
+        // Read the clock after the gate is held: a request whose deadline passed while it waited
+        // for the gate must not write its file.
+        let result = if clock.now() < deadline {
+            encoded.and_then(EncodedShot::finish)
+        } else {
+            Err("the window didn't deliver a screenshot in time (is it visible?)".into())
+        };
+        // Enqueue before the gate is released and before `Replied` is visible to the transport.
+        let _ = reply.send(ControlReply { id: id.clone(), result });
+    })
+    .is_some()
 }
 
 /// A controller button given as its standard-layout index, its key trigger name ("Gamepad A") or
