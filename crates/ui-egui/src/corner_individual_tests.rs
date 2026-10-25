@@ -100,7 +100,8 @@ fn polygons_and_stars_take_corner_smoothing() {
         s.execute("node.set", &json!({"ids": [id], "props": {"cornerRadius": 8}})).unwrap();
         s.execute("select.set", &json!({"ids": [id]})).unwrap();
         let mut u = Ui::new(s);
-        let t = named_button(&mut u, "Individual corners");
+        // With no corners of their own, the button is named for what it opens.
+        let t = named_button(&mut u, "Corner smoothing");
         click(&mut u, t);
         assert!((0..4).all(|k| u.ctx.read_response(Id::new(("corner", k)).with("field")).is_none()), "{cmd}: one radius, no corner fields");
         let smoothing = u.ctx.read_response(Id::new("smoothing").with("field")).expect("the smoothing field shows").rect.center();

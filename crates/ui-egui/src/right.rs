@@ -876,7 +876,9 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             let radius_of = |n: &Node| n.corners.uniform().unwrap_or_else(|| n.corners.radii.iter().copied().fold(0.0, f64::max));
             app.field_of(&ids, "cornerRadius", e, radius_of, |v| json!(v.max(0.0)));
             let open = ui.data(|d| d.get_temp::<bool>(Id::new("indep_corners"))).unwrap_or(false);
-            if smooth_ok && icons::button(ui, Icon::IndependentCorners, 24.0, open, tr("Individual corners")).clicked() {
+            // Polygons and stars have no corners of their own: the button opens only Corner smoothing.
+            let tip = if indep_ok { tr("Individual corners") } else { tr("Corner smoothing") };
+            if smooth_ok && icons::button(ui, Icon::IndependentCorners, 24.0, open, tip).clicked() {
                 ui.data_mut(|d| d.insert_temp(Id::new("indep_corners"), !open));
             }
         }

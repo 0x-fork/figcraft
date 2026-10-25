@@ -2220,10 +2220,10 @@ fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) 
     let resp = ui.interact(area, ui.id().with("present_area"), Sense::click_and_drag());
     let over = resp.contains_pointer();
     if let Some(l) = layout(p, area, chrome) {
-        // The pane only takes the keyboard while the pointer is over it, and neither takes it
-        // while a link notice shows (Escape there cancels the notice).
+        // The pane only takes the keyboard while the pointer is over it. While a link notice shows
+        // the prototype takes neither keys nor the pointer (Escape there cancels the notice).
         let keys = chrome.keys && p.link_notice.is_none() && (!chrome.pane || over);
-        input(p, &ctx, &l, over, keys, chrome.pane, now);
+        input(p, &ctx, &l, over && p.link_notice.is_none(), keys, chrome.pane, now);
     }
     let Some(l) = layout(p, area, chrome) else { return action };
     p.shown = Some((p.current, l.place, l.clip.intersect(area)));

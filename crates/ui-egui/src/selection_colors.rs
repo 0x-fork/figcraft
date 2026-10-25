@@ -6,7 +6,7 @@ use std::sync::Arc;
 use egui::{Id, Ui};
 use figcraft_color::Color;
 use figcraft_doc::{Document, NodeId, StyleKind, VariableType};
-use figcraft_engine::selection_colors::{PaintTarget, SelectionColor, bind_refusal, collect};
+use figcraft_engine::selection_colors::{PaintTarget, SelectionColor, bind_refusal, collect, in_scope};
 use serde_json::json;
 
 use crate::a11y::Tip;
@@ -133,7 +133,11 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Arc<Document>, ids: &[NodeId
                                     .variables
                                     .variables
                                     .iter()
-                                    .filter(|v| v.kind == VariableType::Color && bind_refusal(doc, &group.targets, &v.id).is_none())
+                                    .filter(|v| {
+                                        v.kind == VariableType::Color
+                                            && bind_refusal(doc, &group.targets, &v.id).is_none()
+                                            && in_scope(doc, &group.targets, &v.id)
+                                    })
                                     .collect();
                                 if !variables.is_empty() {
                                     ui.separator();
