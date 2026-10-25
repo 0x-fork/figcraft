@@ -971,6 +971,16 @@ pub(crate) fn scale_factor(handle: Handle, q: Point, w0: f64, h0: f64, anchor: (
 }
 
 impl Session {
+    /// The pointer left the canvas: what hovering there showed goes (the distances Alt or Dev Mode
+    /// measured and the box measured to, a vector region's highlight), unless a gesture holds it.
+    pub fn pointer_left(&mut self) {
+        if !self.tool.busy() {
+            self.tool.overlay.guides.clear();
+            self.tool.overlay.measure_box = None;
+        }
+        self.vector_pointer_left();
+    }
+
     /// What a marquee starting at page point `p` selects inside: the top-level frame it starts in
     /// (its children), or the focus view's frame.
     pub(crate) fn marquee_within(&self, p: Point) -> Result<Option<NodeId>> {
@@ -2010,6 +2020,10 @@ impl Session {
         Ok(())
     }
 
+    /// Handle a double-click gesture: finish a pen path, rename or click labels/widgets,
+    /// cancel an in-progress move/resize/draw/marquee, handle board double-clicks, enter text
+    /// editing (select-all on entry, word-select inside the running edit), enter vector editing
+    /// for selected shapes, and step groups/frames one level deeper.
     fn double_click(&mut self, ev: &PointerEvent) -> Result<()> {
         let ds = self.ds()?;
         let (doc, sel, page) = (ds.doc.clone(), ds.selection.clone(), ds.page);
@@ -2059,13 +2073,15 @@ impl Session {
             && doc.node(target).is_some_and(|n| matches!(n.kind, NodeKind::Text(_)))
             && (sel.contains(&target) || select_target(&doc, leaf, &sel, false) == target)
         {
-            // Entering a text selects all of it; in the text being edited, the word.
+            // Entering a text selects all of it; in the text being edited, the word. A
+            // double-click inside the running edit is an ordinary edit: starting a new session
+            // here would replace the IME owner's epoch and drop a composition on a plain gesture.
             let editing = self.ds()?.text_edit.as_ref().is_some_and(|te| te.id == target);
             let idx = self.text_index_at(target, ev.p())?;
-            textedit::begin(self, target, Some(idx), false)?;
             if editing {
                 textedit::select_word(self, idx)?;
             } else {
+                textedit::begin(self, target, Some(idx), false)?;
                 textedit::key(self, "SelectAll", false, false, false)?;
             }
             return Ok(());

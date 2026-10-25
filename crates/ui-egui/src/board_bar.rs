@@ -170,7 +170,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     let size = vec2(h.width(), 40.0);
     let at = place(sel, size, app.canvas.rect);
     let t = Tokens::get(ctx);
-    egui::Area::new(egui::Id::new("board_bar")).fixed_pos(at).order(egui::Order::Middle).show(ctx, |ui| {
+    egui::Area::new(egui::Id::unique("board_bar")).fixed_pos(at).order(egui::Order::Middle).show(ctx, |ui| {
         let (rect, _) = ui.allocate_exact_size(size, Sense::click());
         a11y::container_bounds(ui, rect);
         let p = ui.painter();
@@ -198,7 +198,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
 fn color_part(app: &mut FigApp, ui: &mut Ui, mut x: f32, cy: f32, t: &Tokens) -> f32 {
     for (i, (name, c)) in BOARD_COLORS.iter().enumerate() {
         let r = Rect::from_center_size(pos2(x + SWATCH / 2.0, cy), vec2(SWATCH, SWATCH));
-        let resp = ui.interact(r, ui.id().with(("bb_color", i)), Sense::click()).on_hover_text(tr(color_label(name)));
+        let resp = ui.interact(r, ui.scope_id().with(("bb_color", i)), Sense::click()).on_hover_text(tr(color_label(name)));
         a11y::button(&resp, tr(color_label(name)));
         if resp.hovered() {
             ui.painter().rect_filled(r.expand(2.0), CornerRadius::same(6), t.hover);
@@ -215,7 +215,7 @@ fn color_part(app: &mut FigApp, ui: &mut Ui, mut x: f32, cy: f32, t: &Tokens) ->
 /// The shape menu at `at` (its left edge and middle), showing `shape`; where the next part starts.
 fn shape_part(app: &mut FigApp, ui: &mut Ui, shape: BoardShape, at: Pos2, t: &Tokens) -> f32 {
     let r = Rect::from_min_size(pos2(at.x, at.y - CELL / 2.0), vec2(CELL + 12.0, CELL));
-    let resp = ui.interact(r, ui.id().with("bb_shape"), Sense::click()).on_hover_text(tr("Shape"));
+    let resp = ui.interact(r, ui.scope_id().with("bb_shape"), Sense::click()).on_hover_text(tr("Shape"));
     a11y::menu_button(&resp, tr("Shape"), a11y::menu_open(&resp));
     if resp.hovered() {
         ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
@@ -240,7 +240,7 @@ fn shape_part(app: &mut FigApp, ui: &mut Ui, shape: BoardShape, at: Pos2, t: &To
 fn size_part(app: &mut FigApp, ui: &mut Ui, mut x: f32, cy: f32, t: &Tokens) -> f32 {
     for (label, size) in TEXT_SIZES {
         let r = Rect::from_center_size(pos2(x + CELL / 2.0, cy), vec2(CELL, CELL));
-        let resp = ui.interact(r, ui.id().with(("bb_size", label)), Sense::click()).on_hover_text(tr("Text size"));
+        let resp = ui.interact(r, ui.scope_id().with(("bb_size", label)), Sense::click()).on_hover_text(tr("Text size"));
         a11y::button(&resp, &format!("{} {label}", tr("Text size")));
         if resp.hovered() {
             ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);

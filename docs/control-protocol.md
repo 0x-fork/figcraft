@@ -41,11 +41,17 @@ still answers every method that acts on the app's state (`engine.execute`, `docu
 `node.get`, `ui.inspect`, `ui.pointer`, `ui.key`, `ui.type`, `ui.set`, `ui.render`, `window.list`,
 …), in the file that window shows, so an attached agent can edit, inspect and save while the app is
 out of sight. The app is not drawn meanwhile and only wakes for requests, at most ten times a
-second while minimised, so a request there takes up to about 0.1 s. What only a drawn frame can
-answer (`ui.screenshot`, `ui.input`, `window.new`) is an error at once (`window 0 is minimised or
-hidden: …`) instead of waiting for the window to show; `ui.render` draws the document without it.
-Under Wayland the app can't tell that its window is minimised: where the compositor then stops
-drawing it, a request waits for the window and gets the 60 s timeout error.
+second while minimised, so a request there takes up to about 0.1 s. A request that needs a drawn
+frame (`ui.screenshot`, `ui.input`) is kept queued while the window is hidden and asks it to paint
+(`RequestPaintWhileHidden`; native eframe honours that). A screenshot whose window reports no
+visibility at all is parked the same way with its deadline, so it cannot wait forever in the
+queue. A screenshot settles on three completed, presented UI frames (a discarded sizing pass does
+not count), then is issued, and expires once at its 60 s deadline if no paint arrives. `window.new`
+remains an error at once (`window 0 is minimised or hidden: …`) instead of waiting for the window
+to show; `ui.render` draws the document without it. Under Wayland the app can't tell that its
+window is minimised: where the compositor then stops drawing it, a request waits for the window
+and gets the 60 s timeout error. The browser's shared eframe runner does not implement
+`RequestPaintWhileHidden` yet, so hidden-tab screenshots and injected input are unqualified there.
 
 Coordinates are page units, y down. `x`/`y` in `node.set`/`node.create` are relative to the parent
 frame (groups have no coordinate space of their own).
@@ -307,10 +313,19 @@ focus view shows, or `null`) and `annotationFilter`).
 
 ### `ui.screenshot {path?}`
 
-PNG of the whole window (`window` picks one), UI included (needs a visible window; an idle one draws the frame to
-capture). Returns `{path, width, height}`, without `path` `{format: "png", width, height, data}`
-(base64); an error at once when the window is minimised or hidden, or after 60 s when the window
-doesn't deliver.
+PNG of the whole window (`window` picks one), UI included (an idle one draws the frame to capture;
+a hidden one, or one whose platform visibility is not reported, is asked to paint and the request
+is parked with its deadline until it does). Returns
+`{path, width, height}`, without `path` `{format: "png", width, height, data}` (base64). Requests
+are bounded to four pending, 128 MiB of pixels per image and 256 MiB in flight or
+completed-but-undrained. The reservation is the larger of the encoder phase (readback +
+straight-RGBA copy + PNG) and the reply phase (readback + PNG + base64); the encoder copy is
+dropped before base64 is built, and an oversized encoded reply is refused before base64 is
+allocated. The reply carries the request's own id, and the capture belongs to the document and
+window it was admitted for; cancellation, a tab switch, a resize/DPI/zoom between issuance and
+arrival (retried twice, then an error), an unrepresentable current surface (fail closed), and the
+60 s deadline never write late files. A hidden window whose pixels arrived is asked to paint the
+pass that drains them, so a completed readback is not left to time out.
 
 ### `ui.render {path?, scale?, ids?}`
 
