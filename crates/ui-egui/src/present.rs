@@ -2506,7 +2506,9 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
         )
     });
     let keys = if keys_on { keys } else { Vec::new() };
+    // Controller buttons pressed while a link notice shows are dropped, as keys are.
     let pads = std::mem::take(&mut p.pads);
+    let pads = if p.link_notice.is_none() { pads } else { Vec::new() };
     // A transition a drag started follows the pointer while it stays down, then plays on from there.
     if let Some(a) = p.anim.as_mut()
         && let Some((from, dir, len)) = a.follow
