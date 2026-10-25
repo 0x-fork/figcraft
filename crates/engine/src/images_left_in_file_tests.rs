@@ -66,3 +66,16 @@ fn a_file_without_images_left_out_saves_as_before() {
     assert!(!s.ds().unwrap().is_dirty());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_hard_link_to_the_file_is_not_saved_over() {
+    let (dir, path, mut s) = opened_with_images_left_in_file("hard-link");
+    let link = dir.join("link.figcraft");
+    let _ = std::fs::remove_file(&link);
+    std::fs::hard_link(&path, &link).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    rect(&mut s, 20.0);
+    assert!(s.execute("file.saveAs", &json!({"path": link.to_string_lossy()})).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let _ = std::fs::remove_dir_all(&dir);
+}

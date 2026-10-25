@@ -117,7 +117,7 @@ pub(crate) fn within_app_folder(path: &Path, folder: &Path) -> bool {
 
 pub fn same_file(a: impl AsRef<Path>, b: impl AsRef<Path>) -> bool {
     let (a, b) = (a.as_ref(), b.as_ref());
-    a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+    a == b || same_file::is_same_file(a, b).unwrap_or(false)
 }
 
 /// `p` without Windows' `\\?\` prefix, for messages.
