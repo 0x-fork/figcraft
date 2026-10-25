@@ -1188,6 +1188,10 @@ validation and generates the lockfile from its local dependency config.
 
 ## Current local qualification — 2026-10-25
 
+Historical qualification: the following counts apply to the earlier `10702311`
+integration. The current `9f788753` refresh and its 3,247 passing executions are
+recorded in the status update above.
+
 The migration preserves captured main `10702311f345393ee1d8868c3257679befcfa14d`
 (53 commits and 114 paths beyond the first integration). The final review commit records
 both the migration history and that upstream target as parents. The selected egui revision is

@@ -345,12 +345,15 @@ fn cjk_names_are_looked_for_in_edits_not_on_every_pan() {
 fn a_hidden_window_answers_at_once() {
     // #269, #720: minimised or covered, the window draws no frames, but the app's logic still runs:
     // it answers edits, inspection, saves and the interface's state; what needs a frame (a capture
-    // of the window) is an error at once instead of waiting for the window to show.
+    // of the window) queues for a forced hidden paint and otherwise expires at its deadline.
     let dir = std::env::temp_dir().join(format!("figcraft-hidden-save-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("hidden.figcraft");
     let (mut h, _) = document();
     h.settle();
+    // Exercise admission well after startup, independently of settling speed.
+    h.time += 120.0;
+    h.app.clock.set_test_now(Some(h.time));
     let (tx, rx) = std::sync::mpsc::channel();
     let request = |id: u64, method: &str, params: Value| ControlRequest {
         id: json!(id),
@@ -376,7 +379,7 @@ fn a_hidden_window_answers_at_once() {
     assert_eq!(h.app.capture.shots.len(), 1, "one admitted capture");
     assert!(h.app.control_queue.is_empty(), "nothing waits for the window");
     // Its deadline expires it once, with the same error the transport used to get.
-    h.app.clock.set_test_now(Some(crate::control::SHOT_TIMEOUT + 1.0));
+    h.app.clock.set_test_now(Some(h.time + crate::control::SHOT_TIMEOUT + 1.0));
     let _ = ctx.run_logic(&hidden, |ctx| crate::control::background(&mut h.app, ctx));
     let shot = rx.try_recv().expect("expired");
     assert_eq!(shot.id, json!(3));

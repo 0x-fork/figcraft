@@ -1,6 +1,23 @@
 # egui 0.37 local implementation — stage 1 notes and follow-ups
 
+Current candidate font pin: `37827adc41fd165f9a9234ac40f94dbad353aa69` restores the complete prior Latin catalog
+alongside the migration fallbacks. Central font tests and license checks passed;
+publication is pending approval. Managed run `egui037-figcraft-latin-ci-20261025-0711`
+passed with required fonts: five targeted build-input tests plus full CI, including
+WASM and plugin builds (3,257 passing executions, zero failures, nine ignored across
+72 summaries; repeated tests are counted). This supersedes the optional-font-only
+qualification below for the restored catalog.
+
 ## Current local qualification — 2026-10-25
+
+The published refresh preserves main `9f788753` and passed managed full CI
+`egui037-figcraft-main-refresh-ci-20261025-0618`: 3,247 passing executions, zero
+failures and nine ignored. The 3,242 counts below describe the earlier `10702311`
+qualification, before five additional main-branch tests. These are execution counts,
+not distinct regressions. The release font input is under review separately; a
+passing optional-font host build does not qualify the required web font catalog.
+
+### Earlier qualification at `10702311`
 
 The migration preserves captured main `10702311f345393ee1d8868c3257679befcfa14d`
 (53 commits and 114 paths beyond the first integration). The final review commit records
@@ -147,19 +164,19 @@ an unhandled command for hidden tabs. Hidden-browser-tab `ui.screenshot`/`ui.inp
 unqualified even though the native path now queues and settles them. This is a forkfix prerequisite,
 not a passing claim.
 
-## Local dependency and lock prerequisites (parent)
+## Dependency and lock prerequisites
 
-- Parent config `local-integration-config.toml` patches the egui family and winit, and `craft-ui`/
-  `craft-print`. It does **not** patch `craft-window`. FigCraft now disables craft-window's optional
-  `egui` feature (it only needs the frame probe), but Cargo still resolves a package's optional
-  dependencies into the lock, and that rev declares `egui = "0.36"`. The managed graph must
-  therefore also patch/repoint `craft-window` to the reviewed craft-libs revision whose workspace
-  targets 0.37 (or otherwise prove the lock has exactly one egui family); otherwise the lock will
-  contain a second egui 0.36.
-- No `[patch]` rows or path dependencies live in this repository's manifests; the parent generates
-  `Cargo.lock`. Do not publish this tree's resolved paths.
-- Fonts: production keeps its central `CRAFT_FONTS_DIR`/system-font policy; no font binaries are
-  added here. Color-emoji claims still require a separate `epaint/color_fonts` feature job.
+- The committed root `[patch.crates-io]` table pins the egui family and winit to
+  immutable published fork revisions. `craft-window` is pinned to the reviewed
+  craft-libs revision targeting egui 0.37; its optional `egui` feature stays disabled
+  because FigCraft needs only the frame probe.
+- `Cargo.lock` is committed and resolves the canonical Git sources without local
+  path overrides. Use `--locked`; the earlier parent integration config is not
+  required to reproduce this graph.
+- Fonts remain an optional central `CRAFT_FONTS_DIR` input with native system-font
+  fallback; no font binaries are added here. Required release-font qualification
+  is separate from optional-font host CI. Color emoji still needs a separate
+  `epaint/color_fonts` feature check.
 
 ## Qualification gaps and baseline backports/perf operations
 
@@ -182,6 +199,12 @@ operations to measure once the parent can build: `#8731` text tessellation, `#87
 startup, `#8512` font discovery, `#8763`/PR `#8764` TextEdit click-away, `#8748` hidden deferred
 children. None of these were applied, removed or claimed as fixed.
 
-## Optional Latin manifest compatibility
+## Required web font catalog
 
-The pinned central font catalog has a required `fonts/manifest.txt` and no optional `fonts/latin-manifest.txt`. Required-font builds now validate the core and all supplied extension assets, while an absent opt-in Latin manifest is watched but not required. This follows the existing build script documentation and keeps malformed or incomplete supplied manifests fatal in required mode. No font binary was copied into FigCraft. Both required-core and no-font configurations remain validation gates.
+Native optional-font builds retain the system-font policy. A required web build must
+embed Inter Regular and SemiBold plus Noto Sans Georgian Regular after filtering;
+missing required face/style coverage fails the build, regardless of which manifest supplies it. Required mode
+also rejects an unset `CRAFT_FONTS_DIR`. The migration's original `b076417` catalog
+lacks Inter and is not a qualified required-web input. A combined central font pin restores the prior Latin catalog while preserving the new
+core fallbacks. Source Sans 3 and Source Serif 4 are excluded on every target; no font binary belongs in this repository. Required-web, required-native
+and optional-font configurations remain separate validation gates.

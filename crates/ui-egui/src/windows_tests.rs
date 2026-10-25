@@ -137,6 +137,8 @@ fn another_hidden_window_answers_requests_that_need_no_frame_in_its_own_file() {
 
     // A capture that needs a frame is admitted and asks the hidden window to paint, rather than
     // failing at once; only its deadline expires it (once).
+    // Model a request admitted long after startup, without waiting in real time.
+    app.clock.set_test_now(Some(120.0));
     let shot = request(&mut app, "ui.screenshot", json!({"window": w, "path": "unused.png"}));
     let unknown = request(&mut app, "window.list", json!({"window": 99}));
     logic(&ctx, &mut app, &[ViewportId::ROOT, other]);
@@ -145,7 +147,7 @@ fn another_hidden_window_answers_requests_that_need_no_frame_in_its_own_file() {
     assert!(unknown.try_recv().expect("answered").result.unwrap_err().contains("no window 99"));
     assert!(app.control_queue.is_empty());
     // The whole request lifetime is over: one timeout reply, and nothing retained.
-    app.clock.set_test_now(Some(crate::control::SHOT_TIMEOUT + 1.0));
+    app.clock.set_test_now(Some(app.clock.now() + crate::control::SHOT_TIMEOUT + 1.0));
     logic(&ctx, &mut app, &[ViewportId::ROOT, other]);
     assert!(shot.try_recv().expect("answered").result.unwrap_err().contains("didn't deliver a screenshot"));
     assert!(app.capture.shots.is_empty(), "released after its deadline");
