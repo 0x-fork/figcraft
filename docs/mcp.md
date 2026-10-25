@@ -708,7 +708,10 @@ device, whether a click where nothing reacts briefly flashes the screen's hotspo
 interactions, on by default; also in the presenter's Options menu) and whether its Inspect panel
 shows the size, colours and typography of the layer under the pointer (also the Inspect button in
 its bar); the options are kept for later presentations (in the presenter Z cycles them and R
-restarts). The player's state is
+restarts). An Open link to an `http` or `https` address first shows a notice that the link leaves
+the prototype, with Open link, Cancel and "Don't show this again"; `proto.linkNotice {show?}`
+turns the notice on (the default) or off, kept with the desktop app's preferences (the web build
+keeps it until the page reloads). The player's state is
 in `inspect_ui` (`presenter`, `preview`: screen, scroll, `scale`, `zoom`, `pan`, the screen's
 `hotspots` and whether they are flashing, the `inspected` layer) when attached, and
 `ui.set {presentScroll: [x, y]}` scrolls its screen (see [control-protocol.md](control-protocol.md)).
