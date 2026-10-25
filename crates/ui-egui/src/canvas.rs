@@ -183,7 +183,17 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         }
     }
     let own_cursor = input(app, ui, &resp);
-    crate::drop_overlay(&ctx, ctx.content_rect(), tr("Drop to import"));
+    // A browser names no dragged file until the drop, so documents there still say "import", or
+    // in Dev Mode show the Dev Mode note, though they open when dropped.
+    let documents = ctx.input(|i| i.raw.hovered_files.iter().all(|f| f.path.as_deref().is_some_and(crate::is_document)));
+    let label = if documents {
+        tr("Drop to open")
+    } else if app.ui.right_tab == crate::RightTab::Inspect {
+        tr("Dev Mode only inspects: switch to Design (Shift+D) to edit")
+    } else {
+        tr("Drop to import")
+    };
+    crate::drop_overlay(&ctx, ctx.content_rect(), label);
     crate::guides::end_released(&ctx);
     crate::live::track_pointer(app, &ctx);
     app.sync_preedit();
@@ -242,6 +252,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         let image_rect = presented_image_rect(tl, v, zoom, ppp, pixel_preview);
         painter.image(tex.id(), image_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
+    crate::dev_mode::refresh_measurements(app);
     app.session.tool.labels = overlays(app, &painter, &t);
     crate::frame_labels::rename_field(app, ui);
     // The zoom tool's area.
@@ -254,6 +265,8 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     }
     crate::dev_mode::draw(app, &painter);
     crate::handles::draw(app, &painter);
+    crate::board_bar::stamp_author(app, &painter, ctx.input(|i| i.pointer.hover_pos()).filter(|p| rect.contains(*p)));
+    crate::board_bar::show(app, &ctx);
     crate::selection_spacing::draw(app, &painter);
     crate::comments::draw(app, &painter);
     crate::live_text::draw(app, &painter);
@@ -504,10 +517,21 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
     if !app.canvas.dragging && crate::selection_spacing::input(app, &ctx, hover_pos, resp.hovered(), app.canvas.space_pan) {
         return false;
     }
-    // Dropped files import onto the canvas, behind a card while they do ([`crate::pending_open`]).
+    // Dropped files import onto the canvas, behind a card while they do ([`crate::pending_open`]);
+    // a dropped document opens as a file of its own, as on the home screen. Dev Mode imports
+    // nothing into the design, and says so once for the whole drop.
     let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+    let mut refused = false;
     for f in dropped {
         let path = f.path().to_path_buf();
+        if crate::is_document(&path) {
+            crate::pending_open::open_dropped(app, &f);
+            continue;
+        }
+        if refused || crate::menus::dev_mode_refuses(app, "file.import") {
+            refused = true;
+            continue;
+        }
         let pt = hover_pos.map(|h| app.to_page(h)).unwrap_or_default();
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped.png".into());
         let (params, read) = if path.exists() {
@@ -932,7 +956,8 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
             }
         }
         // The focus view's bar names its frame.
-        let labelled = focus.is_none() && (n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. }));
+        // Board objects (stickies, shapes with text, stamps) are frames without a name label.
+        let labelled = focus.is_none() && (n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. })) && !n.is_board_atom();
         if labelled && let Some(q) = crate::frame_labels::draw(app, painter, t, &doc, *c, sel.contains(c), ds.hover == Some(*c)) {
             labels.push((*c, q.map(|p| app.to_page(p))));
         }
@@ -1037,8 +1062,9 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
             let tiny = figcraft_engine::tools::box_sides_px(&b, zoom).1 < figcraft_engine::tools::SMALL_BOX_PX;
             // Measuring to another layer (Alt held) shows just the outlines: no handles or size.
             let measuring = app.session.tool.overlay.measure_box.is_some();
-            // Locked layers (selected in the layers panel) can't be resized: no handles either.
-            let handles = if measuring || sel.iter().any(|i| figcraft_engine::tools::locked_in(&doc, *i)) {
+            // Locked layers (selected in the layers panel) can't be resized, nor anything in Dev
+            // Mode: no handles either.
+            let handles = if measuring || app.session.tool.dev_mode || sel.iter().any(|i| figcraft_engine::tools::locked_in(&doc, *i)) {
                 0
             } else if is_line {
                 2
