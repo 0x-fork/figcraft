@@ -488,11 +488,11 @@ pub(crate) fn write(path: &str, _bytes: &[u8]) -> Result<()> {
 }
 
 fn ext(path: &str) -> String {
-    std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
+    std::path::Path::new(path).extension().and_then(std::ffi::OsStr::to_str).unwrap_or("").to_ascii_lowercase()
 }
 
 fn file_stem(path: &str) -> String {
-    std::path::Path::new(path).file_stem().and_then(|e| e.to_str()).unwrap_or("Untitled").to_string()
+    std::path::Path::new(path).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Untitled").to_string()
 }
 
 /// The counts the import report shows for a freshly loaded document.
@@ -941,14 +941,37 @@ pub fn export_area(doc: &Document, ids: &[NodeId], setting: &ExportSetting) -> O
         .reduce(|a, b| a.union(b))
 }
 
-/// What an export of `ids` draws, bottom to top: the layers themselves, or (contents only off,
-/// and always for slices) every top-level layer of their page, so whatever shows in the area is in.
-fn drawn_layers(doc: &Document, ids: &[NodeId], setting: &ExportSetting) -> Vec<NodeId> {
-    let slice = ids.iter().any(|i| doc.node(*i).is_some_and(|n| matches!(n.kind, NodeKind::Slice)));
-    match ids.first().and_then(|i| doc.page_of(*i)).and_then(|p| doc.node(p)) {
-        Some(page) if slice || !setting.contents_only => page.children.clone(),
-        _ => super::edit::z_sorted(doc, ids),
+/// What an export of `ids` draws, bottom to top: the layers themselves, or (contents only off)
+/// every top-level layer of their page, so whatever shows in the area is in. A slice paints nothing
+/// itself: with contents only on, a slice inside a frame or group draws that frame or group, and a
+/// slice anywhere else draws every top-level layer of its page.
+pub fn drawn_layers(doc: &Document, ids: &[NodeId], setting: &ExportSetting) -> Vec<NodeId> {
+    let Some(page) = ids.first().and_then(|i| doc.page_of(*i)).and_then(|p| doc.node(p)) else {
+        return super::edit::z_sorted(doc, ids);
+    };
+    if !setting.contents_only {
+        return page.children.clone();
     }
+    let mut own = Vec::with_capacity(ids.len());
+    for &i in ids {
+        if !doc.node(i).is_some_and(|n| matches!(n.kind, NodeKind::Slice)) {
+            own.push(i);
+            continue;
+        }
+        match slice_container(doc, i) {
+            Some(c) => own.push(c),
+            None => return page.children.clone(),
+        }
+    }
+    own.sort_unstable();
+    own.dedup();
+    super::edit::z_sorted(doc, &super::edit::roots(doc, &own))
+}
+
+/// The frame or group a slice sits in: None on the page or in a section.
+fn slice_container(doc: &Document, slice: NodeId) -> Option<NodeId> {
+    let parent = doc.node(slice)?.parent?;
+    doc.node(parent).is_some_and(|p| p.kind.is_frame_like() || matches!(p.kind, NodeKind::Group)).then_some(parent)
 }
 
 /// [`export_bytes`] with an export setting's format and options (its size is `scale`: see
@@ -1181,8 +1204,11 @@ fn export_path(name: &str) -> String {
     if parts.is_empty() { "Untitled".into() } else { parts.join("/") }
 }
 
-/// `name` without path separators and characters file systems reject.
-fn safe_file_name(name: &str) -> String {
+/// `name` without path separators and characters file systems reject (`/ \ : * ? " < > |` and
+/// control characters become `_`); everything else is kept, up to the first 200 characters.
+/// `figcraft-cli export` names its files by this rule too (and keeps at most 100 characters before
+/// the number and extension it adds).
+pub fn safe_file_name(name: &str) -> String {
     name.chars().take(200).map(|c| if c.is_control() || "/\\:*?\"<>|".contains(c) { '_' } else { c }).collect()
 }
 

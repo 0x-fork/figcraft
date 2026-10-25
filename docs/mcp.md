@@ -34,6 +34,10 @@ of the window itself (`screenshot` with `window`) needs it on screen: it is then
 
 ### Confining file access
 
+The roots below belong to the **headless** side: the session `figcraft-cli mcp` runs itself, with
+no window. A server attached with `--attach` runs the commands inside the app instead, so the app
+confines them — from the flags it was started with, not from anything passed to the CLI.
+
 ```sh
 figcraft-cli mcp --automation-read-root /work/project --automation-write-root /work/project/out
 ```
@@ -144,6 +148,8 @@ Or in a project's `.mcp.json`:
   there is none, so they are page coordinates then). Groups and boolean groups have no coordinate
   space of their own: a layer in a group is placed in the frame (or on the page) the group is in.
   `inspect_document` reports `x`/`y` the same way, plus `absoluteBounds` in page coordinates.
+  In `props`, `fill` and `stroke` also accept `"none"` (either case) or `null` as no paint, the
+  same as an empty `fills`/`strokes` list, so an outline-only shape can be made in one call.
 - Frames, groups, sections and masks: drawing a frame or section with the `pointer` tool around
   layers puts those fully inside it in it; sections go only on the page or in sections (moves,
   drags, pastes and new sections elsewhere are refused or land on the page); resizing a section
@@ -190,6 +196,12 @@ Or in a project's `.mcp.json`:
     the CSS `fr` unit: a track never gets less than its content (a fixed-size child bigger than
     its share keeps it; the other `fr` tracks share the rest). `inspect` reports a grid child's
     resolved `gridCell`.
+- Layer order: `node.reparent {ids?, parent, index?}` moves layers into `parent` (keeping their place
+  on the canvas, or taking their place in its auto layout flow) and `node.reorder {id, index}` moves
+  one within its parent. `index` counts the parent's children bottom first (in auto layout, the
+  first in the flow) and is where the (first) moved layer ends up after the move, in the same parent
+  or a new one; several layers land together in their stacking order. No `index`, or one past the
+  end, puts them on top (last in the flow).
 - **Every menu action is a command** (`list_commands`), and most commands act on `ids` when given,
   else on the selection. New layers become the selection.
 - Colours are `"#RRGGBB"` or `"#RRGGBBAA"`. Inside fills and strokes, `color` may also be a hex
@@ -267,9 +279,11 @@ Or in a project's `.mcp.json`:
 - **Styles stay true to their layers**: editing a styled fill, stroke, effect or layout grid list
   (`node.set`, `fill.set`, `fill.add`, a bound variable…) unlinks that style (`styles.fill` etc. go
   `null`), so a later `style.update` doesn't overwrite the edit; `style.apply` replaces variables
-  bound to what the style sets; a text style goes on text layers only. Names are trimmed per `/`
-  folder part. `style.move {styles, before?, folder?}` reorders (and with `folder`, renames into it),
-  `style.duplicate {style}` adds "<name> copy" right below, `style.renameFolder {folder, name}`.
+  bound to what the style sets; a text style goes on text layers only. In one call, a style link
+  (`fillStyle`, `textStyle`…) wins over values it sets; set a deviation in a later call, which
+  unlinks it. Names are trimmed per `/` folder part. `style.move {styles, before?, folder?}`
+  reorders (and with `folder`, renames into it), `style.duplicate {style}` adds "<name> copy" right
+  below, `style.renameFolder {folder, name}`.
 - **Variables**: `variable.bind` refuses a variable of a type the field doesn't take (a colour on
   `width`); scopes only filter pickers. `variable.delete` / `variable.deleteCollection` unbind the
   layers using them (they keep their last value) and give aliases to them their values. An
@@ -301,7 +315,7 @@ Or in a project's `.mcp.json`:
 | `inspect_document {depth, allPages}` | The document as JSON (layer tree, styles, selection, history). |
 | `get_node {id, depth}` | One layer as JSON; `pluginData` (`{key: value}`, values as strings) when the layer or page has layer data written with `set_properties {props: {pluginData}}`. |
 | `select {ids}` | Replace the selection (`[]` deselects). |
-| `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?, contentsOnly?, includeBoundingBox?, svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?}` | png, jpg, svg, webp, pdf, or `fig`: the whole file as `.fig`, experimental (see Exporting `.fig` files below); `size` is `2x`, `512w` or `512h`. The image covers what the layers paint (shadows towards their offset, strokes, unclipped children, a mask group's mask; hidden layers take no room; a slice is its area with everything under it); `contentsOnly: false` also draws every other layer showing in that area, `includeBoundingBox` exports the layers' own boxes; SVG: `svgOutlineText: false` keeps `<text>`, `svgIdAttribute` writes unique ids from layer names, `svgSimplifyStroke: false` writes every stroke as an outline. The same options go in export settings (`export.add` / `export.update`). PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?, assets?}` (every layer once per setting, named `<layer><suffix>.<format>`, a slash in a layer name making a folder; `assets: true` exports the Inspect tab's assets instead: icons as SVG, images as PNG). |
+| `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?, contentsOnly?, includeBoundingBox?, svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?}` | png, jpg, svg, webp, pdf, or `fig`: the whole file as `.fig`, experimental (see Exporting `.fig` files below); `size` is `2x`, `512w` or `512h`. The image covers what the layers paint (shadows towards their offset, strokes, unclipped children, a mask group's mask; hidden layers take no room; a slice is its area with everything under it, or only the frame or group it sits in while `contentsOnly` is on); `contentsOnly: false` also draws every other layer showing in that area, `includeBoundingBox` exports the layers' own boxes; SVG: `svgOutlineText: false` keeps `<text>`, `svgIdAttribute` writes unique ids from layer names, `svgSimplifyStroke: false` writes every stroke as an outline. The same options go in export settings (`export.add` / `export.update`). PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?, assets?}` (every layer once per setting, named `<layer><suffix>.<format>`, a slash in a layer name making a folder; `assets: true` exports the Inspect tab's assets instead: icons as SVG, images as PNG). |
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window in front when attached, a window id (see Windows below) that window. |
 | `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` (best effort, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. `open_file` returns `opened` (for a file opened anew, a `summary` of `name`, `pages`, `layers` and `images`, and `warnings` or `repairs`; a file that was already open just gives its `index`) and the document's `document` outline. |
 | `undo` / `redo` | Step through history. |
@@ -328,6 +342,40 @@ tips; headless, it only sets the preference.
 ```json
 {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"file.newFromTemplate","params":{"template":"dashboard"}}}}
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"export","arguments":{"format":"png","path":"dashboard.png"}}}
+```
+
+### Filling copies with data
+
+`data.fill {id, rows, gap?, formats?, dir?, format?, scale?}` repeats a frame once per row (a carousel, a set
+of posts, a card per item) in one undo step: each key of a row names layers in the copy, and a
+string (or number) sets their text, `{text?, fill?, visible?}` sets more; `name` names the copy
+(default "<frame> <n>"). Copies go in a row to the right, `gap` apart (default 100). With `dir`, each
+copy is exported there as `<name>.<format>` (png by default) after the edits land. Returns `{ids,
+missing (keys no layer is named), files?, errors?}`. `errors` lists the exports that failed as
+`[{id, path, error}]`; the copies stay, and the files that were written are in `files`.
+
+Copy that changes length per row can size itself: `{"Headline": {"text": "…", "fit": {"maxLines": 2}}}` runs
+`text.fit` on those layers after the text is set.
+
+`formats: [{name?, width, height}]` makes every row once per size: the copy is resized so its auto layout
+reflows, named `<name>-<format name>` (default `<width>x<height>`), and placed under the row's previous
+format. Text `fit` runs after the resize. Use case: one call turns a 1080×1350 post into feed, story
+(1080×1920) and square (1080×1080) files for each slide of a carousel; the frame must be auto layout (fixed-
+position children keep their place).
+
+`text.fit {ids?, maxLines?, minSize?, orphans?}` gives a text layer with a fixed width (auto height or fixed size)
+the largest font size, down to `minSize` (default 60% of the current), at which it stays within `maxLines` lines
+and its box's height. Every style run scales by the same factor. A one-word last line (an orphan) is avoided by
+shrinking up to 8% more, else by keeping the last two words together with a no-break space. A one-word paragraph after a hard line break is not an orphan. Text never
+grows, text that already fits keeps its exact size, and sizes round to a tenth without going below `minSize`.
+Returns `{fitted: [{id, fontSize, lines, fits, orphan}]}`. Use case: a carousel slide "Lighthouse 100. Loads in under
+1s." at 96px broke into three lines with "1s." alone; with `fit: {maxLines: 3}` it is two balanced lines.
+
+```json
+{"command": "data.fill", "params": {"id": 80, "dir": "out/carousel", "scale": 1, "rows": [
+  {"name": "01-cover", "Headline": "Your website and AI chat assistant in 7 days", "Badge": {"visible": true}},
+  {"name": "02-proof", "Headline": "Lighthouse 100, loads in under a second", "Badge": {"visible": false}}
+]}}
 ```
 
 ### Boards
@@ -499,6 +547,17 @@ its proportion). A path or point set that draws nothing is refused instead of ma
 0×0 layer, as is a size on an axis the geometry has none of (except 0, such as a horizontal line's
 height) and a size of 0 or less on an axis it has, which would flatten it.
 
+`node.set {path}` (or `set_properties`) replaces a vector's geometry with new SVG path data and
+keeps the layer: its id, name, place in the layer list, paints, effects, styles, variable bindings
+and constraints. The path is read as `vector.create` reads it, and `width`/`height` in the same call
+scale it the same way. The path's own box goes at the layer's current x/y (rotation and flips
+stay); with `x`/`y` in the same call it goes at `x` + its left edge and `y` + its top, as
+`vector.create` places it. Points' own settings (per-point corner radius, caps, joins) go with the
+old geometry. On several layers, layers that aren't vectors are skipped with a warning; on a
+single one, or when none is a vector, the call is refused (convert shapes with
+`vector.edit.begin` or Flatten first). A layer inside an instance is refused too: its geometry
+comes from its main component, so edit that or detach the instance. Undo brings the old path back.
+
 Vector edit mode is driven with `run_command` (or `pointer`/`key` for gestures):
 `vector.edit.begin {id? | ids?}` (default the selection; converts shapes to vectors; several layers
 are edited at once, the first active; `key` Enter with shapes selected does the same),
@@ -635,7 +694,8 @@ rotation?, color?, width?, height?, responsive?}` (`None`, `iPhone 16`, `iPhone 
 `Black`, `White`, `Pink`, `Teal`, `Blue` for the iPhone 16 (an error lists them), `""` for the
 default; `width` / `height` set the custom size's screen, 1–10000 points, and pick `Custom size`,
 which is a bare screen without a body). On a device the presented frame is sized to the device's
-screen: what doesn't fit is clipped, or scrolls when the frame's `overflow` allows it, while `fixed`
+screen: a frame bigger than the screen scrolls through its whole size whatever its `overflow`, content
+past the frame's own edges scrolls only as its `overflow` allows (else it's clipped), and `fixed`
 layers stay on screen (pinned to the edges their constraints name). With `responsive: true` (saved
 in the file) the presented frame is instead resized to the device's screen, or without a device to
 the presenter's window at 100%, and its constraints and auto layout respond as when it is resized
@@ -648,7 +708,10 @@ device, whether a click where nothing reacts briefly flashes the screen's hotspo
 interactions, on by default; also in the presenter's Options menu) and whether its Inspect panel
 shows the size, colours and typography of the layer under the pointer (also the Inspect button in
 its bar); the options are kept for later presentations (in the presenter Z cycles them and R
-restarts). The player's state is
+restarts). An Open link to an `http` or `https` address first shows a notice that the link leaves
+the prototype, with Open link, Cancel and "Don't show this again"; `proto.linkNotice {show?}`
+turns the notice on (the default) or off, kept with the desktop app's preferences (the web build
+keeps it until the page reloads). The player's state is
 in `inspect_ui` (`presenter`, `preview`: screen, scroll, `scale`, `zoom`, `pan`, the screen's
 `hotspots` and whether they are flashing, the `inspected` layer) when attached, and
 `ui.set {presentScroll: [x, y]}` scrolls its screen (see [control-protocol.md](control-protocol.md)).
@@ -764,6 +827,14 @@ most when it can't be reached).
   moves the chosen variant there, `{name, index}` reorders variant properties (the variants'
   names follow). `component.properties` on a set reports `conflicts`: variants sharing one
   combination of values.
+- **Boolean properties**: on the main component, a boolean property's value is the visibility of
+  the layers bound to it. `component.addProperty {type: "boolean", default, layer}`,
+  `component.bindProperty {field: "visible"}` and `component.editProperty {name, default}` show or
+  hide the main's bound layers to match the default (without `default`, `addProperty` takes the
+  bound layer's visibility). Showing or hiding a bound layer on the main sets the default, and the
+  property's other bound layers (in every variant of a set) follow. New instances start from the
+  default; existing instances keep the values they have. Files open as saved: a main whose bound
+  layer disagrees with the default stays that way until one of them is edited.
 - `component.pushChanges {id?}` copies the instance's overrides into its main (from a layer of a
   nested instance too: always into the outer instance's main).
 
@@ -771,7 +842,9 @@ most when it can't be reached).
 
 - `instance.swap {ids?, component}` shows another component in the instances (overrides on layers
   with matching names stay; property values with the same names too). Nested instances can be
-  swapped on their own (an override of the instance they're in).
+  swapped on their own (an override of the instance they're in); a swapped nested instance keeps
+  what its outer main overrode on matching layers as its own, so later edits of those in the main
+  don't reach it.
 - `instance.swapAt {component, x, y}` swaps the instance at a page point: of the instances under
   it (innermost first), the first showing a variant of the same component set, else the innermost
   (never one inside the dropped component); only text layers keep their overrides. The Assets
@@ -849,6 +922,8 @@ click or drag across regions with `pointer` to merge, add `alt` to remove; `shap
 - **Text on a path**: `text.onPath {text?, path?, start?, flip?}` (default: the selected text layer
   and the other selected layer) puts a text layer on a vector's or shape's path: the text takes the
   path layer's place, transform and box, and the path layer is removed (`edit.undo` brings it back).
+  The text also takes the path layer's effects when it has any, and its fills when one of them
+  shows, each with its style and variable bindings; otherwise the text keeps its own.
   The baseline follows the path from `start` (0..1 of its length); the text's horizontal alignment
   places it there (left starts, centre centres, right ends at it); `flip` runs it on the other side
   the other way. Glyphs past an open path's end are hidden; a closed path (ellipse, rectangle) wraps
@@ -856,7 +931,12 @@ click or drag across regions with `pointer` to merge, add `alt` to remove; `shap
   them, `text.removeFromPath {ids?}` makes it plain auto-width text again. Resizing the layer
   scales the path. The text stays editable (`text.edit.*`, `type_text`); `get_node` shows
   `textPath {d (SVG path data in the layer's space), start, flip}`. Exports draw it as outlines
-  (PDF too: not selectable); underline and strikethrough aren't drawn on a path.
+  (PDF too: not selectable); underline and strikethrough aren't drawn on a path. With the tool
+  `tool.textOnPath`, a `pointer` press within 6 screen pixels of a shape's or vector's first
+  subpath puts a new, empty text layer on it, starting at the press, and starts typing: the text
+  also takes the path layer's constraints and effects, and its fills when one of them shows. Ending
+  the edit with nothing typed puts the path layer back with no undo step. Locked layers and layers
+  inside instances are skipped.
 - **Pattern fills**: `fill.pattern {source (layer id), ids?, index?, tile? (grid|horizontalHex|
   verticalHex), scale?, spacing? [x, y], align? (start|center|end), opacity?}` makes the fill at
   `index` (default the top one) the source layer repeated, at `scale` × its own size with `spacing`
@@ -954,7 +1034,9 @@ frame back to Auto, inheriting its parent's mode).
 The same JSON carries variables between FigCraft files: `variable.export {collections?, format?,
 path?}` writes this file's collections (default: all but library copies) as a local variables
 response (`format: "json"`, the default) or as CSS custom properties (`format: "css"`: the default
-mode on `:root`, each other mode on `[data-<collection>="<mode>"]`, aliases as `var(--name)`), and
+mode on `:root`, each other mode on `[data-<collection>="<mode>"]`, aliases as `var(--name)`, numbers
+in px unless the layers bound to them, their scopes or the variables aliasing them make them an
+opacity or a font weight, so `border-radius: var(--radius)` reads `12px`), and
 returns `{text}` (or writes `path` and returns `{path}`). `variable.import {variables}` (an object,
 JSON text or a path; `variableCollections` and `variables` under `meta` or at the top level) reads
 one back: a collection joins this file's collection of the same name
@@ -1381,6 +1463,22 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
   are clipped to 200 characters; a layer holds at most 32 links. Links are data: never fetched or
   opened by the engine (the app opens one when it is clicked). `get_node` and `inspect_document`
   list them as `devResources`; the Inspect tab lists, adds, edits and removes them.
+- **Measurements kept on the canvas:** distances a developer leaves on the canvas for everyone.
+  `devMode.addMeasurement {from? (default the first selected layer), to?, side?}` → `{from, index,
+  lines}` places one between `from` and `to` (a layer on the same page), along one side of `from`
+  (`side`: `top`, `right`, `bottom` or `left`: that side's length) or, with neither, to the layer
+  around `from`; `devMode.removeMeasurement {from?, index?}` → `{removed}` (no index: every one
+  starting from the layer); both undoable. `devMode.measurements {page?, id?}` → `[{from, fromName,
+  index, to?, toName?, side?, labels, lines: [{x0, y0, x1, y1, label, dashed}]}]` lists those on a
+  page (default the current one; `id`: only those from or to that layer), with their lines in page
+  space measured from the layers' current bounds, so they follow the layers. A measurement is
+  stored on the layer it starts from (`get_node` lists them as `measurements: [{to} | {side}]`),
+  saved with the file and synced; the same two layers are measured once (either way round), a
+  layer starts at most 64. One whose other layer was deleted or moved to another page isn't listed
+  or drawn (an undo brings it back); a copy keeps the side measurements and those to layers copied
+  with it. In the app, Dev Mode draws them with the hover redlines, and the Inspect tab lists them
+  (with nothing selected, every one on the page), selects a measurement's layer on a click, removes
+  one with −, and places new ones from its Add measurement menu.
 - **Annotations:** notes for developers on any layer, each with optional pinned properties that
   Dev Mode shows with their current values (and the style or variable behind them).
   `annotation.add {id?, label?, properties?}` (a note, pinned properties or both; returns `{id,
@@ -1417,8 +1515,8 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
   button to open it in the focus view). In the app's Dev Mode the canvas only inspects: presses
   select (and pan, and comment), never move, resize, draw or edit text and vectors, and the menus
   and shortcuts refuse commands that edit the design (Dev Mode's own annotations, statuses, dev
-  resources, code connections and comments still work); choosing a drawing tool in the toolbar
-  goes back to the design. Commands sent over MCP or the control channel aren't affected.
+  resources, measurements, code connections and comments still work); choosing a drawing tool in
+  the toolbar goes back to the design, and the layers panel only selects and expands. Commands sent over MCP or the control channel aren't affected.
 - **Compare changes:** when a layer marked Ready for dev first changes (it turns "Changed"), the
   file keeps a copy of it and everything in it as it was just before that edit (saved in the
   `.figcraft` file only while there is a change; resolving the change, marking it again, another
@@ -1525,6 +1623,14 @@ Pass the returned target list to:
 - `selection.applyColorStyle {targets, style}` to apply a document paint style. As with `style.apply`,
   this replaces the matching node's entire fill/stroke list and links the style. Text ranges copy
   resolved paints and keep their typography, without a paint-style link.
+- `selection.bindColorVariable {targets, variable}` to bind a document color variable (id or name)
+  to those solid fill and stroke slots, as `variable.bind` does with `fills/<i>/color` or
+  `strokes/<i>/color`. A color style on the list and an earlier binding of the slot are removed.
+  Text ranges with fills of their own take the variable's value in the layer's modes, without a
+  binding. Gradients and other variable types are refused; scopes only filter what the Selection
+  colors menu offers, as for `variable.bind`.
+- `selection.detachColor {targets}` to unlink the color style and the color variable of those
+  slots, keeping their values.
 
 Keep the targets fixed throughout a live interaction. A color becoming equal to another color
 must not add slots to the gesture. Invalid or missing targets fail atomically. Direct paint edits

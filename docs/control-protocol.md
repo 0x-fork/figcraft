@@ -131,7 +131,8 @@ component/instance links, overrides, `slot` (a slot layer's property name), boun
 `devStatus` (handoff status), `devChanged` (changed since it was marked ready for dev),
 `annotations` (Dev Mode notes: `[{label, properties, category?}]`), `codeLinks` (a component's
 links to code: `[{language, importPath, name, template}]`), `devResources` (links for developers,
-its own and inherited: `[{name, url, index?, from?}]`), `pluginData` (layer data written with
+its own and inherited: `[{name, url, index?, from?}]`), `measurements` (Dev Mode measurements
+starting from the layer: `[{to} | {side}]`), `pluginData` (layer data written with
 `node.set {props: {pluginData: {key: value}}}`, pages included: `{key: value}`, values as strings;
 only when there is some). The auto layout props
 that `node.set` accepts are listed in [mcp.md](mcp.md#conventions-agents-must-know).
@@ -166,7 +167,8 @@ far the view is panned (`pan`, `panRange`), whether a scroll is still coasting (
 active screen's `hotspots` (`[{id, rect: [x0, y0, x1, y1]}]` in window points, bottom-most first),
 whether a click where nothing reacts flashes them (`hotspotHints`) and they are flashing now
 (`hotspotFlash`), and whether the Inspect panel shows (`inspect`) with the layer it shows
-(`inspected`) (`null` when nothing plays). `presentOptions` holds the options the next presentation
+(`inspected`), and the link an Open link notice waits to open (`linkNotice`, else `null`) (`null`
+when nothing plays). `presentOptions` holds the options the next presentation
 starts with (`scale`, `deviceFrame`, `comments`, `hotspotHints`, `inspect`).
 `textPreview` is true while a live text preview shows on the canvas (a hovered text style or named
 instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).

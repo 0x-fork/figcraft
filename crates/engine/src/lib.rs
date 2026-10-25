@@ -23,6 +23,8 @@ pub mod codegen;
 pub mod collab;
 pub mod component_codegen;
 pub mod components;
+pub mod datafill;
+pub mod dev_measurements;
 pub mod dev_resources;
 pub mod devcompare;
 pub mod devinspect;
@@ -60,7 +62,9 @@ pub mod synthetic;
 pub mod synthetic_ds;
 pub mod templates;
 pub mod textedit;
+pub mod textfit;
 pub mod textpreview;
+pub mod token_roles;
 pub mod tools;
 pub mod vectoredit;
 pub mod widgets;
@@ -414,6 +418,7 @@ impl DocState {
         }
         doc.link_layer_text_styles();
         cmd::styles::apply_paint_bindings_on_load(&mut doc);
+        components::mark_layer_modes(&mut doc);
         // Initial import settlement belongs to the saved baseline, not the user's first edit.
         let page = doc.current_page.filter(|p| doc.pages.contains(p)).or_else(|| doc.first_page()).unwrap_or(NodeId(0));
         let doc = Arc::new(doc);
@@ -686,6 +691,9 @@ pub struct Prefs {
     /// The Getting started tips on the home screen were closed (Help ▸ Getting started shows them
     /// again).
     pub getting_started_dismissed: bool,
+    /// A prototype's Open link goes to a website without first telling the viewer that it leaves
+    /// the prototype (the notice's "Don't show this again"; `proto.linkNotice` shows it again).
+    pub link_notice_skipped: bool,
     /// How each home screen section shows its files, by section id (`"recents"`): `"grid"` (cards
     /// with the picture each file carries) or `"list"` (a table). Missing: the grid.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -735,6 +743,7 @@ impl Default for Prefs {
             recent_files: Vec::new(),
             online_files: Vec::new(),
             getting_started_dismissed: false,
+            link_notice_skipped: false,
             home_views: BTreeMap::new(),
             home_sort: "modified".into(),
             home_order: "desc".into(),
@@ -961,6 +970,8 @@ impl Session {
             ds.end_preview();
         }
         let before = self.ds().ok().map(|d| (d.doc.clone(), d.selection.clone(), d.page, d.uid));
+        // Cut and copy write the clipboard before a later check can refuse the command.
+        let clipboard_before = self.clipboard.clone();
         let result = guard::run(id, || (spec.run)(self, params))
             .and_then(|v| self.check_instance_structure(id, &before).map(|()| v))
             .and_then(|v| self.check_preview(id, &before).map(|()| v))
@@ -993,6 +1004,7 @@ impl Session {
                     ds.selection = sel;
                     ds.page = page;
                 }
+                self.clipboard = clipboard_before;
             }
         }
         result
@@ -1654,7 +1666,11 @@ mod cursor_tests;
 #[cfg(test)]
 mod dark_page_text_tests;
 #[cfg(test)]
+mod datafill_tests;
+#[cfg(test)]
 mod design_paste_tests;
+#[cfg(test)]
+mod dev_measurements_tests;
 #[cfg(test)]
 mod dev_resources_tests;
 #[cfg(test)]
@@ -1689,6 +1705,8 @@ mod fig_export_assets_tests;
 mod fig_export_tests;
 #[cfg(test)]
 mod fig_import_tests;
+#[cfg(test)]
+mod fill_none_tests;
 #[cfg(test)]
 mod finite_geometry_tests;
 #[cfg(test)]
@@ -1882,6 +1900,8 @@ mod text_style_picker_tests;
 #[cfg(test)]
 mod text_tail_tests;
 #[cfg(test)]
+mod textfit_tests;
+#[cfg(test)]
 mod theme_pages_tests;
 #[cfg(test)]
 mod tiff_tests;
@@ -1902,9 +1922,13 @@ mod variants_discovery_tests;
 #[cfg(test)]
 mod vector_behaviour_tests;
 #[cfg(test)]
+mod vector_fill_rule_tests;
+#[cfg(test)]
 mod vector_multi_behaviour_tests;
 #[cfg(test)]
 mod vector_offset_tests;
+#[cfg(test)]
+mod vector_path_set_tests;
 #[cfg(test)]
 mod version_preview_tests;
 #[cfg(test)]
