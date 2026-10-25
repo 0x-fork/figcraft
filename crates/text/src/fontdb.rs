@@ -980,10 +980,12 @@ fn files_outside_dirs(files: Vec<std::path::PathBuf>, dirs: &[std::path::PathBuf
 #[cfg(target_os = "macos")]
 fn font_manager_files() -> Vec<std::path::PathBuf> {
     std::panic::catch_unwind(|| {
-        core_text::font_collection::create_for_all_families()
-            .get_descriptors()
-            .map(|descriptors| descriptors.iter().filter_map(|descriptor| descriptor.font_path()).collect())
-            .unwrap_or_default()
+        objc2::rc::autoreleasepool(|_| {
+            core_text::font_collection::create_for_all_families()
+                .get_descriptors()
+                .map(|descriptors| descriptors.iter().filter_map(|descriptor| descriptor.font_path()).collect())
+                .unwrap_or_default()
+        })
     })
     .unwrap_or_default()
 }
