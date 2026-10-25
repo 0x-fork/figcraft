@@ -18,3 +18,11 @@ png = { workspace = true }
 unicode-bidi = { workspace = true }
 unicode-segmentation = { workspace = true }
 log = { workspace = true }
+
+# Fonts that font managers (RightFont, FontBase, Typeface) activate without copying them into a font
+# folder are known only to Core Text. Its safe wrappers list every available font's file (Core Text
+# needs unsafe FFI, which the workspace forbids). Its dependencies (core-foundation 0.9,
+# core-graphics 0.23, foreign-types 0.5, libc) are already in the lockfile. Pinned exactly: review
+# the diff before bumping.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-text = { version = "=20.1.0", default-features = false }
