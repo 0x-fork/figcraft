@@ -240,8 +240,12 @@ pub fn invoke(app: &mut FigApp, id: &str) {
             app.toast(tr("Copied as text"));
         }
         "edit.copyLink" => {
-            let ids = app.session.selection();
-            app.clipboard_set_text(&format!("figcraft://node/{}", ids.first().map(|i| i.0).unwrap_or(0)));
+            // Only a selected layer has a link, and the copy goes through the control-channel fence
+            // (`clipboard_set_text`): a synthetic gesture never replaces the user's clipboard.
+            if let Some(id) = app.session.selection().first() {
+                app.clipboard_set_text(&format!("figcraft://node/{}", id.0));
+                app.toast(tr("Link copied"));
+            }
         }
         "edit.findReplace" => app.ui.find = Some((String::new(), String::new())),
         // The Actions palette invokes commands without parameters. These values are edited in
@@ -928,11 +932,13 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                     .ok()
                     .filter(|doc| figcraft_engine::cmd::component::can_combine_variants(doc, &app.session.selection()))
                     .map(|_| i18n::command("component.combineVariants", "Combine as variants"));
+                let copy_link = i18n::command("edit.copyLink", "Copy link to selection");
                 let mut entries: Vec<(&str, &str)> = if has_sel {
                     vec![
                         (tr("Copy"), "edit.copy"),
                         (tr("Paste here"), "edit.paste"),
                         (tr("Paste to replace"), "edit.pasteReplace"),
+                        (tr("Copy as"), COPY_AS),
                         ("-", ""),
                         (tr("Bring to front"), "arrange.front"),
                         (tr("Bring forward"), "arrange.forward"),
@@ -956,10 +962,6 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                         ("-", ""),
                         (tr("Flip horizontal"), "object.flipH"),
                         (tr("Flip vertical"), "object.flipV"),
-                        ("-", ""),
-                        (tr("Copy as CSS"), "edit.copyAsCss"),
-                        (tr("Copy as SVG"), "edit.copyAsSvg"),
-                        (tr("Copy as PNG"), "edit.copyAsPng"),
                         ("-", ""),
                         (tr("Delete"), "edit.delete"),
                     ]
@@ -999,6 +1001,29 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                         separator(ui);
                         continue;
                     }
+                    if *id == COPY_AS {
+                        let copy_items = [
+                            (tr("Copy as CSS"), "edit.copyAsCss"),
+                            (tr("Copy as SVG"), "edit.copyAsSvg"),
+                            (tr("Copy as PNG"), "edit.copyAsPng"),
+                            (&*copy_link, "edit.copyLink"),
+                        ];
+                        let picked = submenu(ui, COPY_AS, label, &t, |ui| {
+                            let mut picked = None;
+                            for (label, id) in copy_items {
+                                let sc = crate::shortcuts::shortcut(id).unwrap_or("");
+                                if item(ui, label, sc, available(id), false, &t) {
+                                    picked = Some(id);
+                                }
+                            }
+                            picked
+                        });
+                        if let Some(id) = picked {
+                            invoke(app, id);
+                            close = true;
+                        }
+                        continue;
+                    }
                     let sc = crate::shortcuts::shortcut(id).unwrap_or("");
                     if item(ui, label, sc, available(id), false, &t) {
                         if *id == "edit.paste" {
@@ -1012,11 +1037,15 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                 }
             });
         });
-        let clicked_outside = ctx.input(|i| i.pointer.any_pressed()) && !area.response.hovered() && !over_menu(ctx);
+        // The press of a tap that opened the menu (press and release in one frame) is spared.
+        let fresh = !std::mem::replace(&mut app.ui.context_menu_shown, true);
+        let clicked_outside = !fresh && ctx.input(|i| i.pointer.any_pressed()) && !area.response.hovered() && !over_menu(ctx);
         if close || clicked_outside || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             app.ui.context_menu = None;
             forget_tree(ctx, ctx_menu_id());
         }
+    } else {
+        app.ui.context_menu_shown = false;
     }
     crate::colorpicker::show(app, ctx);
     palette(app, ctx);
@@ -1024,6 +1053,9 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
 
 /// The context menu's Select layer submenu (its key in the context menu's tree).
 const SELECT_LAYER: &str = "Select layer";
+
+/// The context menu's Copy as submenu: its key in the tree, and the marker row in the entries.
+const COPY_AS: &str = "Copy as";
 
 /// Stable egui id for the context menu's pending Select-layer open request.
 fn select_layer_ask_id() -> Id {
