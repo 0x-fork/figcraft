@@ -1189,8 +1189,9 @@ validation and generates the lockfile from its local dependency config.
 ## Historical local qualification — 2026-10-25
 
 The following counts apply to the earlier `10702311` integration, not the later
-`2a3b7d4f` qualification in the status update above. The intervening `9f788753`
-refresh passed 3,247 executions; the runs listed below passed 3,242.
+`2a3b7d4f` qualification documented in `docs/egui-037-local-followups.md`. The
+status update above covers the subsequent `92682728` integration. The intervening
+`9f788753` refresh passed 3,247 executions; the runs listed below passed 3,242.
 
 The migration preserves captured main `10702311f345393ee1d8868c3257679befcfa14d`
 (53 commits and 114 paths beyond the first integration). The final review commit records
