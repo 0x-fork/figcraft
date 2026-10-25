@@ -559,3 +559,60 @@ fn is_ancestor_holds_for_very_deep_chains() {
     assert!(d.is_ancestor(root, leaf));
     assert!(matches!(d.reparent(root, leaf, None), Err(DocError::Cycle(..))));
 }
+
+#[test]
+fn many_small_vector_subpaths_build_and_stroke_without_rescans() {
+    // Many closed subpaths whose last point repeats the start (#F-332), a long open chain (#F-334)
+    // and a big rounded polygon (#F-333): each used to scan the whole network per step.
+    let mut p = figcraft_geom::kurbo::BezPath::new();
+    for i in 0..3_000 {
+        let x = f64::from(i) * 10.0;
+        p.move_to((x, 0.0));
+        p.line_to((x + 5.0, 0.0));
+        p.line_to((x + 5.0, 5.0));
+        p.line_to((x, 0.0));
+        p.close_path();
+    }
+    let net = VectorNetwork::from_path(&p);
+    assert_eq!(net.vertices.len(), 3 * 3_000);
+    assert_eq!(net.regions[0].loops.len(), 3_000);
+    assert!(net.segments.iter().all(|s| s.a < net.vertices.len() && s.b < net.vertices.len()));
+    assert_eq!(net.stroke_runs().len(), 3_000);
+
+    let pts: Vec<Point> = (0..20_000).map(|i| Point::new(f64::from(i), f64::from(i % 7))).collect();
+    let chain = VectorNetwork::from_points(&pts, false);
+    let runs = chain.stroke_runs();
+    assert_eq!(runs.len(), 1);
+    assert!(!runs[0].closed);
+
+    let ring: Vec<Point> = (0..4_000)
+        .map(|i| {
+            let t = f64::from(i) / 4_000.0 * std::f64::consts::TAU;
+            Point::new(1000.0 * t.cos(), 1000.0 * t.sin() * if i % 2 == 0 { 1.0 } else { 0.9 })
+        })
+        .collect();
+    let mut poly = VectorNetwork::from_points(&ring, true);
+    for v in &mut poly.vertices {
+        v.radius = 0.5;
+    }
+    let rounded = poly.rounded().unwrap();
+    assert!(rounded.regions[0].loops[0].len() > poly.segments.len(), "arcs are walked between the sides");
+    assert_eq!(rounded.regions[0].loops[0].len(), rounded.segments.len());
+}
+
+#[test]
+fn two_segment_closed_loop_rounded_corners() {
+    let mut v0 = Vertex::new(0.0, 0.0);
+    v0.radius = 2.0;
+    let mut v1 = Vertex::new(10.0, 0.0);
+    v1.radius = 2.0;
+    let net = VectorNetwork {
+        vertices: vec![v0, v1],
+        segments: vec![Segment { a: 0, b: 1, ta: (0.0, 0.0), tb: (0.0, 0.0) }, Segment { a: 1, b: 0, ta: (0.0, 5.0), tb: (0.0, -5.0) }],
+        regions: vec![Region { loops: vec![vec![0, 1]], winding: WindingRule::NonZero }],
+    };
+    let r = net.rounded().unwrap();
+    assert_eq!(r.regions[0].loops[0].len(), 4, "both arcs are in the loop");
+    let path = net.fill_path();
+    assert!(!path.elements().is_empty());
+}
