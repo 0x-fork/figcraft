@@ -292,8 +292,19 @@ pub fn export(file: &str, out: &str, t: &Target) -> CliResult<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn refuse_dropping_images(input: &str, out: &str, images_left_out: usize) -> CliResult<()> {
+    if images_left_out > 0 && figcraft_engine::file_access::same_file(input, out) {
+        return Err(CliError::Failed(format!(
+            "{out} wasn't written: {images_left_out} of its images weren't loaded (together they pass what FigCraft reads from one file), and writing over it would delete them. Write to another path; {input} keeps them."
+        )));
+    }
+    Ok(())
+}
+
 pub fn convert(input: &str, out: &str) -> CliResult<ExitCode> {
-    let doc = load(input)?;
+    let (loaded, _) = figcraft_engine::cmd::file::load_path(input, None).map_err(|e| CliError::Failed(format!("can't open {input}: {e}")))?;
+    refuse_dropping_images(input, out, loaded.images_past_budget)?;
+    let doc = loaded.doc;
     let page = doc
         .current_page
         .filter(|p| doc.pages.contains(p))
@@ -389,6 +400,9 @@ pub fn run_script(script: &str, input: Option<&str>, out: Option<&str>) -> CliRe
     }
     if let Some(out) = out {
         let ds = s.ds().map_err(|e| CliError::Failed(e.to_string()))?;
+        if let (Some(input), Some(left_out)) = (input, ds.images_lost_saving_to(out)) {
+            refuse_dropping_images(input, out, left_out)?;
+        }
         if ext(out) == "figcraft" {
             // Through the engine, so the version history is kept.
             write(out, &figcraft_engine::cmd::file::file_bytes(ds).map_err(|e| CliError::Failed(e.to_string()))?)?;
