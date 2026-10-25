@@ -137,6 +137,8 @@ fn preview_pane_opens_follows_edits_and_the_selection() {
     assert!(u.app.ui.preview.is_none());
 }
 
+/// Asserts the preview's device viewport and scroll range, wheel and drag scrolling, the
+/// end clamp with spring-back, and that navigation resets scroll to the top.
 #[test]
 fn the_frame_scrolls_on_the_device_screen_by_wheel_and_drag() {
     let (mut u, a, b, _) = setup();

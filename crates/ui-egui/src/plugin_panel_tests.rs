@@ -89,6 +89,9 @@ fn an_open_plugin_panel_draws_no_frames_while_idle() {
     Harness::new(session()).assert_idle("a plugin panel");
 }
 
+/// Asserts a plugin colour field's swatch opens the picker on that field, a picked colour
+/// reaches the plugin, and a second plugin's panel opens while the first remains (two panels
+/// present).
 #[test]
 fn a_colour_field_opens_the_colour_picker_and_two_panels_show_side_by_side() {
     let mut u = Ui::new(session());

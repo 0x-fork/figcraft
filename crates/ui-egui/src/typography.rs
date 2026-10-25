@@ -1167,10 +1167,13 @@ const ROW: f32 = 26.0;
 /// The font list's tallest (it scrolls past that).
 const LIST_HEIGHT: f32 = 380.0;
 
+/// Return the persisted list of recently used font families.
 fn recent_families(ctx: &egui::Context) -> Vec<String> {
     ctx.data_mut(|d| d.get_persisted::<Vec<String>>(Id::unique(RECENT_KEY))).unwrap_or_default()
 }
 
+/// Remember a font family at the front of the recent list, removing an earlier
+/// case-insensitive match and keeping at most eight entries.
 fn remember_family(ctx: &egui::Context, family: &str) {
     ctx.data_mut(|d| {
         let v = d.get_persisted_mut_or_default::<Vec<String>>(Id::unique(RECENT_KEY));
@@ -1568,6 +1571,8 @@ mod variable_tests {
         assert!(p.app.ui.last_error.is_none(), "{:?}", p.app.ui.last_error);
     }
 
+    /// Asserts bound font family and style chips replace the dropdowns, a selected text range
+    /// offers no variable binding, and detaching restores the last values.
     #[test]
     fn bound_font_family_and_style_show_their_variables_and_detach() {
         let mut p = Panel::new();

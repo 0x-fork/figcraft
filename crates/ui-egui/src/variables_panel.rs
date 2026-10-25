@@ -173,6 +173,8 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     app.ui.variables = open.then_some(st);
 }
 
+/// Draw the variables header: the title at the left, and the import/export/Close controls at the
+/// right.
 fn header(app: &mut FigApp, ui: &mut Ui, open: &mut bool) {
     let t = Tokens::get(ui.ctx());
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
@@ -253,6 +255,7 @@ fn extend(app: &mut FigApp, lib: &str, c: &str, st: &mut Editor) {
     }
 }
 
+/// Stable egui id for the rename field of a `Rename` target.
 fn rename_id(target: &Rename) -> Id {
     Id::unique(("var_rename", target))
 }
@@ -281,6 +284,8 @@ fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
     (1..10_000).map(|k| if k == 1 { base.to_string() } else { format!("{base} {k}") }).find(|n| !taken(n)).unwrap_or_else(|| base.to_string())
 }
 
+/// Draw the collections sidebar with library headings, collection rows and a create-collection
+/// button.
 fn sidebar(app: &mut FigApp, ui: &mut Ui, views: &[View], local: &Variables, st: &mut Editor) {
     let t = Tokens::get(ui.ctx());
     let (hr, _) = ui.allocate_exact_size(vec2(SIDEBAR_W, 40.0), Sense::hover());
@@ -505,6 +510,8 @@ fn group_of(name: &str) -> &str {
     name.rsplit_once('/').map(|(g, _)| g).unwrap_or("")
 }
 
+/// Draw the variables table for the selected collection: search, library/extended notes,
+/// grouped rows, mode columns and the create-variable row when editable.
 fn table(app: &mut FigApp, ui: &mut Ui, view: &View, st: &mut Editor) {
     let t = Tokens::get(ui.ctx());
     // A sidebar click this frame picked another source: shown next frame.
@@ -594,6 +601,8 @@ fn table(app: &mut FigApp, ui: &mut Ui, view: &View, st: &mut Editor) {
     });
 }
 
+/// Draw a collection's mode header row with rename, duplicate, reorder and delete actions
+/// and an add-mode button when the collection is editable and not extended.
 fn header_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st: &mut Editor, width: f32) {
     let t = Tokens::get(ui.ctx());
     // An extended collection has the modes of the one it extends.

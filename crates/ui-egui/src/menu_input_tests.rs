@@ -69,6 +69,8 @@ fn batch_rename_opens_its_existing_dialog() {
     assert!(ui.app.ui.last_error.is_none());
 }
 
+/// Asserts `file.rename` opens the left panel's inline file-name editor (not a dialog),
+/// focuses it, and commits the typed name on Enter.
 #[test]
 fn rename_file_edits_the_file_name_in_place() {
     let mut ui = Ui::new(Session::new());

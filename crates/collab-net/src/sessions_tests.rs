@@ -89,6 +89,9 @@ fn rect(s: &mut Session) -> u64 {
     s.execute("shape.rectangle", &json!({"x": 10, "y": 10, "width": 40, "height": 30})).unwrap()["id"].as_u64().unwrap()
 }
 
+/// Asserts two files are hosted and joined independently: each has its own port, session and
+/// edits, presence stays in its file's session, and closing one file's session leaves the
+/// other live.
 #[test]
 fn two_files_are_hosted_and_joined_independently() {
     let mut host = session("Hana");

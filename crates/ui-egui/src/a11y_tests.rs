@@ -404,6 +404,8 @@ fn the_align_buttons_are_off_for_a_layer_alone_on_the_page() {
     assert!(!align_left(&tree(&mut u)), "one in a frame aligns to it");
 }
 
+/// Asserts side-panel and Pages edges are not focusable, and Tab never stops on the
+/// side-panel edges.
 #[test]
 fn the_custom_panel_edges_never_enter_the_keyboard_or_focus_order() {
     // FigCraft's panels are fixed, so egui makes no `panel.__resize` widgets; the draggable edges

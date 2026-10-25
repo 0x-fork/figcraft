@@ -426,6 +426,8 @@ fn flows_overview(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
     }
 }
 
+/// Draw prototype settings: device and rotation, device colour, custom size, responsive
+/// toggle and page background, running `proto.settings`.
 fn settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
     if widgets::section_header(ui, tr("Prototype settings"), &[(Icon::Preview, tr("Open prototype preview"))], false).is_some() {
         app.run("proto.preview", json!({}));
@@ -552,6 +554,7 @@ fn custom_size(app: &mut FigApp, ui: &mut Ui, model: Option<proto::Device>) {
     });
 }
 
+/// Show, create or preview the flow starting at `frame` and edit its description.
 fn flow_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, frame: NodeId) {
     let flows = flows_of(doc, page);
     let mine = flows.iter().find(|f| f.start == frame).cloned();
@@ -579,6 +582,8 @@ fn flow_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, fra
     }
 }
 
+/// List a node's interactions, add a default click navigation (or Back), open the editor
+/// popover and remove interactions.
 fn interactions(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, node: &Node) {
     let t = Tokens::get(ui.ctx());
     let id = node.id;
@@ -696,6 +701,7 @@ fn animates(a: &Action) -> bool {
     )
 }
 
+/// Stable egui id for the prototype key-capture flag.
 fn capture_id() -> Id {
     Id::unique("proto_key_capture")
 }
@@ -704,6 +710,8 @@ fn capturing(ctx: &egui::Context) -> bool {
     ctx.data(|d| d.get_temp::<bool>(capture_id())).unwrap_or(false)
 }
 
+/// Draw an interaction's trigger controls: trigger picker, mouse/delay fields, key capture
+/// and controller-button selection, patching the interaction.
 fn trigger_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &Interaction) {
     let t = Tokens::get(ui.ctx());
     widgets::sublabels(ui, tr("Trigger"), None);
@@ -1021,6 +1029,8 @@ pub(crate) fn action_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, page:
     }
 }
 
+/// Draw an interaction's animation controls: transition, direction, easing, duration and
+/// custom easing fields, plus an animated curve preview.
 fn animation_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &Interaction) {
     let t = Tokens::get(ui.ctx());
     widgets::sublabels(ui, tr("Animation"), None);

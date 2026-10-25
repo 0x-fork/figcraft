@@ -69,6 +69,8 @@ pub struct ImeSurrounding {
 /// A mutex (rather than an atomic) also works on wasm32 targets without 64-bit atomics.
 static EDITING_SESSION: LazyLock<Mutex<u64>> = LazyLock::new(|| Mutex::new(0));
 
+/// Return the next editing-session token from a mutex-protected counter (`wrapping_add`).
+/// Zero is a valid token; the mutex also works on wasm32 without 64-bit atomics.
 fn next_editing_session() -> u64 {
     let mut session = match EDITING_SESSION.lock() {
         Ok(session) => session,
@@ -143,6 +145,9 @@ fn range(te: &TextEdit) -> (usize, usize) {
     (te.caret.min(te.anchor), te.caret.max(te.anchor))
 }
 
+/// Apply an unconditional text-model mutation through `edit_if`, whose success clears the
+/// composition, clamps caret and anchor to the character count, marks a `characters` override
+/// when the node is source-backed, normalizes the document and bumps the revision.
 fn edit(s: &mut Session, f: impl FnOnce(&mut TextData, &mut TextEdit)) -> Result<()> {
     edit_if(s, |t, te| {
         f(t, te);
@@ -230,6 +235,11 @@ pub fn insert_ime_commit(s: &mut Session, text: &str) -> Result<ImeInsertion> {
     insert_model(s, text, true)
 }
 
+/// Insert committed text, optionally as an IME commit: normalize line endings, drop control
+/// characters except `\n`/`\t`, ignore a bare newline/CR IME commit, clear an active
+/// composition for an empty or control-only IME commit, and turn a committed space after a
+/// line-start `-`, `*` or `1.` into a bulleted/numbered list. Reports whether the insertion was
+/// plain, transformed, or a no-op.
 fn insert_model(s: &mut Session, text: &str, ime_commit: bool) -> Result<ImeInsertion> {
     // Stock `TextEdit` deliberately ignores these two commits (they are not a mutation); only a
     // real commit may do so, since typing Enter goes through `insert`.
@@ -894,6 +904,9 @@ mod tests {
         e
     }
 
+    /// Asserts double-clicking a text layer selects all text, a second double-click selects the
+    /// word without changing the editing session, and drag and Shift+click extend the
+    /// selection.
     #[test]
     fn pointer_double_click_drag_and_shift_click() {
         let (mut s, id) = setup("Hello world");
@@ -1132,6 +1145,8 @@ mod tests {
         }
     }
 
+    /// Asserts surrounding text is logical UTF-8 text with byte offsets and keeps a reversed
+    /// selection reversed.
     #[test]
     fn ime_surrounding_uses_logical_utf8_bytes_and_keeps_selection_direction() {
         let (mut s, id) = setup("café😀e\u{301}x");
@@ -1146,6 +1161,8 @@ mod tests {
         assert_eq!(ime.owner.document, s.ds().unwrap().uid);
     }
 
+    /// Asserts an active composition is excluded from surrounding text and an empty text layer
+    /// reports an available, empty payload.
     #[test]
     fn ime_surrounding_excludes_the_composition_and_empty_text_is_available() {
         let (mut s, id) = setup("Hi");
@@ -1162,6 +1179,8 @@ mod tests {
         assert_eq!((ime.text.as_str(), ime.cursor, ime.anchor), ("", 0, 0), "an empty layer is available, not unavailable");
     }
 
+    /// Asserts surrounding text is capped at `MAX_IME_SURROUNDING_BYTES`, an exactly budget-sized
+    /// selection is describable, and one byte more is `SelectionTooWide`.
     #[test]
     fn ime_surrounding_is_bounded_and_a_too_wide_selection_is_explicitly_unavailable() {
         let long = "a".repeat(5000);
@@ -1182,6 +1201,8 @@ mod tests {
         assert_eq!(ime_surrounding(&s), Err(ImeSurroundingUnavailable::SelectionTooWide));
     }
 
+    /// Asserts edits and caret moves keep the same IME owner, while ending and beginning a new
+    /// edit session changes the generation.
     #[test]
     fn ime_owner_is_stable_through_edits_and_the_session_changes_on_begin() {
         let (mut s, id) = setup("Hello");
@@ -1197,6 +1218,8 @@ mod tests {
         assert_ne!(replaced.editing_session, first.editing_session, "a new edit session is a replacement epoch");
     }
 
+    /// Asserts byte deletion around a reversed selection removes whole characters on both
+    /// sides, keeps the selected text and direction, and a final no-op leaves the text alone.
     #[test]
     fn ime_delete_surrounding_bytes_keeps_the_reversed_selection_and_deletes_around_it() {
         let (mut s, id) = setup("ab你好cd");
@@ -1215,6 +1238,8 @@ mod tests {
         assert_eq!(data(&s, id).characters, "你好", "a no-op delete does not touch the text");
     }
 
+    /// Asserts character deletion keeps and shifts the selection, and a no-op delete leaves an
+    /// active composition and the revision untouched.
     #[test]
     fn ime_delete_surrounding_chars_keeps_the_selection_and_ignores_a_no_op() {
         let (mut s, id) = setup("ab你好cd");
@@ -1235,6 +1260,7 @@ mod tests {
         assert_eq!(s.ds().unwrap().revision, revision);
     }
 
+    /// Asserts a text layer in another document has a different IME owner.
     #[test]
     fn ime_owner_identity_changes_with_the_document() {
         let (mut s, id) = setup("Hi");
@@ -1250,6 +1276,8 @@ mod tests {
         assert_eq!(second.node, other);
     }
 
+    /// Asserts a space committed after a line-start `-` becomes a bulleted list and reports
+    /// `Transformed`; a plain `"x"` commit reports `Plain`, and an empty commit reports `Nothing`.
     #[test]
     fn ime_commit_reports_list_autoformat_as_an_application_transformation() {
         let (mut s, id) = setup("-");
@@ -1261,6 +1289,8 @@ mod tests {
         assert_eq!(insert_ime_commit(&mut s, "").unwrap(), ImeInsertion::Nothing);
     }
 
+    /// Asserts CRLF normalization reports `Transformed`, control-only input reports `Nothing`,
+    /// and bare newline/CR commits are ignored while a live composition remains.
     #[test]
     fn ime_commit_normalisation_is_a_transformation_and_a_bare_newline_is_ignored() {
         let (mut s, id) = setup("Hi");
@@ -1283,6 +1313,8 @@ mod tests {
         assert_eq!(data(&s, id).characters, "Hia\nb\n");
     }
 
+    /// Asserts an empty or control-only IME commit ends a live composition (bumping the revision
+    /// once), inserts nothing, and is a harmless no-op when no composition is active.
     #[test]
     fn an_empty_ime_commit_ends_the_composition_without_inserting_text() {
         let (mut s, id) = setup("Hello");

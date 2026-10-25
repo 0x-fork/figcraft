@@ -62,6 +62,9 @@ struct App {
 }
 
 impl eframe::App for App {
+    /// Native eframe logic callback: store the first context, drain control requests, run
+    /// guarded background work, poll macOS open events, handle close requests and title
+    /// changes, and schedule recovery repaints on the app clock.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         {
             let mut slot = self.ctx_slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner);

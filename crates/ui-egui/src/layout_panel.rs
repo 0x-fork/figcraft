@@ -283,6 +283,8 @@ fn add_slot(ui: &mut Ui, label: &str, tip: &str, width: f32) -> egui::Response {
     resp
 }
 
+/// Draw the 3×3 main/cross alignment grid, auto-gap modes, grid column/row gaps and the
+/// horizontal baseline checkbox.
 fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
     let t = Tokens::get(ui.ctx());
     let grid_mode = l.mode == LayoutMode::Grid;

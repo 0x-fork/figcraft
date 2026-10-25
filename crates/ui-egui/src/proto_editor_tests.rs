@@ -78,6 +78,9 @@ fn condition(u: &Ui, btn: NodeId, block: usize) -> String {
     blocks[block].condition.as_ref().map(|c| c.display(&doc.variables)).unwrap_or_default()
 }
 
+/// Asserts the interaction editor shows conditional blocks and nested actions, restarts a
+/// condition when a variable of another type is picked, ignores a right-hand-side variable pick
+/// for a complex condition, and one undo restores the previous condition.
 #[test]
 fn the_interaction_editor_shows_conditionals_and_picks_their_variables() {
     let (mut s, _, b, btn) = setup();
@@ -154,6 +157,8 @@ fn the_builder_takes_variable_operator_value_conditions() {
     }
 }
 
+/// Asserts invalid typed conditions keep their draft and show errors without saving, a valid
+/// one clears the error and saves, and Enter does not leak to shortcuts.
 #[test]
 fn typed_conditions_are_checked_and_errors_show_until_fixed() {
     let (mut s, _, b, btn) = setup();

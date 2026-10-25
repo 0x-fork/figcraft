@@ -245,6 +245,9 @@ const INSTALL: &str = "plugin.directory.install";
 const MANAGE_W: f32 = 400.0;
 const ROW_TEXT_W: f32 = 300.0;
 
+/// Draw the Plugins window with installed and browse tabs, dispatching remove, import,
+/// browse, confirm and stop actions; closing the window cancels its directory requests and
+/// clears confirmation.
 fn manage_window(app: &mut FigApp, ctx: &Context) {
     let t = Tokens::get(ctx);
     let mut open = true;
@@ -509,6 +512,8 @@ fn summary(p: &InstalledPlugin) -> String {
     parts.join(" · ")
 }
 
+/// Draw a plugin command's parameter form: close it when the plugin or command disappeared,
+/// edit values and colour picks, run `plugin.run` on Run, and close on Cancel.
 fn form_window(app: &mut FigApp, ctx: &Context) {
     let Some(mut form) = app.ui.plugin_form.clone() else { return };
     let Some((name, command)) = app

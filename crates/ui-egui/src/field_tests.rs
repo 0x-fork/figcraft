@@ -467,6 +467,8 @@ fn lead(u: &Ui, id: Id) -> Pos2 {
     u.ctx.read_response(id.with("lead")).unwrap_or_else(|| panic!("no field {id:?}")).rect.center()
 }
 
+/// Asserts scrubbing the colour picker's R and alpha fields updates the colour live, each
+/// scrub adding one undo step.
 #[test]
 fn scrubbing_colour_picker_fields_is_live_and_one_undo_step() {
     let (mut u, a, _) = setup();
@@ -490,6 +492,8 @@ fn scrubbing_colour_picker_fields_is_live_and_one_undo_step() {
     assert_eq!(undo_steps(&u), steps + 2, "alpha");
 }
 
+/// Asserts scrubbing a prototype delay sets the value once when released and adds one undo
+/// step.
 #[test]
 fn scrubbing_a_prototype_delay_sets_it_once_when_let_go() {
     let mut s = Session::new();
@@ -514,6 +518,7 @@ fn scrubbing_a_prototype_delay_sets_it_once_when_let_go() {
     assert_eq!((ms, undo_steps(&u)), (800, steps + 1));
 }
 
+/// Asserts scrubbing the scale panel's width scales the layer live in one undo step.
 #[test]
 fn scrubbing_the_scale_panel_width_scales_live_in_one_undo_step() {
     let (mut u, a, _) = setup();
@@ -584,6 +589,8 @@ fn the_intensity_label_fits_whole_in_every_language() {
     out.textures_delta.clear();
 }
 
+/// Asserts a label too long for its number field is elided before the value, while the value
+/// stays whole and both remain inside the field.
 #[test]
 fn a_label_too_long_for_its_field_ends_in_an_ellipsis_before_the_value() {
     let ctx = egui::Context::default();
@@ -780,6 +787,8 @@ fn a_deferred_field_save_keeps_its_document_when_the_next_input_switches_tabs() 
     }
 }
 
+/// Asserts a deferred field save does not retarget a closed, moved or foreign owner: the other
+/// file stays untouched, Save as is not opened, and the stale request is consumed once.
 #[test]
 fn a_deferred_field_save_does_not_retarget_a_closed_moved_or_foreign_owner() {
     for change in ["closed", "moved", "foreign"] {

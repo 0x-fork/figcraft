@@ -135,6 +135,8 @@ fn num(v: &Value) -> f64 {
     v.as_f64().unwrap()
 }
 
+/// Asserts presenter fit/fit-width/fill/actual scaling, pan ranges, wheel and drag panning,
+/// option carry-over to the next presentation, and R restarting the flow.
 #[test]
 fn presenter_scales_by_its_options_and_pans_what_overflows() {
     let (mut u, big) = big();
@@ -272,6 +274,7 @@ fn scrolling_keeps_its_momentum_and_springs_back_from_the_ends() {
     assert_eq!(u.preview()["flinging"], json!(false));
 }
 
+/// Asserts wheel momentum continues after input stops and then comes to rest.
 #[test]
 fn the_wheel_coasts_after_it_stops() {
     let (mut u, a, ..) = setup();

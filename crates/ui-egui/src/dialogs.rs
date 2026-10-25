@@ -179,6 +179,10 @@ pub fn keys(app: &mut FigApp, ctx: &Context) {
     }
 }
 
+/// Draw the app's dialogs and cards: pending opens/imports/missing fonts, About,
+/// Preferences, shortcuts, find/replace, batch rename, menu input, variables, dev compare,
+/// branch, export preview, colour profile, plugin, live join/publish, online dialogs and
+/// close confirmation.
 pub fn show(app: &mut FigApp, ctx: &Context) {
     // Dropped files waiting to open: their card, then (once it has shown) the files.
     crate::pending_open::pending_opens(app, ctx);

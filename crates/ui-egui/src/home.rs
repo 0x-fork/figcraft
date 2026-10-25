@@ -188,6 +188,8 @@ fn dropped(app: &mut FigApp, ctx: &egui::Context) {
     }
 }
 
+/// Draw the Home sidebar: app icon and wordmark, file/template search (Escape clears it)
+/// and section tabs; choosing a section clears the file query.
 fn sidebar(app: &mut FigApp, ui: &mut Ui, t: &Tokens, left: Rect) {
     let mut y = left.min.y + 20.0;
     crate::theme::paint_app_icon(ui, Rect::from_min_size(pos2(left.min.x + 12.0, y - 4.0), vec2(32.0, 32.0)));
@@ -475,6 +477,8 @@ fn matches(template: &Template, query: &str, kind: Option<Kind>) -> bool {
             || has(template.size))
 }
 
+/// Draw template search and kind filter, show no-match guidance and a "Show all templates"
+/// button that clears the query and kind, and lay matching templates out in a grid.
 fn templates(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
     heading(ui, t, tr("Templates"));
     ui.horizontal(|ui| {

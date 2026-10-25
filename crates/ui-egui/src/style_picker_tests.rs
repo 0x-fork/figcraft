@@ -95,6 +95,8 @@ fn text_session() -> (Session, figcraft_doc::NodeId) {
     (s, t)
 }
 
+/// Asserts hovering a text style previews it without an edit, leaving the popover restores
+/// the value, and clicking applies one undo step and closes the picker.
 #[test]
 fn text_styles_preview_on_hover_and_apply_on_click() {
     let (s, t) = text_session();

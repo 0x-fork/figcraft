@@ -223,6 +223,9 @@ fn cancel_retargeted_field_save(ui: &mut Ui, id: Id) {
     ui.memory_mut(|m| m.surrender_focus(editor));
 }
 
+/// Implement the shared number field: label/icon lead, scrubbing, keyboard stepping and
+/// typing, select-all when a click starts editing, bindable values and deferred-save
+/// cancellation; returns an edit and/or bind event.
 fn number_field_impl(
     ui: &mut Ui,
     id: Id,

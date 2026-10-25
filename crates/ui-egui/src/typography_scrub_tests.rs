@@ -44,6 +44,7 @@ impl Fields {
         out.textures_delta.clear();
         out.platform_output.cursor_icon
     }
+    /// Screen position of a typography field's label/lead, used to start a scrub.
     fn lead(&self, key: &str) -> Pos2 {
         let rect = self.ctx.read_response(Id::unique(key).with("click")).unwrap().rect;
         Pos2::new(rect.min.x + 12.0, rect.center().y)
@@ -157,6 +158,8 @@ fn typography_icon_scrub_changes_only_the_selected_characters_without_ending_tex
     assert_eq!(f.value("ty_ls"), 0.0);
 }
 
+/// Asserts typography spacing fields accept typed percent units, commit on Enter, and
+/// Escape restores the previous value without adding an undo step.
 #[test]
 fn typography_spacing_fields_still_accept_typed_units_and_escape_cancels() {
     let mut f = Fields::new();

@@ -20,6 +20,7 @@ fn key(h: &mut Harness, key: Key) {
     }
 }
 
+/// Whether the widget with the given id currently has focus.
 fn focused(h: &Harness, id: &str) -> bool {
     h.ctx.memory(|m| m.has_focus(egui::Id::unique(id)))
 }

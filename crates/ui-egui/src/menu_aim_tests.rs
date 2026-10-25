@@ -87,6 +87,7 @@ impl Ui {
 
 const TOPS: [&str; 6] = ["File", "Edit", "View", "Object", "Text", "Arrange"];
 
+/// Stable id for a top-level menu in the menu-aim test harness.
 fn top(name: &str) -> Id {
     Id::unique(("menu", name))
 }
@@ -145,6 +146,8 @@ fn a_reopened_main_menu_shows_no_stale_submenu() {
     assert!(u.tops_shown().is_empty(), "reopened with {:?} open", u.tops_shown());
 }
 
+/// Asserts leaving a top menu and returning to it does not restore the submenu that was open
+/// before.
 #[test]
 fn a_submenu_one_level_down_reopens_closed() {
     let mut u = Ui::new();

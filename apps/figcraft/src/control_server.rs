@@ -97,6 +97,9 @@ fn spawn_connection(stream: TcpStream, queue: Queue, ctx: CtxSlot, workers: &mut
     }
 }
 
+/// Serve one control connection: read bounded JSON lines, reject oversized frames and a
+/// full queue, queue one request, wait under its gate, and write one reply. Non-JSON input
+/// answers with an error and closes the connection so HTTP body lines cannot become commands.
 fn serve(mut out: TcpStream, queue: Queue, ctx: CtxSlot, timeout: Duration) -> std::io::Result<()> {
     out.set_read_timeout(Some(timeout))?;
     out.set_write_timeout(Some(timeout))?;

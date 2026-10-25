@@ -20,6 +20,7 @@ struct Drag {
     pos: Pos2,
 }
 
+/// Stable egui id for prototype connection dragging.
 fn drag_id() -> Id {
     Id::unique("proto_canvas_drag")
 }
@@ -59,6 +60,8 @@ struct Sources {
     ids: Arc<Vec<NodeId>>,
 }
 
+/// Return the cached subtree nodes with interactions for `page`, recomputing only when the
+/// document pointer or page changes.
 pub(crate) fn sources(ctx: &egui::Context, doc: &Arc<Document>, page: NodeId) -> Arc<Vec<NodeId>> {
     ctx.data_mut(|d| {
         let c = d.get_temp_mut_or_default::<Sources>(Id::unique("proto_canvas_sources"));

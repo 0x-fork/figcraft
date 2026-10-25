@@ -34,6 +34,7 @@ fn caret_x(ctx: &egui::Context, text: &str, cursor: CCursor) -> f32 {
     ctx.fonts_mut(|f| f.layout_no_wrap(text.to_string(), regular(11.0), Color32::WHITE).pos_from_cursor(cursor).min.x)
 }
 
+/// Read the primary character cursor of a test text field.
 fn cursor(ctx: &egui::Context, id: Id) -> CCursor {
     egui::TextEdit::load_state(ctx, id).unwrap().cursor.char_range().unwrap().primary
 }
@@ -75,6 +76,8 @@ fn fonts() -> Option<egui::Context> {
     Some(ctx)
 }
 
+/// Asserts names keep their logical text while glyphs paint in visual order, including
+/// ellipsis placement at the overflow end and mixed-direction rows.
 #[test]
 fn names_keep_logical_text_and_paint_in_visual_order() {
     let Some(ctx) = fonts() else { return };
@@ -137,6 +140,8 @@ fn names_keep_logical_text_and_paint_in_visual_order() {
     });
 }
 
+/// Asserts Arabic letters take joined contextual forms and truncation puts the ellipsis at
+/// the visual end of a right-to-left row.
 #[test]
 fn arabic_joining_and_truncation_use_the_visual_end() {
     let Some(ctx) = fonts() else { return };
@@ -177,6 +182,8 @@ fn arabic_joining_and_truncation_use_the_visual_end() {
     });
 }
 
+/// Asserts the shaper mirrors right-to-left parentheses in both glyph order and the atlas
+/// shapes chosen for them.
 #[test]
 fn rtl_brackets_are_mirrored_by_the_shaper() {
     let Some(ctx) = fonts() else { return };
@@ -211,6 +218,8 @@ fn rtl_brackets_are_mirrored_by_the_shaper() {
     });
 }
 
+/// Asserts Right/Left move the caret visually while logical offsets jump, Shift extends
+/// visually, and typing inserts at the logical caret; Latin text keeps egui's own caret.
 #[test]
 fn rename_caret_moves_visually_with_logical_offsets() {
     let Some(ctx) = fonts() else { return };
@@ -266,6 +275,8 @@ fn rename_caret_moves_visually_with_logical_offsets() {
     assert_eq!(caret(&ctx, lid).0, 2);
 }
 
+/// Asserts clicks map right-to-left visual positions to logical carets, so a click at the
+/// visual left end leaves the caret at the logical end and typing appends there.
 #[test]
 fn clicks_place_the_logical_caret_by_what_is_shown() {
     let Some(ctx) = fonts() else { return };

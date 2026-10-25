@@ -84,6 +84,8 @@ fn unavailable_system_theme_uses_the_existing_light_fallback() {
     assert_eq!(Tokens::get(&ctx), Tokens::light());
 }
 
+/// Checks that the test graph enables egui's `default_fonts` and `monochrome_emoji_fonts`
+/// features by asserting both a Latin and an emoji glyph are available.
 #[test]
 fn tests_have_the_explicit_default_and_monochrome_emoji_font_features() {
     // 0.37 egui has no default features, and kittest's own dev-features do not propagate to this

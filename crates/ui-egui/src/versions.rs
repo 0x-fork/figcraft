@@ -403,6 +403,8 @@ fn current_row(ui: &mut Ui, more: bool, active: bool) -> bool {
     !active && resp.on_hover_text(tr("Back to the current version")).clicked()
 }
 
+/// Draw one version row with timeline, name, time, up to three description lines and a
+/// more/context menu; returns the chosen preview, restore, edit, duplicate or delete action.
 fn version_row(ui: &mut Ui, row: &Row, last: bool, previewing: bool) -> Option<Action> {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();

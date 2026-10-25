@@ -71,6 +71,9 @@ struct WebShell {
 impl eframe::App for WebShell {
     // eframe runs `logic` for visible tabs and, with only `run_logic`, for hidden ones: keep
     // autosave/live/control deadlines moving without a paint. `FigApp::ui` does not repeat it.
+    /// Run the browser shell's eframe logic callback: guard `background_tick` so hidden tabs
+    /// still advance autosave, live and control deadlines without painting. `FigApp::ui` does
+    /// not repeat it.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         figcraft_ui_egui::windows::guard(&mut self.fig, ctx, |fig| fig.background_tick(ctx));
     }

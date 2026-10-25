@@ -28,6 +28,7 @@ fn reply(reader: &mut BufReader<TcpStream>) -> Value {
     serde_json::from_str(&line).unwrap()
 }
 
+/// Build a `ui.inspect` control request with a throwaway reply channel.
 fn request() -> ControlRequest {
     ControlRequest { id: json!(0), method: "ui.inspect".into(), params: json!({}), reply: mpsc::channel().0, state: Default::default() }
 }
@@ -115,6 +116,8 @@ fn full_queue_rejects_before_dispatch_and_ui_queue_stays_bounded() {
     worker.join().unwrap().unwrap();
 }
 
+/// Asserts a commit that writes the file and queues its reply wins the gate: the transport's
+/// timeout branch consumes that reply and leaves the state `Replied`.
 #[test]
 fn a_committed_reply_wins_over_the_transport_timeout() {
     let dir = std::env::temp_dir().join(format!("figcraft-control-commit-{}", std::process::id()));
@@ -139,6 +142,7 @@ fn a_committed_reply_wins_over_the_transport_timeout() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Asserts a zero-duration wait reports `Timeout` and cancels the open gate.
 #[test]
 fn a_timeout_cancels_an_open_request() {
     let gate = RequestGate::new();
@@ -147,6 +151,8 @@ fn a_timeout_cancels_an_open_request() {
     assert_eq!(gate.state(), RequestState::Cancelled, "nothing may write after the timeout");
 }
 
+/// Asserts a closed reply channel reports `Disconnected` and leaves the gate `Open`, not
+/// cancelled.
 #[test]
 fn a_disconnected_reply_channel_is_not_reported_as_a_timeout() {
     let gate = RequestGate::new();
@@ -268,6 +274,9 @@ fn a_limit_sized_frame_is_accepted_at_eof() {
     worker.join().unwrap().unwrap();
 }
 
+/// Asserts expired requests stop occupying the UI queue cap, a later request is admitted
+/// and answered, and a window that finally draws discards its expired command before
+/// dispatch.
 #[test]
 fn timed_out_requests_release_a_full_deferred_ui_queue() {
     use figcraft_ui_egui::{FigApp, NoServices, control, windows};

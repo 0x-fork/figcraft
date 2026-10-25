@@ -129,6 +129,7 @@ fn unavailable(label: &str) -> &'static str {
     }
 }
 
+/// Stable egui id for a node interaction's open action path.
 fn open_id(cx: &Cx) -> Id {
     Id::unique(("proto_open_action", cx.node, cx.k))
 }

@@ -64,10 +64,13 @@ fn remove_button(u: &mut Ui, list: &str, index: usize) -> Pos2 {
         .unwrap_or_else(|| panic!("no Remove button in {list} row {index} {row:?} {all:?}"))
 }
 
+/// Read a temporary boolean open-settings flag keyed by `salt` and row index.
 fn flag(u: &Ui, salt: &'static str, i: usize) -> bool {
     u.ctx.data(|d| d.get_temp::<bool>(Id::unique((salt, i)))).unwrap_or(false)
 }
 
+/// Asserts removing a fill keeps the open picker on the surviving paint (with its index
+/// shifted), and removing the paint being edited closes the picker.
 #[test]
 fn removing_a_fill_keeps_the_picker_on_its_paint() {
     let mut s = Session::new();
@@ -93,6 +96,8 @@ fn removing_a_fill_keeps_the_picker_on_its_paint() {
     assert_eq!(u.app.ui.picker, None);
 }
 
+/// Asserts removing effects or grids moves open settings and an open colour picker to the
+/// surviving row, or closes them when their own row is removed.
 #[test]
 fn removing_effects_and_grids_keeps_open_settings_with_their_rows() {
     let mut s = Session::new();

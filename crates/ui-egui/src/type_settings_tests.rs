@@ -2,6 +2,8 @@
 //! de paragraphe") stays inside the popover, which otherwise widened a little every frame.
 use egui::{Area, Id, Pos2, RawInput, Rect, vec2};
 
+/// Asserts a long type-settings row label does not widen the popover beyond 264 pt across
+/// frames.
 #[test]
 fn a_long_label_does_not_widen_the_type_settings_popover() {
     let ctx = egui::Context::default();

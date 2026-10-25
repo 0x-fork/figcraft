@@ -48,6 +48,9 @@ pub fn status_dropdown(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[Nod
     });
 }
 
+/// Draw section colour and hide-contents controls, Dev status, changed-reason Resolve, the
+/// last-change note and Resize to fit; returns for an empty selection or one without a Dev
+/// status.
 pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let sections = !sel.is_empty() && sel.iter().all(|i| is_section(doc, *i));
     if sel.is_empty() || !sel.iter().all(|i| has_status(doc, *i)) {

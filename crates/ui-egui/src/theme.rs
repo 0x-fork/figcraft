@@ -173,6 +173,7 @@ impl Tokens {
     }
 }
 
+/// Stable id for temporary theme tokens.
 fn tokens_id() -> egui::Id {
     egui::Id::unique("figcraft_tokens")
 }
@@ -436,6 +437,7 @@ pub fn c32(c: figcraft_color::Color) -> Color32 {
     Color32::from_rgba_unmultiplied(r, g, b, a)
 }
 
+/// Stable id for the current document-to-screen colour conversion.
 fn screen_conversion_id() -> egui::Id {
     egui::Id::unique("figcraft_screen_conversion")
 }

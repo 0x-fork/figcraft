@@ -164,6 +164,7 @@ enum Act {
     Hide(NodeId, bool),
 }
 
+/// Stable egui id for the assets drag payload.
 fn drag_id() -> Id {
     Id::unique("asset_drag")
 }
@@ -581,6 +582,10 @@ fn render_thumbs(ui: &Ui, w: f32, thumbs: &mut Thumbs, wanted: &[(Source, NodeId
     }
 }
 
+/// Draw the Assets panel: refresh libraries, switch to the libraries view when asked,
+/// otherwise cache a listing keyed by revision, query and library state, render local and
+/// enabled-library assets with reused thumbnails, and dispatch place, style, hide, toggle
+/// and drag actions.
 pub fn show(app: &mut FigApp, ui: &mut Ui) {
     refresh_libraries(app, ui);
     if app.ui.libraries {
@@ -773,6 +778,8 @@ fn drag_feedback(app: &mut FigApp, ui: &mut Ui, doc: &Document, libs: &HashMap<S
     ui.ctx().request_repaint();
 }
 
+/// Draw the 64×64 component ghost on the tooltip layer, using the thumbnail when available
+/// and the component or component-set icon otherwise.
 fn ghost(ui: &Ui, p: Pos2, set: bool, tex: Option<egui::TextureHandle>) {
     let t = Tokens::get(ui.ctx());
     let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::unique("asset_ghost")));
@@ -831,6 +838,10 @@ fn libraries_view(app: &mut FigApp, ui: &mut Ui) {
     });
 }
 
+/// Draw the publish form: status, publishable components/styles/collections, description and
+/// publish buttons. Run `library.publish` locally or publish to the server in the
+/// background, reset the form on success, and report when the file is unsaved so other files
+/// cannot yet use it.
 fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
     let form_id = Id::unique("asset_publish_form");
     let mut form: PublishForm = ui.data(|d| d.get_temp(form_id)).unwrap_or_default();
@@ -1010,6 +1021,8 @@ fn usage(app: &mut FigApp, ui: &mut Ui, w: f32, link: &str) {
     ui.add_space(8.0);
 }
 
+/// Draw the libraries enabled in this file with version/count/status, remove and swap
+/// actions, add-file and pasted-link controls, and background fetch/cancel handling.
 fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
     let t = Tokens::get(ui.ctx());
     title(ui, w, tr("Libraries in this file"));

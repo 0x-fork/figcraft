@@ -6,6 +6,9 @@
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
+/// Font build script: emit `craft_fonts.rs` from `input_fonts`, passing the
+/// `CRAFT_FONTS_DIR`, `CRAFT_FONTS_REQUIRED`, wasm target and `FIGCRAFT_EMBED_CJK` inputs;
+/// report generation and write failures with `cargo::error`.
 fn main() {
     println!("cargo::rerun-if-env-changed=CRAFT_FONTS_DIR");
     println!("cargo::rerun-if-env-changed=CRAFT_FONTS_REQUIRED");
@@ -77,6 +80,10 @@ struct Catalog {
     faces: Vec<(String, String)>,
 }
 
+/// Parse a font manifest of `family | style | file | scripts` rows into `CraftFont`
+/// entries: skip Adobe-authored families, skip CJK unless requested, keep the web catalog
+/// to its budgeted families, canonicalize and watch each face, and emit `include_bytes!`
+/// items.
 fn craft_fonts(dir: &std::path::Path, manifest_rel: &str, wasm: bool, embed_cjk: bool) -> Result<Catalog, String> {
     let manifest = dir.join(manifest_rel);
     watch(&manifest);
@@ -121,6 +128,8 @@ mod tests {
     struct Fixture(PathBuf);
 
     impl Fixture {
+        /// Test fixture: create a unique temporary directory, write a synthetic face file and
+        /// install the default Georgian manifest.
         fn new() -> Self {
             let dir = std::env::temp_dir().join(format!("fig-font-input-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
             std::fs::create_dir_all(dir.join("fonts")).unwrap();
@@ -131,6 +140,7 @@ mod tests {
             fixture
         }
 
+        /// Test fixture: write manifest rows that all point at the fixture's `fonts/face.ttf` face.
         fn manifest(&self, name: &str, faces: &[(&str, &str)]) {
             let text = faces.iter().map(|(family, style)| format!("{family} | {style} | fonts/face.ttf | Latn\n")).collect::<String>();
             std::fs::write(self.0.join("fonts").join(name), text).unwrap();
@@ -138,11 +148,15 @@ mod tests {
     }
 
     impl Drop for Fixture {
+        /// Remove the fixture's temporary directory, ignoring errors.
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
 
+    /// Asserts the native Latin catalog keeps its 43 permitted presentation faces, the web
+    /// catalog keeps only the four Inter faces, Adobe-authored families are absent, and
+    /// permitted native faces remain.
     #[test]
     fn restored_latin_catalog_preserves_permitted_native_faces_and_web_budget() {
         let f = Fixture::new();
@@ -160,6 +174,7 @@ mod tests {
         assert!(input_fonts(Some(&f.0), true, true, false).is_ok());
     }
 
+    /// Asserts required web input rejects a catalog missing Inter Regular or Inter SemiBold.
     #[test]
     fn required_web_rejects_core_only_and_partial_latin_catalogs() {
         let f = Fixture::new();
@@ -168,6 +183,8 @@ mod tests {
         assert!(input_fonts(Some(&f.0), true, true, false).unwrap_err().contains("Inter SemiBold"));
     }
 
+    /// Asserts required web input embeds the Inter and Georgian catalogs (three entries) and
+    /// rejects a manifest without Noto Sans Georgian Regular.
     #[test]
     fn required_web_embeds_both_catalogs_and_requires_georgian() {
         let f = Fixture::new();
@@ -180,6 +197,8 @@ mod tests {
         assert!(input_fonts(Some(&f.0), true, true, false).unwrap_err().contains("Noto Sans Georgian Regular"));
     }
 
+    /// Asserts absent font input is empty when optional and an error when required, while present
+    /// input includes Noto Sans Georgian.
     #[test]
     fn optional_and_native_inputs_keep_their_existing_policy() {
         let f = Fixture::new();
@@ -189,6 +208,8 @@ mod tests {
         assert!(input_fonts(Some(&f.0), false, true, false).unwrap().contains("Noto Sans Georgian"));
     }
 
+    /// Asserts required web input rejects a manifest whose face file is missing, even when every
+    /// face row is listed.
     #[test]
     fn required_web_rejects_missing_asset_even_with_all_face_rows() {
         let f = Fixture::new();

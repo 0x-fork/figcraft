@@ -45,6 +45,8 @@ fn names(app: &FigApp) -> Vec<String> {
     app.session.docs.iter().map(|d| d.doc.name.clone()).collect()
 }
 
+/// Asserts closing a window in the presenter shows the unsaved-changes dialog and does not
+/// dismiss the preview.
 #[test]
 fn closing_a_window_in_the_presenter_shows_the_unsaved_changes_dialog() {
     let mut session = Session::new();
@@ -104,6 +106,8 @@ fn windows_hold_tabs_and_close_with_their_files() {
     assert_eq!(app.session.ds().unwrap().doc.name, "A");
 }
 
+/// Asserts a hidden other window answers edits and inspection in its own file while the main
+/// window keeps its file, and a capture parks with a deadline and times out once.
 #[test]
 fn another_hidden_window_answers_requests_that_need_no_frame_in_its_own_file() {
     let mut s = Session::empty();
@@ -180,6 +184,8 @@ fn a_request_for_a_window_on_screen_wakes_it_while_the_main_window_is_hidden() {
     assert!(woken.lock().unwrap().contains(&other), "the other window is asked to draw: {:?}", woken.lock().unwrap());
 }
 
+/// Asserts every direct UI frame clears the logic-tick marker so background work runs each
+/// frame.
 #[test]
 fn every_direct_ui_frame_runs_background_work() {
     // Direct `App::ui` harnesses never call `App::logic`: the tick marker the UI pass consumes
@@ -192,6 +198,8 @@ fn every_direct_ui_frame_runs_background_work() {
     }
 }
 
+/// Asserts synthetic input for a child window reaches the pane that draws it, leaving the
+/// main window's pane untouched.
 #[test]
 fn synthetic_input_for_a_child_window_reaches_the_pane_that_draws_it() {
     let mut s = Session::empty();
@@ -214,6 +222,8 @@ fn synthetic_input_for_a_child_window_reaches_the_pane_that_draws_it() {
     assert_eq!(crate::windows::take_input(&mut app, other), events, "the child's next frame takes its batch");
 }
 
+/// Asserts a child raw-input hook with no batch does not error or drain the root window's
+/// pending acknowledgement.
 #[test]
 fn a_frame_without_a_batch_does_not_error_another_windows_acknowledgement() {
     let mut s = Session::empty();
@@ -238,6 +248,8 @@ fn a_frame_without_a_batch_does_not_error_another_windows_acknowledgement() {
     assert_eq!(app.input_acks[0].reply.id, json!(5));
 }
 
+/// Asserts a child window runs `viewport_setup` and its pane keeps the dark theme after the
+/// swap back.
 #[test]
 fn a_child_window_runs_the_ui_setup_the_main_window_does() {
     // eframe calls `App::ui` only for the root window, so a child that draws while the root does
@@ -263,6 +275,8 @@ fn a_child_window_runs_the_ui_setup_the_main_window_does() {
     assert_eq!(again, Some(json!(true)));
 }
 
+/// Asserts a closed and later reused viewport does not inherit its old IME context
+/// generation.
 #[test]
 fn an_emptied_window_forgets_its_ime_context() {
     // `windows::begin` ends the viewport when a window loses its last file; a later window that

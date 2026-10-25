@@ -67,6 +67,7 @@ fn crop_corners(app: &FigApp, id: NodeId, r: (f64, f64, f64, f64)) -> Option<[Po
     ])
 }
 
+/// Stable egui id for handle dragging.
 fn drag_id() -> Id {
     Id::unique("figcraft_handle_drag")
 }

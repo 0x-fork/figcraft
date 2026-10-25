@@ -43,6 +43,7 @@ fn drag(u: &mut Ui, p: Pos2, by: egui::Vec2, release: bool) {
     }
 }
 
+/// Asserts typed and scrubbed spacing changes take effect with exactly one undo step.
 #[test]
 fn spacing_fields_type_scrub_and_keep_one_undo_step() {
     let (mut u, ids) = scene(true);
@@ -88,6 +89,8 @@ fn canvas_gap_drag_keeps_selection_and_undo_redo_for_both_grid_axes() {
     }
 }
 
+/// Asserts Escape rolls a spacing drag back, and releasing outside the window commits once
+/// while keeping the selection.
 #[test]
 fn escape_rolls_back_and_an_outside_release_finishes_the_gesture() {
     let (mut u, ids) = scene(false);

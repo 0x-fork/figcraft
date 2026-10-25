@@ -25,14 +25,17 @@ struct Recorded {
 struct Clipboard(Arc<Mutex<Recorded>>);
 
 impl Services for Clipboard {
+    /// Record a system-clipboard text write in the test clipboard service.
     fn clipboard_set_text(&mut self, s: &str) {
         let mut r = self.0.lock().unwrap();
         r.text.push(s.to_string());
         r.last_text = Some(s.to_string());
     }
+    /// Return the test system clipboard's last text.
     fn clipboard_get_text(&mut self) -> Option<String> {
         self.0.lock().unwrap().last_text.clone()
     }
+    /// Count a PNG clipboard write in the test clipboard service.
     fn clipboard_set_png(&mut self, _w: u32, _h: u32, _rgba: &[u8]) {
         self.0.lock().unwrap().pngs += 1;
     }
@@ -46,6 +49,7 @@ struct Win {
 }
 
 impl Win {
+    /// Create a test window over a session containing one selected rectangle.
     fn new() -> Self {
         let mut s = Session::new();
         s.execute("shape.rectangle", &json!({"x": 10, "y": 10, "width": 100, "height": 50})).unwrap();
@@ -54,6 +58,7 @@ impl Win {
         win
     }
 
+    /// Build a test window around `s` with a recording clipboard service and run three frames.
     fn with_session(s: Session) -> Self {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let app = FigApp::new(s, Box::new(Clipboard(recorded.clone())));
@@ -64,6 +69,7 @@ impl Win {
         win
     }
 
+    /// Run one production UI frame with `events` at the next 60 Hz test time.
     fn frame(&mut self, events: Vec<Event>) {
         self.time += 1.0 / 60.0;
         self.app.clock.set_test_now(Some(self.time));
@@ -74,12 +80,15 @@ impl Win {
         out.textures_delta.clear();
     }
 
+    /// Return the recorded `(text writes, PNG writes)` count.
     fn writes(&self) -> (usize, usize) {
         let r = self.recorded.lock().unwrap();
         (r.text.len(), r.pngs)
     }
 }
 
+/// Asserts that a control-channel copy shortcut writes no system clipboard, still runs the
+/// command and is acknowledged.
 #[test]
 fn a_synthetic_copy_shortcut_leaves_the_system_clipboard_alone() {
     let mut w = Win::new();
@@ -106,6 +115,8 @@ fn a_synthetic_copy_shortcut_leaves_the_system_clipboard_alone() {
     assert!(rx.try_recv().is_ok(), "the batch is acknowledged");
 }
 
+/// Asserts copy commands run under the synthetic-control fence write nothing, while the same
+/// command afterwards writes once.
 #[test]
 fn a_copy_command_invoked_for_a_synthetic_click_still_keeps_the_clipboard() {
     let mut w = Win::new();
@@ -120,6 +131,7 @@ fn a_copy_command_invoked_for_a_synthetic_click_still_keeps_the_clipboard() {
     assert_eq!(w.writes(), (1, 0));
 }
 
+/// Return the characters of a text node in the test window.
 fn edit_text(w: &Win, id: NodeId) -> String {
     match &w.app.session.doc().unwrap().node(id).unwrap().kind {
         NodeKind::Text(t) => t.characters.clone(),
@@ -127,6 +139,8 @@ fn edit_text(w: &Win, id: NodeId) -> String {
     }
 }
 
+/// Asserts a synthetic Cut deletes the selected text, keeps the edit session active, writes
+/// no system clipboard, and ends its fence with the frame.
 #[test]
 fn a_synthetic_cut_deletes_the_selection_but_leaves_the_users_clipboard_alone() {
     let mut s = Session::new();
@@ -147,6 +161,8 @@ fn a_synthetic_cut_deletes_the_selection_but_leaves_the_users_clipboard_alone() 
     assert!(!w.app.control_synthetic, "the fence ends with the frame");
 }
 
+/// Asserts a programmatic copy leaves the system clipboard alone and invalidates the stale
+/// mirror, so a later user paste uses the system text rather than the programmatic layers.
 #[test]
 fn a_programmatic_copy_does_not_let_a_stale_mirror_hide_the_users_paste() {
     let mut s = Session::new();

@@ -40,6 +40,7 @@ struct Picker {
     at: Pos2,
 }
 
+/// Stable egui id for the variable picker.
 fn picker_id() -> Id {
     Id::unique("variable_picker")
 }

@@ -134,6 +134,8 @@ pub fn rail(app: &mut FigApp, ui: &mut Ui) {
     }
 }
 
+/// Draw the left panel: versions when open, otherwise the file/Assets header with in-place
+/// file rename and collapse control, followed by Pages and Layers or the Assets panel.
 pub fn left_panel(app: &mut FigApp, ui: &mut Ui) {
     if app.ui.versions.open {
         crate::versions::panel(app, ui);
@@ -173,6 +175,8 @@ pub fn left_panel(app: &mut FigApp, ui: &mut Ui) {
     }
 }
 
+/// Draw the page list with open/search/add controls, filtering, selection, rename,
+/// reorder/drag and layer drop-to-page; Dev Mode allows opening pages but blocks mutations.
 fn pages(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     // Dev Mode only inspects: rows open pages, but don't add, rename, reorder, duplicate or delete.
@@ -444,6 +448,7 @@ struct Sweep {
     ids: Vec<NodeId>,
 }
 
+/// Stable egui id for the eye/padlock sweep state.
 fn sweep_id() -> Id {
     Id::unique("layer_toggle_sweep")
 }
@@ -654,6 +659,7 @@ fn rename_layer(app: &mut FigApp, id: NodeId) {
     app.ui.layers_seen_sel = app.session.selection();
 }
 
+/// Stable egui id for a layer row's rename field.
 fn rename_id(id: NodeId) -> Id {
     Id::unique(("rename", id))
 }
@@ -722,6 +728,8 @@ fn search_field(ui: &mut Ui, t: &Tokens, w: f32, id: Id, hint: &str, text: &mut 
     }
 }
 
+/// Draw the layer tree with search, cached rows, reveal-selection expansion and scrolling,
+/// rename/Tab navigation, selection and drag/drop, sweep toggles and Dev Mode restrictions.
 fn layers(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     // Dev Mode only inspects: rows select and expand, but don't rename, reorder, hide or lock.

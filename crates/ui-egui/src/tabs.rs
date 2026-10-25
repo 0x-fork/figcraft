@@ -97,6 +97,8 @@ fn tab_drop_position(visible: &[(usize, Rect)], from: usize, pointer_x: f32) -> 
     }
 }
 
+/// Draw the top tab bar: Home, document and presenter tabs, new-tab and window controls,
+/// open/close/reorder animation and tab closing, pausing the presenter when going Home.
 pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     egui::Panel::top("tab_bar").exact_size(HEIGHT).frame(egui::Frame::NONE.fill(t.tab_bar)).show(ui, |ui| {

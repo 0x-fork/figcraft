@@ -14,6 +14,7 @@ fn escape(h: &mut Harness) {
     }
 }
 
+/// Whether the Join link field currently has focus.
 fn link_focused(h: &Harness) -> bool {
     h.ctx.memory(|m| m.has_focus(egui::Id::unique("live_join_link")))
 }

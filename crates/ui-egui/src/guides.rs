@@ -49,6 +49,7 @@ struct Placed {
     line: Option<[Point; 2]>,
 }
 
+/// Stable egui id for guide dragging.
 fn drag_id() -> Id {
     Id::unique("guide_drag")
 }

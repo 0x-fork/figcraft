@@ -205,6 +205,9 @@ pub struct AfterFieldSave {
 }
 
 impl AfterFieldSave {
+    /// Run a deferred field-save binding only if the originating window still exists and owns
+    /// the document; temporarily activate that document, run the binding, then restore the
+    /// previously front tab.
     fn run(self, app: &mut FigApp) {
         // A closed file or one moved to another window cannot turn this into a save of the
         // current tab. The UiState normally stays in its window's pane; validate that too.
@@ -299,6 +302,7 @@ pub(crate) fn revalidate_field_save(app: &FigApp, ctx: &Context, save: Option<Af
     }
 }
 
+/// Stable id, per viewport and editor, for a rejected field-save cancellation.
 fn field_save_cancellation(ctx: &Context, editor: egui::Id) -> egui::Id {
     egui::Id::unique(("field_save_cancelled", ctx.viewport_id(), editor))
 }
@@ -644,12 +648,16 @@ pub(crate) struct ImeInputBaseline {
 }
 
 impl ImeInputBaseline {
+    /// Capture an IME baseline only while a text edit and an active preedit exist, recording
+    /// the IME target and the caret/anchor.
     pub(crate) fn capture(app: &FigApp) -> Option<Self> {
         let te = app.session.ds().ok()?.text_edit.as_ref()?;
         te.preedit.as_ref()?;
         Some(Self { target: ime_target(app)?, caret: te.caret, anchor: te.anchor })
     }
 
+    /// Whether the IME target changed, editing or the preedit ended, or the caret/anchor moved
+    /// since the baseline was captured.
     fn interrupted(&self, app: &FigApp) -> bool {
         ime_target(app) != Some(self.target)
             || app
@@ -661,6 +669,9 @@ impl ImeInputBaseline {
     }
 }
 
+/// Apply a batch of text, IME, paste, copy, cut and key events: reject all IME events for an
+/// interrupted composition, swallow text produced by a key that ran a shortcut, then finish
+/// with triple-click line selection and preedit sync.
 fn text_keys(app: &mut FigApp, ctx: &Context, events: &[Event], ime_input: Option<ImeInputBaseline>) {
     // Validate once before the batch: an accepted DeleteSurrounding deliberately clears preedit,
     // but its following Commit still belongs to the same valid transaction. An interrupted

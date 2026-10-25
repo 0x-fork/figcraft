@@ -339,6 +339,8 @@ fn hue_color(ctx: &egui::Context, h: f32) -> Color32 {
     doc_c32(ctx, Hsb { h, s: 1.0, b: 1.0 }.to_color())
 }
 
+/// Draw the saturation/value square and its knob, updating `hsb.s` and `hsb.b` on click or
+/// drag; returns `(changed, done)`.
 fn sv_square(ui: &mut Ui, rect: Rect, hsb: &mut Hsb) -> (bool, bool) {
     // White → hue horizontally, then transparent → black vertically.
     let mut m = Mesh::default();
@@ -377,6 +379,8 @@ fn sv_square(ui: &mut Ui, rect: Rect, hsb: &mut Hsb) -> (bool, bool) {
     (changed, resp.drag_stopped() || resp.clicked())
 }
 
+/// Draw the hue gradient and knob, updating `hsb.h` clamped below 360; returns
+/// `(changed, done)`.
 fn hue_slider(ui: &mut Ui, rect: Rect, hsb: &mut Hsb) -> (bool, bool) {
     let n = 12;
     let mut m = Mesh::default();
@@ -417,6 +421,8 @@ fn slider_knob(ui: &mut Ui, rect: Rect, t: f32, id: Id) -> Option<(f32, bool)> {
     None
 }
 
+/// Draw the checkerboard and transparent-to-opaque alpha gradient with a knob; returns the
+/// new alpha and done state, or `None` when the slider is not interacting.
 fn alpha_slider(ui: &mut Ui, rect: Rect, color: Color) -> Option<(f32, bool)> {
     widgets::checker(&ui.painter().with_clip_rect(rect), rect, rect.height() / 2.0);
     let mut m = Mesh::default();
@@ -441,6 +447,9 @@ pub fn window_id() -> Id {
     Id::unique("color_picker")
 }
 
+/// Draw the colour picker for the current target: close it when there is no target or the
+/// target's selection no longer matches, otherwise apply eyedropper, paint-kind, colour and
+/// gradient-stop edits live, positioned beside a plugin field when applicable.
 pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     let Some(target) = app.ui.picker.clone() else {
         // A colour sampled for a picker that has closed has no paint to go to.

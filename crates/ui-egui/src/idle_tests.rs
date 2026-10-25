@@ -248,6 +248,8 @@ fn a_finished_background_render_wakes_the_ui() {
     assert!(worker.poll().is_some(), "the woken frame finds the image");
 }
 
+/// Asserts a control request wakes an idle UI and is answered, and screenshots keep frames
+/// coming until delivered before the UI rests again.
 #[test]
 fn control_requests_and_screenshots_wake_an_idle_ui() {
     let (mut h, _) = document();
@@ -341,6 +343,8 @@ fn cjk_names_are_looked_for_in_edits_not_on_every_pan() {
     assert_eq!(h.app.cjk_needed(&ctx, 0), crate::cjk::HANGUL);
 }
 
+/// Asserts a hidden window answers edits and inspection at once, while a screenshot is
+/// parked with a deadline and times out once instead of waiting for a frame.
 #[test]
 fn a_hidden_window_answers_at_once() {
     // #269, #720: minimised or covered, the window draws no frames, but the app's logic still runs:
@@ -424,6 +428,8 @@ fn auto_save_writes_a_changed_file_then_rests() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Asserts a hidden logic tick runs background work and advances the autosave deadline
+/// without counting a UI frame, and is idempotent at the same time.
 #[test]
 fn a_hidden_logic_tick_runs_background_work_but_counts_no_ui_frame() {
     let (mut h, _) = document();
@@ -444,6 +450,7 @@ fn a_hidden_logic_tick_runs_background_work_but_counts_no_ui_frame() {
     assert_eq!(h.app.ui.next_autosave, deadline, "idempotent at the same monotonic time");
 }
 
+/// Asserts a discarded sizing pass counts one drawn frame, not one per pass.
 #[test]
 fn a_discarded_sizing_pass_sets_up_and_counts_one_frame_only() {
     let (mut h, _) = document();

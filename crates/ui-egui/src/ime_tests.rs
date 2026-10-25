@@ -48,6 +48,7 @@ fn ime_descriptor(u: &mut Ui, events: Vec<Event>) -> IMEOutput {
     u.frame_raw(RawInput { events, ..Default::default() }).platform_output.ime.expect("the IME stays on while editing")
 }
 
+/// Return the available surrounding-text payload of an IME output, panicking when unavailable.
 fn available(ime: &IMEOutput) -> &IMESurroundingTextPayload {
     match &ime.surrounding_text {
         IMESurroundingText::Available(payload) => payload,
@@ -55,6 +56,7 @@ fn available(ime: &IMEOutput) -> &IMESurroundingTextPayload {
     }
 }
 
+/// Create a text layer with `text` and return its node id.
 fn text_layer(s: &mut Session, text: &str) -> NodeId {
     NodeId(s.execute("text.create", &json!({"text": text, "x": 40, "y": 40})).unwrap()["id"].as_u64().unwrap())
 }
@@ -103,6 +105,8 @@ fn pinyin_composes_inline_and_commits_once_with_the_ime_on_every_frame() {
     assert_eq!(text(&u, t), "Hi你好\n!");
 }
 
+/// Asserts an empty IME commit ends the composition, inserts nothing, keeps the editor
+/// focused, and the next pass observes the committed text.
 #[test]
 fn an_empty_ime_commit_ends_the_composition_without_inserting_text() {
     // Safari's egui web integration sends `Commit("")` (not `Preedit("")`) when the last
@@ -126,6 +130,8 @@ fn an_empty_ime_commit_ends_the_composition_without_inserting_text() {
     assert_eq!(text(&u, t), "Hello");
 }
 
+/// Asserts byte deletion before the paired commit replaces the exact UTF-8 range, and one undo
+/// restores the pre-IME text.
 #[test]
 fn an_ime_replacing_text_deletes_in_bytes_before_the_paired_commit() {
     // 0.37 sends `DeleteSurroundingBytes` immediately before the commit that replaces it. The
@@ -146,6 +152,8 @@ fn an_ime_replacing_text_deletes_in_bytes_before_the_paired_commit() {
     assert_eq!(text(&u, t), "ab\u{4F60}\u{597D}cd", "one undo restores the pre-IME text");
 }
 
+/// Asserts a caret click invalidates the whole stale IME batch (both byte and character
+/// deletions) while a later direct commit still works.
 #[test]
 fn a_caret_click_rejects_the_stale_delete_and_commit_in_the_same_input_batch() {
     figcraft_text::scan_system_fonts();
@@ -185,6 +193,8 @@ fn a_caret_click_rejects_the_stale_delete_and_commit_in_the_same_input_batch() {
     }
 }
 
+/// Asserts a control-channel document switch rejects the old composition's delete and commit
+/// batch, while a direct commit to the new target remains valid.
 #[test]
 fn a_document_switch_rejects_the_old_compositions_delete_and_commit_batch() {
     figcraft_text::scan_system_fonts();
@@ -214,6 +224,8 @@ fn a_document_switch_rejects_the_old_compositions_delete_and_commit_batch() {
     assert_eq!(text(&u, b), "BravoX", "a direct commit to the new noncomposing target remains valid");
 }
 
+/// Asserts the first observation and ordinary typing are `Other`, while an accepted commit is
+/// `InputMethod` with UTF-8 offsets, the same owner and generation.
 #[test]
 fn ime_cause_is_input_method_only_for_an_accepted_commit() {
     figcraft_text::scan_system_fonts();
@@ -240,6 +252,8 @@ fn ime_cause_is_input_method_only_for_an_accepted_commit() {
     assert_eq!(text(&u, t), "Hi你好x");
 }
 
+/// Asserts a frame mixing IME and application edits is `Other`, and a later pure commit is
+/// `InputMethod` without lingering state.
 #[test]
 fn ime_cause_reports_mixed_application_and_ime_mutations_as_other() {
     figcraft_text::scan_system_fonts();
@@ -267,6 +281,7 @@ fn ime_cause_reports_mixed_application_and_ime_mutations_as_other() {
     assert_eq!(text(&u, t), "Hiあbうcえおdか");
 }
 
+/// Asserts a control-channel text edit is an application change (`Other`).
 #[test]
 fn a_control_channel_text_edit_is_an_application_change() {
     figcraft_text::scan_system_fonts();
@@ -283,6 +298,8 @@ fn a_control_channel_text_edit_is_an_application_change() {
     assert_eq!(available(&out).text, "Hiz");
 }
 
+/// Asserts a byte delete followed by a commit is `InputMethod` and describes the
+/// post-mutation text and caret.
 #[test]
 fn ime_delete_then_commit_is_input_method_and_describes_the_post_mutation_text() {
     figcraft_text::scan_system_fonts();
@@ -302,6 +319,8 @@ fn ime_delete_then_commit_is_input_method_and_describes_the_post_mutation_text()
     assert_eq!(text(&u, t), "abXd");
 }
 
+/// Asserts preedit text is excluded from surrounding text and earns no receipt, while the
+/// following commit is `InputMethod`.
 #[test]
 fn preedit_is_not_surrounding_text_but_the_commit_that_follows_is_input_method() {
     figcraft_text::scan_system_fonts();
@@ -322,6 +341,8 @@ fn preedit_is_not_surrounding_text_but_the_commit_that_follows_is_input_method()
     assert_eq!(available(&committed).cursor, 8);
 }
 
+/// Asserts surrounding text is logical UTF-8 with byte offsets and keeps a reversed
+/// selection.
 #[test]
 fn ime_surrounding_text_is_logical_utf8_and_keeps_a_reversed_selection() {
     figcraft_text::scan_system_fonts();
@@ -339,6 +360,8 @@ fn ime_surrounding_text_is_logical_utf8_and_keeps_a_reversed_selection() {
     assert!(payload.cursor < payload.anchor, "the reversed selection is not sorted");
 }
 
+/// Asserts empty text is available while a selection wider than the 4000-byte budget is
+/// explicitly unavailable but still has a nonzero IME context generation.
 #[test]
 fn empty_text_is_available_while_a_too_wide_selection_is_explicitly_unavailable() {
     figcraft_text::scan_system_fonts();
@@ -361,6 +384,7 @@ fn empty_text_is_available_while_a_too_wide_selection_is_explicitly_unavailable(
     assert!(wide.context_generation > 0, "the owner stays known when only the text is unavailable");
 }
 
+/// Asserts replacing a too-wide selection with a commit is still an `InputMethod` receipt.
 #[test]
 fn a_commit_replacing_a_too_wide_selection_is_still_an_input_method_receipt() {
     figcraft_text::scan_system_fonts();
@@ -382,6 +406,8 @@ fn a_commit_replacing_a_too_wide_selection_is_still_an_input_method_receipt() {
     assert_eq!((available(&out).cursor, available(&out).anchor), (1, 1));
 }
 
+/// Asserts another text node is another owner, and re-entering the same node changes the
+/// context generation while keeping the owner key.
 #[test]
 fn a_new_edit_session_and_another_text_node_are_new_ime_owners() {
     figcraft_text::scan_system_fonts();
@@ -405,6 +431,8 @@ fn a_new_edit_session_and_another_text_node_are_new_ime_owners() {
     assert_ne!(again.context_generation, first.context_generation, "re-entering is a replaced target");
 }
 
+/// Asserts an accepted commit survives a discarded rerun without inserting twice and keeps
+/// its `InputMethod` cause, while a mixed rerun is `Other`.
 #[test]
 fn an_accepted_commit_survives_a_discarded_pass_without_reapplying_or_losing_its_cause() {
     figcraft_text::scan_system_fonts();
@@ -428,6 +456,9 @@ fn an_accepted_commit_survives_a_discarded_pass_without_reapplying_or_losing_its
     assert_eq!(mixed.change_cause, ImeChangeCause::Other);
 }
 
+/// Asserts IME context state is scoped per viewport: each viewport has its own generation,
+/// the root keeps its context across an aux pass, and a closed aux viewport does not inherit
+/// the old generation.
 #[test]
 fn ime_context_state_is_scoped_per_viewport() {
     figcraft_text::scan_system_fonts();
@@ -480,6 +511,7 @@ fn ime_context_state_is_scoped_per_viewport() {
     assert_ne!(aux_again.context_generation, aux_ime.context_generation);
 }
 
+/// Asserts the engine's IME surrounding-text byte limit equals egui's wire limit.
 #[test]
 fn the_engine_surrounding_limit_matches_the_wire_limit() {
     // A divergence would truncate or overrun the bounded payload silently.
@@ -488,6 +520,8 @@ fn the_engine_surrounding_limit_matches_the_wire_limit() {
     assert_eq!(engine, wire);
 }
 
+/// Asserts a frame observes the IME exactly once in both the editor pass and the Home
+/// early-return pass.
 #[test]
 fn a_frame_observes_the_ime_once_even_when_it_ends_early() {
     figcraft_text::scan_system_fonts();
@@ -506,6 +540,8 @@ fn a_frame_observes_the_ime_once_even_when_it_ends_early() {
     assert_eq!(u.app.ime_observations - before, 1, "one idle observation on the home screen");
 }
 
+/// Asserts a double-click inside an existing edit selects the word without changing the IME
+/// owner or generation.
 #[test]
 fn a_double_click_inside_the_edit_keeps_the_ime_generation() {
     figcraft_text::scan_system_fonts();
@@ -536,6 +572,8 @@ fn a_double_click_inside_the_edit_keeps_the_ime_generation() {
     assert_eq!(available(&after).text, "Hello world");
 }
 
+/// Asserts a `window.new` that moves the edited file leaves the root window emitting no IME
+/// descriptor.
 #[test]
 fn a_window_new_that_moves_the_edited_file_leaves_the_root_ime_idle() {
     figcraft_text::scan_system_fonts();
@@ -560,6 +598,8 @@ fn a_window_new_that_moves_the_edited_file_leaves_the_root_ime_idle() {
     assert!(out.platform_output.ime.is_none(), "the root must not emit a descriptor for a file it no longer shows");
 }
 
+/// Asserts a CRLF-normalized commit is application-origin (`Other`), and bare-newline and
+/// control-only commits insert nothing.
 #[test]
 fn a_transformed_commit_is_application_origin_and_a_bare_newline_does_nothing() {
     figcraft_text::scan_system_fonts();
@@ -582,6 +622,8 @@ fn a_transformed_commit_is_application_origin_and_a_bare_newline_does_nothing() 
     assert!(matches!(control.surrounding_text, IMESurroundingText::Available(_)));
 }
 
+/// Asserts character deletion keeps the selection for the paired commit, which replaces it
+/// and reports `InputMethod`.
 #[test]
 fn ime_delete_surrounding_chars_keeps_the_selection_for_the_paired_commit() {
     figcraft_text::scan_system_fonts();

@@ -91,6 +91,7 @@ const BOARD_GROUPS: &[Group] = &[
     Group::tools("comment", tr_noop("Comment"), &[(ToolId::Comment, Icon::Comment)]),
 ];
 
+/// Return the last tool index remembered for a toolbar group, falling back to `default`.
 fn remembered(ui: &Ui, key: &str, default: ToolId) -> ToolId {
     ui.data(|d| d.get_temp::<u8>(egui::Id::unique(("tb_last", key)))).and_then(|i| ToolId::ALL.get(i as usize).copied()).unwrap_or(default)
 }
@@ -535,6 +536,8 @@ fn options_flyout(app: &mut FigApp, ui: &mut Ui, g: &Group, bottom_left: egui::P
     }
 }
 
+/// Draw a tool group's flyout above its button, with keyboard/hover highlighting, remembered
+/// selection when a tool is clicked, and Escape to close.
 fn flyout(app: &mut FigApp, ui: &mut Ui, g: &Group, bottom_left: egui::Pos2) {
     let t = Tokens::get(ui.ctx());
     let item_h = 32.0;

@@ -2010,6 +2010,10 @@ impl Session {
         Ok(())
     }
 
+    /// Handle a double-click gesture: finish a pen path, rename or click labels/widgets,
+    /// cancel an in-progress move/resize/draw/marquee, handle board double-clicks, enter text
+    /// editing (select-all on entry, word-select inside the running edit), enter vector editing
+    /// for selected shapes, and step groups/frames one level deeper.
     fn double_click(&mut self, ev: &PointerEvent) -> Result<()> {
         let ds = self.ds()?;
         let (doc, sel, page) = (ds.doc.clone(), ds.selection.clone(), ds.page);

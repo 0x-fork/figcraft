@@ -12,6 +12,7 @@ use serde_json::json;
 use crate::control::{CaptureSpec, ControlReply, ControlRequest};
 use crate::layers_drag_tests::Ui;
 
+/// Queue a `ui.screenshot` request in the test app and return its reply receiver.
 fn push(u: &mut Ui, id: u64, params: serde_json::Value) -> std::sync::mpsc::Receiver<ControlReply> {
     let (tx, rx) = std::sync::mpsc::channel();
     u.app.control_queue.push(ControlRequest { id: json!(id), method: "ui.screenshot".into(), params, reply: tx, state: Default::default() });
@@ -38,10 +39,13 @@ fn resized_frame(u: &mut Ui, size: egui::Vec2) -> egui::FullOutput {
     out
 }
 
+/// Whether any viewport in the frame output issues a `Screenshot` command.
 fn has_screenshot(out: &egui::FullOutput) -> bool {
     out.viewport_output.values().any(|v| v.commands.iter().any(|c| matches!(c, egui::ViewportCommand::Screenshot(_))))
 }
 
+/// Asserts reverse capture completion replies only to the matching request, then drains both
+/// requests.
 #[test]
 fn two_captures_correlate_by_request_across_reverse_completion() {
     let mut u = Ui::new(Session::empty());
@@ -67,6 +71,7 @@ fn two_captures_correlate_by_request_across_reverse_completion() {
     assert!(u.app.capture.shots.is_empty(), "no retained requests");
 }
 
+/// Asserts a cancelled capture gets no reply and its slot is released.
 #[test]
 fn a_cancelled_capture_never_replies_or_writes() {
     let mut u = Ui::new(Session::empty());
@@ -89,6 +94,7 @@ fn commit_dir(tag: &str) -> std::path::PathBuf {
     dir
 }
 
+/// Asserts cancellation after encoding still prevents the final file write and reply.
 #[test]
 fn a_cancellation_after_encoding_prevents_the_final_write() {
     let dir = commit_dir("cancelled");
@@ -107,6 +113,7 @@ fn a_cancellation_after_encoding_prevents_the_final_write() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Asserts a capture that arrives past its deadline reports a timeout and writes no PNG.
 #[test]
 fn a_real_arrival_that_crosses_the_deadline_does_not_write_its_png() {
     let mut u = Ui::new(Session::empty());
@@ -129,6 +136,8 @@ fn a_real_arrival_that_crosses_the_deadline_does_not_write_its_png() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Asserts an expiry during encoding reports the timeout under the gate, marks the request
+/// replied and writes no file.
 #[test]
 fn an_expiry_during_encoding_prevents_the_final_write_and_reports_timeout() {
     let dir = commit_dir("expired");
@@ -149,6 +158,8 @@ fn an_expiry_during_encoding_prevents_the_final_write_and_reports_timeout() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Asserts a commit before the deadline writes the file and queues one reply, and a second
+/// commit is refused.
 #[test]
 fn a_commit_before_the_deadline_writes_and_queues_its_reply_once() {
     let dir = commit_dir("committed");
@@ -172,6 +183,8 @@ fn a_commit_before_the_deadline_writes_and_queues_its_reply_once() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Asserts a capture past its deadline sends one timeout reply, releases its slot, and late
+/// pixels are ignored.
 #[test]
 fn a_capture_after_its_deadline_replies_once_and_late_pixels_are_inert() {
     let mut u = Ui::new(Session::empty());
@@ -191,6 +204,8 @@ fn a_capture_after_its_deadline_replies_once_and_late_pixels_are_inert() {
     assert!(rx.try_recv().is_err(), "a late capture is inert");
 }
 
+/// Asserts the snapshot count budget rejects an over-budget request before issuing, and every
+/// admitted capture still completes under its own id.
 #[test]
 fn a_snapshot_batch_is_capped_before_issuing_over_the_count_budget() {
     let mut u = Ui::new(Session::empty());
@@ -213,6 +228,7 @@ fn a_snapshot_batch_is_capped_before_issuing_over_the_count_budget() {
     rxs.clear();
 }
 
+/// Asserts an undersized readback is not accepted but reissued with one retry and no reply.
 #[test]
 fn an_undersized_readback_is_reissued_instead_of_accepted() {
     let mut u = Ui::new(Session::empty());
@@ -230,6 +246,7 @@ fn an_undersized_readback_is_reissued_instead_of_accepted() {
     assert!(!r.issued, "waits for the settled geometry again");
 }
 
+/// Asserts a one-pixel rounding difference is accepted as the same surface.
 #[test]
 fn a_one_pixel_rounding_difference_is_still_the_same_surface() {
     let mut u = Ui::new(Session::empty());
@@ -245,6 +262,7 @@ fn a_one_pixel_rounding_difference_is_still_the_same_surface() {
     assert!(u.app.capture.shots.is_empty(), "released");
 }
 
+/// Asserts an A→B→A tab switch invalidates the admitted capture with "document changed".
 #[test]
 fn a_document_a_to_b_to_a_switch_is_not_the_admitted_capture() {
     let mut s = Session::empty();
@@ -268,6 +286,8 @@ fn a_document_a_to_b_to_a_switch_is_not_the_admitted_capture() {
     assert!(u.app.capture.shots.is_empty(), "released");
 }
 
+/// Asserts a geometry change bumps the capture epoch and reissues instead of accepting old
+/// pixels.
 #[test]
 fn a_geometry_change_reissues_instead_of_accepting_old_pixels() {
     let mut u = Ui::new(Session::empty());
@@ -288,6 +308,8 @@ fn a_geometry_change_reissues_instead_of_accepting_old_pixels() {
     assert!(!r.issued, "waits for the settled geometry again");
 }
 
+/// Asserts a translucent pixel round-trips through the PNG as straight RGBA without
+/// darkening.
 #[test]
 fn a_translucent_pixel_round_trips_straight_rgba() {
     let img = egui::ColorImage::from_rgba_unmultiplied([1, 1], &[128, 64, 32, 128]);
@@ -298,6 +320,8 @@ fn a_translucent_pixel_round_trips_straight_rgba() {
     assert_eq!(decoded.get_pixel(0, 0).0, [128, 64, 32, 128], "straight alpha is not darkened");
 }
 
+/// Asserts a capture is not issued before three completed real UI frames; the following
+/// completed frame issues it.
 #[test]
 fn a_capture_is_not_issued_before_three_completed_real_ui_frames() {
     let mut u = Ui::new(Session::empty());
@@ -313,6 +337,8 @@ fn a_capture_is_not_issued_before_three_completed_real_ui_frames() {
     assert!(u.app.capture.shots[0].issued, "issued once three frames have presented their layout");
 }
 
+/// Asserts a discarded sizing pass does not count toward capture settling, and the next
+/// completed frame issues it.
 #[test]
 fn a_discarded_sizing_pass_does_not_count_as_a_settled_capture_frame() {
     let mut u = Ui::new(Session::empty());
@@ -327,6 +353,8 @@ fn a_discarded_sizing_pass_does_not_count_as_a_settled_capture_frame() {
     assert!(u.app.capture.shots[0].issued, "the next completed frame issues the capture");
 }
 
+/// Asserts pixels delivered while hidden force a draining paint and are answered rather than
+/// timed out.
 #[test]
 fn a_hidden_window_that_delivers_pixels_is_asked_to_paint_the_draining_pass() {
     let mut u = Ui::new(Session::empty());
@@ -354,6 +382,8 @@ fn a_hidden_window_that_delivers_pixels_is_asked_to_paint_the_draining_pass() {
     assert!(u.app.capture.shots.is_empty(), "released");
 }
 
+/// Asserts a capture for a window with unknown visibility is parked with its deadline and a
+/// paint request, then times out once.
 #[test]
 fn a_capture_for_a_window_with_unknown_visibility_is_admitted_with_a_deadline() {
     let mut u = Ui::new(Session::empty());
@@ -386,6 +416,8 @@ fn a_capture_for_a_window_with_unknown_visibility_is_admitted_with_a_deadline() 
     assert!(u.app.capture.shots.is_empty(), "released");
 }
 
+/// Asserts a completed capture is rejected when current geometry is unavailable, failing
+/// closed.
 #[test]
 fn a_completed_capture_is_rejected_when_current_geometry_is_unavailable() {
     let mut u = Ui::new(Session::empty());
@@ -412,6 +444,7 @@ fn a_completed_capture_is_rejected_when_current_geometry_is_unavailable() {
     assert!(u.app.capture.shots.is_empty(), "released");
 }
 
+/// Asserts a tab switch while a capture settles invalidates it with "document changed".
 #[test]
 fn a_capture_belongs_to_the_document_admitted_not_the_one_showing_when_it_arrives() {
     let mut s = Session::empty();
@@ -435,6 +468,8 @@ fn a_capture_belongs_to_the_document_admitted_not_the_one_showing_when_it_arrive
     assert!(u.app.capture.shots.is_empty(), "released");
 }
 
+/// Asserts the capture budget covers the encoding and reply peaks, not just pixels, and an
+/// over-budget resize is rejected before readback.
 #[test]
 fn the_capture_budget_counts_the_encoding_peak_not_only_the_pixels() {
     let fits = CaptureSpec { viewport: egui::ViewportId::ROOT, size_px: [4096, 4096], pixels_per_point: 1.0, zoom: 1.0 };
@@ -462,6 +497,8 @@ fn the_capture_budget_counts_the_encoding_peak_not_only_the_pixels() {
     assert!(!has_screenshot(&out), "over-budget growth is rejected before any readback command");
 }
 
+/// Asserts resizing settling captures rechecks aggregate reserved bytes, rejects the request
+/// that no longer fits, and makes the survivor reserve its real cost.
 #[test]
 fn resizing_settling_captures_rechecks_the_aggregate_reserved_bytes() {
     let mut u = Ui::new(Session::empty());
@@ -481,6 +518,8 @@ fn resizing_settling_captures_rechecks_the_aggregate_reserved_bytes() {
     assert!(!has_screenshot(&out), "neither request was read back using the old small reservation");
 }
 
+/// Asserts an allowed resize restarts settling, issues only after three new-size frames, and
+/// reserves the current cost.
 #[test]
 fn an_allowed_resize_restarts_settling_and_issues_with_the_current_reservation() {
     let mut u = Ui::new(Session::empty());
@@ -518,6 +557,8 @@ fn push_input(u: &mut Ui, id: u64) -> std::sync::mpsc::Receiver<ControlReply> {
     rx
 }
 
+/// Asserts injected input is queued, applied by the presenting pass, and acknowledged once
+/// after that pass.
 #[test]
 fn injected_input_is_acknowledged_only_after_the_pass_that_applies_it() {
     let mut u = Ui::new(Session::empty());
@@ -534,6 +575,8 @@ fn injected_input_is_acknowledged_only_after_the_pass_that_applies_it() {
     assert!(!u.app.control_synthetic, "the fence ends with the frame");
 }
 
+/// Asserts a discarded pass neither acknowledges nor replays an injected batch; the presented
+/// pass acknowledges once.
 #[test]
 fn a_discarded_pass_does_not_acknowledge_or_lose_an_injected_batch() {
     let mut u = Ui::new(Session::empty());
@@ -565,6 +608,8 @@ fn a_discarded_pass_does_not_acknowledge_or_lose_an_injected_batch() {
     assert!(app.input_acks.is_empty() && app.applied_acks.is_empty());
 }
 
+/// Asserts injected text is applied once across a discarded sizing pass and acknowledged
+/// once.
 #[test]
 fn injected_text_lands_once_across_a_discarded_sizing_pass() {
     // egui reruns a discarded pass with the same `RawInput`. The custom editor applied the text in

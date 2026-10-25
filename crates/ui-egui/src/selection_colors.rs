@@ -24,6 +24,9 @@ struct Cache {
     colors: Arc<Vec<SelectionColor>>,
 }
 
+/// Return the cached selection colours when the document and selection match. During an
+/// interaction reuse an existing matching cache, or return an empty list without discovering
+/// colours; otherwise discover and cache them.
 fn colors(ui: &Ui, document: u64, doc: &Arc<Document>, ids: &[NodeId], interacting: bool) -> Arc<Vec<SelectionColor>> {
     let key = Id::unique("selection_colors_cache");
     if let Some(cache) = ui.data(|d| d.get_temp::<Cache>(key))
@@ -49,6 +52,9 @@ pub(crate) fn open_picker(app: &mut FigApp, targets: Vec<PaintTarget>) {
     app.ui.picker = Some(PickerTarget::SelectionColor { targets, selection: ds.selection.clone(), document: ds.uid });
 }
 
+/// Draw the selection-colour groups (at least two): swatch opens the picker, hex and opacity
+/// edits, style/variable detach/apply/bind, and “select layers with this color”; disabled
+/// during an interaction.
 pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Arc<Document>, ids: &[NodeId]) {
     let Ok(ds) = app.session.ds() else { return };
     let interacting = ds.interaction.is_some();
@@ -249,6 +255,8 @@ mod tests {
         assert!(!p.frame(vec![]).iter().any(|(s, _)| s == "Selection colors"));
     }
 
+    /// Asserts the panel reuses cached colours through a live interaction and refreshes the cache
+    /// after the commit.
     #[test]
     fn panel_keeps_cached_colors_during_interaction_and_refreshes_after_commit() {
         let (mut p, a, _) = Panel::new();
@@ -268,6 +276,8 @@ mod tests {
         assert!(!Arc::ptr_eq(&before.colors, &after.colors));
     }
 
+    /// Asserts no cached colours are discovered during an interaction, and cancelling restores
+    /// the panel with the original colours.
     #[test]
     fn panel_defers_discovery_without_a_matching_cache_during_interaction() {
         let (mut p, a, _) = Panel::new();

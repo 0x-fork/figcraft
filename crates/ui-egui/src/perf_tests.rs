@@ -68,6 +68,8 @@ impl Bench {
     }
 }
 
+/// Build and print a synthetic UI benchmark report for the given layer count; it makes no
+/// assertions.
 fn report(layers: usize) {
     let mut b = Bench::new(layers);
     let mut rows: Vec<(&str, f64)> = Vec::new();
@@ -180,6 +182,7 @@ fn design_system(icons: usize, instances: usize) -> (Document, figcraft_engine::
     figcraft_engine::synthetic_ds::design_system_with_instances(&spec, instances).unwrap()
 }
 
+/// Build a test mouse-wheel event for the given vertical delta.
 fn wheel(d: f32) -> Event {
     Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,

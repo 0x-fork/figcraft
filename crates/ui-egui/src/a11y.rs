@@ -253,6 +253,8 @@ struct Shared {
     name: String,
 }
 
+/// Run `f` on the per-context temporary `Shared` accessibility state keyed by
+/// `figcraft_a11y`.
 fn shared<R>(ctx: &Context, f: impl FnOnce(&mut Shared) -> R) -> R {
     ctx.data_mut(|d| f(d.get_temp_mut_or_default::<Shared>(Id::unique("figcraft_a11y"))))
 }

@@ -601,6 +601,10 @@ pub fn design_clipboard_buffer(html: &str) -> Option<Vec<u8>> {
     figcraft_format::fig::is_fig(&bytes).then_some(bytes)
 }
 
+/// Paste design layers from clipboard HTML or base64 `data`: decode and reject missing,
+/// invalid or oversized data, load a temporary `.fig`, take its top-level page layers,
+/// store them as a foreign-file clipboard source with a bumped layers generation, then
+/// delegate to `paste` and append import warnings.
 fn paste_design_layers(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "edit.pasteDesignLayers";
     let bytes = match (string(p, "html"), string(p, "data")) {

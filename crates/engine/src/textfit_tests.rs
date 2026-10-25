@@ -64,6 +64,8 @@ fn a_one_word_last_line_is_avoided() {
     assert!(l.lines.len() == 1 || words.split_whitespace().count() > 1 || words.contains('\u{a0}'), "{words:?}");
 }
 
+/// Asserts `data.fill` keeps a short copy's font size, shrinks a long copy, and leaves the
+/// source text layer untouched.
 #[test]
 fn data_fill_sizes_each_copys_text() {
     figcraft_text::scan_system_fonts();

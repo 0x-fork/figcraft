@@ -312,6 +312,7 @@ fn pages_down_to(u: &mut Ui, to: f32) -> Vec<NodeId> {
     opened
 }
 
+/// Asserts a 60-page list scrolls with the wheel to its last page, past its first pages.
 #[test]
 fn a_long_pages_list_scrolls_and_leaves_room_for_the_layers() {
     let mut s = Session::new();
@@ -383,6 +384,8 @@ fn double_click_checking_focus(u: &mut Ui, p: Pos2) {
     }
 }
 
+/// Asserts double-clicking a page selects and renames it, with the keyboard in its name
+/// field for the screen-reader tree.
 #[test]
 fn double_clicking_a_page_renames_it_with_the_focus_in_the_screen_reader_tree() {
     let mut s = Session::new();

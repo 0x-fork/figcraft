@@ -134,6 +134,8 @@ fn ime_composition_with_cjk() {
     assert!(s.ds().unwrap().text_edit.as_ref().unwrap().preedit.is_none());
 }
 
+/// Asserts `delete_surrounding_bytes` removes an exact UTF-8 byte range across CJK and a
+/// supplementary emoji, leaves nothing past the start, and the whole edit is one undo step.
 #[test]
 fn ime_delete_surrounding_bytes_is_exact_and_one_undo_step() {
     // 0.37's `DeleteSurroundingBytes` counts UTF-8 bytes around the selection, before the paired
@@ -156,6 +158,9 @@ fn ime_delete_surrounding_bytes_is_exact_and_one_undo_step() {
     assert_eq!(chars(&s, t), "ab\u{4F60}\u{597D}c\u{1F600}d", "one undo restores the whole session");
 }
 
+/// Asserts a byte range that only partly covers a character leaves it in place, while an
+/// exact range deletes it, and a selection survives for the paired commit with its
+/// direction preserved.
 #[test]
 fn ime_delete_surrounding_bytes_keeps_partial_characters_and_selection() {
     // The fork deletes the byte range exactly and leaves a character the range only partly

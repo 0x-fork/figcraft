@@ -45,6 +45,7 @@ fn selection(ctx: &egui::Context, te: Id) -> Option<(usize, usize)> {
     Some((a.min(b), a.max(b)))
 }
 
+/// Asserts clicking a hex field focuses it and selects all six characters.
 #[test]
 fn a_click_into_a_hex_field_selects_it_all() {
     let ctx = egui::Context::default();
@@ -57,6 +58,7 @@ fn a_click_into_a_hex_field_selects_it_all() {
     assert_eq!(selection(&ctx, id.with("te")), Some((0, 6)));
 }
 
+/// Asserts clicking an inline field selects it all and typing replaces the selection.
 #[test]
 fn a_click_into_an_inline_field_selects_it_all() {
     // A fill's hex in the Design panel, a variable's value, a rename.
@@ -75,6 +77,7 @@ fn a_click_into_an_inline_field_selects_it_all() {
     assert_eq!(out.as_deref(), Some("red"));
 }
 
+/// Asserts clicking a search box selects its whole query.
 #[test]
 fn a_click_into_a_search_box_selects_its_query() {
     let ctx = egui::Context::default();
@@ -87,6 +90,7 @@ fn a_click_into_a_search_box_selects_its_query() {
     assert_eq!(selection(&ctx, id), Some((0, 6)));
 }
 
+/// Asserts Tab focus selects a field's whole value.
 #[test]
 fn tab_into_a_field_selects_it_all() {
     let ctx = egui::Context::default();
@@ -106,6 +110,7 @@ fn tab_into_a_field_selects_it_all() {
     assert_eq!(selection(&ctx, id), Some((0, 7)));
 }
 
+/// Asserts a drag selects a non-empty proper subrange rather than the whole value.
 #[test]
 fn a_drag_selects_only_what_it_covers() {
     let ctx = egui::Context::default();
@@ -120,6 +125,7 @@ fn a_drag_selects_only_what_it_covers() {
     assert!(!(a == 0 && b == q.chars().count()), "not all of it: {a}..{b}");
 }
 
+/// Asserts re-clicking a field after focus was lost mid-edit selects all.
 #[test]
 fn a_field_left_mid_edit_selects_all_on_the_next_click() {
     let ctx = egui::Context::default();

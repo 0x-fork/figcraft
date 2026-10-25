@@ -70,18 +70,22 @@ pub struct RequestGate {
 }
 
 impl RequestGate {
+    /// Create a request gate in its default `Open` state.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Return a copy of the gate's current request state.
     pub fn state(&self) -> RequestState {
         *self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// Whether the gate is `Cancelled`.
     pub fn is_cancelled(&self) -> bool {
         self.state() == RequestState::Cancelled
     }
 
+    /// Whether the gate is `Replied`.
     pub fn is_replied(&self) -> bool {
         self.state() == RequestState::Replied
     }
@@ -121,6 +125,7 @@ pub struct ControlRequest {
 }
 
 impl ControlRequest {
+    /// Whether this request's gate is `Cancelled`.
     pub fn is_cancelled(&self) -> bool {
         self.state.is_cancelled()
     }
@@ -147,6 +152,7 @@ struct SlotInner {
 }
 
 impl CaptureSlot {
+    /// Create an empty capture slot for `viewport`, holding a clone of the UI context.
     fn new(ctx: &Context, viewport: egui::ViewportId) -> Arc<Self> {
         Arc::new(Self { inner: Mutex::new(SlotInner::default()), ctx: ctx.clone(), viewport })
     }
@@ -161,6 +167,8 @@ impl CaptureSlot {
         })
     }
 
+    /// Store the first delivered image only while the slot is open and untaken, ignoring later
+    /// or closed deliveries, then wake the viewport after releasing the lock.
     pub(crate) fn complete(&self, image: Arc<egui::ColorImage>) {
         {
             let mut inner = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -214,6 +222,7 @@ pub struct CaptureSpec {
 const SHOT_PNG_OVERHEAD: usize = 64 * 1024;
 
 impl CaptureSpec {
+    /// Return the checked pixel byte count (`width × height × 4`), or `None` on overflow.
     fn bytes(&self) -> Option<usize> {
         self.size_px[0].checked_mul(self.size_px[1])?.checked_mul(4)
     }
@@ -272,6 +281,7 @@ pub struct ShotRequest {
 }
 
 impl ShotRequest {
+    /// Close and drop the capture slot, if any, and zero the reserved byte count.
     fn release(&mut self) {
         if let Some(slot) = self.slot.take() {
             slot.close();
@@ -327,6 +337,7 @@ fn current_spec(ctx: &Context, viewport: egui::ViewportId) -> Option<CaptureSpec
     Some(CaptureSpec { viewport, size_px: [w as usize, h as usize], pixels_per_point: ppp, zoom })
 }
 
+/// Send one reply carrying the request id, ignoring a disconnected receiver.
 fn reply(r: &mut ShotRequest, result: Result<Value, String>) {
     let _ = r.reply.send(ControlReply { id: r.id.clone(), result });
 }
@@ -819,6 +830,8 @@ enum EncodedShot {
 }
 
 impl EncodedShot {
+    /// Deliver the encoded shot: for `File`, write the PNG through `file_access` and return its
+    /// path and dimensions; for `Data`, return the prebuilt result.
     fn finish(self) -> Result<Value, String> {
         match self {
             Self::File { path, png, width, height } => {

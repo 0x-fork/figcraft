@@ -488,6 +488,7 @@ pub struct FrameClock {
 }
 
 impl Default for FrameClock {
+    /// Start the frame clock at the current web time with no injected test time.
     fn default() -> Self {
         Self { origin: web_time::Instant::now(), test_now: None }
     }
@@ -722,6 +723,9 @@ pub struct UiState {
 }
 
 impl Default for UiState {
+    /// Seed the default UI state (panel widths, tabs, pages, Home, presenters, pickers and
+    /// dialogs off, and the rest of the transient UI fields); `FigApp::new` overrides panel
+    /// widths and the pages height from preferences.
     fn default() -> Self {
         Self {
             left_width: PANEL_DEFAULT,
@@ -915,6 +919,9 @@ pub struct FigApp {
 pub type Done = Box<dyn FnOnce(&mut FigApp, &egui::Context, Value)>;
 
 impl FigApp {
+    /// Construct `FigApp` from a session and services, taking panel widths and pages height
+    /// from preferences and initializing UI, canvas, clocks, capture/IME and transient channel
+    /// state.
     pub fn new(session: Session, services: Box<dyn Services>) -> Self {
         // The main window's panels open as wide as they were left.
         let (left_width, right_width) = session.prefs.panel_widths;
@@ -2044,6 +2051,9 @@ impl FigApp {
         }
     }
 
+    /// Draw the toast: start its lifetime on the frame **after** the first drawn frame, request
+    /// that frame and the frame that hides it, expire and remove it at the deadline, and place it
+    /// at the bottom centre.
     fn toast_ui(&mut self, ctx: &egui::Context) {
         let Some((msg, clock)) = &mut self.ui.toast else { return };
         let now = ctx.input(|i| i.time);

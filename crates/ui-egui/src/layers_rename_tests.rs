@@ -144,6 +144,8 @@ fn rename_without_a_name_renames_one_row_or_opens_the_dialog() {
     assert!(std::sync::Arc::ptr_eq(&doc, &s.ds().unwrap().doc));
 }
 
+/// Asserts a layer rename continues after its row is scrolled out of view and commits on
+/// Enter.
 #[test]
 fn a_rename_scrolled_out_of_view_goes_on() {
     let mut s = Session::new();

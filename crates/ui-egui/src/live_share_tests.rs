@@ -385,6 +385,9 @@ fn without_a_code_the_link_is_shared_instead() {
     assert_eq!(script.lock().unwrap().copied.last().map(String::as_str), Some(PLAIN));
 }
 
+/// Asserts the join field accepts a typed code or invite link, joins on Enter, clears after
+/// joining, shows failure/retry, rejects an invalid code with an error, and accepts local
+/// codes and links.
 #[test]
 fn the_join_field_takes_a_code_or_a_link_and_enter_joins() {
     let (mut h, script) = harness();
@@ -450,6 +453,8 @@ fn the_home_screen_joins_with_a_code_and_opens_the_file() {
     assert_eq!(h.app.session.docs.len(), 2);
 }
 
+/// Asserts the join dialog uses the same shared join field, focuses it, and closes once the
+/// join starts.
 #[test]
 fn the_join_dialog_is_the_same_field() {
     let (mut h, script) = harness();

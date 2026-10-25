@@ -163,6 +163,10 @@ fn pointer_event(app: &FigApp, kind: PointerKind, pos: Pos2, m: &egui::Modifiers
     }
 }
 
+/// Run one canvas pass: update the viewport size and first-fit zoom; handle pointer/key input
+/// and accessibility; draw the drop overlay, guides, live pointer and preedit; request/poll
+/// renders and upload the texture; draw the page background and last texture; then draw overlays,
+/// labels, handles, comments, versions/branch/dev/live UI and the cursor.
 pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     let rect = ui.max_rect();
     app.canvas.rect = rect;

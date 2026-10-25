@@ -58,6 +58,9 @@ pub fn turn_since(painter: &Painter, from: ShapeIdx, pivot: Pos2, angle: f32) {
     });
 }
 
+/// Recursively rotate shape geometry by `rot`/`angle` about `pivot`: leaves
+/// no-op/callback/band shapes alone, rotates points and centers, adds the angle to
+/// ellipses/rects/text, and rotates meshes.
 fn turn(shape: &mut Shape, rot: Rot2, angle: f32, pivot: Pos2) {
     let at = |p: &mut Pos2| *p = pivot + rot * (*p - pivot);
     match shape {

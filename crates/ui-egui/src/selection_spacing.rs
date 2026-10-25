@@ -24,6 +24,8 @@ struct LayoutCache {
     reorder: Option<Arc<ReorderLayout>>,
 }
 
+/// Return one cached spacing/reorder calculation per document, page, selection and frame,
+/// refreshing next frame after an edit and reusing an unchanged document snapshot.
 fn layout(app: &FigApp, ctx: &egui::Context, ids: &[NodeId]) -> Arc<SelectionSpacing> {
     let Ok(ds) = app.session.ds() else { return Arc::new(SelectionSpacing::default()) };
     let key = Id::unique("selection_spacing_layout");
@@ -52,11 +54,13 @@ fn layout(app: &FigApp, ctx: &egui::Context, ids: &[NodeId]) -> Arc<SelectionSpa
     });
     layout
 }
+/// Return the cached reorder layout, first ensuring the shared layout cache is populated.
 fn reorder_layout(app: &FigApp, ctx: &egui::Context, ids: &[NodeId]) -> Option<Arc<ReorderLayout>> {
     layout(app, ctx, ids);
     ctx.data(|d| d.get_temp::<LayoutCache>(Id::unique("selection_spacing_layout"))).and_then(|c| c.reorder)
 }
 
+/// Stable egui id for spacing/reorder drag state.
 fn drag_id() -> Id {
     Id::unique("selection_spacing_drag")
 }
@@ -107,6 +111,8 @@ fn start_drag(app: &mut FigApp, ctx: &egui::Context, ids: Vec<NodeId>, p: Pos2, 
     }
 }
 
+/// Draw horizontal and vertical spacing fields, running `arrange.spacing` with
+/// `fromGesture`.
 pub fn panel(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId]) {
     let layout = layout(app, ui.ctx(), ids);
     if layout.horizontal.is_none() && layout.vertical.is_none() {

@@ -478,10 +478,12 @@ struct At {
     path: String,
 }
 
+/// Scoped egui id for the current menu level.
 fn at_key(ui: &Ui) -> Id {
     ui.scope_id().with("menu_level")
 }
 
+/// Return the current menu root/path, defaulting to the main menu root.
 fn level_at(ui: &Ui) -> At {
     ui.data(|d| d.get_temp::<At>(at_key(ui))).unwrap_or(At { root: Id::unique("menus"), path: String::new() })
 }
@@ -817,6 +819,9 @@ const TOP_MENUS: &[&str] = &[
     tr_noop("Help"),
 ];
 
+/// Draw the main and context menu trees: forget closed/stale submenu state, apply
+/// control-channel Select-layer open/close, close on outside click or Escape, then draw the
+/// colour picker and palette popups.
 pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
     let t = Tokens::get(ctx);
     // A closed menu forgets its open submenus (and a context menu opened somewhere else starts
@@ -1020,6 +1025,7 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
 /// The context menu's Select layer submenu (its key in the context menu's tree).
 const SELECT_LAYER: &str = "Select layer";
 
+/// Stable egui id for the context menu's pending Select-layer open request.
 fn select_layer_ask_id() -> Id {
     Id::unique("ctx_select_layer_ask")
 }

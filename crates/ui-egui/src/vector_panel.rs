@@ -72,6 +72,8 @@ fn width_point(app: &mut FigApp, ui: &mut Ui, doc: &Document, ve: &VectorEdit) {
     ui.add_space(8.0);
 }
 
+/// Draw the selected points' position, dimensions, corner radius, mirroring and per-point
+/// stroke cap/join controls; the width tool delegates to its own panel.
 pub fn points(app: &mut FigApp, ui: &mut Ui, doc: &Document, ve: &VectorEdit) {
     if ve.tool == vectoredit::VTool::Width {
         width_point(app, ui, doc, ve);

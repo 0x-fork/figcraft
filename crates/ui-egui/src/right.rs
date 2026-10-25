@@ -78,6 +78,8 @@ impl FigApp {
     }
 }
 
+/// Draw the right panel: people, present and share controls, Design/Prototype tabs and zoom
+/// menu, then route the scroll area to comments, frame presets, design, prototype or inspect.
 pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
@@ -393,6 +395,8 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
     crate::export_panel::section(app, ui, &doc, &sel);
 }
 
+/// Draw the page section: background and colour profile, local variables/styles, and the
+/// page export section.
 fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
     let t = Tokens::get(ui.ctx());
     let Ok(page) = app.session.page() else { return };
@@ -455,6 +459,8 @@ fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
     crate::export_panel::page_section(app, ui, doc, page);
 }
 
+/// Draw the selection header: type name (or Mixed), frame/group conversion, orientation
+/// swap and frame presets, component/mask/boolean quick actions, and instance details.
 fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let t = Tokens::get(ui.ctx());
     let label = match common(doc, sel, |n| n.kind.label()) {
@@ -589,6 +595,8 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     ui.add_space(8.0);
 }
 
+/// Draw alignment and distribution, X/Y and rotation with flip/rotate controls, the
+/// absolute-position toggle and frame constraints.
 fn position_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let ids = sel.to_vec();
     let col = widgets::col_width(ui.available_width());
@@ -807,6 +815,8 @@ fn pretty(s: &str) -> String {
     }
 }
 
+/// Draw visibility/blend/mask, opacity, uniform or per-corner radius, corner smoothing and
+/// the blend-mode row.
 fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let ids = sel.to_vec();
     let visible = common(doc, sel, |n| n.visible).unwrap_or(true);
@@ -1080,6 +1090,8 @@ fn range_fill(app: &mut FigApp, ui: &mut Ui, doc: &Document, id: NodeId, start: 
     });
 }
 
+/// Draw a selected-text range fill, or the fill/stroke paint rows with add, style, reorder,
+/// stroke align/weight, per-side weights and advanced stroke settings.
 fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: bool) {
     if fills
         && let Some((id, a, b)) = figcraft_engine::textedit::selected_range(&app.session)
@@ -1641,6 +1653,8 @@ fn paint_label(p: &Paint) -> String {
     }
 }
 
+/// Draw the effect list with add/style/type/toggle/remove/reorder, open settings, and keep an
+/// open picker and settings flags aligned when rows move or are removed.
 fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let ids = sel.to_vec();
     let list = common(doc, sel, |n| n.effects.clone());
@@ -1723,6 +1737,8 @@ fn fx_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, prop: &str,
     crate::variable_ui::number_field(app, ui, ids, &format!("effects/{i}/{prop}"), Id::unique(("fx", prop, i)), lead, Some(value), "", width)
 }
 
+/// Draw type-specific effect fields for shadows, blurs, noise, texture and glass, using live
+/// scrub edits that stay one undo step and bindable colour fields.
 fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &Effect) {
     let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
     let set = |app: &mut FigApp, e2: Effect, scrub: Option<bool>| {
@@ -1959,6 +1975,8 @@ fn fx_color(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &Effect,
     }
 }
 
+/// Draw the layout-grid list with add/style/type/toggle/remove/reorder, per-grid settings,
+/// and keep open-settings flags aligned when rows move or are removed.
 fn grids(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let ids = sel.to_vec();
     let list = common(doc, sel, |n| n.grids.clone());
