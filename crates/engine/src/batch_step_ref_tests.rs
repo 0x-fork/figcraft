@@ -110,3 +110,26 @@ fn a_nested_batch_refers_to_its_own_steps() {
     let rect = s.doc().unwrap().node(id(&inner[1])).unwrap().clone();
     assert_eq!(rect.parent, Some(id(&inner[0])), "in the nested batch's own first frame, not the outer one");
 }
+
+#[test]
+fn a_failing_command_names_its_step_and_rolls_back() {
+    let mut s = Session::new();
+    let frame = id(&s.execute("node.create", &json!({"type": "frame", "width": 50, "height": 50})).unwrap());
+    let text = id(&s.execute("node.create", &json!({"type": "text", "text": "orig"})).unwrap());
+    let undo = s.ds().unwrap().history.undo.len();
+    let name = s.doc().unwrap().node(s.page().unwrap()).unwrap().name.clone();
+    let r = s.execute(
+        "command.batch",
+        &json!({"commands": [
+            {"command": "text.set", "params": {"ids": [text.0], "text": "novo"}},
+            {"command": "text.set", "params": {"ids": [frame.0], "text": "erro"}},
+            {"command": "page.rename", "params": {"name": "Depois do erro"}}
+        ]}),
+    );
+    let msg = r.unwrap_err().to_string();
+    assert!(msg.contains("step 1: invalid parameters for"), "{msg}");
+    assert!(msg.contains("is not text"), "{msg}");
+    assert!(matches!(&s.doc().unwrap().node(text).unwrap().kind, figcraft_doc::NodeKind::Text(t) if t.characters == "orig"));
+    assert_eq!(s.doc().unwrap().node(s.page().unwrap()).unwrap().name, name);
+    assert_eq!(s.ds().unwrap().history.undo.len(), undo);
+}

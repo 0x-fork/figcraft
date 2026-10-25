@@ -1280,7 +1280,15 @@ impl Session {
     /// resolve `$step` the same way, inside its own [`Session::grouped`].
     pub fn batch_step(&mut self, results: &[Value], step: usize, cmd: &str, params: &Value) -> Result<Value> {
         let p = if cmd == "command.batch" { params.clone() } else { resolve_step_refs(params, results, step, 0)? };
-        self.execute(cmd, &p)
+        self.execute(cmd, &p).map_err(|e| match e {
+            // Say which step failed; a nested batch's error already does.
+            EngineError::UnknownCommand(_) | EngineError::BadParams { .. } | EngineError::NoNode(_) | EngineError::Other(_)
+                if !e.to_string().starts_with("step ") =>
+            {
+                EngineError::Other(format!("step {step}: {e}"))
+            }
+            e => e,
+        })
     }
 
     /// Run `f` as one undo step called `label`: the commands it executes push no steps of their
