@@ -89,6 +89,9 @@ fn rect(s: &mut Session) -> u64 {
     s.execute("shape.rectangle", &json!({"x": 10, "y": 10, "width": 40, "height": 30})).unwrap()["id"].as_u64().unwrap()
 }
 
+/// Asserts two files are hosted and joined independently: each has its own port, session and
+/// edits, presence stays in its file's session, and closing one file's session leaves the
+/// other live.
 #[test]
 fn two_files_are_hosted_and_joined_independently() {
     let mut host = session("Hana");
@@ -128,6 +131,10 @@ fn two_files_are_hosted_and_joined_independently() {
     assert_eq!(guest.ds().unwrap().uid, guest.docs[2].uid, "the file that arrived last is in front");
     guest.execute("doc.switch", &json!({"index": guest.docs.iter().position(|d| d.uid == gb).unwrap()})).unwrap();
     // An edit in A reaches the guest's copy of A only, while B is in front at the guest.
+    // Concurrent joins may complete in either order. Put B in front explicitly so the
+    // following assertions exercise A's background session independent of network timing.
+    guest.execute("doc.switch", &json!({"index": guest.docs.iter().position(|d| d.uid == gb).unwrap()})).unwrap();
+    assert_eq!(guest.ds().unwrap().uid, gb, "B is in front while A receives edits");
     let in_a = rect(&mut host);
     host.execute("doc.switch", &json!({"index": 1})).unwrap();
     let in_b = rect(&mut host);

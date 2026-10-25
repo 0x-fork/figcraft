@@ -2020,6 +2020,10 @@ impl Session {
         Ok(())
     }
 
+    /// Handle a double-click gesture: finish a pen path, rename or click labels/widgets,
+    /// cancel an in-progress move/resize/draw/marquee, handle board double-clicks, enter text
+    /// editing (select-all on entry, word-select inside the running edit), enter vector editing
+    /// for selected shapes, and step groups/frames one level deeper.
     fn double_click(&mut self, ev: &PointerEvent) -> Result<()> {
         let ds = self.ds()?;
         let (doc, sel, page) = (ds.doc.clone(), ds.selection.clone(), ds.page);
@@ -2069,13 +2073,15 @@ impl Session {
             && doc.node(target).is_some_and(|n| matches!(n.kind, NodeKind::Text(_)))
             && (sel.contains(&target) || select_target(&doc, leaf, &sel, false) == target)
         {
-            // Entering a text selects all of it; in the text being edited, the word.
+            // Entering a text selects all of it; in the text being edited, the word. A
+            // double-click inside the running edit is an ordinary edit: starting a new session
+            // here would replace the IME owner's epoch and drop a composition on a plain gesture.
             let editing = self.ds()?.text_edit.as_ref().is_some_and(|te| te.id == target);
             let idx = self.text_index_at(target, ev.p())?;
-            textedit::begin(self, target, Some(idx), false)?;
             if editing {
                 textedit::select_word(self, idx)?;
             } else {
+                textedit::begin(self, target, Some(idx), false)?;
                 textedit::key(self, "SelectAll", false, false, false)?;
             }
             return Ok(());

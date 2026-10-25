@@ -74,13 +74,13 @@ fn setting_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &Expo
         if let Some(size_w) = size_w {
             let presets: Vec<String> =
                 ExportSize::SCALES.iter().map(|value| ExportSize::Scale { value: *value }.label()).chain(["512w".into(), "512h".into()]).collect();
-            if let Some(s) = widgets::combo_field(ui, Id::new(("export_size", i)), &e.size.label(), size_w, &presets)
+            if let Some(s) = widgets::combo_field(ui, Id::unique(("export_size", i)), &e.size.label(), size_w, &presets)
                 && ExportSize::parse(&s) != Some(e.size)
             {
                 app.run("export.update", json!({"ids": ids, "index": i, "size": s}));
             }
         }
-        if let Some(sfx) = widgets::text_field(ui, Id::new(("export_suffix", i)), &e.suffix, suffix_w, tr("Suffix"))
+        if let Some(sfx) = widgets::text_field(ui, Id::unique(("export_suffix", i)), &e.suffix, suffix_w, tr("Suffix"))
             && sfx != e.suffix
         {
             app.run("export.update", json!({"ids": ids, "index": i, "suffix": sfx}));
@@ -96,7 +96,7 @@ fn setting_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &Expo
         });
         let more = icons::button(ui, Icon::Dots, button, false, tr("Export settings"));
         egui::Popup::from_toggle_button_response(&more)
-            .id(Id::new(("export_more", i)))
+            .id(Id::unique(("export_more", i)))
             .width(216.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
@@ -142,7 +142,7 @@ fn advanced_options(ui: &mut Ui, e: &ExportSetting, text: bool) -> Option<Value>
 fn print_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &PrintSettings) {
     let t = Tokens::get(ui.ctx());
     row(ui, 26.0, |ui| {
-        let open_id = Id::new(("export_print", i));
+        let open_id = Id::unique(("export_print", i));
         let open = egui::Popup::is_id_open(ui.ctx(), open_id);
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), FIELD_H), Sense::click());
         if resp.hovered() || open {
@@ -156,7 +156,7 @@ fn print_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &PrintS
             .width(216.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
-                if let Some(next) = print_options(ui, Id::new(("export_print_fields", i)), p) {
+                if let Some(next) = print_options(ui, Id::unique(("export_print_fields", i)), p) {
                     let mut params = print_params(&next);
                     params["ids"] = json!(ids);
                     params["index"] = json!(i);
@@ -264,7 +264,7 @@ fn preview(app: &mut FigApp, ui: &mut Ui, doc: &Document, id: NodeId) {
     }
     let revision = app.session.ds().map(|d| d.revision).unwrap_or(0);
     let now = ui.input(|i| i.time);
-    let cache_id = Id::new("export_preview_tex");
+    let cache_id = Id::unique("export_preview_tex");
     let cached: Option<PreviewTex> = ui.data(|d| d.get_temp(cache_id));
     let stale = cached.as_ref().is_none_or(|c| c.id != id || c.revision != revision);
     let due = cached.as_ref().is_none_or(|c| c.id != id || now - c.at >= PREVIEW_REFRESH);

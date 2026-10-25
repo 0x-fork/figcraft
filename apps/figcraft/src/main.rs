@@ -62,6 +62,9 @@ struct App {
 }
 
 impl eframe::App for App {
+    /// Native eframe logic callback: store the first context, drain control requests, run
+    /// guarded background work, poll macOS open events, handle close requests and title
+    /// changes, and schedule recovery repaints on the app clock.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         {
             let mut slot = self.ctx_slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -71,7 +74,9 @@ impl eframe::App for App {
         }
         let title = with_app(|fig| {
             control_server::drain_queue(&self.queue, &mut fig.control_queue);
-            figcraft_ui_egui::control::drain_hidden(fig, ctx);
+            // Phase-safe background work: control queues, autosave/recovery deadlines, live polling.
+            // It runs on logic-only callbacks too, so it never reads UI input.
+            figcraft_ui_egui::windows::guard(fig, ctx, |fig| fig.background_tick(ctx));
             #[cfg(target_os = "macos")]
             apple_events::poll(&self.apple_events, fig, ctx);
             // Closing the window asks about unsaved changes (and keeps the app running while other
@@ -86,8 +91,14 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.title = title;
         }
-        let now = ctx.input(|i| i.time);
-        if let Some(wait) = with_app(|fig| recovery::lock(&self.recovery).as_mut().and_then(|r| r.tick(&fig.session, now))).flatten() {
+        // Recovery deadlines use the same monotonic clock as the app's background work: a
+        // logic-only tick leaves `ctx.input(i.time)` stale.
+        if let Some(wait) = with_app(|fig| {
+            let now = fig.now_secs();
+            recovery::lock(&self.recovery).as_mut().and_then(|r| r.tick(&fig.session, now))
+        })
+        .flatten()
+        {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
         }
     }

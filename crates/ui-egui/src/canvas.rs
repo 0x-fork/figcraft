@@ -163,12 +163,16 @@ fn pointer_event(app: &FigApp, kind: PointerKind, pos: Pos2, m: &egui::Modifiers
     }
 }
 
+/// Run one canvas pass: update the viewport size and first-fit zoom; handle pointer/key input
+/// and accessibility; draw the drop overlay, guides, live pointer and preedit; request/poll
+/// renders and upload the texture; draw the page background and last texture; then draw overlays,
+/// labels, handles, comments, versions/branch/dev/live UI and the cursor.
 pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     let rect = ui.max_rect();
     app.canvas.rect = rect;
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
-    let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
+    let resp = ui.interact(rect, ui.scope_id().with("canvas"), Sense::click_and_drag());
     let key_box = app.ui.key_box;
     crate::a11y::canvas(&mut app.ui.nav, &resp, || key_box.map_or_else(|| describe(&app.session), describe_box));
     if let Ok(ds) = app.session.ds_mut()
