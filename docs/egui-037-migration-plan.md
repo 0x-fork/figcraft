@@ -1,5 +1,9 @@
 # FigCraft egui 0.37 migration plan
 
+Status update (2026-10-25): Move FigCraft to immutable egui 0.37, winit and craft-window revisions, preserving main `9f788753` and its document/vector changes. Adapt UI lifecycle, screenshot callbacks and IME ownership; keep deferred field saves tied to the correct document and window. Validation: refreshed host CI passed with 3,247 passing test executions, zero failures and nine ignored across 70 summaries. The final run uses bundled fonts plus licensed DejaVu fallback without the optional craft-fonts input; earlier bundled-font configuration checks also passed. WASM and all three plugin bundles passed; outputs are preserved and hash-verified. The current-main integration passed independent review. Native visible GUI/browser workflows, native IME, paired app performance and current-source platform/release installation remain open. Human review and human merge are required.
+
+The original planning record below is historical.
+
 Status: implemented locally, with host CI qualification recorded in the current qualification
 section below and in `docs/egui-037-local-followups.md`. Earlier sections retain the original
 planning baselines. Native/browser workflows and paired app performance remain open.
