@@ -217,11 +217,12 @@ pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
         d.to_bits().hash(&mut h);
     }
     props.dashes.len().hash(&mut h);
-    // Points' own caps and joins (vector networks).
+    // Points' own caps and joins and the fill rule Inside/Outside clip by (vector networks).
     let net = match &n.kind {
-        NodeKind::Vector { network } if network.has_point_styles(props.join) => Some(network),
+        NodeKind::Vector { network } => Some(network),
         _ => None,
     };
+    net.is_some_and(|n| n.regions.iter().any(|r| r.winding == figcraft_doc::WindingRule::EvenOdd)).hash(&mut h);
     for v in net.map(|n| n.vertices.as_slice()).unwrap_or_default() {
         (v.cap.map(|c| c as u8), v.join.map(|j| j as u8)).hash(&mut h);
     }

@@ -1,10 +1,9 @@
 # FigCraft egui 0.37 migration plan
 
-Status: local implementation contract. The owned worktree contains the 0.37 dependency family,
-lifecycle/API ports, local capture adapter and incoming/outgoing IME work described in
-`docs/egui-037-local-followups.md`. This document makes no build, test, benchmark, browser, GUI,
-lockfile or immutable-pin acceptance claim; the parent runs managed validation through
-`maintenance/task.py`. No publication approval exists for this document or any derived branch/PR.
+Status: implemented locally, with host CI qualification recorded in the current qualification
+section below and in `docs/egui-037-local-followups.md`. Earlier sections retain the original
+planning baselines. Native/browser workflows and paired app performance remain open.
+No publication approval exists for this document or any derived branch/PR.
 
 Scope: the exact checkout
 `/home/codex/work/CraftApps/egui037-migration-20261022/figcraft-implementation`. This plan covers
@@ -1183,32 +1182,40 @@ web hidden paint remains a recorded prerequisite, not a fake.
 No build/test/GUI/browser/performance run was performed for this stage; the parent runs managed
 validation and generates the lockfile from its local dependency config.
 
-## Current local qualification — 2026-10-24
+## Current local qualification — 2026-10-25
 
-The local migration includes the reviewed source content of captured main
-`3476f4b1e72e31514670ceff9c1a5a3d78a8b302`. The migration base is
-`8167f13a6a416ca61fcb505a7eaf6be383f6c5c0`.
-This local integration records both the migration base and captured main as parents.
-Canonical immutable egui/winit/shared-library pins and the Cargo lock are resolved.
-The normal UI dependency enables both `default_fonts` and `monochrome_emoji_fonts`.
+The migration preserves captured main `10702311f345393ee1d8868c3257679befcfa14d`
+(53 commits and 114 paths beyond the first integration). The final review commit records
+both the migration history and that upstream target as parents. The selected egui revision is
+`6d518fc799681571963842f95b55a6b68431b15a`, winit is
+`a517b3846ee8457d84ee4975110bfda6797c44dc`, and craft-window is
+`25da1314d443171b4adeaad2cd9454b273f35c6f`. Cargo.lock SHA-256 is
+`7ba8af4de70ba657a652266ddee2920bfc501c851520a49ac60c8044a5c23cc1`.
+The normal UI enables `default_fonts` and `monochrome_emoji_fonts`.
 
-The current source passed the repository's complete local `xtask ci`: formatting,
-strict workspace/all-target lint, workspace tests and doctests, translation report,
-layers, assets, five-package WASM check and plugin workspace fmt/lint/tests/WASM
-build. The recorded 70 summaries contain 3,189 passing executions, zero failures,
-nine ignored tests and 3,002 filtered instances. This includes a repeated translation
-report test; it is not a count of distinct regressions. The main doctest stage selected
-zero tests. All 17 field-save regressions passed, including owner-bound deferred saves,
-same-pass document replacement and later valid edits/saves. The three real plugin
-bundles and all six original outputs were hash-verified and preserved.
+Managed full CI `egui037-figcraft-final-ci-20261024-2312` passed with bundled fonts.
+Managed full CI `egui037-figcraft-system-font-ci-20261025-0402` also passed without
+bundled craft-fonts, using a licensed DejaVu Sans system-font fixture via XDG_DATA_HOME.
+The final qualification run `egui037-figcraft-final-qualification-ci-20261025-0453`
+repeated that configuration successfully after the documentation reconciliation.
+Both runs completed formatting, strict lint, workspace tests, doctests, translations,
+layering, assets, WASM checks, and plugin fmt/lint/tests/release-WASM builds. Each log
+contains 3,242 passing executions, zero failures and nine ignored across 70 summaries;
+this includes repeated translation checks and is not a count of distinct regressions.
+The main doctest stage selects zero tests. Three plugin bundles were hash-verified and
+preserved for each configuration.
 
-Incoming IME interruption and current-geometry screenshot admission repairs are
-implemented, as are the original-document/window binding and per-field stale-draft
-cancellation needed for deferred Save/Save As across tab/control routing. Historical
-stage notes below describe the original implementation state rather than current
-qualification. Local evidence retains the exact source/lock, focused tests, full CI
-and original plugin outputs. Native/visible GUI and browser workflows, platform IME,
-no-font configurations where relevant, paired performance and actual release package
-installation/signing/AppImage inspection remain separate open gates. Further notice
-repairs, if required, are not claimed complete here. No application publication has
-been authorized; PRs require human review and human merge.
+The no-bundled-font run includes two test fixture corrections: text-fit cases explicitly
+scan installed fonts, and a concurrent collaboration test explicitly selects its foreground
+document after both joins complete instead of depending on network completion order.
+Independent review accepted these changes with the original layout, synchronization and
+isolation assertions intact. All 17 field-save regressions remain covered, including
+owner-bound deferred saves, same-pass document replacement and later valid edits/saves.
+Incoming IME interruption, screenshot geometry admission, and document/window ownership
+are implemented. Historical notes below describe the earlier planning stages.
+
+The final review packet binds source, lock, logs, plugin outputs and commit ancestry.
+Native visible GUI/browser workflows, native/custom-editor IME, paired performance,
+current-source platform runtime and actual release installation/signing remain open.
+The system-font result is not a claim that missing document fonts are interchangeable.
+Human review and human merge are required; no publication is authorized by this document.

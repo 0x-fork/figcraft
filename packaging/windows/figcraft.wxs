@@ -95,6 +95,7 @@
     <?endif ?>
     <ComponentGroup Id="FigcraftFiles" Directory="INSTALLFOLDER">
       <Component Id="FigcraftApp" Guid="238228C3-4C1D-4B33-8C5D-C31B65BC2DA4">
+        <File Id="FigcraftNotice" Source="$(var.BinDir)\NOTICE" KeyPath="no" />
         <File Id="FigcraftExe" Source="$(var.BinDir)\figcraft.exe" KeyPath="yes">
           <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="FigCraft"
               Description="FigCraft interface design and prototyping" WorkingDirectory="INSTALLFOLDER" Advertise="yes"

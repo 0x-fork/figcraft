@@ -880,6 +880,7 @@ pub(crate) fn ime_output(app: &mut FigApp, ctx: &Context) {
             rect: cursor_rect,
             cursor_rect,
             should_interrupt_composition: false,
+            reset_request: None,
             change_cause: update.change_cause,
             surrounding_text: update.surrounding_text,
         })

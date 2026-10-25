@@ -124,7 +124,10 @@ fn two_files_are_hosted_and_joined_independently() {
     assert_eq!(host.live_summary()["link"], a["link"]);
     assert_eq!(host.live_summary()["document"], 0);
     // An edit in A reaches the guest's copy of A only, while B is in front at the guest.
-    assert_eq!(guest.ds().unwrap().uid, gb, "the file joined last is in front");
+    // Concurrent joins may complete in either order. Put B in front explicitly so the
+    // following assertions exercise A's background session independent of network timing.
+    guest.execute("doc.switch", &json!({"index": guest.docs.iter().position(|d| d.uid == gb).unwrap()})).unwrap();
+    assert_eq!(guest.ds().unwrap().uid, gb, "B is in front while A receives edits");
     let in_a = rect(&mut host);
     host.execute("doc.switch", &json!({"index": 1})).unwrap();
     let in_b = rect(&mut host);

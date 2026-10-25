@@ -122,7 +122,7 @@ impl Services for WebServices {
     }
     fn open_url(&mut self, url: &str) {
         let Some(window) = web_sys::window() else { return };
-        if let Err(e) = window.open_with_url_and_target(url, "_blank") {
+        if let Err(e) = window.open_with_url_and_target_and_features(url, "_blank", "noopener,noreferrer") {
             log::error!("couldn't open {url}: {e:?}");
         }
     }
