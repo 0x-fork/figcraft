@@ -10,6 +10,10 @@ qualification below for the restored catalog.
 
 ## Current local qualification — 2026-10-25
 
+Latest combined-source qualification includes main `2a3b7d4fa78e67ecdc7bdfe8b4781e50e5b2612e`, preserving its text-on-path, style-variable, export and Dev Mode changes. Managed full CI `egui037-figcraft-main2a-ci-20261025-0745` passed with required fonts: 3,297 passing executions, zero failures and nine ignored across 71 summaries, including WASM and plugin builds. Fresh independent review accepted the integration. The capture/IME/field-save refactor addresses the prior Sonar complexity findings; remote analysis still needs the approved update. Native/browser, platform IME and paired performance gaps below remain open.
+
+### Earlier review-fix qualification
+
 The published refresh preserves main `9f788753` and passed managed full CI
 `egui037-figcraft-main-refresh-ci-20261025-0618`: 3,247 passing executions, zero
 failures and nine ignored. The 3,242 counts below describe the earlier `10702311`
