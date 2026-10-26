@@ -441,6 +441,8 @@ fn every_platform_has_a_thai_font_in_the_fallbacks() {
     }
 }
 
+// The paths are Unix absolute paths (font managers are a macOS thing): on Windows they aren't absolute.
+#[cfg(unix)]
 #[test]
 fn font_manager_files_outside_the_font_folders_are_indexed_once() {
     let folders = [std::path::PathBuf::from("/Library/Fonts"), std::path::PathBuf::from("/Users/a/Library/Fonts")];
