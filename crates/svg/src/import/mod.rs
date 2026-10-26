@@ -446,8 +446,8 @@ fn paint_path(cx: &mut Ctx, p: &usvg::Path, mut n: Node, transform: Affine, worl
 const CLOSE_TOLERANCE: f64 = 1e-3;
 
 /// `path` with the subpaths that end within `tol` of their start closed onto it and, with `all`
-/// (SVG fills every subpath as if closed), every other subpath of two or more segments closed
-/// with a straight segment.
+/// (SVG fills every subpath as if closed), every other subpath that can enclose an area (two or
+/// more segments, or one curve) closed with a straight segment.
 fn closed_for_fill(path: &BezPath, tol: f64, all: bool) -> BezPath {
     use figcraft_geom::kurbo::PathEl;
     let mut out = BezPath::new();
@@ -462,7 +462,8 @@ fn closed_for_fill(path: &BezPath, tol: f64, all: bool) -> BezPath {
         };
         let open = !matches!(sub.last(), Some(PathEl::ClosePath));
         let segments = sub.len() - 1;
-        if open && segments >= 2 {
+        let curve = matches!(sub.last(), Some(PathEl::QuadTo(..) | PathEl::CurveTo(..)));
+        if open && (segments >= 2 || curve) {
             let near = sub.last().and_then(|e| e.end_point()).is_some_and(|end| (end - start).hypot() <= tol);
             if near && let Some(last) = sub.last_mut() {
                 match last {
@@ -671,6 +672,42 @@ pub(crate) fn nesting(data: &[u8], limit: usize) -> usize {
     max
 }
 
+/// Whether `data` nests elements more than [`MAX_NESTING`] deep: the byte scan first, then the
+/// parsed tree (walked without recursion), which also counts what DTD entity references expand to.
+pub(crate) fn too_deep(data: &[u8]) -> bool {
+    if nesting(data, MAX_NESTING) > MAX_NESTING {
+        return true;
+    }
+    let Ok(text) = std::str::from_utf8(data) else { return false };
+    let opt = usvg::roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
+    let Ok(xml) = usvg::roxmltree::Document::parse_with_options(text, opt) else { return false };
+    // Depth-first by sibling and parent links; the root is depth 0, each child one deeper.
+    let (mut node, mut depth) = (xml.root(), 0usize);
+    loop {
+        if let Some(child) = node.first_child() {
+            node = child;
+            depth += 1;
+            if depth > MAX_NESTING {
+                return true;
+            }
+            continue;
+        }
+        loop {
+            if let Some(next) = node.next_sibling() {
+                node = next;
+                break;
+            }
+            match node.parent() {
+                Some(up) if depth > 0 => {
+                    node = up;
+                    depth -= 1;
+                }
+                _ => return false,
+            }
+        }
+    }
+}
+
 fn options(data: &[u8], limits: budget::Limits) -> usvg::Options<'static> {
     // Only data URIs, within budgets: an opened or pasted SVG never pulls other files off the disk
     // and never expands without limit.
@@ -727,7 +764,7 @@ fn import_within(
 ) -> Result<Imported, ImportError> {
     // SVGZ is unpacked here, within a budget, so every check below sees the real document.
     let data = budget::document(data, &limits).map_err(ImportError)?;
-    if nesting(&data, MAX_NESTING) > MAX_NESTING {
+    if too_deep(&data) {
         return Err(ImportError(format!("elements nested more than {MAX_NESTING} deep")));
     }
     let tree = usvg::Tree::from_data(&data, &options(&data, limits)).map_err(|e| ImportError(e.to_string()))?;

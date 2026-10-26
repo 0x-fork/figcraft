@@ -101,6 +101,16 @@ fn smoothed_corners_keep_the_stroke_inside_the_fill() {
 }
 
 #[test]
+fn center_and_outside_strokes_follow_smoothed_corners() {
+    for (align, out, inset) in [(StrokeAlign::Center, 1.0, 1.0), (StrokeAlign::Outside, 2.0, 0.0)] {
+        let a = area(&rounded_side_strokes(W, H, [16.0; 4], 0.6, [2.0; 4], align));
+        let outer = area(&rounded_rect(W + 2.0 * out, H + 2.0 * out, [16.0 + out; 4], 0.6));
+        let hole = area(&rounded_rect(W - 2.0 * inset, H - 2.0 * inset, [16.0 - inset; 4], 0.6));
+        assert!((a - (outer - hole)).abs() < 1e-3, "{align:?}: {a} vs {}", outer - hole);
+    }
+}
+
+#[test]
 fn weights_wider_than_the_box_leave_the_outer_edge() {
     let full = rounded_side_strokes(20.0, 10.0, [4.0; 4], 0.0, [6.0; 4], StrokeAlign::Inside);
     assert!((area(&full) - area(&rounded_rect(20.0, 10.0, [4.0; 4], 0.0))).abs() < 1e-6);

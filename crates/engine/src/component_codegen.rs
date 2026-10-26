@@ -232,7 +232,9 @@ pub fn type_name(name: &str) -> String {
 /// Words no generated parameter may be called (keywords of TypeScript, Swift and Kotlin, and
 /// names the generated code uses).
 const RESERVED: &[&str] = &[
+    "arguments",
     "as",
+    "await",
     "body",
     "break",
     "case",
@@ -246,6 +248,7 @@ const RESERVED: &[&str] = &[
     "do",
     "else",
     "enum",
+    "eval",
     "export",
     "extends",
     "extension",
@@ -256,6 +259,7 @@ const RESERVED: &[&str] = &[
     "function",
     "guard",
     "if",
+    "implements",
     "import",
     "in",
     "init",
@@ -271,6 +275,7 @@ const RESERVED: &[&str] = &[
     "operator",
     "package",
     "private",
+    "protected",
     "protocol",
     "public",
     "ref",
