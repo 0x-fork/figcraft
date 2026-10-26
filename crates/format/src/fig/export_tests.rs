@@ -1189,6 +1189,19 @@ fn local_samples_round_trip() {
 }
 
 #[test]
+fn a_vector_drawable_export_setting_is_written_as_svg_with_a_warning() {
+    let mut doc = Document::new("vd");
+    let page = doc.first_page().unwrap();
+    let r = doc.create(page, NodeKind::Rectangle, "Icon", 0.0, 0.0, 24.0, 24.0).unwrap();
+    doc.get_mut(r).unwrap().exports = vec![ExportSetting { format: ExportFormat::VectorDrawable, ..Default::default() }];
+    let (bytes, warnings) = export(&doc, None).unwrap();
+    assert_eq!(warnings, ["Android Vector Drawable (XML) export settings were written as SVG"]);
+    let (back, _) = import(&bytes, "x").unwrap();
+    let icon = back.nodes().find(|n| n.name == "Icon").unwrap();
+    assert_eq!(icon.exports.iter().map(|x| x.format).collect::<Vec<_>>(), [ExportFormat::Svg]);
+}
+
+#[test]
 fn images_are_named_by_the_sha1_of_their_bytes() {
     // FIPS 180 test vectors.
     assert_eq!(export::sha1_hex(b""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
