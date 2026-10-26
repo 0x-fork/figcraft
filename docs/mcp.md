@@ -1090,7 +1090,11 @@ path?}` writes this file's collections (default: all but library copies) as a lo
 response (`format: "json"`, the default) or as CSS custom properties (`format: "css"`: the default
 mode on `:root`, each other mode on `[data-<collection>="<mode>"]`, aliases as `var(--name)`, numbers
 in px unless the layers bound to them, their scopes or the variables aliasing them make them an
-opacity or a font weight, so `border-radius: var(--radius)` reads `12px`), and
+opacity or a font weight, so `border-radius: var(--radius)` reads `12px`) or as
+Dart constants for Flutter (`format: "dart"`: an `abstract final class` per collection and mode, the
+default mode's named after the collection and the others after the collection and the mode, with a
+`static const` `Color`, `double`, `String` or `bool` per variable; names become camelCase Dart
+identifiers kept apart, aliases are resolved to their value in that mode), and
 returns `{text}` (or writes `path` and returns `{path}`). `variable.import {variables}` (an object,
 JSON text or a path; `variableCollections` and `variables` under `meta` or at the top level) reads
 one back: a collection joins this file's collection of the same name
