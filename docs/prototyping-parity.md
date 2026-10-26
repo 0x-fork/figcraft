@@ -23,8 +23,8 @@ larger real prototypes. Remaining: 2–5 h.
 ## Rules from the documentation
 
 Status: **pass** (a case in the suite holds), **fixed** (the suite found a divergence, now fixed),
-**added** (the setting was missing and now exists), **silent** (the documentation doesn't say; the
-case pins the current behaviour).
+**added** (the setting was missing and now exists), **extra** (FigCraft's own, beyond the reference
+tool; opt-in), **silent** (the documentation doesn't say; the case pins the current behaviour).
 
 | Rule | Status | Evidence / notes |
 |---|---|---|
@@ -51,7 +51,7 @@ case pins the current behaviour).
 | Open overlay: positions, background dimming, close on a click outside (on by default, can be turned off) | pass | `a_click_outside_an_overlay_closes_it_unless_turned_off`, `overlay_positions` |
 | Overlays stack; swap overlay replaces the top one; close overlay closes it | pass | `overlays_stack_swap_close_and_go_with_navigation` |
 | Manual overlay position relative to the hotspot | **added** | `offset: [x, y]` on the action, from the top-left of the layer that opens it (X / Y fields in the interaction editor; without one, below that layer); `present_delay_tests` |
-| Overlay position presets relative to the layer that opens it, inside or outside (not in Figma: [forum request](https://forum.figma.com/suggest-a-feature-11/set-overlay-position-relative-to-element-not-to-page-35366)) | **added** | `anchor: triggerInside \| triggerOutside` on the open overlay action; Relative to (Whole screen / Trigger layer) and Inside / Outside in the interaction editor. Outside: top presets above the layer, bottom presets below it, edges lined up (a dropdown is Bottom left + Outside); Center centres it on the layer. No flipping at the screen edge. `.fig` export writes a manual offset; `proto_overlay_anchor_tests`, `present_overlay_anchor_tests`, MCP `overlay_anchor` |
+| Overlay position presets relative to the layer that opens it, inside or outside (not in Figma: [forum request](https://forum.figma.com/suggest-a-feature-11/set-overlay-position-relative-to-element-not-to-page-35366)) | **extra** | `anchor: triggerInside \| triggerOutside` on the open overlay action; Relative to (Whole screen / Trigger layer) and Inside / Outside in the interaction editor. Outside: top presets above the layer, bottom presets below it, edges lined up (a dropdown is Bottom left + Outside); Center centres it on the layer. No flipping at the screen edge. `.fig` export writes a manual offset; `proto_overlay_anchor_tests`, `present_overlay_anchor_tests`, MCP `overlay_anchor` |
 | Delay on mouse enter / leave / down / up | **added** | `delayMs` on the interaction, a Delay field in the editor; fires once after the delay while its screen or overlay still shows (a pointer that leaves early: silent, it still fires); `mouse_triggers_wait_out_their_delay` |
 | Open link | pass | always a new tab or browser window (opening in place would leave the prototype) |
 | Change to: another variant of the instance, in place, with the interaction's animation | pass | `interactive_components_change_in_place` |

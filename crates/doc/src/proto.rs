@@ -579,7 +579,7 @@ pub enum Action {
         /// opened it (x, y). None = right below that layer.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         offset: Option<[f64; 2]>,
-        /// Figma does not have this. The .fig export writes it as a manual offset.
+        /// The incumbent has no such option. The .fig export writes it as a manual offset.
         #[serde(default, skip_serializing_if = "OverlayAnchor::is_screen")]
         anchor: OverlayAnchor,
     },
