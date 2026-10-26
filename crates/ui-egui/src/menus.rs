@@ -1021,9 +1021,12 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                 }
                 // An instance's actions reach its main component: replace "Create component" with
                 // "Go to main component" (as in Figma's context menu).
-                if app.session.doc().ok().is_some_and(|doc| {
-                    ids.iter().any(|i| doc.node(*i).is_some_and(|n| matches!(n.kind, figcraft_doc::NodeKind::Instance { .. })))
-                }) && let Some(at) = entries.iter().position(|e| e.1 == "component.create")
+                if app
+                    .session
+                    .doc()
+                    .ok()
+                    .is_some_and(|doc| ids.iter().any(|i| doc.node(*i).is_some_and(|n| matches!(n.kind, figcraft_doc::NodeKind::Instance { .. }))))
+                    && let Some(at) = entries.iter().position(|e| e.1 == "component.create")
                 {
                     entries[at] = (tr("Go to main component"), "component.goToMain");
                 }
