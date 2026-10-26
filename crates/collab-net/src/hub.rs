@@ -763,13 +763,10 @@ pub(crate) fn to_local(inbox: &Inbox, local: u32, msg: &ServerMsg) {
 }
 
 #[cfg(test)]
-#[path = "queue_tests.rs"]
 mod queue_tests;
 
 #[cfg(test)]
-#[path = "barred_tests.rs"]
 mod barred_tests;
 
 #[cfg(test)]
-#[path = "preauth_tests.rs"]
 mod preauth_tests;
