@@ -7,14 +7,10 @@
 
 pub mod a11y;
 pub mod bidi;
-mod board_picker;
 pub mod canvas;
 pub mod cjk;
-pub mod colorpicker;
 pub mod control;
 pub mod dialogs;
-pub mod field_math;
-pub mod font_preview;
 pub mod home;
 pub mod home_recents;
 pub mod i18n;
@@ -25,7 +21,6 @@ pub mod online;
 pub mod pending_open;
 pub mod present;
 pub mod shortcuts;
-pub mod style_picker;
 pub mod tabs;
 pub mod theme;
 pub mod toolbar;
@@ -260,6 +255,11 @@ pub use panels::typography;
 pub use panels::variable_ui;
 pub use panels::vector_panel;
 pub use panels::versions;
+use widgets::board_picker;
+pub use widgets::colorpicker;
+pub use widgets::field_math;
+pub use widgets::font_preview;
+pub use widgets::style_picker;
 
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
