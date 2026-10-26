@@ -175,7 +175,7 @@ message PrototypeStartingPoint string name=1, string position=3
 message OverlayBackgroundAppearance OverlayBackgroundType backgroundType=1, Color backgroundColor=2
 message GUIDPositionMapEntry GUID id=1, string position=2
 message GUIDPositionMap GUIDPositionMapEntry[] entries=1
-enum GridTrackSizingType FLEX=0 FIXED=1 HUG=2
+enum GridTrackSizingType FLEX=0 FIXED=1 HUG=2 UNKNOWN=3
 message GridTrackSizingFunction GridTrackSizingType type=1, float value=2
 message GridTrackSize GridTrackSizingFunction minSizing=1, GridTrackSizingFunction maxSizing=2
 message GUIDGridTrackSizeMapEntry GUID id=1, GridTrackSize trackSize=2
@@ -289,6 +289,37 @@ fn s(x: &str) -> Kv<'static> {
 fn b(x: bool) -> Kv<'static> {
     Kv::Bool(x)
 }
+
+/// A track's size as the format's enum name and value, when both sizing functions agree (the
+/// importer keeps only those). `None`: the format has no name for it, so an equal track stands in.
+fn grid_track_size(track: &GridTrack) -> Option<(&'static str, f64)> {
+    let value = track.value;
+    let fits = value.is_finite() && (0.0..=crate::fig::map::MAX_GRID_TRACK_VALUE).contains(&value);
+    match track.sizing {
+        Sizing::Fixed if fits => Some(("FIXED", value)),
+        Sizing::Fill if fits && value > 0.0 => Some(("FLEX", value)),
+        Sizing::Hug => Some(("HUG", 0.0)),
+        _ => None,
+    }
+}
+
+/// A grid axis's track sizes, keyed by track id like the order map. A track the document doesn't
+/// set is left out, and one the format can't hold keeps its id (the import equalises it) and sets
+/// `dropped`.
+fn grid_sizing(tracks: &[GridTrack], ids: &[u32], dropped: &mut bool) -> Option<Kv<'static>> {
+    let mut entries = Vec::new();
+    for (track, id) in tracks.iter().zip(ids) {
+        match grid_track_size(track) {
+            Some((kind, value)) => {
+                let size = || o(vec![("type", e(kind)), ("value", fl(value))]);
+                entries.push(o(vec![("id", guid(AUX, *id)), ("trackSize", o(vec![("minSizing", size()), ("maxSizing", size())]))]));
+            }
+            None => *dropped = true,
+        }
+    }
+    (!entries.is_empty()).then(|| o(vec![("entries", arr(entries))]))
+}
+
 fn guid(session: u32, local: u32) -> Kv<'static> {
     o(vec![("sessionID", u(session)), ("localID", u(local))])
 }
@@ -1208,8 +1239,13 @@ impl<'d> Exporter<'d> {
         if !n.guides.is_empty() {
             self.warn("ruler guides were left out");
         }
-        if !n.annotations.is_empty() || !n.dev_resources.is_empty() || !n.code_links.is_empty() || !n.dev_status.is_none() {
-            self.warn("Dev Mode annotations, statuses, resources and code links were left out");
+        if !n.annotations.is_empty()
+            || !n.dev_resources.is_empty()
+            || !n.code_links.is_empty()
+            || !n.measurements.is_empty()
+            || !n.dev_status.is_none()
+        {
+            self.warn("Dev Mode annotations, statuses, resources, measurements and code links were left out");
         }
         if !n.plugin_data.is_empty() {
             self.warn("plugin data was left out");
@@ -1510,44 +1546,7 @@ impl<'d> Exporter<'d> {
             ("stackReverseZIndex", b(l.reverse_z)),
         ]);
         if grid {
-            // Instance layers share their main layer's track ids, so unchanged tracks and the cells
-            // their layers sit in still match.
-            let key = self.main_layer(n.id);
-            let (want_c, want_r) = (l.grid_columns.min(1000) as usize, l.grid_rows.min(1000) as usize);
-            let (cols, rows) = match self.tracks.get(&key) {
-                Some((c, r)) if (c.len(), r.len()) == (want_c, want_r) => (c.clone(), r.clone()),
-                _ => ((0..want_c).map(|_| self.next_aux()).collect(), (0..want_r).map(|_| self.next_aux()).collect()),
-            };
-            let map = |ids: &[u32]| {
-                o(vec![(
-                    "entries",
-                    arr(ids.iter().enumerate().map(|(i, t)| o(vec![("id", guid(AUX, *t)), ("position", s(&position(i)))])).collect()),
-                )])
-            };
-            // Each track's size (fixed px, hug, or a share of the free space), by track id; a track
-            // the layout doesn't list fills one share. Readers without it make tracks up.
-            let sizes = |ids: &[u32], tracks: &[GridTrack]| {
-                let entries = ids.iter().enumerate().map(|(i, id)| {
-                    let t = tracks.get(i).copied().unwrap_or_default();
-                    let (ty, value) = match t.sizing {
-                        Sizing::Fixed => ("FIXED", t.value),
-                        Sizing::Hug => ("HUG", 0.0),
-                        Sizing::Fill => ("FLEX", if t.value.is_finite() && t.value > 0.0 { t.value } else { 1.0 }),
-                    };
-                    let sizing = || o(vec![("type", e(ty)), ("value", fl(value))]);
-                    o(vec![("id", guid(AUX, *id)), ("trackSize", o(vec![("minSizing", sizing()), ("maxSizing", sizing())]))])
-                });
-                o(vec![("entries", arr(entries.collect()))])
-            };
-            f.extend([
-                ("gridColumnGap", fl(l.gap)),
-                ("gridRowGap", fl(l.cross_gap)),
-                ("gridColumns", map(&cols)),
-                ("gridRows", map(&rows)),
-                ("gridColumnsSizing", sizes(&cols, &l.column_tracks)),
-                ("gridRowsSizing", sizes(&rows, &l.row_tracks)),
-            ]);
-            self.tracks.insert(key, (cols, rows));
+            self.grid_layout(n, l, f);
         } else {
             let spread = l.content_align == ContentAlign::SpaceBetween;
             f.extend([
@@ -1556,6 +1555,34 @@ impl<'d> Exporter<'d> {
                 ("stackCounterAlignContent", e(if spread { "SPACE_BETWEEN" } else { "AUTO" })),
             ]);
         }
+    }
+
+    /// A grid layout's track gaps, order and sizes.
+    fn grid_layout(&mut self, n: &Node, l: &AutoLayout, f: &mut Fields) {
+        // Instance layers share their main layer's track ids, so unchanged tracks and the cells
+        // their layers sit in still match.
+        let key = self.main_layer(n.id);
+        let (want_c, want_r) = (l.grid_columns.min(1000) as usize, l.grid_rows.min(1000) as usize);
+        let (cols, rows) = match self.tracks.get(&key) {
+            Some((c, r)) if (c.len(), r.len()) == (want_c, want_r) => (c.clone(), r.clone()),
+            _ => ((0..want_c).map(|_| self.next_aux()).collect(), (0..want_r).map(|_| self.next_aux()).collect()),
+        };
+        let map = |ids: &[u32]| {
+            o(vec![("entries", arr(ids.iter().enumerate().map(|(i, t)| o(vec![("id", guid(AUX, *t)), ("position", s(&position(i)))])).collect()))])
+        };
+        f.extend([("gridColumnGap", fl(l.gap)), ("gridRowGap", fl(l.cross_gap)), ("gridColumns", map(&cols)), ("gridRows", map(&rows))]);
+        let mut dropped = false;
+        let column_sizing = grid_sizing(&l.column_tracks, &cols, &mut dropped);
+        let row_sizing = grid_sizing(&l.row_tracks, &rows, &mut dropped);
+        if dropped {
+            self.warn("grid tracks whose size the format can't hold were written as equal tracks");
+        }
+        for (name, sizing) in [("gridColumnsSizing", column_sizing), ("gridRowsSizing", row_sizing)] {
+            if let Some(v) = sizing {
+                f.push((name, v));
+            }
+        }
+        self.tracks.insert(key, (cols, rows));
     }
 
     /// How a layer sizes and sits in its auto layout parent. Min/max sizes are the layer's own
@@ -2594,7 +2621,7 @@ fn unset(key: &str) -> Option<Kv<'static>> {
         "styleIdForFill" | "styleIdForStrokeFill" | "styleIdForEffect" | "styleIdForGrid" | "styleIdForText" => {
             o(vec![("guid", guid(u32::MAX, u32::MAX))])
         }
-        "variableConsumptionMap" | "variableModeBySetMap" => o(vec![("entries", arr(Vec::new()))]),
+        "variableConsumptionMap" | "variableModeBySetMap" | "gridColumnsSizing" | "gridRowsSizing" => o(vec![("entries", arr(Vec::new()))]),
         "mask" | "rectangleCornerRadiiIndependent" | "borderStrokeWeightsIndependent" => b(false),
         "effects" | "dashPattern" | "layoutGrids" | "exportSettings" | "prototypeInteractions" | "fillGeometry" | "variableWidthPoints" => {
             arr(Vec::new())
