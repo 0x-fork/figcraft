@@ -292,7 +292,9 @@ pub fn stroke_center(path: &BezPath, width: f64, props: &StrokeProps) -> BezPath
         .with_miter_limit(props.miter_limit.clamp(1.0, 100.0))
         .with_start_cap(kcap(props.cap_start))
         .with_end_cap(kcap(props.cap_end));
-    if let Some(pat) = width::dash_pattern(props) {
+    // Each subpath restarts the pattern, so it can add up to one more pattern's worth of dashes.
+    let subpaths = path.elements().iter().filter(|e| matches!(e, PathEl::MoveTo(_))).count() as f64;
+    if let Some(pat) = width::dash_pattern(props).filter(|p| width::dashes_fit(path.perimeter(1.0) + subpaths * p.iter().sum::<f64>(), p)) {
         style = style.with_dashes(0.0, pat);
     }
     kurbo::stroke(path.iter(), &style, &kurbo::StrokeOpts::default(), 0.05)
@@ -359,36 +361,35 @@ pub fn stroke_outline_of(path: &BezPath, props: &StrokeProps, closed_shape: bool
 
 /// End point and outward direction of an open path at its start or end.
 fn path_end(path: &BezPath, at_end: bool) -> Option<(Point, Vec2)> {
-    let segs: Vec<PathSeg> = path.segments().collect();
-    let seg = if at_end { segs.last()? } else { segs.first()? };
     use kurbo::ParamCurve;
     use kurbo::ParamCurveDeriv;
-    let (p, d) = if at_end {
-        let d = match seg {
-            PathSeg::Line(l) => l.p1 - l.p0,
-            PathSeg::Quad(q) => q.deriv().eval(1.0).to_vec2(),
-            PathSeg::Cubic(c) => {
-                let d = c.deriv().eval(1.0).to_vec2();
-                if d.hypot() < 1e-9 { c.p3 - c.p2 } else { d }
-            }
+    let dir_of = |seg: &PathSeg| -> Option<(Point, Vec2)> {
+        let (p, d) = if at_end {
+            let d = match seg {
+                PathSeg::Line(l) => l.p1 - l.p0,
+                PathSeg::Quad(q) => q.deriv().eval(1.0).to_vec2(),
+                PathSeg::Cubic(c) => {
+                    let d = c.deriv().eval(1.0).to_vec2();
+                    if d.hypot() < 1e-9 { c.p3 - c.p2 } else { d }
+                }
+            };
+            (seg.end(), d)
+        } else {
+            let d = match seg {
+                PathSeg::Line(l) => l.p0 - l.p1,
+                PathSeg::Quad(q) => -q.deriv().eval(0.0).to_vec2(),
+                PathSeg::Cubic(c) => {
+                    let d = -c.deriv().eval(0.0).to_vec2();
+                    if d.hypot() < 1e-9 { c.p0 - c.p1 } else { d }
+                }
+            };
+            (seg.start(), d)
         };
-        (seg.end(), d)
-    } else {
-        let d = match seg {
-            PathSeg::Line(l) => l.p0 - l.p1,
-            PathSeg::Quad(q) => -q.deriv().eval(0.0).to_vec2(),
-            PathSeg::Cubic(c) => {
-                let d = -c.deriv().eval(0.0).to_vec2();
-                if d.hypot() < 1e-9 { c.p0 - c.p1 } else { d }
-            }
-        };
-        (seg.start(), d)
+        let len = d.hypot();
+        (len >= 1e-12).then(|| (p, d / len))
     };
-    let len = d.hypot();
-    if len < 1e-12 {
-        return None;
-    }
-    Some((p, d / len))
+    // Skip zero-length segments (repeated vertices) and use the nearest one with a direction.
+    if at_end { path.segments().collect::<Vec<_>>().iter().rev().find_map(dir_of) } else { path.segments().find_map(|s| dir_of(&s)) }
 }
 
 /// The filled arrowhead shape for `cap` at one end of an open path.
@@ -694,6 +695,29 @@ mod tests {
     }
 
     #[test]
+    fn layer_end_arrow_is_drawn_when_a_closed_run_follows_the_open_one() {
+        let verts = [(0.0, 0.0), (50.0, 0.0), (0.0, 100.0), (50.0, 100.0), (25.0, 150.0)];
+        let net = VectorNetwork {
+            vertices: verts
+                .iter()
+                .enumerate()
+                .map(|(i, &(x, y))| figcraft_doc::Vertex { cap: (i == 0).then_some(StrokeCap::Round), ..figcraft_doc::Vertex::new(x, y) })
+                .collect(),
+            segments: vec![
+                figcraft_doc::Segment::line(0, 1),
+                figcraft_doc::Segment::line(2, 3),
+                figcraft_doc::Segment::line(3, 4),
+                figcraft_doc::Segment::line(4, 2),
+            ],
+            ..Default::default()
+        };
+        let path = BezPath::new();
+        let plain = StrokeProps { weight: 2.0, ..Default::default() };
+        let arrow = StrokeProps { cap_end: StrokeCap::TriangleArrow, ..plain.clone() };
+        assert_ne!(stroke_outline_of(&path, &arrow, false, Some(&net)), stroke_outline_of(&path, &plain, false, Some(&net)));
+    }
+
+    #[test]
     fn equal_joins_do_not_break_closed_stroke_runs() {
         let path = sq(0.0, 0.0, 20.0);
         let mut net = VectorNetwork::from_points(&[Point::new(0.0, 0.0), Point::new(20.0, 0.0), Point::new(20.0, 20.0), Point::new(0.0, 20.0)], true);
@@ -720,6 +744,35 @@ mod tests {
     }
 
     #[test]
+    fn a_dash_pattern_too_fine_for_its_path_strokes_solid() {
+        // ~500k dashes on this line (#1060): drawn solid, as a variable width stroke is past
+        // `MAX_DASHES`, rather than one outline per dash.
+        let mut line = BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((10_000.0, 0.0));
+        let props = StrokeProps { weight: 2.0, dashes: vec![0.01, 0.01], align: StrokeAlign::Center, ..Default::default() };
+        let s = stroke_center(&line, 2.0, &props);
+        assert!(s.elements().len() < 100, "{} elements", s.elements().len());
+        assert!((s.area().abs() - 20_000.0).abs() < 10.0, "{}", s.area());
+    }
+
+    #[test]
+    fn each_subpath_restarting_the_dash_pattern_counts_toward_the_limit() {
+        // The pattern restarts at every subpath: on 10,000 short lines its 199 tiny dashes come
+        // round each time (~1M dashes), though the length alone suggests a few hundred.
+        let mut path = BezPath::new();
+        for i in 0..10_000 {
+            path.move_to((0.0, f64::from(i) * 4.0));
+            path.line_to((2.0, f64::from(i) * 4.0));
+        }
+        let mut dashes = vec![0.01; 199];
+        dashes.push(10_000.0);
+        let props = StrokeProps { weight: 1.0, dashes, align: StrokeAlign::Center, ..Default::default() };
+        let s = stroke_center(&path, 1.0, &props);
+        assert!(s.elements().len() < 100_000, "{} elements", s.elements().len());
+    }
+
+    #[test]
     fn inside_and_outside_strokes_respect_an_even_odd_hole() {
         // A ring: both loops run the same way, so only the even-odd rule leaves the hole open.
         let mut ring = sq(0.0, 0.0, 100.0);
@@ -741,5 +794,23 @@ mod tests {
         let nz = VectorNetwork::from_path(&ring);
         let s = stroke_outline_of(&ring, &inside, true, Some(&nz));
         assert!(s.winding(material) != 0 && s.winding(hole) != 0);
+    }
+
+    #[test]
+    fn arrowhead_skips_zero_length_end_segments() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((100.0, 0.0));
+        assert!(arrowhead(&p, StrokeCap::TriangleArrow, 2.0, true).is_some());
+        p.line_to((100.0, 0.0));
+        let (tip, dir) = path_end(&p, true).expect("end direction");
+        assert_eq!((tip, dir), (Point::new(100.0, 0.0), Vec2::new(1.0, 0.0)));
+        assert!(arrowhead(&p, StrokeCap::TriangleArrow, 2.0, true).is_some());
+        let mut q = BezPath::new();
+        q.move_to((0.0, 0.0));
+        q.line_to((0.0, 0.0));
+        q.line_to((100.0, 0.0));
+        let (tip, dir) = path_end(&q, false).expect("start direction");
+        assert_eq!((tip, dir), (Point::new(0.0, 0.0), Vec2::new(-1.0, 0.0)));
     }
 }
