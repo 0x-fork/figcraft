@@ -457,7 +457,7 @@ fn japanese_korean_chinese_and_vietnamese_have_no_plural_forms() {
     assert_eq!(code("system", Some("ja,en-US")), "ja");
     assert_eq!(LANGS[resolve("vi", None)].name, "Tiếng Việt");
     assert!(LANGS[resolve("vi", None)].draft);
-    for code in ["ja", "ko", "zh-Hans", "vi"] {
+    for code in ["ja", "ko", "th", "zh-Hans", "vi"] {
         let lang = LANGS.iter().position(|l| l.code == code).unwrap();
         assert!(!plural_one(lang, 0) && !plural_one(lang, 1) && !plural_one(lang, 2), "{code}");
         let ones: Vec<_> = LANGS[lang].ui.iter().filter(|(_, t)| matches!(t, Text::Plural { one: Some(_), .. })).map(|(k, _)| k).collect();
