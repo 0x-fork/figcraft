@@ -366,3 +366,15 @@ fn faces_by_postscript_name() {
     }
     assert!(postscript_face("").is_none());
 }
+
+#[test]
+fn every_platform_has_a_thai_font_in_the_fallbacks() {
+    // Thai typed into a Latin layer (new text starts in Inter) is drawn by the first fallback that
+    // has it: Noto Sans Thai (craft-fonts, Linux), Leelawadee UI or Tahoma (Windows), Thonburi
+    // (macOS). They come after the Latin faces, which go on drawing Latin text.
+    let at = |family: &str| FALLBACK_FAMILIES.iter().position(|f| *f == family);
+    let latin = at("Segoe UI").unwrap();
+    for thai in ["Noto Sans Thai", "Leelawadee UI", "Tahoma", "Thonburi"] {
+        assert!(at(thai).is_some_and(|i| i > latin), "{thai}");
+    }
+}
