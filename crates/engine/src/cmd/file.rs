@@ -56,7 +56,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.save",
             "Save",
-            "{path?} (programmatic saves need a path the first time); a .fig path writes an experimental export copy of the shown document with `warnings`, keeping the native path, unsaved changes and version preview",
+            "{path?, overwrite? (replace what another app wrote to the file since it was opened or saved: without it that save is refused)} (programmatic saves need a path the first time); a .fig path writes an experimental export copy of the shown document with `warnings`, keeping the native path, unsaved changes and version preview",
             false,
             save
         ),
@@ -159,6 +159,8 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         spec!("file.revert", "Revert to saved", "{}  leave the live session first, if any", false, |s, _| {
             let path = s.ds()?.path.clone().ok_or_else(|| EngineError::Disabled("file.revert".into(), "the file was never saved".into()))?;
+            // Stamped before reading: a change made during the read makes the next save refuse.
+            let on_disk = crate::library::stat(&path).ok();
             let (loaded, _) = load_path(&path, None)?;
             let i = s.active;
             let uid = s.ds()?.uid;
@@ -167,6 +169,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     .with_versions(loaded.versions)
                     .with_branches(loaded.branches)
                     .with_images_left_in_file(&path, loaded.images_past_budget);
+                slot.on_disk = on_disk;
             }
             // Edits on its branch tabs are reverted too.
             crate::branches::close_tabs(s, uid, None);
@@ -945,6 +948,8 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         remember(s, &path);
         return Ok(json!({"index": i}));
     }
+    // Stamped before reading: a change made during the read makes the next save refuse.
+    let on_disk = crate::library::stat(&path).ok();
     let (loaded, rest) = load_path(&path, variables.as_ref())?;
     remember(s, &path);
     let native = !rest && matches!(ext(&path).as_str(), "figcraft" | "json");
@@ -958,12 +963,12 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let summary = import_summary(&loaded.doc);
     let images_left_out = if native { loaded.images_past_budget } else { 0 };
-    s.docs.push(
-        DocState::new(loaded.doc, native.then(|| path.clone()))
-            .with_versions(loaded.versions)
-            .with_branches(loaded.branches)
-            .with_images_left_in_file(&path, images_left_out),
-    );
+    let mut ds = DocState::new(loaded.doc, native.then(|| path.clone()))
+        .with_versions(loaded.versions)
+        .with_branches(loaded.branches)
+        .with_images_left_in_file(&path, images_left_out);
+    ds.on_disk = on_disk.filter(|_| native);
+    s.docs.push(ds);
     s.active = s.docs.len() - 1;
     let mut out = json!({"index": s.active, "summary": summary});
     out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
@@ -1053,7 +1058,9 @@ impl FileSnapshot {
         };
         let path = self.path.as_deref().ok_or(EngineError::NoDocument)?;
         refuse_dropping_images(ds, path)?;
+        refuse_overwriting_changes(ds, path)?;
         write(path, bytes)?;
+        ds.note_on_disk();
         // The history or branches may have changed since: then they still count as unsaved.
         if ds.revision == self.revision {
             ds.versions_changed = false;
@@ -1072,6 +1079,17 @@ fn refuse_dropping_images(ds: &DocState, path: &str) -> Result<()> {
             file_stem(path)
         ))),
         None => Ok(()),
+    }
+}
+
+/// Saving over the tab's own file would lose what another app wrote to it since (#1330).
+fn refuse_overwriting_changes(ds: &DocState, path: &str) -> Result<()> {
+    match (&ds.on_disk, crate::library::stat(path)) {
+        (Some(was), Ok(now)) if now != *was => Err(EngineError::Other(format!(
+            "{} wasn't saved: the file changed on disk since it was opened or saved here (another app or figcraft-cli wrote to it), and saving would replace those changes. Revert to saved to load them, or Save as to keep this version as well.",
+            file_stem(path)
+        ))),
+        _ => Ok(()),
     }
 }
 
@@ -1137,6 +1155,7 @@ fn save_to(s: &mut Session, path: Option<String>) -> Result<Value> {
     write(&path, &bytes)?;
     ds.doc = snapshot.doc;
     ds.path = Some(path.clone());
+    ds.note_on_disk();
     mark_saved(s, &json!({}))?;
     remember(s, &path);
     Ok(json!({"path": path, "bytes": bytes.len()}))
@@ -1157,13 +1176,19 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(path) = string(p, "path") {
         return save_to(s, Some(path));
     }
-    match s.docs.get(crate::branches::file_tab(s)).ok_or(EngineError::NoDocument)?.path.clone() {
+    let ds = s.docs.get(crate::branches::file_tab(s)).ok_or(EngineError::NoDocument)?;
+    match ds.path.clone() {
         // Earlier builds wrote native data under a .fig name: never overwrite that file with an export.
         Some(path) if ext(&path) == "fig" => {
             s.request_ui("dialog.saveAs", json!({}));
             Err(EngineError::Disabled("file.save".into(), "the saved path ends in .fig: choose Save as or pass `path`".into()))
         }
-        Some(path) => save_to(s, Some(path)),
+        Some(path) => {
+            if p.get("overwrite").and_then(Value::as_bool) != Some(true) {
+                refuse_overwriting_changes(ds, &path)?;
+            }
+            save_to(s, Some(path))
+        }
         None => {
             s.request_ui("dialog.saveAs", json!({}));
             Err(EngineError::Disabled("file.save".into(), "the file has no path yet: pass `path`".into()))
@@ -1731,7 +1756,7 @@ fn close(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let uid = ds.uid;
     let active_uid = s.docs.get(s.active).map(|d| d.uid);
-    s.docs.remove(i);
+    s.remove_tabs(|d| d.uid == uid);
     // Removing a tab before the active one shifts its index; keep the same document selected.
     s.active = active_uid.and_then(|a| s.docs.iter().position(|d| d.uid == a)).unwrap_or(i.min(s.docs.len().saturating_sub(1)));
     crate::branches::close_tabs(s, uid, None);

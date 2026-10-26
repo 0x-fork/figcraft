@@ -137,6 +137,12 @@ pub(crate) fn num(v: f64) -> String {
     }
 }
 
+/// `v` without trailing zeros (6 decimals), for lengths that must convert back to the same pixels.
+fn num6(v: f64) -> String {
+    let r = (v * 1_000_000.0).round() / 1_000_000.0;
+    if r.is_finite() && r != 0.0 { format!("{r}") } else { "0".into() }
+}
+
 /// `code` with every pixel length (`12px`) in rem of `root` pixels (`0.75rem`); names that end
 /// in "px", markup lines (layer text), string literals and comments are left alone.
 pub fn px_to_rem(code: &str, root: f64) -> String {
@@ -202,7 +208,7 @@ fn lengths_to_rem(code: &str, root: f64) -> String {
         match number.parse::<f64>() {
             Ok(v) if free && v.is_finite() => {
                 out.push_str(before);
-                out.push_str(&format!("{}rem", num(v / root)));
+                out.push_str(&format!("{}rem", num6(v / root)));
             }
             _ => {
                 out.push_str(head);

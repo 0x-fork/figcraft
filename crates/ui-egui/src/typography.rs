@@ -527,17 +527,27 @@ fn type_settings(
             app.set_props(ids, json!({"leadingTrim": if i == 1 { "capHeight" } else { "none" }}));
         }
         let resize = common(doc, ids, |n| n.kind.text().map(|t| t.auto_resize)).flatten();
+        // Auto-height text with a line limit truncates too.
+        let truncating = common(doc, ids, |n| n.kind.text().map(TextData::truncates)).flatten();
         caption(ui, tr("Truncate text"));
-        let active = resize.map(|r| usize::from(r == TextAutoResize::Truncate));
-        match text_seg(ui, "trunc", &[(tr("Off"), tr_noop("Don't truncate")), ("…", tr_noop("Truncate with an ellipsis"))], active, w) {
-            Some(1) => app.set_props(ids, json!({"textAutoResize": "truncate"})),
-            Some(_) if resize != Some(TextAutoResize::Height) && resize != Some(TextAutoResize::WidthAndHeight) => {
-                app.set_props(ids, json!({"textAutoResize": "none"}))
+        match text_seg(
+            ui,
+            "trunc",
+            &[(tr("Off"), tr_noop("Don't truncate")), ("…", tr_noop("Truncate with an ellipsis"))],
+            truncating.map(usize::from),
+            w,
+        ) {
+            Some(1) if truncating != Some(true) => app.set_props(ids, json!({"textAutoResize": "truncate"})),
+            Some(0) if resize == Some(TextAutoResize::Height) => {
+                if truncating == Some(true) {
+                    app.set_props(ids, json!({"maxLines": 0}));
+                }
             }
+            Some(0) if resize != Some(TextAutoResize::WidthAndHeight) => app.set_props(ids, json!({"textAutoResize": "none"})),
             _ => {}
         }
         // Max lines only matter while truncating; no limit shows "Auto".
-        if resize == Some(TextAutoResize::Truncate) {
+        if truncating == Some(true) {
             let max = common(doc, ids, |n| n.kind.text().map(|t| t.max_lines)).flatten();
             ui.add_space(4.0);
             let shown = max.map(f64::from).filter(|m| *m > 0.0);

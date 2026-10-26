@@ -338,13 +338,20 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
                 PropDef::InstanceSwap { default, .. } => {
                     let label = doc.node(*default).map(|n| n.name.clone()).unwrap_or_else(|| tr("Missing").into());
                     let resp = widgets::dropdown(ui, &label, 84.0, None);
-                    menu_popup(&resp).show(|ui| {
-                        for (c, name) in comps.iter() {
-                            if menu_item(ui, name, "") {
-                                app.run("component.editProperty", json!({"id": owner, "name": k, "default": c.0}));
-                                ui.close();
+                    crate::a11y::combo(&resp, k, &label, crate::a11y::menu_open(&resp));
+                    // A file with many components (an icon library) scrolls instead of running off the screen.
+                    menu_popup(&resp).width(200.0).show(|ui| {
+                        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                            for (c, name) in comps.iter() {
+                                let current = c == default;
+                                if menu_item(ui, &format!("{}{name}", if current { "✓ " } else { "" }), "") {
+                                    if !current {
+                                        app.run("component.editProperty", json!({"id": owner, "name": k, "default": c.0}));
+                                    }
+                                    ui.close();
+                                }
                             }
-                        }
+                        });
                     });
                 }
                 PropDef::Variant { .. } | PropDef::Slot { .. } => {}
