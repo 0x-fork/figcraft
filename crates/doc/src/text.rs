@@ -417,7 +417,8 @@ pub struct TextData {
     /// line's baseline).
     #[serde(skip_serializing_if = "crate::node::is_default")]
     pub leading_trim: LeadingTrim,
-    /// Max lines when truncating (0 = as many as fit).
+    /// Max lines when truncating, or before an auto-height text ends in an ellipsis (0 = as many
+    /// as fit).
     #[serde(skip_serializing_if = "crate::node::is_default")]
     pub max_lines: u32,
     /// OpenType feature toggles (e.g. "liga": false).
@@ -508,6 +509,28 @@ impl TextData {
 
     pub fn char_count(&self) -> usize {
         self.characters.chars().count()
+    }
+
+    /// Whether text that runs out of room ends in an ellipsis: a truncating box, or auto height
+    /// with a line limit (the box hugs up to `max_lines` lines).
+    pub fn truncates(&self) -> bool {
+        match self.auto_resize {
+            TextAutoResize::Truncate => true,
+            TextAutoResize::Height => self.max_lines > 0,
+            TextAutoResize::WidthAndHeight | TextAutoResize::None => false,
+        }
+    }
+
+    /// The resize mode once the box is given an explicit `width` and/or `height`: an explicit
+    /// height fixes the box, an explicit width turns auto width into auto height, and truncating
+    /// text keeps truncating.
+    pub fn fix_size(&mut self, width: bool, height: bool) {
+        self.auto_resize = match self.auto_resize {
+            _ if height && self.truncates() => TextAutoResize::Truncate,
+            _ if height => TextAutoResize::None,
+            TextAutoResize::WidthAndHeight if width => TextAutoResize::Height,
+            mode => mode,
+        };
     }
 
     /// The style at char index `i`.

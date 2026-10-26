@@ -1821,10 +1821,11 @@ impl Session {
                     n.child_layout.sizing_v = Sizing::Fixed;
                 }
                 if let NodeKind::Text(t) = &mut n.kind {
-                    t.auto_resize = match handle {
-                        Handle::Edge(1) | Handle::Edge(3) => TextAutoResize::Height,
-                        _ => TextAutoResize::None,
-                    };
+                    match handle {
+                        Handle::Edge(1) | Handle::Edge(3) if t.auto_resize == TextAutoResize::Truncate => {}
+                        Handle::Edge(1) | Handle::Edge(3) => t.auto_resize = TextAutoResize::Height,
+                        _ => t.fix_size(true, true),
+                    }
                 }
                 return Ok(());
             }
