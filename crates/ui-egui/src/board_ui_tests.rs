@@ -56,12 +56,12 @@ fn pick_option(u: &mut Ui, i: usize, n: usize) {
 
 /// Whether the bar over the selection showed in the last frame.
 fn bar_shown(ctx: &egui::Context) -> bool {
-    ctx.memory(|m| m.areas().visible_last_frame(&egui::LayerId::new(egui::Order::Middle, egui::Id::new("board_bar"))))
+    ctx.memory(|m| m.areas().visible_last_frame(&egui::LayerId::new(egui::Order::Middle, egui::Id::unique("board_bar"))))
 }
 
 /// The bar over the selection, when it shows.
 fn bar(u: &Ui) -> Option<Rect> {
-    bar_shown(&u.ctx).then(|| u.ctx.memory(|m| m.area_rect(egui::Id::new("board_bar")))).flatten()
+    bar_shown(&u.ctx).then(|| u.ctx.memory(|m| m.area_rect(egui::Id::unique("board_bar")))).flatten()
 }
 
 #[test]
