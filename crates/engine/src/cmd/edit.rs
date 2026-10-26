@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 
 use super::{CommandSpec, ok};
 use crate::params::*;
-use crate::{EngineError, Result, Session, bad, spec};
+use crate::{BatchStep, EngineError, Result, Session, bad, spec};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -342,15 +342,16 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             ok()
         }),
-        spec!("command.batch", "Run several commands", "{label?, commands: [{command, params}]} (one undo step)", false, |s, p| {
+        spec!("command.batch", "Run several commands", "{label?, commands: [{command, params, as?}]} (one undo step)", false, |s, p| {
             let label = string(p, "label").unwrap_or_else(|| "Batch".into());
-            let cmds: Vec<(String, Value)> = match get(p, "commands") {
+            let cmds: Vec<BatchStep> = match get(p, "commands") {
                 Some(Value::Array(a)) => {
                     let mut out = Vec::new();
                     for (i, c) in a.iter().enumerate() {
                         let cmd =
                             c.get("command").and_then(Value::as_str).ok_or_else(|| bad("command.batch", format!("step {i} has no `command`")))?;
-                        out.push((cmd.to_string(), c.get("params").cloned().unwrap_or(json!({}))));
+                        let params = c.get("params").cloned().unwrap_or(json!({}));
+                        out.push(BatchStep { name: crate::batch::step_name(i, c)?, ..BatchStep::new(cmd, params) });
                     }
                     out
                 }
@@ -541,6 +542,7 @@ pub fn copy_to_clipboard(s: &mut Session, cmd: &str, ids: &[NodeId]) -> Result<(
     s.clipboard.nodes = nodes;
     s.clipboard.images = images;
     s.clipboard.bounds = bounds;
+    s.clipboard.layers_generation = s.clipboard.layers_generation.wrapping_add(1);
     Ok(())
 }
 
@@ -600,6 +602,10 @@ pub fn design_clipboard_buffer(html: &str) -> Option<Vec<u8>> {
     figcraft_format::fig::is_fig(&bytes).then_some(bytes)
 }
 
+/// Paste design layers from clipboard HTML or base64 `data`: decode and reject missing,
+/// invalid or oversized data, load a temporary `.fig`, take its top-level page layers,
+/// store them as a foreign-file clipboard source with a bumped layers generation, then
+/// delegate to `paste` and append import warnings.
 fn paste_design_layers(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "edit.pasteDesignLayers";
     let bytes = match (string(p, "html"), string(p, "data")) {
@@ -616,8 +622,18 @@ fn paste_design_layers(s: &mut Session, p: &Value) -> Result<Value> {
     let (nodes, images, bounds) = copied(&doc, &tops);
     let props = s.clipboard.props.take();
     // No open file has id 0. So paste treats this copy as a copy from a different file.
-    s.clipboard =
-        crate::Clipboard { nodes, images, props, bounds, source_doc: 0, source: Some(doc), source_path: None, copied_components: BTreeSet::new() };
+    let layers_generation = s.clipboard.layers_generation.wrapping_add(1);
+    s.clipboard = crate::Clipboard {
+        nodes,
+        images,
+        props,
+        bounds,
+        source_doc: 0,
+        source: Some(doc),
+        source_path: None,
+        copied_components: BTreeSet::new(),
+        layers_generation,
+    };
     let mut out = paste(s, p)?;
     if !other.issues.is_empty() {
         out["warnings"] = json!(other.issues);

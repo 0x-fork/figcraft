@@ -309,13 +309,13 @@ Or in a project's `.mcp.json`:
 |---|---|
 | `list_commands {filter?}` | Every command: id, label, menu, shortcut, undoable, params doc. |
 | `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, Leptos, SwiftUI or Jetpack Compose for a layer; components take their properties as parameters and instances are calls, see Dev Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names; `colorFormat`: hex, rgb, css, hsl or hsb), `inspect.assets` (layers under the selection with export settings, icons and images, each with its `kind`), `inspect.code` takes `unit: rem` and `rootFontSize` for CSS, HTML, React and Leptos, `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`, `codeConnect.set` (components linked to real code, see Dev Mode below)). |
-| `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing for open documents and their document state. Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. A step can use what an earlier step returned: `{"$step": n}` anywhere in its params becomes the `id` in step n's result (zero-based), and `{"$step": n, "field": "…"}` another field of it (see Step references below). |
+| `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing for open documents and their document state. Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. A step can use what an earlier step returned: name it with `"as": "card"` and `{"$ref": "card"}` anywhere in a later step's params becomes the `id` in its result (`{"$step": n}` does the same by zero-based position); `"field"` takes another key or a slash path such as `ids/0` (see Step references below). |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
 | `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`; marking again clears "Changed"), a section's `sectionContentsHidden`, text…); returns the updated layers. |
 | `inspect_document {depth, allPages}` | The document as JSON (layer tree, styles, selection, history). |
 | `get_node {id, depth}` | One layer as JSON; `pluginData` (`{key: value}`, values as strings) when the layer or page has layer data written with `set_properties {props: {pluginData}}`. |
 | `select {ids}` | Replace the selection (`[]` deselects). |
-| `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?, contentsOnly?, includeBoundingBox?, svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?}` | png, jpg, svg, webp, pdf, or `fig`: the whole file as `.fig`, experimental (see Exporting `.fig` files below); `size` is `2x`, `512w` or `512h`. The image covers what the layers paint (shadows towards their offset, strokes, unclipped children, a mask group's mask; hidden layers take no room; a slice is its area with everything under it); `contentsOnly: false` also draws every other layer showing in that area, `includeBoundingBox` exports the layers' own boxes; SVG: `svgOutlineText: false` keeps `<text>`, `svgIdAttribute` writes unique ids from layer names, `svgSimplifyStroke: false` writes every stroke as an outline. The same options go in export settings (`export.add` / `export.update`). PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?, assets?}` (every layer once per setting, named `<layer><suffix>.<format>`, a slash in a layer name making a folder; `assets: true` exports the Inspect tab's assets instead: icons as SVG, images as PNG). |
+| `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?, contentsOnly?, includeBoundingBox?, svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?}` | png, jpg, svg, webp, pdf, or `fig`: the whole file as `.fig`, experimental (see Exporting `.fig` files below); `size` is `2x`, `512w` or `512h`. The image covers what the layers paint (shadows towards their offset, strokes, unclipped children, a mask group's mask; hidden layers take no room; a slice is its area with everything under it, or only the frame or group it sits in while `contentsOnly` is on); `contentsOnly: false` also draws every other layer showing in that area, `includeBoundingBox` exports the layers' own boxes; SVG: `svgOutlineText: false` keeps `<text>`, `svgIdAttribute` writes unique ids from layer names, `svgSimplifyStroke: false` writes every stroke as an outline. The same options go in export settings (`export.add` / `export.update`). PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?, assets?}` (every layer once per setting, named `<layer><suffix>.<format>`, a slash in a layer name making a folder; `assets: true` exports the Inspect tab's assets instead: icons as SVG, images as PNG). |
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window in front when attached, a window id (see Windows below) that window. |
 | `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` (best effort, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. `open_file` returns `opened` (for a file opened anew, a `summary` of `name`, `pages`, `layers` and `images`, and `warnings` or `repairs`; a file that was already open just gives its `index`) and the document's `document` outline. |
 | `undo` / `redo` | Step through history. |
@@ -708,7 +708,10 @@ device, whether a click where nothing reacts briefly flashes the screen's hotspo
 interactions, on by default; also in the presenter's Options menu) and whether its Inspect panel
 shows the size, colours and typography of the layer under the pointer (also the Inspect button in
 its bar); the options are kept for later presentations (in the presenter Z cycles them and R
-restarts). The player's state is
+restarts). An Open link to an `http` or `https` address first shows a notice that the link leaves
+the prototype, with Open link, Cancel and "Don't show this again"; `proto.linkNotice {show?}`
+turns the notice on (the default) or off, kept with the desktop app's preferences (the web build
+keeps it until the page reloads). The player's state is
 in `inspect_ui` (`presenter`, `preview`: screen, scroll, `scale`, `zoom`, `pan`, the screen's
 `hotspots` and whether they are flashing, the `inspected` layer) when attached, and
 `ui.set {presentScroll: [x, y]}` scrolls its screen (see [control-protocol.md](control-protocol.md)).
@@ -919,6 +922,8 @@ click or drag across regions with `pointer` to merge, add `alt` to remove; `shap
 - **Text on a path**: `text.onPath {text?, path?, start?, flip?}` (default: the selected text layer
   and the other selected layer) puts a text layer on a vector's or shape's path: the text takes the
   path layer's place, transform and box, and the path layer is removed (`edit.undo` brings it back).
+  The text also takes the path layer's effects when it has any, and its fills when one of them
+  shows, each with its style and variable bindings; otherwise the text keeps its own.
   The baseline follows the path from `start` (0..1 of its length); the text's horizontal alignment
   places it there (left starts, centre centres, right ends at it); `flip` runs it on the other side
   the other way. Glyphs past an open path's end are hidden; a closed path (ellipse, rectangle) wraps
@@ -926,7 +931,12 @@ click or drag across regions with `pointer` to merge, add `alt` to remove; `shap
   them, `text.removeFromPath {ids?}` makes it plain auto-width text again. Resizing the layer
   scales the path. The text stays editable (`text.edit.*`, `type_text`); `get_node` shows
   `textPath {d (SVG path data in the layer's space), start, flip}`. Exports draw it as outlines
-  (PDF too: not selectable); underline and strikethrough aren't drawn on a path.
+  (PDF too: not selectable); underline and strikethrough aren't drawn on a path. With the tool
+  `tool.textOnPath`, a `pointer` press within 6 screen pixels of a shape's or vector's first
+  subpath puts a new, empty text layer on it, starting at the press, and starts typing: the text
+  also takes the path layer's constraints and effects, and its fills when one of them shows. Ending
+  the edit with nothing typed puts the path layer back with no undo step. Locked layers and layers
+  inside instances are skipped.
 - **Pattern fills**: `fill.pattern {source (layer id), ids?, index?, tile? (grid|horizontalHex|
   verticalHex), scale?, spacing? [x, y], align? (start|center|end), opacity?}` makes the fill at
   `index` (default the top one) the source layer repeated, at `scale` × its own size with `spacing`
@@ -1398,6 +1408,22 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
 
 ### Dev Mode
 
+- **Pages as React + Tailwind:** `inspect.code {id, language: "tailwind"}` writes a layer tree as a
+  React function component styled with Tailwind CSS v4 utilities and no stylesheet. Auto layout
+  becomes `flex`/`flex-col`/`gap-*`/`p-*` on the 4px spacing scale, fixed-width auto layout frames
+  and text become fluid (`w-full max-w-[960px]`; as wide as the frame: `w-full`) and a frame's
+  fixed height a minimum, per-side strokes become `border-b` and the like, and instances are
+  inlined with their overrides (component code is `language: react`), except instances whose component
+  is connected to code (`codeConnect.set`/`codeConnect.import`, React): those are their snippet, e.g.
+  `<Button variant="outline">{"See examples"}</Button>`, with each import once at the top. A design
+  system mapped to shadcn/ui this way exports pages that use the project's own components. Bound variables become theme
+  utilities (`bg-accent`, `rounded-card`, `text-muted`) that `variable.export {format: "tailwind"}`
+  declares: `@import "tailwindcss";` and an `@theme static` block (every token is emitted, also those only read through `var()`) named by namespace (`--color-*`,
+  `--radius-*`, `--text-*`, `--spacing-*`, `--font-*`; a number's namespace and unit come from what
+  layers bind it to), other modes on `[data-<collection>="<mode>"]`. With `mobile: <frame id>` (the
+  same layer names, mobile layout) the code is mobile first: the mobile frame's classes, the
+  desktop frame's that differ behind `lg:`, and layers only on desktop `hidden` plus `lg:flex`
+  (auto layout frames) or `lg:block` (other layers).
 - **Component code:** `inspect.code {id, language: react|leptos|swiftui|compose}` on a component,
   a component set or a variant writes the component as a reusable unit: React (TSX) with a props
   interface, Leptos with a `#[component]` function (`#[prop]` defaults, `view!` markup), SwiftUI
@@ -1613,6 +1639,14 @@ Pass the returned target list to:
 - `selection.applyColorStyle {targets, style}` to apply a document paint style. As with `style.apply`,
   this replaces the matching node's entire fill/stroke list and links the style. Text ranges copy
   resolved paints and keep their typography, without a paint-style link.
+- `selection.bindColorVariable {targets, variable}` to bind a document color variable (id or name)
+  to those solid fill and stroke slots, as `variable.bind` does with `fills/<i>/color` or
+  `strokes/<i>/color`. A color style on the list and an earlier binding of the slot are removed.
+  Text ranges with fills of their own take the variable's value in the layer's modes, without a
+  binding. Gradients and other variable types are refused; scopes only filter what the Selection
+  colors menu offers, as for `variable.bind`.
+- `selection.detachColor {targets}` to unlink the color style and the color variable of those
+  slots, keeping their values.
 
 Keep the targets fixed throughout a live interaction. A color becoming equal to another color
 must not add slots to the gesture. Invalid or missing targets fail atomically. Direct paint edits
@@ -1807,25 +1841,47 @@ Align and distribute as one undo step:
 
 ### Step references
 
-A step in a `batch` can use what an earlier step returned. `{"$step": n}` anywhere in a step's
-params (a value, an item in `ids`, a nested field) is replaced by the `id` in the result of step `n`
-(zero-based) before the step runs; `{"$step": n, "field": "name"}` takes another field of that
-result. This builds a nested tree in one call and one undo step, without guessing ids:
+A step in a `batch` can use what an earlier step returned. Give the step a name with `"as"` (next to
+`command` and `params`), and `{"$ref": "name"}` anywhere in a later step's params (a value, an item
+in `ids`, a nested field) is replaced by the `id` in that step's result before the later step runs.
+This builds a nested tree in one call and one undo step, without guessing ids or counting steps:
 
 ```json
 {"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"batch","arguments":{"label":"Card","commands":[
-  {"command":"node.create","params":{"type":"frame","name":"Card","props":{"layout":"vertical","gap":12}}},
-  {"command":"node.create","params":{"type":"text","parent":{"$step":0},"text":"Ada Lovelace"}},
-  {"command":"node.create","params":{"type":"frame","parent":{"$step":0},"name":"Button"}},
-  {"command":"node.create","params":{"type":"text","parent":{"$step":2},"text":"Follow"}}]}}}
+  {"command":"node.create","as":"card","params":{"type":"frame","name":"Card","props":{"layout":"vertical","gap":12}}},
+  {"command":"node.create","params":{"type":"text","parent":{"$ref":"card"},"text":"Ada Lovelace"}},
+  {"command":"node.create","as":"button","params":{"type":"frame","parent":{"$ref":"card"},"name":"Button"}},
+  {"command":"node.create","params":{"type":"text","parent":{"$ref":"button"},"text":"Follow"}}]}}}
 ```
 
-A reference to the same or a later step, a negative or non-integer index, a missing `field` or any
-other key next to `$step` fails the whole batch, which is rolled back. Only an object whose keys are
-`$step` (and optionally `field`) is a reference: text such as `"$step 0"` is left as written. The
-`$step` key is reserved in step params: an object holding it anywhere (in plugin data or a variable
-value too) is read as a reference. A step that is itself a `command.batch` is passed on as written,
-so the references in its steps are to its own steps, not the outer batch's.
+`{"$step": n}` refers to a step by its zero-based position instead, and works in the same places;
+the two can be mixed. Names are any non-empty string and must be unique within the batch.
+
+`"field"` takes something other than the `id`: a key of the result (`{"$ref": "card", "field":
+"name"}`) or a path into it, with `/` between the parts and list items by zero-based index, the way
+`variable.bind` names `fills/0/color`. `edit.duplicate` returns `{"ids": [...]}`, so its first copy is
+`ids/0`:
+
+```json
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"batch","arguments":{"label":"Copy","commands":[
+  {"command":"edit.duplicate","as":"copy","params":{"ids":[5]}},
+  {"command":"node.set","params":{"ids":[{"$ref":"copy","field":"ids/0"}],"props":{"name":"Card copy"}}}]}}}
+```
+
+A path may start with `/`, as in JSON Pointer (`/ids/0`). A key that itself holds `/` is matched as
+written before it is read as a path. A path ends at whatever value it reaches, so `"field": "ids"` is
+the whole list.
+
+These fail the whole batch, which is rolled back, with an error naming the step: two steps with the
+same `as` (before any step runs); a `$ref` to a name no step has (the error lists the names there
+are) or to the same or a later step; a `$step` to the same or a later step, or that is negative or
+not an integer; a `field` the result doesn't have (the error names the full path and, for a list,
+how many items it has); any key next to `$ref` or `$step` other than `field`. Only an object holding
+a `$ref` or `$step` key is a reference: text such as `"$ref card"` is left as written. Both keys are
+reserved in step params: an object holding either anywhere (in plugin data or a variable value too)
+is read as a reference. A step that is itself a `command.batch` is passed on as written, so the
+references in its steps are to its own steps and names, not the outer batch's; the outer batch can
+reach into its result list with a path (`{"$ref": "inner", "field": "1/id"}`).
 
 The end-to-end tests in `crates/mcp/tests/it/agent_tasks.rs` are worked examples of realistic tasks
 (auto layout, a card built in one batch with step references, components and overrides, gradients
