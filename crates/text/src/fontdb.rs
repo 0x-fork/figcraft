@@ -408,7 +408,7 @@ fn names(f: &skrifa::FontRef) -> (Option<String>, Option<String>) {
 /// Families tried, in order, for characters a text's own font lacks. The symbol fonts come last:
 /// Apple Symbols (macOS), Segoe UI Symbol (Windows) and the Noto symbol and math fonts (Linux), for
 /// signs such as ⌖ and ⤒ that no text face has.
-const FALLBACK_FAMILIES: [&str; 24] = [
+const FALLBACK_FAMILIES: [&str; 29] = [
     "Inter",
     "Helvetica Neue",
     "Arial",
@@ -427,6 +427,11 @@ const FALLBACK_FAMILIES: [&str; 24] = [
     "Noto Sans CJK KR",
     "Noto Sans KR",
     "Noto Sans Arabic",
+    "Noto Sans Thai",
+    "Noto Sans Thai UI",
+    "Leelawadee UI",
+    "Thonburi",
+    "Tahoma",
     "Apple Symbols",
     "Segoe UI Symbol",
     "Noto Sans Symbols",
