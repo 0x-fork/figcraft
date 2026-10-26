@@ -69,9 +69,11 @@ fn paragraph(s: &Value, td: &mut TextData) {
         // Missing means a fixed box.
         _ => TextAutoResize::None,
     };
-    td.max_lines = num(s, "maxLines").filter(|n| *n >= 1.0).map_or(0, |n| n.min(10_000.0) as u32);
+    // A line limit applies only while truncation is on; a leftover `maxLines` is ignored.
+    let ending = text(s, "textTruncation") == Some("ENDING");
+    td.max_lines = num(s, "maxLines").filter(|n| ending && *n >= 1.0).map_or(0, |n| n.min(10_000.0) as u32);
     // Auto height with a line limit keeps hugging its lines up to the limit.
-    if text(s, "textTruncation") == Some("ENDING") && !td.truncates() {
+    if ending && !td.truncates() {
         td.auto_resize = TextAutoResize::Truncate;
     }
     td.paragraph_spacing = len(s, "paragraphSpacing").unwrap_or(0.0);
