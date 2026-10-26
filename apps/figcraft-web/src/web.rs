@@ -47,10 +47,12 @@ pub fn start() {
                         let link = js_sys::decode_uri_component(link).ok().and_then(|s| s.as_string()).unwrap_or_else(|| link.to_string());
                         figcraft_ui_egui::live::open_invite(&mut fig, &link);
                     }
-                    // `window.figcraft`: the page's control channel (crate::api).
-                    crate::api::connect(cc.egui_ctx.clone());
-                    if let Err(e) = crate::api::install() {
-                        log::error!("couldn't install window.figcraft: {e:?}");
+                    // `?control`: `window.figcraft`, the page's control channel (crate::api), opt-in.
+                    if crate::query::control(&query()) {
+                        crate::api::connect(cc.egui_ctx.clone());
+                        if let Err(e) = crate::api::install() {
+                            log::error!("couldn't install window.figcraft: {e:?}");
+                        }
                     }
                     Ok(Box::new(WebShell { fig }))
                 }),

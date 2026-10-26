@@ -383,7 +383,8 @@ these methods in documented tools and returns images inline.
 The web build has no TCP server (a page can't listen on a socket), so it offers the same methods to the
 page itself, as promises on `window.figcraft` (`apps/figcraft-web/src/api.rs`). An agent driving FigCraft in a
 browser tab, or a host app showing it in an `<iframe>`, uses the commands it would send to the desktop
-app:
+app. It is opt-in: the page installs `window.figcraft` only when its URL has a `control` query entry
+(`index.html?control`, which can be combined with other flags: `?webgl&control`).
 
 | Call | |
 |---|---|
