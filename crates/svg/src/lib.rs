@@ -126,9 +126,24 @@ fn path_d(p: &BezPath) -> String {
     s
 }
 
+/// A matrix scale/shear coefficient to 6 significant digits (unlike [`num`], small values survive).
+fn coeff(v: f64) -> String {
+    if !v.is_finite() || v == 0.0 {
+        return "0".into();
+    }
+    let digits = 5 - v.abs().log10().floor() as i32;
+    let p = 10f64.powi(digits);
+    let r = (v * p).round() / p;
+    format!("{r}")
+}
+
 fn matrix(a: Affine) -> String {
     let c = a.as_coeffs();
-    format!("matrix({} {} {} {} {} {})", num(c[0]), num(c[1]), num(c[2]), num(c[3]), num(c[4]), num(c[5]))
+    // Snap float noise (e.g. 6e-17 from a 90 degree rotation) to zero, relative to the largest term.
+    let eps = c[..4].iter().fold(0.0f64, |m, v| m.max(v.abs())) * 1e-12;
+    let eps = eps.max(1e-12);
+    let k = |v: f64| if v.abs() <= eps { "0".to_string() } else { coeff(v) };
+    format!("matrix({} {} {} {} {} {})", k(c[0]), k(c[1]), k(c[2]), k(c[3]), num(c[4]), num(c[5]))
 }
 
 /// A view of page area `b` at `k` device pixels per unit (fewer when that makes it larger than
@@ -155,13 +170,12 @@ fn blend_style(b: figcraft_color::BlendMode) -> String {
 /// `s` escaped for XML text and attribute values; characters XML 1.0 forbids (control characters
 /// other than tab, newline and carriage return, U+FFFE and U+FFFF) are left out.
 fn esc(s: &str) -> String {
-    s.chars()
-        .filter(|&c| !matches!(c, '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{fffe}' | '\u{ffff}'))
-        .collect::<String>()
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    s.chars().filter(|&c| xml_char(c)).collect::<String>().replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// Whether XML 1.0 allows `c` (see [`esc`]).
+fn xml_char(c: char) -> bool {
+    !matches!(c, '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{fffe}' | '\u{ffff}')
 }
 
 fn hex(c: Color) -> String {
@@ -562,7 +576,9 @@ impl W<'_> {
 
     /// `name` as an `id` not used yet in this file (spaces as underscores; repeats get `_2`…).
     fn unique_id(&mut self, name: &str) -> String {
-        let base: String = name.chars().take(200).map(|c| if c.is_whitespace() || c.is_control() { '_' } else { c }).collect();
+        // As written: what `esc` leaves out isn't part of it.
+        let base: String =
+            name.chars().take(200).map(|c| if c.is_whitespace() || c.is_control() { '_' } else { c }).filter(|&c| xml_char(c)).collect();
         let base = if base.is_empty() { "layer".to_string() } else { base };
         let next = self.next_suffix.entry(base.clone()).or_insert(1);
         let id = loop {
