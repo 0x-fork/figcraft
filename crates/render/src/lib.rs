@@ -81,6 +81,7 @@ pub struct Options {
     /// detail, see [`lod`]. Off for everything that must be exact (exports, thumbnails); no
     /// effect in outline mode.
     pub lod: bool,
+    pub magnified_image_pixels: bool,
     /// A dot grid over the background, under the layers (a board's canvas; drawn only where the
     /// background is).
     pub dots: Option<Dots>,
@@ -187,6 +188,7 @@ pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Opti
         outlined: &opts.outlined,
         skip: &opts.skip,
         lod,
+        magnified_image_pixels: opts.magnified_image_pixels,
         under: None,
         time: 0.0,
         bounds: &bounds,
@@ -220,6 +222,7 @@ fn nodes_into(doc: &Document, ids: &[NodeId], view: &View, pix: &mut Pixmap, tim
         outlined: &[],
         skip: &[],
         lod: false,
+        magnified_image_pixels: false,
         under: None,
         time,
         bounds: &bounds,
@@ -469,6 +472,8 @@ mod image_budget_tests;
 mod image_profile_tests;
 #[cfg(test)]
 mod lod_tests;
+#[cfg(test)]
+mod magnified_image_tests;
 #[cfg(test)]
 mod paint_behaviour_tests;
 #[cfg(test)]
