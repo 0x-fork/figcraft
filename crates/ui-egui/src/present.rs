@@ -2198,6 +2198,9 @@ fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) 
         p.restart(p.start, now);
     }
     if p.doc.as_ref().is_none_or(|d| !d.contains(p.current)) {
+        // Controller buttons pressed with no frame to show are dropped, as they are while a link
+        // notice shows.
+        p.pads.clear();
         if !chrome.pane {
             return Some(BarAction::Close);
         }
@@ -2228,6 +2231,8 @@ fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) 
         // the prototype takes neither keys nor the pointer (Escape there cancels the notice).
         let keys = chrome.keys && p.link_notice.is_none() && (!chrome.pane || over);
         input(p, &ctx, &l, over && p.link_notice.is_none(), keys, chrome.pane, now);
+    } else {
+        p.pads.clear();
     }
     let Some(l) = layout(p, area, chrome) else { return action };
     p.shown = Some((p.current, l.place, l.clip.intersect(area)));
