@@ -501,6 +501,9 @@ pub fn scale_node(doc: &mut Document, id: NodeId, k: f64) -> Result<()> {
         }
         if let NodeKind::Vector { network } = &mut n.kind {
             network.scale(k, k);
+            for v in &mut network.vertices {
+                v.radius *= k;
+            }
         }
         n.width *= k;
         n.height *= k;
