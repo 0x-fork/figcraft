@@ -40,6 +40,7 @@ icons! {
     Pen,
     Pencil,
     Text,
+    TextOnPath,
     Comment,
     Actions,
     Chevron,
@@ -209,6 +210,8 @@ icons! {
     Connector,
     Shapes,
     Stamp,
+    /// A measurement: a dimension line with arrowheads between two end ticks.
+    Measure,
 }
 
 /// Points along a circular arc from angle `a0` to `a1` (radians, y down: increasing is clockwise).
@@ -558,6 +561,12 @@ fn draw(p: &P, icon: Icon) {
             p.line(3.5, 3.0, 3.5, 5.5);
             p.line(11.5, 3.0, 11.5, 5.5);
             p.line(5.5, 12.5, 9.5, 12.5);
+        }
+        TextOnPath => {
+            // A small T above the curve it follows.
+            p.line(4.5, 3.0, 11.5, 3.0);
+            p.line(8.0, 3.0, 8.0, 8.5);
+            p.poly(&[(2.0, 13.5), (5.0, 11.5), (8.0, 10.8), (11.0, 11.5), (14.0, 13.5)], false);
         }
         Comment => {
             let mut b: Vec<(f32, f32)> = arc_pts(8.5, 7.5, 5.0, 2.75, TAU + 1.95).collect();
@@ -1180,6 +1189,13 @@ fn draw(p: &P, icon: Icon) {
             p.circle(8.0, 8.0, 6.0);
             p.poly(&[(5.0, 8.3), (7.2, 10.5), (11.0, 6.0)], false);
         }
+        Measure => {
+            p.line(2.5, 4.0, 2.5, 12.0);
+            p.line(13.5, 4.0, 13.5, 12.0);
+            p.line(3.0, 8.0, 13.0, 8.0);
+            p.poly(&[(5.5, 5.5), (3.0, 8.0), (5.5, 10.5)], false);
+            p.poly(&[(10.5, 5.5), (13.0, 8.0), (10.5, 10.5)], false);
+        }
         Logo => {
             // FigCraft's own mark: the curled tail of the chameleon on the app icon. One bold
             // stroke: a shaft along the bottom, then three half turns, each tighter than the last.
@@ -1267,7 +1283,7 @@ pub fn paint_outlines(painter: &Painter, rect: Rect, size: f64, parts: &[(&figcr
 /// Every icon at the sizes the UI uses, labelled: for reviewing the set (`ui.set {iconGallery}`).
 pub fn gallery(ctx: &egui::Context) {
     let t = crate::theme::Tokens::get(ctx);
-    egui::Area::new(egui::Id::new("icon_gallery")).order(egui::Order::Foreground).fixed_pos(Pos2::ZERO).show(ctx, |ui| {
+    egui::Area::new(egui::Id::unique("icon_gallery")).order(egui::Order::Foreground).fixed_pos(Pos2::ZERO).show(ctx, |ui| {
         let screen = ctx.content_rect();
         let (r, _) = ui.allocate_exact_size(screen.size(), egui::Sense::click());
         ui.painter().rect_filled(r, 0.0, t.panel);
@@ -1365,7 +1381,7 @@ mod tests {
         let mut u = crate::layers_drag_tests::Ui::new(s);
         u.frame(vec![]);
         let shapes = u.frame_output(vec![]).shapes;
-        let lead = |name: &str| u.ctx.read_response(egui::Id::new(name).with("lead")).map(|r| r.rect).unwrap_or_else(|| panic!("{name} is shown"));
+        let lead = |name: &str| u.ctx.read_response(egui::Id::unique(name).with("lead")).map(|r| r.rect).unwrap_or_else(|| panic!("{name} is shown"));
         let (rotation, radius) = (marks(&shapes, lead("pos_rot")), marks(&shapes, lead("ap_rad")));
         assert!(!rotation.is_empty() && !radius.is_empty(), "both draw an icon");
         assert_ne!(rotation, radius);
