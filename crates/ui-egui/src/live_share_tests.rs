@@ -517,7 +517,7 @@ fn a_key_typed_for_one_server_is_not_sent_to_another() {
     h.app.session.execute("pref.publishServer", &json!({"url": "wss://other.example/"})).unwrap();
     h.frames(2);
     let shapes = open(&mut h);
-    let shapes = click(&mut h, &shapes, "Start sharing");
+    click(&mut h, &shapes, "Start sharing");
     assert_eq!(script.lock().unwrap().published.last().unwrap().key, None, "the old server's key is not sent to the new server");
 }
 
