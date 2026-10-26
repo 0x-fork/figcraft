@@ -229,6 +229,9 @@ fn unique_id_is_linear_for_repeated_names() {
     assert_eq!(w.unique_id("a_3"), "a_3");
     assert_eq!(w.unique_id("a"), "a_2");
     assert_eq!(w.unique_id("a"), "a_4");
+    // Unique as written, without what XML leaves out.
+    assert_eq!(w.unique_id("b\u{fffe}"), "b");
+    assert_eq!(w.unique_id("b\u{ffff}"), "b_2");
     let start = std::time::Instant::now();
     for _ in 0..30_000 {
         w.unique_id("Rectangle");
@@ -246,4 +249,31 @@ fn layer_ids_never_clash_with_generated_ids() {
     d.create(f, NodeKind::Rectangle, "R", 0.0, 0.0, 50.0, 50.0).unwrap();
     let svg = export_svg(&d, &[f], &SvgOptions { include_ids: true, ..SvgOptions::default() }).unwrap();
     assert_eq!(svg.matches("id=\"clip1\"").count(), 1, "{svg}");
+}
+
+#[test]
+fn a_filled_open_curve_is_closed_for_its_fill() {
+    // SVG fills an open subpath as if closed: one curve and the line back enclose an area.
+    let mut d = Document::new("t");
+    let p = d.first_page().unwrap();
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"><path fill="#000000" d="M0 0C0 50 100 50 100 0"/></svg>"##;
+    import_svg(&mut d, svg.as_bytes(), p, 0.0, 0.0, "x").unwrap();
+    let loops = |n: &figcraft_doc::Node| match &n.kind {
+        NodeKind::Vector { network } => network.regions.iter().map(|r| r.loops.len()).sum::<usize>(),
+        _ => 0,
+    };
+    assert_eq!(d.nodes().map(loops).sum::<usize>(), 1);
+}
+
+#[test]
+fn matrix_keeps_small_scale_precision() {
+    assert_eq!(matrix(Affine::scale(0.0375)), "matrix(0.0375 0 0 0.0375 0 0)");
+    assert_eq!(matrix(Affine::scale(0.0001)), "matrix(0.0001 0 0 0.0001 0 0)");
+}
+
+#[test]
+fn matrix_snaps_rotation_noise_and_tiny_values() {
+    let r = Affine::rotate(std::f64::consts::FRAC_PI_2);
+    assert_eq!(matrix(r), "matrix(0 1 -1 0 0 0)");
+    assert_eq!(matrix(Affine::scale(1e-320)), "matrix(0 0 0 0 0 0)");
 }
