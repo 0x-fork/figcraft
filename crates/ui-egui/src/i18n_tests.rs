@@ -157,15 +157,32 @@ fn menu_worded_differently() -> BTreeSet<&'static str> {
 fn used_keys() -> BTreeSet<String> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut keys = BTreeSet::new();
-    for entry in std::fs::read_dir(dir).unwrap().flatten() {
-        let path = entry.path();
+    for path in sources(&dir) {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        if !name.ends_with(".rs") || name.ends_with("_tests.rs") || name == "i18n.rs" {
+        if name.ends_with("_tests.rs") || name == "i18n.rs" {
             continue;
         }
         keys.extend(literals(&std::fs::read_to_string(&path).unwrap(), LOOKUPS));
     }
     keys
+}
+
+/// Every `.rs` file under `dir`, in subdirectories too, leaving out test code: `tests.rs` and
+/// anything under a `tests` directory.
+fn sources(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap().flatten() {
+        let path = entry.path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if path.is_dir() {
+            if name != "tests" {
+                out.extend(sources(&path));
+            }
+        } else if name.ends_with(".rs") && name != "tests.rs" {
+            out.push(path);
+        }
+    }
+    out
 }
 
 /// The importers' fixed notes: the string literals passed to `warn` in the `.fig` and REST import
@@ -176,11 +193,12 @@ fn importer_notes() -> BTreeSet<String> {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../format/src");
     let mut keys = BTreeSet::new();
     for dir in ["fig", "rest"] {
-        for entry in std::fs::read_dir(src.join(dir)).unwrap().flatten() {
-            let path = entry.path();
+        // The module root sits beside its directory (`fig.rs` + `fig/`) or inside it (`fig/mod.rs`).
+        let root = src.join(format!("{dir}.rs"));
+        for path in sources(&src.join(dir)).into_iter().chain(root.exists().then_some(root)) {
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            // export.rs warns about what a `.fig` export leaves out, not about an import.
-            if !name.ends_with(".rs") || name.contains("tests") || name == "export.rs" {
+            // export.rs and export/ warn about what a `.fig` export leaves out, not about an import.
+            if name.contains("tests") || name == "export.rs" || path.starts_with(src.join("fig/export")) {
                 continue;
             }
             keys.extend(literals(&std::fs::read_to_string(&path).unwrap(), &["warn("]));
