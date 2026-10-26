@@ -375,6 +375,9 @@ pub struct DocState {
     /// [`cmd::edit::Duplicated`]; not saved).
     pub(crate) last_duplicate: Option<cmd::edit::Duplicated>,
     images_left_in_file: Option<(String, usize)>,
+    /// The file on disk as this tab last read or wrote it: a save refuses to replace what another
+    /// app (figcraft-cli, say) wrote to it since (#1330).
+    on_disk: Option<library::Stamp>,
 }
 
 /// A version shown on the canvas in place of the document: read-only until it's restored or the
@@ -438,6 +441,7 @@ impl DocState {
             view_from_prefs: false,
             last_duplicate: None,
             images_left_in_file: None,
+            on_disk: None,
         };
         st.zoom_to_fit();
         st
@@ -446,6 +450,11 @@ impl DocState {
     pub fn with_images_left_in_file(mut self, path: &str, count: usize) -> Self {
         self.images_left_in_file = (count > 0).then(|| (path.to_string(), count));
         self
+    }
+
+    /// The tab's file now holds what this tab read or wrote.
+    pub(crate) fn note_on_disk(&mut self) {
+        self.on_disk = self.path.as_deref().and_then(|p| library::stat(p).ok());
     }
 
     pub fn images_lost_saving_to(&self, path: &str) -> Option<usize> {
@@ -1873,6 +1882,8 @@ mod rotated_guides_tests;
 mod rotated_select_tests;
 #[cfg(test)]
 mod rotation_origin_tests;
+#[cfg(test)]
+mod save_disk_changes_tests;
 #[cfg(test)]
 mod save_format_tests;
 #[cfg(test)]
