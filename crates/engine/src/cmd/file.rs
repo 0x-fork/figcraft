@@ -56,7 +56,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.save",
             "Save",
-            "{path?} (programmatic saves need a path the first time); a .fig path writes an experimental export copy of the shown document with `warnings`, keeping the native path, unsaved changes and version preview",
+            "{path?, overwrite? (replace what another app wrote to the file since it was opened or saved: without it that save is refused)} (programmatic saves need a path the first time); a .fig path writes an experimental export copy of the shown document with `warnings`, keeping the native path, unsaved changes and version preview",
             false,
             save
         ),
@@ -77,14 +77,14 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.export",
             "Export",
-            "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp, or fig: the whole file as .fig, experimental, with `warnings` for what was left out; other apps may not open every file), scale? (default 1) | size? (2x|512w|512h or {by: scale|width|height, value}: a scale, or a width or height in pixels), path? (else returns base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options)}",
+            "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp|xml (an Android Vector Drawable, with `warnings` for what it changed or left out), or fig: the whole file as .fig, experimental, with `warnings` for what was left out; other apps may not open every file), scale? (default 1) | size? (2x|512w|512h or {by: scale|width|height, value}: a scale, or a width or height in pixels), path? (else returns base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options), svgIdAttribute? (SVG ids, XML android:name), vdCompat? (XML: bestEffort (default: approximate with a warning)|exact (leave out what can't be exact, with a warning)|ignore (no warnings))}",
             false,
             export
         ),
         spec!(
             "file.exportLayers",
             "Export layers",
-            "{ids? (default the selection, else every layer on the page with export settings), assets? (true: the Inspect tab's assets in and under them instead: layers with export settings, icons as SVG, images as PNG), dir? (folder to write into; else each file comes back as base64 `data`), zip? (no dir: the files come back together as one base64 zip `data` instead), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options): for every PDF instead of each setting's own}  every layer once per export setting, named `<layer><suffix>.<format>` (\"@2x\" when a scaled export has no suffix; repeats get \" 2\"; slashes in a layer name make folders). Returns {files: [{name, id, bytes, path | data}], skipped (layers without settings), data? (zip)}",
+            "{ids? (default the selection, else every layer on the page with export settings), assets? (true: the Inspect tab's assets in and under them instead: layers with export settings, icons as SVG, images as PNG), dir? (folder to write into; else each file comes back as base64 `data`), zip? (no dir: the files come back together as one base64 zip `data` instead), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options): for every PDF instead of each setting's own, vdCompat? (bestEffort|exact|ignore: for every XML instead of each setting's own)}  every layer once per export setting, named `<layer><suffix>.<format>` (\"@2x\" when a scaled export has no suffix; repeats get \" 2\"; slashes in a layer name make folders). Returns {files: [{name, id, bytes, path | data, warnings (XML only)}], skipped (layers without settings), data? (zip)}",
             false,
             export_layers
         ),
@@ -159,6 +159,8 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         spec!("file.revert", "Revert to saved", "{}  leave the live session first, if any", false, |s, _| {
             let path = s.ds()?.path.clone().ok_or_else(|| EngineError::Disabled("file.revert".into(), "the file was never saved".into()))?;
+            // Stamped before reading: a change made during the read makes the next save refuse.
+            let on_disk = crate::library::stat(&path).ok();
             let (loaded, _) = load_path(&path, None)?;
             let i = s.active;
             let uid = s.ds()?.uid;
@@ -167,6 +169,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     .with_versions(loaded.versions)
                     .with_branches(loaded.branches)
                     .with_images_left_in_file(&path, loaded.images_past_budget);
+                slot.on_disk = on_disk;
             }
             // Edits on its branch tabs are reverted too.
             crate::branches::close_tabs(s, uid, None);
@@ -945,6 +948,8 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         remember(s, &path);
         return Ok(json!({"index": i}));
     }
+    // Stamped before reading: a change made during the read makes the next save refuse.
+    let on_disk = crate::library::stat(&path).ok();
     let (loaded, rest) = load_path(&path, variables.as_ref())?;
     remember(s, &path);
     let native = !rest && matches!(ext(&path).as_str(), "figcraft" | "json");
@@ -958,12 +963,12 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let summary = import_summary(&loaded.doc);
     let images_left_out = if native { loaded.images_past_budget } else { 0 };
-    s.docs.push(
-        DocState::new(loaded.doc, native.then(|| path.clone()))
-            .with_versions(loaded.versions)
-            .with_branches(loaded.branches)
-            .with_images_left_in_file(&path, images_left_out),
-    );
+    let mut ds = DocState::new(loaded.doc, native.then(|| path.clone()))
+        .with_versions(loaded.versions)
+        .with_branches(loaded.branches)
+        .with_images_left_in_file(&path, images_left_out);
+    ds.on_disk = on_disk.filter(|_| native);
+    s.docs.push(ds);
     s.active = s.docs.len() - 1;
     let mut out = json!({"index": s.active, "summary": summary});
     out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
@@ -1053,7 +1058,9 @@ impl FileSnapshot {
         };
         let path = self.path.as_deref().ok_or(EngineError::NoDocument)?;
         refuse_dropping_images(ds, path)?;
+        refuse_overwriting_changes(ds, path)?;
         write(path, bytes)?;
+        ds.note_on_disk();
         // The history or branches may have changed since: then they still count as unsaved.
         if ds.revision == self.revision {
             ds.versions_changed = false;
@@ -1072,6 +1079,17 @@ fn refuse_dropping_images(ds: &DocState, path: &str) -> Result<()> {
             file_stem(path)
         ))),
         None => Ok(()),
+    }
+}
+
+/// Saving over the tab's own file would lose what another app wrote to it since (#1330).
+fn refuse_overwriting_changes(ds: &DocState, path: &str) -> Result<()> {
+    match (&ds.on_disk, crate::library::stat(path)) {
+        (Some(was), Ok(now)) if now != *was => Err(EngineError::Other(format!(
+            "{} wasn't saved: the file changed on disk since it was opened or saved here (another app or figcraft-cli wrote to it), and saving would replace those changes. Revert to saved to load them, or Save as to keep this version as well.",
+            file_stem(path)
+        ))),
+        _ => Ok(()),
     }
 }
 
@@ -1137,6 +1155,7 @@ fn save_to(s: &mut Session, path: Option<String>) -> Result<Value> {
     write(&path, &bytes)?;
     ds.doc = snapshot.doc;
     ds.path = Some(path.clone());
+    ds.note_on_disk();
     mark_saved(s, &json!({}))?;
     remember(s, &path);
     Ok(json!({"path": path, "bytes": bytes.len()}))
@@ -1157,13 +1176,19 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(path) = string(p, "path") {
         return save_to(s, Some(path));
     }
-    match s.docs.get(crate::branches::file_tab(s)).ok_or(EngineError::NoDocument)?.path.clone() {
+    let ds = s.docs.get(crate::branches::file_tab(s)).ok_or(EngineError::NoDocument)?;
+    match ds.path.clone() {
         // Earlier builds wrote native data under a .fig name: never overwrite that file with an export.
         Some(path) if ext(&path) == "fig" => {
             s.request_ui("dialog.saveAs", json!({}));
             Err(EngineError::Disabled("file.save".into(), "the saved path ends in .fig: choose Save as or pass `path`".into()))
         }
-        Some(path) => save_to(s, Some(path)),
+        Some(path) => {
+            if p.get("overwrite").and_then(Value::as_bool) != Some(true) {
+                refuse_overwriting_changes(ds, &path)?;
+            }
+            save_to(s, Some(path))
+        }
         None => {
             s.request_ui("dialog.saveAs", json!({}));
             Err(EngineError::Disabled("file.save".into(), "the file has no path yet: pass `path`".into()))
@@ -1246,14 +1271,20 @@ fn slice_container(doc: &Document, slice: NodeId) -> Option<NodeId> {
 }
 
 /// [`export_bytes`] with an export setting's format and options (its size is `scale`: see
-/// [`export_scale`]): contents only, include bounding box, the SVG options and PDF print settings.
+/// [`export_scale`]): contents only, include bounding box, the SVG, PDF and Vector Drawable options.
 pub fn export_bytes_with(doc: &Document, ids: &[NodeId], setting: &ExportSetting, scale: f64) -> Result<Vec<u8>> {
+    export_file(doc, ids, setting, scale).map(|(bytes, _)| bytes)
+}
+
+/// [`export_bytes_with`] and what the export changed or left out (Android Vector Drawable only;
+/// empty for the other formats).
+pub fn export_file(doc: &Document, ids: &[NodeId], setting: &ExportSetting, scale: f64) -> Result<(Vec<u8>, Vec<String>)> {
     let nothing = || EngineError::Disabled("file.export".into(), "nothing to export".into());
     if ids.is_empty() {
         return Err(nothing());
     }
     let drawn = drawn_layers(doc, ids, setting);
-    if matches!(setting.format, ExportFormat::Svg | ExportFormat::Pdf) {
+    if setting.format.is_vector() {
         figcraft_render::check_export_depth(doc, &drawn).map_err(|e| EngineError::Other(e.to_string()))?;
     }
     let area = export_area(doc, ids, setting).ok_or_else(nothing)?;
@@ -1270,22 +1301,37 @@ pub fn export_bytes_with(doc: &Document, ids: &[NodeId], setting: &ExportSetting
                 simplify_stroke: setting.svg_simplify_stroke,
                 bounds: Some(area),
             };
-            figcraft_svg::try_export_svg(&doc.in_srgb(), &drawn, &opts).map(String::into_bytes).map_err(|e| match e {
+            let svg = figcraft_svg::try_export_svg(&doc.in_srgb(), &drawn, &opts).map_err(|e| match e {
                 figcraft_svg::SvgError::Empty => nothing(),
                 other => EngineError::Other(other.to_string()),
-            })
+            })?;
+            Ok((svg.into_bytes(), Vec::new()))
+        }
+        // Android colours are sRGB too.
+        ExportFormat::VectorDrawable => {
+            let compat = match setting.vd_compat {
+                VdCompat::BestEffort => figcraft_vectordrawable::Compat::BestEffort,
+                VdCompat::Exact => figcraft_vectordrawable::Compat::Exact,
+                VdCompat::Ignore => figcraft_vectordrawable::Compat::Ignore,
+            };
+            let opts = figcraft_vectordrawable::VdOptions { bounds: Some(area), include_names: setting.svg_id_attribute, compat };
+            let out = figcraft_vectordrawable::try_export(&doc.in_srgb(), &drawn, &opts).map_err(|e| match e {
+                figcraft_vectordrawable::VdError::Empty => nothing(),
+                other => EngineError::Other(other.to_string()),
+            })?;
+            Ok((out.xml.into_bytes(), out.warnings))
         }
         ExportFormat::Pdf => {
             let doc = &*doc.in_srgb();
             // Frames export one page each; anything else shares one page.
             let all_frames = own_area && ids.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like()));
             let groups: Vec<Vec<NodeId>> = if all_frames { ids.iter().map(|i| vec![*i]).collect() } else { vec![drawn] };
-            pdf_bytes(doc, &groups, &setting.print, (!own_area).then_some(area))
+            Ok((pdf_bytes(doc, &groups, &setting.print, (!own_area).then_some(area))?, Vec::new()))
         }
         _ => {
             let pix = figcraft_render::render_area(doc, &drawn, area, scale)
                 .ok_or_else(|| EngineError::Other("render failed (empty or too large)".into()))?;
-            figcraft_render::encode_export(&pix, setting.format, doc.color_profile).map_err(EngineError::Other)
+            Ok((figcraft_render::encode_export(&pix, setting.format, doc.color_profile).map_err(EngineError::Other)?, Vec::new()))
         }
     }
 }
@@ -1322,14 +1368,19 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         None => num_or(p, "scale", 1.0).clamp(0.01, ExportSize::MAX_SCALE),
     };
     let format = setting.format;
-    let bytes = export_bytes_with(doc, &ids, &setting, scale)?;
-    match string(p, "path") {
+    let (bytes, warnings) = export_file(doc, &ids, &setting, scale)?;
+    let mut out = match string(p, "path") {
         Some(path) => {
             write(&path, &bytes)?;
-            Ok(json!({"path": path, "bytes": bytes.len(), "format": format.ext()}))
+            json!({"path": path, "bytes": bytes.len(), "format": format.ext()})
         }
-        None => Ok(json!({"format": format.ext(), "data": base64::engine::general_purpose::STANDARD.encode(&bytes)})),
+        None => json!({"format": format.ext(), "data": base64::engine::general_purpose::STANDARD.encode(&bytes)}),
+    };
+    // Android Vector Drawables say what they changed or left out (an empty list when nothing).
+    if format == ExportFormat::VectorDrawable {
+        out["warnings"] = json!(warnings);
     }
+    Ok(out)
 }
 
 /// The whole document as a `.fig` file (experimental: only round trips through our own importer
@@ -1355,7 +1406,7 @@ pub fn fig_bytes(doc: &Document) -> Result<(Vec<u8>, Vec<String>)> {
 pub fn export_scale(doc: &Document, ids: &[NodeId], setting: &ExportSetting) -> f64 {
     // Size-based exports ask for bounds before encoding. Let encoding report the depth error
     // without entering a recursive bounds walk here; SVG/PDF do not use this raster scale.
-    if matches!(setting.format, ExportFormat::Svg | ExportFormat::Pdf) && figcraft_render::check_export_depth(doc, ids).is_err() {
+    if setting.format.is_vector() && figcraft_render::check_export_depth(doc, ids).is_err() {
         return 1.0;
     }
     export_area(doc, ids, setting).map_or(1.0, |b| setting.size.scale_for(b.width(), b.height()))
@@ -1370,7 +1421,10 @@ pub(super) fn export_setting(cmd: &str, mut e: ExportSetting, p: &Value) -> Resu
         e.suffix = s.chars().filter(|c| !c.is_control()).take(200).collect();
     }
     if let Some(f) = string(p, "format") {
-        e.format = ExportFormat::from_ext(&f).ok_or_else(|| bad(cmd, "format: png|jpg|svg|pdf|webp"))?;
+        e.format = ExportFormat::from_ext(&f).ok_or_else(|| bad(cmd, "format: png|jpg|svg|pdf|webp|xml"))?;
+    }
+    if let Some(c) = vd_compat_param(cmd, p)? {
+        e.vd_compat = c;
     }
     e.print = print_param(cmd, p, e.print)?;
     for (key, slot) in [
@@ -1386,6 +1440,14 @@ pub(super) fn export_setting(cmd: &str, mut e: ExportSetting, p: &Value) -> Resu
         }
     }
     Ok(e)
+}
+
+/// The `vdCompat` `p` passes: bestEffort, exact or ignore (anything else is an error).
+fn vd_compat_param(cmd: &str, p: &Value) -> Result<Option<VdCompat>> {
+    match get(p, "vdCompat") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_str().and_then(VdCompat::from_key).map(Some).ok_or_else(|| bad(cmd, "vdCompat: bestEffort|exact|ignore")),
+    }
 }
 
 /// Whether `p` sets any PDF print option.
@@ -1523,12 +1585,18 @@ fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
     let mut members = Vec::new();
     // Print options passed here stand in for every PDF setting's own.
     let print = has_print_param(p).then(|| print_param(cmd, p, PrintSettings::default())).transpose()?;
+    // And a compatibility mode for every Android Vector Drawable.
+    let compat = vd_compat_param(cmd, p)?;
     let mut files = Vec::with_capacity(jobs.len());
     for job in &jobs {
-        let setting = ExportSetting { print: print.unwrap_or(job.setting.print), ..job.setting.clone() };
+        let setting =
+            ExportSetting { print: print.unwrap_or(job.setting.print), vd_compat: compat.unwrap_or(job.setting.vd_compat), ..job.setting.clone() };
         let scale = export_scale(doc, &[job.id], &setting);
-        let bytes = export_bytes_with(doc, &[job.id], &setting, scale)?;
+        let (bytes, warnings) = export_file(doc, &[job.id], &setting, scale)?;
         let mut f = json!({"name": job.file, "id": job.id, "bytes": bytes.len()});
+        if setting.format == ExportFormat::VectorDrawable {
+            f["warnings"] = json!(warnings);
+        }
         match &dir {
             Some(d) => {
                 let path = std::path::Path::new(d).join(&job.file);
@@ -1731,7 +1799,7 @@ fn close(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let uid = ds.uid;
     let active_uid = s.docs.get(s.active).map(|d| d.uid);
-    s.docs.remove(i);
+    s.remove_tabs(|d| d.uid == uid);
     // Removing a tab before the active one shifts its index; keep the same document selected.
     s.active = active_uid.and_then(|a| s.docs.iter().position(|d| d.uid == a)).unwrap_or(i.min(s.docs.len().saturating_sub(1)));
     crate::branches::close_tabs(s, uid, None);

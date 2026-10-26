@@ -1019,6 +1019,17 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                 {
                     entries.insert(at + 1, (label, "component.combineVariants"));
                 }
+                // An instance's actions reach its main component: replace "Create component" with
+                // "Go to main component" (as in Figma's context menu).
+                if app
+                    .session
+                    .doc()
+                    .ok()
+                    .is_some_and(|doc| ids.iter().all(|i| doc.node(*i).is_some_and(|n| matches!(n.kind, figcraft_doc::NodeKind::Instance { .. }))))
+                    && let Some(at) = entries.iter().position(|e| e.1 == "component.create")
+                {
+                    entries[at] = (tr("Go to main component"), "component.goToMain");
+                }
                 // A right-clicked ruler guide (selected, with no layers) can be removed.
                 if !has_sel && app.session.ds().is_ok_and(|d| d.selected_guide().is_some()) {
                     entries.splice(0..0, [(tr("Remove guide"), "guide.remove"), ("-", "")]);

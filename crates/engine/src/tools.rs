@@ -747,6 +747,26 @@ pub fn locked_in(doc: &Document, id: NodeId) -> bool {
     std::iter::once(id).chain(doc.ancestors(id)).any(|a| doc.node(a).is_some_and(|n| n.locked))
 }
 
+/// Whether layer `t` paints below layer `s`: it holds `s`, or it is behind `s` in the stack of the
+/// nearest layer holding both.
+fn paints_below(doc: &Document, t: NodeId, s: NodeId) -> bool {
+    let chain = |id: NodeId| {
+        let mut c: Vec<NodeId> = std::iter::once(id).chain(doc.ancestors(id)).collect();
+        c.reverse();
+        c
+    };
+    let (ct, cs) = (chain(t), chain(s));
+    let shared = ct.iter().zip(&cs).take_while(|(a, b)| a == b).count();
+    match (ct.get(shared), cs.get(shared)) {
+        (None, Some(_)) => true,
+        (Some(a), Some(b)) => shared.checked_sub(1).and_then(|i| ct.get(i)).and_then(|p| doc.node(*p)).is_some_and(|p| {
+            let order: Vec<NodeId> = p.paint_order().collect();
+            order.iter().position(|c| c == a) < order.iter().position(|c| c == b)
+        }),
+        _ => false,
+    }
+}
+
 /// Which handle (if any) is under `p`. A selection with a locked layer has none.
 pub fn handle_at(doc: &Document, sel: &[NodeId], p: Point, zoom: f64) -> Option<Handle> {
     if sel.is_empty() || sel.iter().any(|i| locked_in(doc, *i)) {
@@ -1363,8 +1383,12 @@ impl Session {
                 .map(|leaf| select_target(&doc, leaf, &sel, ev.cmd))
         });
         // A press inside the selection's box that reaches nothing above it (an unfilled shape's
-        // inside, or the frame or canvas behind it) drags the selection.
-        let behind_sel = |t: Option<NodeId>| t.is_none_or(|t| sel.iter().any(|s| *s != t && doc.is_ancestor(t, *s)));
+        // inside, the frame or canvas behind it, or a layer stacked below the selected layer the
+        // press is in) drags the selection. In a gap between selected layers, what's there is hit.
+        let in_own_box = |s: NodeId| selection_box(&doc, &[s]).is_some_and(|q| in_quad(&q, ev.p()));
+        let behind_sel = |t: Option<NodeId>| {
+            t.is_none_or(|t| sel.iter().any(|s| *s != t && (doc.is_ancestor(t, *s) || (in_own_box(*s) && paints_below(&doc, t, *s)))))
+        };
         let target = match sel.iter().copied().find(|s| !locked_in(&doc, *s)) {
             Some(first) if label.is_none() && !ev.shift && behind_sel(target) && selection_box(&doc, &sel).is_some_and(|q| in_quad(&q, ev.p())) => {
                 Some(first)
@@ -1821,10 +1845,11 @@ impl Session {
                     n.child_layout.sizing_v = Sizing::Fixed;
                 }
                 if let NodeKind::Text(t) = &mut n.kind {
-                    t.auto_resize = match handle {
-                        Handle::Edge(1) | Handle::Edge(3) => TextAutoResize::Height,
-                        _ => TextAutoResize::None,
-                    };
+                    match handle {
+                        Handle::Edge(1) | Handle::Edge(3) if t.auto_resize == TextAutoResize::Truncate => {}
+                        Handle::Edge(1) | Handle::Edge(3) => t.auto_resize = TextAutoResize::Height,
+                        _ => t.fix_size(true, true),
+                    }
                 }
                 return Ok(());
             }
