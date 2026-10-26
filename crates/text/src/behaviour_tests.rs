@@ -190,6 +190,8 @@ fn truncation_fills_the_last_line_before_the_ellipsis() {
         assert!(l.glyphs.iter().any(|g| g.char_start == 6), "{why}: the wrapped word starts on the line");
         assert!(l.glyphs.iter().all(|g| g.x + g.advance <= w + EPS), "{why}: within the box");
         assert!((l.height - line_h).abs() < EPS, "{why}: one line tall");
+        let g7 = l.glyphs.iter().find(|g| g.char_start == 7).unwrap();
+        assert_eq!(l.caret(7), (g7.x, 0), "{why}: a caret reaches the chars taken from the next line");
     }
     // A line that ends its paragraph keeps its words; the ellipsis follows them.
     let mut para = text("Lorem\nconsectetur", TextAutoResize::Truncate);

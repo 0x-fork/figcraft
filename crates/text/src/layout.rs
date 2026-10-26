@@ -786,6 +786,14 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             }
         }
         add_ellipsis(&mut out, wrap);
+        // Carets and selections reach every char the line shows, borrowed ones included.
+        if let Some(l) = out.lines.last() {
+            let shown =
+                out.glyphs.get(l.glyph_start..l.glyph_end).unwrap_or(&[]).iter().filter(|g| g.char_end > g.char_start).map(|g| g.char_end).max();
+            if let (Some(shown), Some(l)) = (shown, out.lines.last_mut()) {
+                l.char_end = l.char_end.max(shown);
+            }
+        }
     }
 
     // Horizontal alignment within the box.
