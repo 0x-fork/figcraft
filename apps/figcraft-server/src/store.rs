@@ -658,7 +658,10 @@ impl Store {
         let dir = self.dir(&id);
         let written = fs::create_dir_all(&dir)
             .map_err(|e| e.to_string())
-            .and_then(|()| disk::write_atomic(&dir.join(SNAPSHOT), &bytes).map_err(|e| e.to_string()))
+            .and_then(|()| {
+                disk::sync_dir(Some(&self.root.join(FILES)));
+                disk::write_atomic(&dir.join(SNAPSHOT), &bytes).map_err(|e| e.to_string())
+            })
             .and_then(|()| disk::write_atomic(&dir.join(LOG), &disk::log_header(1)).map_err(|e| e.to_string()))
             .and_then(|()| write_json(&dir.join(LINKS), &[edit.clone(), view.clone()]))
             // Last: a folder without its description is an upload cut short.
