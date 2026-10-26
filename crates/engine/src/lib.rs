@@ -10,22 +10,18 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 mod assets;
-pub mod batch;
+mod automation;
 mod boards;
 mod canvas;
 pub mod catalog;
 pub mod cmd;
 mod content;
 mod dev;
-pub mod doc_urls;
 mod extensions;
-pub mod file_access;
 pub mod fonts;
 pub mod guard;
-pub mod inspect;
 pub mod keymap;
 pub mod measure;
-pub mod params;
 pub mod proto_run;
 mod selection;
 mod sharing;
@@ -36,6 +32,11 @@ pub use assets::library_swap;
 pub use assets::playground;
 pub use assets::style_vars;
 pub use assets::token_roles;
+pub use automation::batch;
+pub use automation::doc_urls;
+pub use automation::file_access;
+pub use automation::inspect;
+pub use automation::params;
 pub use boards::board;
 pub use boards::board_table;
 pub use boards::board_templates;
