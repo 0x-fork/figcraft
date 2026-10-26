@@ -159,6 +159,8 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         spec!("file.revert", "Revert to saved", "{}  leave the live session first, if any", false, |s, _| {
             let path = s.ds()?.path.clone().ok_or_else(|| EngineError::Disabled("file.revert".into(), "the file was never saved".into()))?;
+            // Stamped before reading: a change made during the read makes the next save refuse.
+            let on_disk = crate::library::stat(&path).ok();
             let (loaded, _) = load_path(&path, None)?;
             let i = s.active;
             let uid = s.ds()?.uid;
@@ -167,7 +169,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     .with_versions(loaded.versions)
                     .with_branches(loaded.branches)
                     .with_images_left_in_file(&path, loaded.images_past_budget);
-                slot.note_on_disk();
+                slot.on_disk = on_disk;
             }
             // Edits on its branch tabs are reverted too.
             crate::branches::close_tabs(s, uid, None);
@@ -946,6 +948,8 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         remember(s, &path);
         return Ok(json!({"index": i}));
     }
+    // Stamped before reading: a change made during the read makes the next save refuse.
+    let on_disk = crate::library::stat(&path).ok();
     let (loaded, rest) = load_path(&path, variables.as_ref())?;
     remember(s, &path);
     let native = !rest && matches!(ext(&path).as_str(), "figcraft" | "json");
@@ -963,7 +967,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         .with_versions(loaded.versions)
         .with_branches(loaded.branches)
         .with_images_left_in_file(&path, images_left_out);
-    ds.note_on_disk();
+    ds.on_disk = on_disk.filter(|_| native);
     s.docs.push(ds);
     s.active = s.docs.len() - 1;
     let mut out = json!({"index": s.active, "summary": summary});
