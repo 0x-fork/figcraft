@@ -900,7 +900,10 @@ fn save_to(s: &mut Session, path: Option<String>) -> Result<Value> {
     }
     let i = crate::branches::file_tab(s);
     let ds = s.docs.get_mut(i).ok_or(EngineError::NoDocument)?;
-    refuse_dropping_images(ds, &path)?;
+    // A download (no path) writes over no file.
+    if let Some(path) = path.as_deref() {
+        refuse_dropping_images(ds, path)?;
+    }
     let mut snapshot = FileSnapshot::of(ds);
     let follows_path = ds.path.as_deref().map_or(ds.doc.name == "Untitled", |old| ds.doc.name == file_stem(old));
     if let Some(path) = path.as_deref()
