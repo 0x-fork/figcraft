@@ -113,6 +113,8 @@ const DENIED: &[&str] = &[
     "edit.redo",
     "edit.repeat",
     "command.batch",
+    // Runs other commands inside (duplicate, edit, export), past this policy, like a batch.
+    "data.fill",
     // Network sessions, online files and their recovery copies on disk.
     "collab.",
     // Opens files in new windows.
@@ -391,6 +393,7 @@ pub(crate) fn register(s: &mut Session, entry: InstalledPlugin, wasm: Vec<u8>) -
     match list.iter_mut().find(|x| x.manifest.id == id) {
         Some(slot) => {
             *slot = entry;
+            s.prefs.plugin_settings.remove(&id);
             true
         }
         None => {

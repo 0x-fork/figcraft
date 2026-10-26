@@ -302,6 +302,8 @@ pub fn create_instance_at(doc: &mut Document, component: NodeId, parent: NodeId,
     root.code_links.clear();
     // The main's dev resources show on its instances without being copied.
     root.dev_resources.clear();
+    // Measurements belong to the layer they were placed on.
+    root.measurements.clear();
     // The main's interactions play on its instances in prototypes; the instance's own start empty.
     root.interactions.clear();
     // So do the variable modes the main sets (see `Document::inherited_modes`).
@@ -720,6 +722,7 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize, spare: BT
         let prev = old.get(&nid);
         // Annotations belong to the layer they were added to, not to its copies.
         n.annotations = prev.map(|o| o.annotations.clone()).unwrap_or_default();
+        n.measurements = prev.map(|o| o.measurements.clone()).unwrap_or_default();
         if let Some(o) = prev {
             carry_overrides(o, &mut n, Carry::Values);
             keep_laid_out(doc, orig, o, &mut n);
@@ -797,6 +800,7 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize, spare: BT
     fresh.code_links.clear();
     // An instance's own dev resources (its main's are listed with them, not copied).
     fresh.dev_resources = root.dev_resources.clone();
+    fresh.measurements = root.measurements.clone();
     fresh.locked = root.locked;
     fresh.visible = root.visible;
     fresh.var_modes = root.var_modes.clone();
@@ -1223,9 +1227,73 @@ fn geometry_derived(doc: &Document, before: &Document, id: NodeId, group: &str) 
     false
 }
 
+/// The components sharing the properties of component `c`: the variants of its set, or `c` alone.
+pub fn property_owners(doc: &Document, c: NodeId) -> Vec<NodeId> {
+    match variant_set(doc, c).and_then(|s| doc.node(s)) {
+        Some(set) => set.children.iter().copied().filter(|v| doc.node(*v).is_some_and(|n| matches!(n.kind, NodeKind::Component { .. }))).collect(),
+        None => vec![c],
+    }
+}
+
+/// Make `value` the default of boolean property `name` on components `comps`, showing or hiding
+/// their layers bound to it: on a main component, a boolean property's value is the visibility of
+/// its layers. Returns the components and layers it changed.
+pub fn set_boolean_default(doc: &mut Document, comps: &[NodeId], name: &str, value: bool) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for &c in comps {
+        let Some(NodeKind::Component { props, .. }) = doc.node(c).map(|n| &n.kind) else { continue };
+        let Some(PropDef::Boolean { default }) = props.get(name) else { continue };
+        if *default != value
+            && let Some(NodeKind::Component { props, .. }) = doc.node_mut(c).map(|n| &mut n.kind)
+        {
+            props.insert(name.to_string(), PropDef::Boolean { default: value });
+            out.push(c);
+        }
+        // The main's own layers (not those of instances nested in it, which follow their mains).
+        let layers: Vec<NodeId> = doc
+            .subtree(c)
+            .into_iter()
+            .filter(|d| *d != c && !inside_instance(doc, *d))
+            .filter(|d| doc.node(*d).is_some_and(|n| n.visible != value && n.prop_refs.get("visible").map(String::as_str) == Some(name)))
+            .collect();
+        for d in layers {
+            if let Some(n) = doc.node_mut(d) {
+                n.visible = value;
+                out.push(d);
+            }
+        }
+    }
+    out
+}
+
+/// A main component's layer bound to a boolean property was shown or hidden: that is the
+/// property's new default, which its other bound layers (in every variant) take too. Returns the
+/// components and layers that changed as a result.
+fn follow_boolean_defaults(doc: &mut Document, before: &Document, changed: &[NodeId]) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for &id in changed {
+        let (Some(n), Some(b)) = (doc.node(id), before.node(id)) else { continue };
+        if n.visible == b.visible || inside_instance(doc, id) {
+            continue;
+        }
+        let Some(name) = n.prop_refs.get("visible").cloned() else { continue };
+        let visible = n.visible;
+        let Some(c) = owning_component(doc, id).filter(|c| *c != id) else { continue };
+        out.extend(set_boolean_default(doc, &property_owners(doc, c), &name, visible));
+    }
+    out
+}
+
 /// After an edit: record overrides inside instances, then rebuild instances whose main changed,
 /// whose properties or main were switched, or whose overrides were reset.
 pub fn sync_after_edit(doc: &mut Document, before: &Document, changed: &[NodeId], touched: &BTreeSet<NodeId>) {
+    let mut changed = changed.to_vec();
+    for id in follow_boolean_defaults(doc, before, &changed) {
+        if !changed.contains(&id) {
+            changed.push(id);
+        }
+    }
+    let changed = changed.as_slice();
     // 0. A slot whose layers were added, removed or reordered holds the instance's own content
     //    from now on; copies of instance layers placed elsewhere stop mirroring their main.
     for &id in changed {
@@ -1591,6 +1659,7 @@ fn copy_layers(doc: &mut Document, src: NodeId, parent: NodeId) -> Option<NodeId
         n.overrides.clear();
         n.prop_refs.clear();
         n.annotations.clear();
+        n.measurements.clear();
         insert_linked(doc, n).ok()?;
     }
     map.get(&src).copied()
