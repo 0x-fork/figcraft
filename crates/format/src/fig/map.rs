@@ -24,7 +24,7 @@ const MAX_DEPTH: usize = 256;
 /// Most path commands read from one geometry blob.
 const MAX_COMMANDS: usize = 200_000;
 const MAX_GRID_TRACKS: usize = 1_000;
-const MAX_GRID_TRACK_VALUE: f64 = 1e6;
+pub(super) const MAX_GRID_TRACK_VALUE: f64 = 1e6;
 /// Id of "no style".
 const NO_STYLE: &str = "4294967295:4294967295";
 /// Longest asset `key` or `version` kept for resolving references given as assets.
@@ -42,6 +42,14 @@ pub(super) fn to_rest(msg: &Kv, name: &str, max_nodes: usize) -> (Value, Vec<Str
     if !m.library_contexts.is_empty() {
         out[crate::rest::FIG_LIBRARY_CONTEXTS_FIELD] = Value::Array(std::mem::take(&mut m.library_contexts));
     }
+    // Mains in the file that the layer cap kept out: their instances are told apart from those of
+    // components the file doesn't have (#981).
+    if m.count >= m.max_nodes {
+        let capped: Vec<Value> = m.referenced_mains.difference(&m.mapped_mains).map(|id| json!(id)).collect();
+        if !capped.is_empty() {
+            out[crate::rest::FIG_CAPPED_MAINS_FIELD] = Value::Array(capped);
+        }
+    }
     if !m.styles.is_empty() {
         out["styles"] = Value::Object(std::mem::take(&mut m.styles));
     }
@@ -58,7 +66,7 @@ pub(super) fn to_rest(msg: &Kv, name: &str, max_nodes: usize) -> (Value, Vec<Str
     if !styles.is_empty() {
         out["styleDefinitions"] = Value::Array(styles);
     }
-    (out, m.warnings, m.networks)
+    (out, m.warnings.finish(), m.networks)
 }
 
 #[cfg(test)]
@@ -368,6 +376,9 @@ struct Mapper<'a> {
     blobs: Vec<&'a [u8]>,
     /// Component property definitions: id → (REST name "Name#id", type).
     prop_defs: BTreeMap<String, (String, &'a str)>,
+    /// The copies of a set's definitions each variant keeps (no name or type of their own; the
+    /// variant's layers and its instances' assignments use them): copy id → the definition's id.
+    prop_parents: BTreeMap<String, String>,
     /// File nodes by asset `key` and `version`: references can name a collection, variable or
     /// style as the asset instead of the guid, and the file carries the resources to resolve
     /// them (the collection node itself says the same `key`).
@@ -384,11 +395,18 @@ struct Mapper<'a> {
     library_contexts: Vec<Value>,
     /// Layers visited while scanning internal canvases, across all of them.
     library_scan_count: usize,
-    warnings: Vec<String>,
+    warnings: crate::rest::Warnings,
     count: usize,
+    /// The mains in the file that instances or instance swap defaults name, and the mains mapped
+    /// as layers: the difference is what the layer cap kept out.
+    referenced_mains: BTreeSet<String>,
+    mapped_mains: BTreeSet<String>,
     /// Most layers produced or scanned, instance expansion included; the one place the cap comes
     /// from (see [`super::layer_budget`]).
     max_nodes: usize,
+    /// Layers kept back for the visible pages' top level while library copies are mapped, so the
+    /// copies can't take the whole budget and leave the pages empty.
+    reserved: usize,
     /// Vector networks, each built once: the layers that show one (every instance of a main
     /// holding it) name it by `vectorNetworkRef`. Kept out of the JSON, where a large file's
     /// networks took gigabytes.
@@ -402,6 +420,7 @@ impl<'a> Mapper<'a> {
         let mut nodes = BTreeMap::new();
         let mut kids: BTreeMap<String, Vec<(&'a str, String)>> = BTreeMap::new();
         let mut prop_defs = BTreeMap::new();
+        let mut prop_parents = BTreeMap::new();
         let changes = msg.get("nodeChanges").map(Kv::list).unwrap_or_default();
         // The last change of a GUID wins; a REMOVED change deletes what came before it.
         for n in changes {
@@ -423,10 +442,11 @@ impl<'a> Mapper<'a> {
                 kids.entry(parent).or_default().push((p.get("position").and_then(Kv::str).unwrap_or(""), id.clone()));
             }
             for d in n.get("componentPropDefs").map(Kv::list).unwrap_or_default() {
-                if let (Some(did), Some(name), Some(ty)) =
-                    (d.get("id").and_then(guid), d.get("name").and_then(Kv::str), d.get("type").and_then(Kv::str))
-                {
+                let Some(did) = d.get("id").and_then(guid) else { continue };
+                if let (Some(name), Some(ty)) = (d.get("name").and_then(Kv::str), d.get("type").and_then(Kv::str)) {
                     prop_defs.insert(did.clone(), (format!("{name}#{did}"), ty));
+                } else if let Some(parent) = d.get("parentPropDefId").and_then(guid) {
+                    prop_parents.insert(did, parent);
                 }
             }
         }
@@ -450,6 +470,7 @@ impl<'a> Mapper<'a> {
             kids,
             blobs,
             prop_defs,
+            prop_parents,
             assets,
             styles: Obj::new(),
             components: Obj::new(),
@@ -458,9 +479,12 @@ impl<'a> Mapper<'a> {
             override_scope_entries: 0,
             library_contexts: Vec::new(),
             library_scan_count: 0,
-            warnings: Vec::new(),
+            warnings: crate::rest::Warnings::default(),
             count: 0,
+            referenced_mains: BTreeSet::new(),
+            mapped_mains: BTreeSet::new(),
             max_nodes,
+            reserved: 0,
             networks: Vec::new(),
             network_ids: HashMap::new(),
         }
@@ -487,12 +511,14 @@ impl<'a> Mapper<'a> {
         .cloned()
     }
 
+    /// A note about what this file's mapping left out or changed. Counted, as the REST importer
+    /// counts its own: these notes are met once per layer, so the kinds were named once each with
+    /// no sign of how much of the file they covered -- a file whose every text layer lost a
+    /// setting read the same as one where a single layer did (#467). The collector keeps the
+    /// first-seen order and the same cap, since some notes name fields of the file (image
+    /// filters).
     fn warn(&mut self, w: impl Into<String>) {
-        let w = w.into();
-        // Capped like the REST importer's list: some warnings name fields of the file (image filters).
-        if self.warnings.len() < crate::rest::MAX_WARNINGS && !self.warnings.contains(&w) {
-            self.warnings.push(w);
-        }
+        self.warnings.add(w.into());
     }
 
     fn children(&self, id: &str) -> Vec<String> {
@@ -543,6 +569,11 @@ impl<'a> Mapper<'a> {
         scope
     }
 
+    /// How many layers may be produced now: the cap, less what is kept for the visible pages.
+    fn budget(&self) -> usize {
+        self.max_nodes.saturating_sub(self.reserved)
+    }
+
     /// The DOCUMENT with its pages.
     fn document(&mut self) -> Value {
         let doc_id = self.nodes.iter().find(|(_, n)| n.get("type").and_then(Kv::str) == Some("DOCUMENT")).map(|(id, _)| id.clone());
@@ -550,9 +581,8 @@ impl<'a> Mapper<'a> {
             Some(d) => self.children(d),
             None => self.nodes.iter().filter(|(_, n)| n.get("type").and_then(Kv::str) == Some("CANVAS")).map(|(id, _)| id.clone()).collect(),
         };
-        let mut out = Vec::new();
         let mut internal = Vec::new();
-        let mut visible_pages = Vec::new();
+        let mut visible = Vec::new();
         for p in pages {
             let Some(&n) = self.nodes.get(&p) else { continue };
             if n.get("type").and_then(Kv::str) != Some("CANVAS") {
@@ -562,17 +592,24 @@ impl<'a> Mapper<'a> {
             // The hidden page that holds styles, variables and library copies.
             if n.get("internalOnly").and_then(Kv::bool) == Some(true) {
                 internal.push((p, n));
-                continue;
+            } else {
+                visible.push((p, n));
             }
-            visible_pages.push(p.clone());
-            out.push(self.page(&p, n));
         }
+        // The library copies the pages use come first: in a file past the layer cap, the pages'
+        // last layers are skipped rather than the mains every instance of them needs (#981).
+        let visible_pages: Vec<String> = visible.iter().map(|(p, _)| p.clone()).collect();
         let required_mains = self.referenced_component_mains(&visible_pages);
+        // The pages and their top-level layers, up to half the cap, stay for the pages.
+        let top: usize = visible_pages.iter().map(|p| 1 + self.children(p).len()).sum();
+        self.reserved = top.min(self.max_nodes / 2);
         for (id, canvas) in internal {
             if let Some(context) = self.library_context(&id, canvas, &required_mains) {
                 self.library_contexts.push(context);
             }
         }
+        self.reserved = 0;
+        let out: Vec<Value> = visible.into_iter().map(|(p, n)| self.page(&p, n)).collect();
         if out.is_empty() {
             self.warn("the file has no pages");
         }
@@ -640,7 +677,7 @@ impl<'a> Mapper<'a> {
             targets.extend(data.and_then(|d| d.get("symbolID")).and_then(guid));
             for assignment in row.get("componentPropAssignments").map(Kv::list).unwrap_or_default() {
                 if assignment.get("defID").is_some_and(|def| self.is_instance_swap(def).is_some()) {
-                    targets.extend(assignment.get("value").and_then(|v| v.get("guidValue")).and_then(guid));
+                    targets.extend(assigned(assignment).and_then(prop_guid));
                 }
             }
             let overrides = data.and_then(|d| d.get("symbolOverrides")).map(Kv::list).unwrap_or_default();
@@ -651,7 +688,31 @@ impl<'a> Mapper<'a> {
     }
 
     fn is_instance_swap(&self, def: &Kv) -> Option<()> {
-        matches!(self.prop_defs.get(&guid(def)?), Some((_, "INSTANCE_SWAP"))).then_some(())
+        matches!(self.prop_def(&guid(def)?), Some((_, "INSTANCE_SWAP"))).then_some(())
+    }
+
+    /// The definition a copy of it was made from, followed to the original: the values an instance
+    /// sets are kept under it, since an assignment and the layers that read it may name different
+    /// copies of one definition.
+    fn prop_root(&self, def: &str) -> String {
+        let mut def = def;
+        for _ in 0..=MAX_DEPTH {
+            let Some(parent) = self.prop_parents.get(def) else { break };
+            def = parent;
+        }
+        def.to_string()
+    }
+
+    /// The definition `def` names: its own, or the set's for a variant's copy of it.
+    fn prop_def(&self, def: &str) -> Option<&(String, &'a str)> {
+        let mut def = def;
+        for _ in 0..=MAX_DEPTH {
+            if let Some(found) = self.prop_defs.get(def) {
+                return Some(found);
+            }
+            def = self.prop_parents.get(def)?;
+        }
+        None
     }
 
     /// The branches of the internal canvas `id` that hold the `required_mains` (with the frames
@@ -792,7 +853,7 @@ impl<'a> Mapper<'a> {
             self.warn(format!("layers nested deeper than {MAX_DEPTH} levels were skipped"));
             return None;
         }
-        if self.count >= self.max_nodes {
+        if self.count >= self.budget() {
             let max = self.max_nodes;
             self.warn(format!("the file has more than {max} layers; the rest were skipped"));
             return None;
@@ -829,7 +890,7 @@ impl<'a> Mapper<'a> {
         let connector_snapshot = own == "CONNECTOR" && self.connector_snapshot_supported(&view);
         // Only a connector with a saved label needs the frame wrapper; an unlabelled one stays a single vector.
         let connector_terminal =
-            connector_snapshot && (!connector_has_saved_label(&view) || depth >= MAX_DEPTH || self.count.saturating_add(1) >= self.max_nodes);
+            connector_snapshot && (!connector_has_saved_label(&view) || depth >= MAX_DEPTH || self.count.saturating_add(1) >= self.budget());
         // A supported connector snapshot has its own note below instead of the generic stand-in one.
         let stand = stand_in(own).filter(|_| !connector_snapshot);
         let ty = match own {
@@ -849,6 +910,9 @@ impl<'a> Mapper<'a> {
             self.warn("connector layers import as static frame/vector snapshots with labels when present; live endpoint bindings are not retained");
         }
         self.count += 1;
+        if own == "SYMBOL" && inst.is_none() {
+            self.mapped_mains.insert(id.to_string());
+        }
         let mut o = Obj::new();
         o.insert("id".into(), json!(rest_id));
         // Private provenance for the .fig importer; ordinary REST import ignores it.
@@ -908,7 +972,7 @@ impl<'a> Mapper<'a> {
         }
         self.prop_refs(&mut o, &view, inst);
         let slot_content = if own == "FRAME" {
-            prop_ref(&view, "SLOT_CONTENT_ID").and_then(|def| inst.and_then(|i| i.slot_contents.get(&def).cloned()))
+            prop_ref(&view, "SLOT_CONTENT_ID").and_then(|def| inst.and_then(|i| i.slot_contents.get(&self.prop_root(&def)).cloned()))
         } else {
             None
         };
@@ -974,7 +1038,7 @@ impl<'a> Mapper<'a> {
     fn shape_with_text(&mut self, o: &mut Obj, v: &View<'a>, own: &str, rest_id: &str) -> Option<Value> {
         let shape = v.str("shapeWithTextType").unwrap_or("SQUARE");
         let outlined = !v.list("fillGeometry").is_empty() || !v.list("strokeGeometry").is_empty();
-        if own != "SHAPE_WITH_TEXT" || matches!(shape, "SQUARE" | "ROUNDED_RECTANGLE") || !outlined || self.count >= self.max_nodes {
+        if own != "SHAPE_WITH_TEXT" || matches!(shape, "SQUARE" | "ROUNDED_RECTANGLE") || !outlined || self.count >= self.budget() {
             return None;
         }
         let mut s = Obj::new();
@@ -1006,7 +1070,7 @@ impl<'a> Mapper<'a> {
     /// layer filling it, inset a little; centred unless it's a note.
     fn inner_text(&mut self, o: &Obj, v: &View<'a>, rest_id: &str, note: bool) -> Option<Value> {
         let chars = own_text(v)?;
-        if self.count >= self.max_nodes {
+        if self.count >= self.budget() {
             return None;
         }
         self.count += 1;
@@ -1141,7 +1205,7 @@ impl<'a> Mapper<'a> {
             out.insert("opacity".into(), json!(root_opacity * line_opacity));
         }
         if connector_has_saved_label(v) {
-            let reason = if self.count >= self.max_nodes { "node budget" } else { "depth limit" };
+            let reason = if self.count >= self.budget() { "node budget" } else { "depth limit" };
             self.warn(format!("connector label was skipped: {reason} prevents nested snapshot children"));
         }
     }
@@ -1171,7 +1235,7 @@ impl<'a> Mapper<'a> {
 
     /// Snapshot the straight, manual connector contract carried by its generated children.
     fn connector_snapshot_children(&mut self, v: &View<'a>, rest_id: &str) -> Vec<Value> {
-        if self.count >= self.max_nodes {
+        if self.count >= self.budget() {
             self.warn(format!("the file has more than {} layers; connector snapshot children were skipped", self.max_nodes));
             return Vec::new();
         }
@@ -1234,7 +1298,7 @@ impl<'a> Mapper<'a> {
         };
         let background_view = View::of(background).with([background_style]);
         if !background_view.list("fillPaints").is_empty() {
-            if self.count >= self.max_nodes {
+            if self.count >= self.budget() {
                 self.warn(format!("the file has more than {} layers; connector label background was skipped", self.max_nodes));
             } else {
                 let mut rect = Obj::new();
@@ -1262,7 +1326,7 @@ impl<'a> Mapper<'a> {
         transform: Affine,
         view: &View<'a>,
     ) {
-        if self.count >= self.max_nodes {
+        if self.count >= self.budget() {
             self.warn(format!("the file has more than {} layers; connector label was skipped", self.max_nodes));
             return;
         }
@@ -1820,7 +1884,12 @@ impl<'a> Mapper<'a> {
                 "BOOL" => json!({"type": "BOOLEAN", "defaultValue": init.and_then(|i| i.get("boolValue")).and_then(Kv::bool).unwrap_or(true)}),
                 "TEXT" => json!({"type": "TEXT", "defaultValue": init.and_then(prop_text).unwrap_or("")}),
                 "INSTANCE_SWAP" => match init.and_then(|i| i.get("guidValue")).and_then(guid) {
-                    Some(g) => json!({"type": "INSTANCE_SWAP", "defaultValue": g}),
+                    Some(g) => {
+                        if self.nodes.contains_key(&g) {
+                            self.referenced_mains.insert(g.clone());
+                        }
+                        json!({"type": "INSTANCE_SWAP", "defaultValue": g})
+                    }
                     None => continue,
                 },
                 "VARIANT" => json!({"type": "VARIANT"}),
@@ -1892,11 +1961,11 @@ impl<'a> Mapper<'a> {
             // Expanded frames must follow their main frame's source link. A direct slot reference
             // makes the engine resolve ownership against the instance, where the property is not defined.
             if !(field == "slot" && inst.is_some())
-                && let Some((name, _)) = self.prop_defs.get(&def)
+                && let Some((name, _)) = self.prop_def(&def)
             {
                 refs.insert(field.into(), json!(name));
             }
-            let Some(val) = inst.and_then(|i| i.props.get(&def)) else { continue };
+            let Some(val) = inst.and_then(|i| i.props.get(&self.prop_root(&def))) else { continue };
             match field {
                 "visible" => {
                     if let Some(b) = val.get("boolValue").and_then(Kv::bool) {
@@ -1911,7 +1980,7 @@ impl<'a> Mapper<'a> {
                         if own_text(v) != Some(t) {
                             o.remove("characterStyleOverrides");
                             o.remove("styleOverrideTable");
-                            if let Some(tv) = val.get("textValue") {
+                            if let Some(tv) = prop_text_data(val) {
                                 let size = o.get("style").and_then(|s| s.get("fontSize")).and_then(Value::as_f64);
                                 char_styles(o, tv, size, &mut |w| self.warn(w));
                             }
@@ -1933,7 +2002,7 @@ impl<'a> Mapper<'a> {
         // An instance swap property value picks the main.
         if let Some(i) = outer
             && let Some(def) = prop_ref(v, "OVERRIDDEN_SYMBOL_ID")
-            && let Some(g) = i.props.get(&def).and_then(|p| p.get("guidValue")).and_then(guid)
+            && let Some(g) = i.props.get(&self.prop_root(&def)).and_then(|p| prop_guid(p))
         {
             sym = Some(g);
         }
@@ -1945,12 +2014,12 @@ impl<'a> Mapper<'a> {
         let assignments = v.list("componentPropAssignments");
         let mut props = Obj::new();
         for a in assignments {
-            let Some((name, ty)) = a.get("defID").and_then(guid).and_then(|d| self.prop_defs.get(&d).cloned()) else { continue };
-            let val = a.get("value");
+            let Some((name, ty)) = a.get("defID").and_then(guid).and_then(|d| self.prop_def(&d).cloned()) else { continue };
+            let val = assigned(a);
             let p = match ty {
                 "BOOL" => val.and_then(|x| x.get("boolValue")).and_then(Kv::bool).map(|b| json!({"type": "BOOLEAN", "value": b})),
                 "TEXT" => val.and_then(prop_text).map(|t| json!({"type": "TEXT", "value": t})),
-                "INSTANCE_SWAP" => val.and_then(|x| x.get("guidValue")).and_then(guid).map(|g| json!({"type": "INSTANCE_SWAP", "value": g})),
+                "INSTANCE_SWAP" => val.and_then(prop_guid).map(|g| json!({"type": "INSTANCE_SWAP", "value": g})),
                 _ => None,
             };
             if let Some(p) = p {
@@ -1963,6 +2032,9 @@ impl<'a> Mapper<'a> {
         if !self.nodes.contains_key(&sym) {
             self.warn("instances of components that aren't in the file show no layers");
             return None;
+        }
+        if !self.referenced_mains.contains(&sym) {
+            self.referenced_mains.insert(sym.clone());
         }
         if outer.is_some_and(|i| i.symbols.contains(&sym)) {
             return None;
@@ -2027,11 +2099,11 @@ impl<'a> Mapper<'a> {
         let mut all_props: BTreeMap<String, &'a Kv<'a>> = outer.map(|i| (*i.props).clone()).unwrap_or_default();
         let mut slot_contents: BTreeMap<String, String> = outer.map(|i| (*i.slot_contents).clone()).unwrap_or_default();
         for a in assignments {
-            if let (Some(d), Some(val)) = (a.get("defID").and_then(guid), a.get("value")) {
-                all_props.entry(d).or_insert(val);
+            if let (Some(d), Some(val)) = (a.get("defID").and_then(guid), assigned(a)) {
+                all_props.entry(self.prop_root(&d)).or_insert(val);
             }
             let Some(def) = a.get("defID").and_then(guid) else { continue };
-            if self.prop_defs.get(&def).is_none_or(|(_, ty)| *ty != "SLOT") {
+            if self.prop_def(&def).is_none_or(|(_, ty)| *ty != "SLOT") {
                 continue;
             }
             let var_value = a.get("varValue");
@@ -2052,7 +2124,7 @@ impl<'a> Mapper<'a> {
                 self.warn("slot content assignment target is missing or is not slot content");
                 continue;
             }
-            slot_contents.entry(def).or_insert(target);
+            slot_contents.entry(self.prop_root(&def)).or_insert(target);
         }
         let mut symbols = outer.map(|i| i.symbols.clone()).unwrap_or_default();
         symbols.push(sym.clone());
@@ -2777,7 +2849,23 @@ fn char_styles(o: &mut Obj, td: &Kv, size: Option<f64>, warn: &mut dyn FnMut(Str
 
 /// The text of a component property value.
 fn prop_text<'k>(v: &'k Kv) -> Option<&'k str> {
-    v.get("textValue").and_then(|t| t.get("characters")).and_then(Kv::str)
+    prop_text_data(v).and_then(|t| t.get("characters")).and_then(Kv::str)
+}
+
+/// The text data of a component property value: `textValue`, or `textDataValue` in the variable form.
+fn prop_text_data<'k, 's>(v: &'k Kv<'s>) -> Option<&'k Kv<'s>> {
+    v.get("textValue").or_else(|| v.get("textDataValue"))
+}
+
+/// The main an instance swap value names: `guidValue`, or `symbolIdValue` in the variable form.
+fn prop_guid(v: &Kv) -> Option<String> {
+    v.get("guidValue").and_then(guid).or_else(|| v.get("symbolIdValue")?.get("guid").and_then(guid))
+}
+
+/// The value a component property assignment sets: `value`, or the variable form `varValue` holds
+/// when `value` is empty, as current files write many booleans and instance swaps.
+fn assigned<'k, 's>(assignment: &'k Kv<'s>) -> Option<&'k Kv<'s>> {
+    assignment.get("value").filter(|v| !matches!(v, Kv::Object(fields) if fields.is_empty())).or_else(|| assignment.get("varValue")?.get("value"))
 }
 
 /// The property a layer's `field` is bound to (`parameterConsumptionMap`).

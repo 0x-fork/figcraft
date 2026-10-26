@@ -200,7 +200,7 @@ fn pref(s: &mut Session, p: &Value, f: fn(&mut crate::Prefs) -> &mut bool) -> Re
     Ok(json!({"on": *slot}))
 }
 
-fn tool(s: &mut Session, t: ToolId) -> Result<Value> {
+pub(crate) fn tool(s: &mut Session, t: ToolId) -> Result<Value> {
     // A file you can't edit now (view only, or on its way to a server): moving around only.
     if let Some(why) = s.active_read_only().filter(|_| !matches!(t, ToolId::Move | ToolId::Hand)) {
         return Err(EngineError::Disabled(format!("tool.{}", t.id()), why.into()));
@@ -370,7 +370,25 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("pref.showDimensions", "Show dimensions on objects", "{on?}", false, |s, p| pref(s, p, |x| &mut x.show_dimensions)),
         spec!("pref.numberKeysOpacity", "Use number keys for opacity", "{on?}", false, |s, p| pref(s, p, |x| &mut x.number_keys_opacity)),
         spec!("pref.reduceMotion", "Reduce motion", "{on?}", false, |s, p| pref(s, p, |x| &mut x.reduce_motion)),
+        spec!(
+            "pref.uiScale",
+            "Interface size",
+            "{scale?: a size from 0.75 to 3 relative to the system's display scale, 1 being the system's own size, so 1.25 is 125 %, not 125 (outside the range it stops at the nearest end; \"auto\" is 1; omit: just read it)} → {scale}: how large the whole interface is drawn; the canvas zoom is separate",
+            false,
+            |s, p| {
+                match get(p, "scale") {
+                    None => {}
+                    Some(Value::String(v)) if v.trim().eq_ignore_ascii_case("auto") => s.prefs.ui_scale = 1.0,
+                    Some(_) => {
+                        let scale = req_num("pref.uiScale", p, "scale")?;
+                        s.prefs.ui_scale = crate::clamp_ui_scale(scale).ok_or_else(|| bad("pref.uiScale", "`scale` must be a finite number"))?;
+                    }
+                }
+                Ok(json!({"scale": s.prefs.ui_scale}))
+            }
+        ),
         spec!("pref.autoSave", "Save files automatically", "{on?}", false, |s, p| pref(s, p, |x| &mut x.auto_save)),
+        spec!("pref.startOnHome", "Start on the Home screen", "{on?}", false, |s, p| pref(s, p, |x| &mut x.start_on_home)),
         spec!("pref.nudge", "Nudge amount", "{small?, big?}", false, |s, p| {
             s.prefs.nudge_small = num(p, "small").unwrap_or(s.prefs.nudge_small).clamp(0.01, 1000.0);
             s.prefs.nudge_big = num(p, "big").unwrap_or(s.prefs.nudge_big).clamp(0.01, 10000.0);
@@ -409,7 +427,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "pref.language",
             "Interface language",
-            "{language: system|en|cs|ru|es|es-419|fr|de|pt-BR|ja|ko|zh-Hans|…; else English}",
+            "{language: system|en|cs|ru|es|es-419|fr|de|pt-BR|ja|ka|ko|vi|zh-Hans|…; else English}",
             false,
             |s, p| {
                 let lang = req_string("pref.language", p, "language")?;
@@ -447,11 +465,14 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "tool.set",
             "Choose tool",
-            "{tool: move|scale|hand|frame|section|slice|rectangle|line|arrow|ellipse|polygon|star|pen|pencil|text|comment|shapeBuilder}",
+            "{tool: move|scale|hand|frame|section|slice|rectangle|line|arrow|ellipse|polygon|star|pen|pencil|text|comment|shapeBuilder | on boards: sticky|shape|connector|marker|highlighter|eraser|stamp}",
             false,
             |s, p| {
                 let t = req_string("tool.set", p, "tool")?;
                 let t = ToolId::from_id(&t).ok_or_else(|| bad("tool.set", format!("unknown tool `{t}`")))?;
+                if t.on_boards() {
+                    crate::board::require(s, &format!("tool.{}", t.id()))?;
+                }
                 tool(s, t)
             }
         ),
@@ -514,11 +535,42 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("tool.pen", "Pen", "{}", false, |s, _| tool(s, ToolId::Pen)),
         spec!("tool.pencil", "Pencil", "{}", false, |s, _| tool(s, ToolId::Pencil)),
         spec!("tool.text", "Text", "{}", false, |s, _| tool(s, ToolId::Text)),
+        spec!("tool.textOnPath", "Text on a path", "{}  a click on a shape's or vector's path puts new text on it", false, |s, _| {
+            tool(s, ToolId::TextOnPath)
+        }),
         spec!("tool.comment", "Comment", "{}", false, |s, _| tool(s, ToolId::Comment)),
         spec!("tool.shapeBuilder", "Shape builder", "{}", false, |s, _| tool(s, ToolId::ShapeBuilder)),
-        spec!("edit.pickColor", "Pick color", "{}", false, |s, _| tool(s, ToolId::Eyedropper)),
+        // `apply: false` is for the UI colour picker: the eyedropper only samples (into
+        // `ToolState::picked`) and the picker writes the colour to the paint it edits.
+        spec!("edit.pickColor", "Pick color", "{apply?}", false, |s, p| {
+            let r = tool(s, ToolId::Eyedropper)?;
+            s.tool.pick_only = !boolean(p, "apply").unwrap_or(true);
+            s.tool.picked = None;
+            Ok(r)
+        }),
     ]
 }
 
 #[allow(dead_code)]
 fn unused(_: NodeId) {}
+
+#[cfg(test)]
+mod start_on_home_tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    #[test]
+    fn start_on_home_is_a_preference_that_persists() {
+        let mut s = Session::new();
+        assert!(!s.prefs.start_on_home);
+        assert_eq!(s.execute("pref.startOnHome", &json!({})).unwrap()["on"], true);
+        assert!(s.prefs.start_on_home);
+        // Saved with the other preferences and read back; older settings files without it read as off.
+        let saved: crate::Prefs = serde_json::from_value(serde_json::to_value(&s.prefs).unwrap()).unwrap();
+        assert!(saved.start_on_home);
+        assert_eq!(s.execute("pref.startOnHome", &json!({"on": false})).unwrap()["on"], false);
+        let old: crate::Prefs = serde_json::from_value(json!({"theme": "dark"})).unwrap();
+        assert!(!old.start_on_home);
+    }
+}
