@@ -1661,7 +1661,7 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
     let copy = if fills { tr("Copy fill") } else { tr("Copy stroke") };
     let paste = if fills { tr("Paste fill") } else { tr("Paste stroke") };
     let can_paste = app.session.clipboard.paint.as_ref().is_some_and(|(f, _)| *f == fills);
-    row_context_menu(ui, r, Id::new(("paint_menu", fills, i))).show(|ui| {
+    row_context_menu(ui, r, Id::unique(("paint_menu", fills, i))).show(|ui| {
         if menu_item(ui, copy, "") {
             app.run(if fills { "fill.copy" } else { "stroke.copy" }, json!({"ids": ids, "index": i}));
             ui.close();
@@ -1740,7 +1740,7 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             }
         });
         let can_paste = app.session.clipboard.effect.is_some();
-        row_context_menu(ui, header, Id::new(("effect_menu", i))).show(|ui| {
+        row_context_menu(ui, header, Id::unique(("effect_menu", i))).show(|ui| {
             if menu_item(ui, tr("Copy effect"), "") {
                 app.run("effect.copy", json!({"ids": ids, "index": i}));
                 ui.close();
@@ -2313,7 +2313,7 @@ fn inspect_assets(app: &mut FigApp, ui: &mut Ui, doc: &Document, assets: &[figcr
     let mut export_all_ids: Option<Vec<NodeId>> = all.then(|| assets.iter().map(|a| a.id).collect());
     let mut export_one: Option<(NodeId, ExportSetting, String)> = None;
     let revision = app.session.ds().map(|d| d.revision).unwrap_or(0);
-    let cache_id = Id::new("inspect_asset_ui");
+    let cache_id = Id::unique("inspect_asset_ui");
     let mut state: AssetUi = ui.data(|d| d.get_temp(cache_id)).unwrap_or_default();
     if state.revision != revision {
         state.revision = revision;
@@ -2358,7 +2358,7 @@ fn inspect_assets(app: &mut FigApp, ui: &mut Ui, doc: &Document, assets: &[figcr
             .unwrap_or_else(|| ExportFormat::ALL.iter().position(|f| Some(*f) == a.settings.first().map(|s| s.format)).unwrap_or(0));
         let fmt = ExportFormat::ALL[idx];
         let btn = Rect::from_min_size(pos2(x, r.min.y + 31.0), vec2(74.0, 20.0));
-        let btn_resp = ui.interact(btn, Id::new(("inspect_asset_format", a.id)), Sense::click());
+        let btn_resp = ui.interact(btn, Id::unique(("inspect_asset_format", a.id)), Sense::click());
         a11y::combo(&btn_resp, tr("Format"), fmt.label(), a11y::menu_open(&btn_resp));
         if btn_resp.hovered() {
             ui.painter().rect_filled(btn, CornerRadius::same(5), t.field);
