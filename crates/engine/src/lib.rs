@@ -9,7 +9,6 @@
 // Tests make and inspect files directly; shipped code goes through `file_access` (clippy.toml).
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
-pub mod annotations;
 mod assets;
 pub mod background;
 pub mod batch;
@@ -18,15 +17,9 @@ pub mod branches;
 mod canvas;
 pub mod catalog;
 pub mod cmd;
-pub mod code_connect;
-pub mod codegen;
 pub mod collab;
-pub mod component_codegen;
 pub mod datafill;
-pub mod dev_measurements;
-pub mod dev_resources;
-pub mod devcompare;
-pub mod devinspect;
+mod dev;
 pub mod doc_urls;
 pub mod file_access;
 pub mod fonts;
@@ -44,7 +37,6 @@ pub mod proto_run;
 mod selection;
 pub mod synthetic;
 pub mod synthetic_ds;
-pub mod tailwind;
 pub mod templates;
 pub mod textfit;
 pub mod widgets;
@@ -72,6 +64,15 @@ pub use canvas::textedit;
 pub use canvas::textpreview;
 pub use canvas::tools;
 pub use canvas::vectoredit;
+pub use dev::annotations;
+pub use dev::code_connect;
+pub use dev::codegen;
+pub use dev::component_codegen;
+pub use dev::dev_measurements;
+pub use dev::dev_resources;
+pub use dev::devcompare;
+pub use dev::devinspect;
+pub use dev::tailwind;
 pub use selection::rename;
 pub use selection::selection_colors;
 pub use selection::selection_reorder;
