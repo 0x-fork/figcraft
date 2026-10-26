@@ -306,5 +306,4 @@ pub fn create_dir_all(path: impl AsRef<Path>) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "file_access_tests.rs"]
 mod tests;
