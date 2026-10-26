@@ -288,7 +288,7 @@ fn model_fields(ui: &mut Ui, c: Color) -> Option<(Color, bool)> {
                 let Some(spec) = Polar::of(name) else { return };
                 // The values last shown or typed stay while the colour is theirs: a chroma lowered to
                 // fit sRGB, or a hue on a grey, isn't read back from the colour on the next frame.
-                let kept_id = Id::new("cp_polar");
+                let kept_id = Id::unique("cp_polar");
                 let rgba = c.to_rgba8();
                 let vals = ui
                     .data(|d| d.get_temp::<(&'static str, [f64; 3], [u8; 4])>(kept_id))

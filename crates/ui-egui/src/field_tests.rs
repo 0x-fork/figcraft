@@ -502,13 +502,13 @@ fn lch_and_oklch_picker_fields_edit_lightness_keeping_hue() {
         u.app.set_props(&[a], json!({"fills": [{"type": "solid", "color": "#0D99FF"}]}));
         let before = color(&u);
         assert_eq!(before.to_hex(), "0D99FF");
-        u.ctx.data_mut(|d| d.insert_temp(Id::new("cp_model"), model));
+        u.ctx.data_mut(|d| d.insert_temp(Id::unique("cp_model"), model));
         u.app.ui.picker = Some(crate::colorpicker::PickerTarget::Paint { fills: true, index: 0, ids: vec![a] });
         for _ in 0..3 {
             u.frame(vec![]);
         }
         let steps = undo_steps(&u);
-        let from = lead(&u, Id::new(("cp_f", l)));
+        let from = lead(&u, Id::unique(("cp_f", l)));
         drag(&mut u, from, -20.0, Modifiers::NONE);
         let after = color(&u);
         let hue = |c| figcraft_color::Oklch::from_color(c).h;
@@ -520,7 +520,7 @@ fn lch_and_oklch_picker_fields_edit_lightness_keeping_hue() {
 
 /// Type `text` into the picker field `id` (`("cp_f", id)`) and press Enter.
 fn type_into_picker(u: &mut Ui, id: &str, text: &str) {
-    let rect = u.ctx.read_response(Id::new(("cp_f", id)).with("field")).unwrap_or_else(|| panic!("no picker field {id}")).rect;
+    let rect = u.ctx.read_response(Id::unique(("cp_f", id)).with("field")).unwrap_or_else(|| panic!("no picker field {id}")).rect;
     click(u, rect.center());
     u.frame(vec![Event::Text(text.into())]);
     key(u, Key::Enter, Modifiers::NONE);
@@ -529,7 +529,7 @@ fn type_into_picker(u: &mut Ui, id: &str, text: &str) {
 
 /// A picker on layer `a` in model `model` (an index into the model menu), drawn and settled.
 fn open_picker(u: &mut Ui, a: NodeId, model: usize) {
-    u.ctx.data_mut(|d| d.insert_temp(Id::new("cp_model"), model));
+    u.ctx.data_mut(|d| d.insert_temp(Id::unique("cp_model"), model));
     u.app.ui.picker = Some(crate::colorpicker::PickerTarget::Paint { fills: true, index: 0, ids: vec![a] });
     for _ in 0..3 {
         u.frame(vec![]);
@@ -537,7 +537,7 @@ fn open_picker(u: &mut Ui, a: NodeId, model: usize) {
 }
 
 fn kept_polar(u: &Ui) -> [f64; 3] {
-    u.ctx.data(|d| d.get_temp::<(&'static str, [f64; 3], [u8; 4])>(Id::new("cp_polar"))).unwrap().1
+    u.ctx.data(|d| d.get_temp::<(&'static str, [f64; 3], [u8; 4])>(Id::unique("cp_polar"))).unwrap().1
 }
 
 #[test]
