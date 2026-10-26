@@ -13,6 +13,13 @@ use crate::FigApp;
 use crate::export_panel::{export_layers, save_one, suggested_name};
 use crate::i18n::{self, tr, tr_noop, trf, trn};
 use crate::theme::{Tokens, regular, semibold};
+pub mod branch_ui;
+pub mod credits;
+pub mod import_report;
+pub mod missing_fonts;
+pub mod plugins_ui;
+pub mod updates_ui;
+pub mod variables_panel;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
