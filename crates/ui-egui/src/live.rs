@@ -772,7 +772,7 @@ fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
             // The server key (a server that needs one; the address in Preferences is without it).
             ui.horizontal(|ui| {
                 widgets::label(ui, tr("Server key"), t.text);
-                if let Some(key) = widgets::text_field_named(ui, egui::Id::new("live_share_key"), &app.ui.live.share_key, 200.0, tr("Server key")) {
+                if let Some(key) = widgets::secret_field_named(ui, egui::Id::new("live_share_key"), &app.ui.live.share_key, 200.0, tr("Server key")) {
                     app.ui.live.share_key = key.trim().chars().filter(|c| !c.is_whitespace() && !c.is_control()).take(128).collect();
                 }
             });
