@@ -212,5 +212,4 @@ impl Session {
 }
 
 #[cfg(test)]
-#[path = "library_server_tests.rs"]
 mod tests;
