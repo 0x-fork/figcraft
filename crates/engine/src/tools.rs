@@ -328,6 +328,9 @@ pub struct Overlay {
     pub vector_hover: Option<crate::vectoredit::VHit>,
     /// The edited layer `vector_hover` is on (several layers can be in edit mode).
     pub vector_hover_on: Option<NodeId>,
+    /// Vector edit mode: the point a press on the outline would add (the pen's ghost anchor where
+    /// it is over a segment, or the midpoint of the segment under the Move tool).
+    pub vector_add: Option<VectorAdd>,
     /// Vector edit mode, Variable width tool: the width point, handle or path under the pointer.
     pub width_hover: Option<crate::vectoredit::WHit>,
     pub lasso: Vec<[f64; 2]>,
@@ -350,6 +353,16 @@ pub struct Overlay {
     /// while one is dragged (see [`crate::shape_handles`]).
     pub shape_hover: Option<ShapeHandle>,
     pub shape: Option<ShapeHint>,
+}
+
+/// A point a press would add to the edited vector's outline: page position, whether it is a
+/// segment's midpoint (the Move tool) rather than the pen's place on its segment, and whether the
+/// pointer is on it (a press adds it; otherwise it just shows where one would go).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct VectorAdd {
+    pub at: [f64; 2],
+    pub midpoint: bool,
+    pub on: bool,
 }
 
 /// The Scale tool's live readout while dragging a handle.
@@ -2102,7 +2115,19 @@ impl Session {
             self.tool.overlay.marquee = None;
             self.cancel_interaction()?;
         }
-        let Some(leaf) = self.hit(&doc, page, ev.p(), ev.tol() * 2.0) else { return Ok(()) };
+        let hit_here = self.hit(&doc, page, ev.p(), ev.tol() * 2.0);
+        // A double-click anywhere on the one selected shape edits its points, like Enter: also
+        // inside a hollow (unfilled) closed shape, where the hit test finds nothing under the
+        // pointer (an open path or a line has no inside: only its stroke counts).
+        if edits
+            && let [id] = sel[..]
+            && doc.node(id).is_some_and(|n| n.kind.is_shape() && figcraft_doc::geometry::is_closed(n))
+            && doc.world_bounds(id).is_some_and(|b| b.contains(ev.p()))
+            && hit_here.is_none_or(|h| h == id || doc.is_ancestor(id, h))
+        {
+            return crate::vectoredit::begin_many(self, &[id]);
+        }
+        let Some(leaf) = hit_here else { return Ok(()) };
         if matches!(self.tool.tool, ToolId::Move | ToolId::Scale) && self.board_double_click(&doc, leaf, &sel)? {
             return Ok(());
         }
@@ -2126,8 +2151,12 @@ impl Session {
             return Ok(());
         }
         // Shapes and vectors: enter vector edit mode (every selected shape, the clicked one active).
-        if edits && doc.node(target).is_some_and(|n| n.kind.is_shape()) && sel.contains(&target) {
-            let mut ids = crate::vectoredit::enter_targets(&doc, &sel).unwrap_or_default();
+        // A shape clicked on its own edits even when the click that selects it and the double-click
+        // arrived in one frame (a press and a release the canvas took together), so no selection was
+        // made yet; another layer's shapes are reached one level at a time, as below.
+        if edits && doc.node(target).is_some_and(|n| n.kind.is_shape()) && (sel.contains(&target) || select_target(&doc, leaf, &sel, false) == target)
+        {
+            let mut ids = if sel.contains(&target) { crate::vectoredit::enter_targets(&doc, &sel).unwrap_or_default() } else { vec![target] };
             ids.retain(|i| *i != target);
             ids.insert(0, target);
             return crate::vectoredit::begin_many(self, &ids);
