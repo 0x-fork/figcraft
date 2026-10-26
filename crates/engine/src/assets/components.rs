@@ -295,9 +295,7 @@ pub fn prop_default_value(d: &PropDef) -> Value {
 }
 
 #[cfg(test)]
-#[path = "components_rebase_source_tests.rs"]
 mod rebase_source_tests;
 
 #[cfg(test)]
-#[path = "components_tests.rs"]
 pub(crate) mod tests;
