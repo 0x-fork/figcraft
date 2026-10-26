@@ -60,6 +60,9 @@ impl LetterSpacing {
 }
 
 pub fn trim_num(v: f64) -> String {
+    if v.abs() >= 9.0e18 {
+        return format!("{v}");
+    }
     let r = (v * 100.0).round() / 100.0;
     if r.fract().abs() < 1e-9 { format!("{}", r as i64) } else { format!("{r}") }
 }
@@ -215,6 +218,10 @@ pub struct ParaList {
     pub list: ListStyle,
     /// Nesting level (0 = outermost; plain paragraphs are always 0).
     pub indent: u8,
+    /// A numbered list that starts counting at this paragraph counts from `start_offset + 1`
+    /// (items that go on counting ignore it; other paragraphs are always 0).
+    #[serde(skip_serializing_if = "crate::node::is_default")]
+    pub start_offset: u32,
 }
 
 /// Character style. In runs, every field is an override; `None` means "inherit the base".
@@ -246,10 +253,17 @@ pub struct TextStyle {
     pub style_id: Option<String>,
 }
 
+/// The font new text starts in. A build can name another (`FIGCRAFT_DEFAULT_FONT="Noto Sans Thai"`,
+/// for a distribution whose users mostly write a script Inter lacks); empty means Inter.
+pub const DEFAULT_FONT: &str = match option_env!("FIGCRAFT_DEFAULT_FONT") {
+    Some(family) if !family.is_empty() => family,
+    _ => "Inter",
+};
+
 impl Default for TextStyle {
     fn default() -> Self {
         Self {
-            font_family: "Inter".into(),
+            font_family: DEFAULT_FONT.into(),
             font_style: "Regular".into(),
             font_size: 12.0,
             line_height: LineHeight::Auto,
@@ -572,7 +586,14 @@ impl TextData {
         }
         self.runs.sort_by_key(|r| r.start);
         let mut merged: Vec<StyleRun> = Vec::with_capacity(self.runs.len());
-        for r in std::mem::take(&mut self.runs) {
+        for mut r in std::mem::take(&mut self.runs) {
+            // Runs never overlap: a later run starts where the previous one ends at the earliest.
+            if let Some(prev) = merged.last() {
+                r.start = r.start.max(prev.end);
+                if r.start >= r.end {
+                    continue;
+                }
+            }
             match merged.last_mut() {
                 Some(prev) if prev.end == r.start && prev.style == r.style => prev.end = r.end,
                 _ => merged.push(r),
@@ -637,13 +658,13 @@ impl TextData {
 
     /// Paragraph `p`'s list settings.
     pub fn para_list(&self, p: usize) -> ParaList {
-        self.paragraphs.get(p).copied().unwrap_or(ParaList { list: self.list, indent: 0 })
+        self.paragraphs.get(p).copied().unwrap_or(ParaList { list: self.list, ..ParaList::default() })
     }
 
     /// Spell out every paragraph's list settings in `paragraphs` (and drop extra entries).
     fn fill_paragraphs(&mut self) {
         let n = self.paragraph_count();
-        let fill = ParaList { list: self.list, indent: 0 };
+        let fill = ParaList { list: self.list, ..ParaList::default() };
         self.paragraphs.resize(n, fill);
     }
 
@@ -657,17 +678,23 @@ impl TextData {
     }
 
     /// Apply `f` to the list settings of the paragraphs chars `start..end` touch (plain
-    /// paragraphs stay at level 0, levels stop at [`MAX_LIST_INDENT`]); one style for all with
-    /// no nesting folds back into `list`.
+    /// paragraphs stay at level 0, only numbered ones keep a start, levels stop at
+    /// [`MAX_LIST_INDENT`]); one style for all with no nesting or start folds back into `list`.
     pub fn set_para_lists(&mut self, start: usize, end: usize, f: impl Fn(&mut ParaList)) {
         let (a, b) = self.para_span(start, end);
         self.fill_paragraphs();
         for pl in self.paragraphs.get_mut(a..=b).unwrap_or(&mut []) {
             f(pl);
-            pl.indent = if pl.list == ListStyle::None { 0 } else { pl.indent.min(MAX_LIST_INDENT) };
+            if pl.list == ListStyle::None {
+                pl.indent = 0;
+            }
+            if pl.list != ListStyle::Numbered {
+                pl.start_offset = 0;
+            }
+            pl.indent = pl.indent.min(MAX_LIST_INDENT);
         }
         if let Some(first) = self.paragraphs.first().copied()
-            && first.indent == 0
+            && first == (ParaList { list: first.list, ..ParaList::default() })
             && self.paragraphs.iter().all(|p| *p == first)
         {
             self.list = first.list;
@@ -675,11 +702,12 @@ impl TextData {
         }
     }
 
-    /// The list settings shared by the paragraphs chars `start..end` touch, or None when they differ.
+    /// The list style and level shared by the paragraphs chars `start..end` touch (the first
+    /// one's settings), or None when they differ. Start numbers don't count.
     pub fn common_para_list(&self, start: usize, end: usize) -> Option<ParaList> {
         let (a, b) = self.para_span(start, end);
         let first = self.para_list(a);
-        (a..=b).all(|p| self.para_list(p) == first).then_some(first)
+        (a..=b).all(|p| self.para_list(p).list == first.list && self.para_list(p).indent == first.indent).then_some(first)
     }
 
     /// Link chars `start..end` (all of them when the range is empty or the whole text) to text
@@ -750,6 +778,15 @@ mod case_tests {
     use super::*;
 
     #[test]
+    fn trim_num_prints_huge_whole_numbers() {
+        assert_eq!(trim_num(1e19), "10000000000000000000");
+        assert_eq!(trim_num(-1e19), "-10000000000000000000");
+        assert_eq!(trim_num(12.0), "12");
+        let v = 12345678901234567890.0_f64;
+        assert_eq!(trim_num(v).parse::<f64>().unwrap(), v);
+    }
+
+    #[test]
     fn title_case_respects_context() {
         assert_eq!(TextCase::Title.apply("hello wORLD don't 3d x-ray"), "Hello WORLD Don't 3d X-Ray");
         // Continuing a word from a previous run: no capital.
@@ -758,6 +795,18 @@ mod case_tests {
         assert_eq!(TextCase::Upper.apply_after("ß", Some('a')), "SS");
         assert!(valid_feature_tag("liga") && valid_feature_tag("ss01"));
         assert!(!valid_feature_tag("lig") && !valid_feature_tag("ligatures") && !valid_feature_tag("li\u{e9}"));
+    }
+
+    #[test]
+    fn new_text_starts_in_the_builds_default_font() {
+        // Inter, unless the build names another with `FIGCRAFT_DEFAULT_FONT` (empty means Inter).
+        let named = option_env!("FIGCRAFT_DEFAULT_FONT").filter(|f| !f.is_empty());
+        assert_eq!(DEFAULT_FONT, named.unwrap_or("Inter"));
+        let st = TextStyle::default();
+        assert_eq!(st.font_family, DEFAULT_FONT);
+        // The family is always written, so a saved file keeps it in a build with another default.
+        let saved = serde_json::to_value(&st).unwrap();
+        assert_eq!(saved["font_family"], DEFAULT_FONT);
     }
 
     #[test]
@@ -781,5 +830,30 @@ mod case_tests {
         assert_eq!(st.weight(), 700);
         assert_eq!(st.variations.keys().collect::<Vec<_>>(), ["wdth"]);
         assert!(valid_axis_tag("wght") && !valid_axis_tag("weight"));
+    }
+
+    #[test]
+    fn list_starts_load_from_old_files_and_follow_edits() {
+        use ListStyle::{Bulleted as B, None as P, Numbered as N};
+        // Files written before start numbers load with none, and write the same bytes.
+        let old = r#"{"list":"numbered","indent":1}"#;
+        let pl: ParaList = serde_json::from_str(old).unwrap();
+        assert_eq!(pl, ParaList { list: N, indent: 1, start_offset: 0 });
+        assert_eq!(serde_json::to_string(&pl).unwrap(), old);
+        // One numbered paragraph with a start keeps it (it doesn't fold into `list`).
+        let mut t = TextData { characters: "Next".into(), ..Default::default() };
+        t.set_para_lists(0, 0, |p| *p = ParaList { list: N, indent: 0, start_offset: 1 });
+        assert_eq!(t.para_list(0), ParaList { list: N, indent: 0, start_offset: 1 });
+        // Enter copies it to the new item; different starts don't make the list mixed.
+        t.replace_range(4, 4, "\nMore");
+        assert_eq!(t.para_list(1).start_offset, 1);
+        t.set_para_lists(5, 5, |p| p.start_offset = 0);
+        assert!(t.common_para_list(0, t.char_count()).is_some_and(|p| p.list == N));
+        // Bullets have no number, so no start.
+        t.set_para_lists(0, 0, |p| *p = ParaList { list: B, indent: 1, start_offset: 4 });
+        assert_eq!(t.para_list(0), ParaList { list: B, indent: 1, start_offset: 0 });
+        // A plain paragraph has none.
+        t.set_para_lists(0, 0, |p| p.list = P);
+        assert_eq!(t.para_list(0), ParaList::default());
     }
 }

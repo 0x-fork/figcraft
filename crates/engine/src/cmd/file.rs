@@ -11,26 +11,38 @@ use super::{CommandSpec, ok};
 use crate::params::*;
 use crate::{DocState, EngineError, Result, Session, bad, spec};
 
+/// A new file of `kind` in a tab of its own.
+fn new_file(s: &mut Session, p: &Value, kind: FileKind) -> Result<Value> {
+    let name = string(p, "name").unwrap_or_else(|| if kind == FileKind::Board { "Untitled board" } else { "Untitled" }.into());
+    let mut doc = Document::new(name);
+    doc.kind = kind;
+    // A property of the page from here on: a later change of theme leaves it alone. Boards are
+    // light whatever the theme.
+    let background = if kind == FileKind::Board { BOARD_PAGE } else { s.new_page_background() };
+    for page in doc.pages.clone() {
+        if let Some(NodeKind::Page { background: b, .. }) = doc.node_mut(page).map(|n| &mut n.kind) {
+            *b = background;
+        }
+    }
+    s.docs.push(DocState::new(doc, None));
+    s.active = s.docs.len() - 1;
+    Ok(json!({"index": s.active, "kind": kind.id()}))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        spec!("file.new", "New design file", "{name?}", false, |s, p| {
-            let name = string(p, "name").unwrap_or_else(|| "Untitled".into());
-            let mut doc = Document::new(name);
-            // A property of the page from here on: a later change of theme leaves it alone.
-            let background = s.new_page_background();
-            for page in doc.pages.clone() {
-                if let Some(NodeKind::Page { background: b, .. }) = doc.node_mut(page).map(|n| &mut n.kind) {
-                    *b = background;
-                }
-            }
-            s.docs.push(DocState::new(doc, None));
-            s.active = s.docs.len() - 1;
-            Ok(json!({"index": s.active}))
-        }),
+        spec!("file.new", "New design file", "{name?}", false, |s, p| new_file(s, p, FileKind::Design)),
+        spec!(
+            "file.newBoard",
+            "New board",
+            "{name?}  a board: sticky notes, shapes with text, connectors, marker and stamps on a light page",
+            false,
+            |s, p| new_file(s, p, FileKind::Board)
+        ),
         spec!(
             "file.open",
             "Open",
-            "{path, variables? (REST: the local variables JSON as an object, JSON text or a path; default `<name>.variables.json` or `variables.json` next to the file)} (.figcraft, .json: FigCraft or REST API file JSON, .fig (best effort), .svg, .png, .jpg …); REST and .fig imports return `warnings`",
+            "{path | data (base64) + name (tells the format; opens as a new unsaved document), variables? (REST: the local variables JSON as an object, JSON text or a path; default `<name>.variables.json` or `variables.json` next to the file)} (.figcraft, .json: FigCraft or REST API file JSON, .fig (best effort), .sketch (Sketch 48 or newer, best effort), .svg, .png, .jpg …); REST, .fig and .sketch imports return `warnings`; a file opened anew returns `summary` {name, pages, layers, images} (one that was already open just returns its `index`)",
             false,
             open
         ),
@@ -41,8 +53,27 @@ pub fn specs() -> Vec<CommandSpec> {
             false,
             open_recent
         ),
-        spec!("file.save", "Save", "{path?} (programmatic saves need a path the first time)", false, save),
-        spec!("file.saveAs", "Save as", "{path}", false, save_as),
+        spec!(
+            "file.save",
+            "Save",
+            "{path?} (programmatic saves need a path the first time); a .fig path writes an experimental export copy of the shown document with `warnings`, keeping the native path, unsaved changes and version preview",
+            false,
+            save
+        ),
+        spec!(
+            "file.saveAs",
+            "Save as",
+            "{path | data: true (no path: returns the file as base64 `data` with its `name`, for a download)} (no extension adds .figcraft); a .fig path writes an experimental export copy of the shown document with `warnings`, keeping the native path, unsaved changes and version preview",
+            false,
+            save_as
+        ),
+        spec!(
+            "file.markSaved",
+            "Mark saved",
+            "{}  clears the unsaved changes of the active tab's file and its branch tabs: run it once the file from `file.saveAs {data: true}` was delivered (a refused download keeps them)",
+            false,
+            mark_saved
+        ),
         spec!(
             "file.export",
             "Export",
@@ -53,7 +84,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.exportLayers",
             "Export layers",
-            "{ids? (default the selection, else every layer on the page with export settings), assets? (true: the Inspect tab's assets in and under them instead: layers with export settings, icons as SVG, images as PNG), dir? (folder to write into; else each file comes back as base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options): for every PDF instead of each setting's own}  every layer once per export setting, named `<layer><suffix>.<format>` (\"@2x\" when a scaled export has no suffix; repeats get \" 2\"; slashes in a layer name make folders). Returns {files: [{name, id, bytes, path | data}], skipped (layers without settings)}",
+            "{ids? (default the selection, else every layer on the page with export settings), assets? (true: the Inspect tab's assets in and under them instead: layers with export settings, icons as SVG, images as PNG), dir? (folder to write into; else each file comes back as base64 `data`), zip? (no dir: the files come back together as one base64 zip `data` instead), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options): for every PDF instead of each setting's own}  every layer once per export setting, named `<layer><suffix>.<format>` (\"@2x\" when a scaled export has no suffix; repeats get \" 2\"; slashes in a layer name make folders). Returns {files: [{name, id, bytes, path | data}], skipped (layers without settings), data? (zip)}",
             false,
             export_layers
         ),
@@ -74,12 +105,26 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.import",
             "Import",
-            "{path | data (base64) + name, x?, y?, center? (SVG: centre it on x, y), variables? (REST: the local variables JSON as an object, JSON text or a path)}  SVG becomes an editable frame (shapes, text, gradients, masks, effects; with `warnings` for what it left out), images become image layers, .figcraft, REST API file JSON and .fig pages are appended with their variables and flows (REST and .fig: with `warnings`)",
+            "{path | data (base64) + name, x?, y?, center? (SVG: centre it on x, y), variables? (REST: the local variables JSON as an object, JSON text or a path)}  SVG becomes an editable frame (shapes, text, gradients, masks, effects; with `warnings` for what it left out), images become image layers, .figcraft, REST API file JSON, .fig and .sketch pages are appended with their variables and flows (REST, .fig and .sketch: with `warnings`; those return `summary` {name, pages, layers, images} of the file read)",
             true,
             import
         ),
         spec!("file.placeImage", "Place image", "{path | data, x?, y?}", true, super::create::place_image),
         spec!("file.close", "Close tab", "{index?, force? (discard unsaved changes)}", false, close),
+        spec!("file.moveTab", "Move tab", "{from, to} (indices among open documents)", false, |s, p| {
+            let from = req_index("file.moveTab", p, "from")?;
+            let to = req_index("file.moveTab", p, "to")?;
+            if from >= s.docs.len() || to >= s.docs.len() {
+                return Err(bad("file.moveTab", "no such document"));
+            }
+            if from != to {
+                let active_uid = s.docs.get(s.active).map(|d| d.uid);
+                let doc = s.docs.remove(from);
+                s.docs.insert(to, doc);
+                s.active = active_uid.and_then(|uid| s.docs.iter().position(|d| d.uid == uid)).unwrap_or(0);
+            }
+            Ok(json!({"index": to}))
+        }),
         spec!(
             "file.recover",
             "Recover file",
@@ -118,7 +163,10 @@ pub fn specs() -> Vec<CommandSpec> {
             let i = s.active;
             let uid = s.ds()?.uid;
             if let Some(slot) = s.docs.get_mut(i) {
-                *slot = DocState::new(loaded.doc, Some(path)).with_versions(loaded.versions).with_branches(loaded.branches);
+                *slot = DocState::new(loaded.doc, Some(path.clone()))
+                    .with_versions(loaded.versions)
+                    .with_branches(loaded.branches)
+                    .with_images_left_in_file(&path, loaded.images_past_budget);
             }
             // Edits on its branch tabs are reverted too.
             crate::branches::close_tabs(s, uid, None);
@@ -340,7 +388,7 @@ fn version_index(cmd: &str, ds: &DocState, p: &Value) -> Result<usize> {
     if i < ds.versions.len() { Ok(i) } else { Err(bad(cmd, format!("no version at index {i}"))) }
 }
 
-fn read_version(v: &Version) -> Result<Arc<Document>> {
+pub(crate) fn read_version(v: &Version) -> Result<Arc<Document>> {
     v.document().map_err(|e| EngineError::Other(format!("version “{}” can't be read: {e}", v.name)))
 }
 
@@ -423,7 +471,7 @@ pub(crate) fn recovered(path: &str) -> Result<DocState> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn read(path: &str) -> Result<Vec<u8>> {
-    std::fs::read(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))
+    crate::file_access::read(path)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -433,11 +481,7 @@ fn read(path: &str) -> Result<Vec<u8>> {
 
 /// The bytes of file `path`, refused when it's larger than `max`.
 pub(crate) fn read_capped(path: &str, max: u64) -> Result<Vec<u8>> {
-    let meta = std::fs::metadata(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    if !meta.is_file() || meta.len() > max {
-        return Err(EngineError::Other(format!("{path}: not a file of at most {max} bytes")));
-    }
-    read(path)
+    crate::file_access::read_capped(path, max)
 }
 
 /// Write `bytes` to `path` through a uniquely named, exclusively created staging file and one
@@ -445,7 +489,7 @@ pub(crate) fn read_capped(path: &str, max: u64) -> Result<Vec<u8>> {
 /// truncates `path`, and no file or symlink at a staging name is ever written through.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn write(path: &str, bytes: &[u8]) -> Result<()> {
-    figcraft_format::write_file_atomic(std::path::Path::new(path), bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))
+    crate::file_access::write(path, bytes)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -454,11 +498,16 @@ pub(crate) fn write(path: &str, _bytes: &[u8]) -> Result<()> {
 }
 
 fn ext(path: &str) -> String {
-    std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
+    std::path::Path::new(path).extension().and_then(std::ffi::OsStr::to_str).unwrap_or("").to_ascii_lowercase()
 }
 
 fn file_stem(path: &str) -> String {
-    std::path::Path::new(path).file_stem().and_then(|e| e.to_str()).unwrap_or("Untitled").to_string()
+    std::path::Path::new(path).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Untitled").to_string()
+}
+
+/// The counts the import report shows for a freshly loaded document.
+fn import_summary(doc: &Document) -> Value {
+    json!({"name": doc.name, "pages": doc.pages.len(), "layers": doc.nodes().filter(|n| !n.is_page()).count(), "images": doc.images.len()})
 }
 
 /// Load a document from any supported file (REST API file JSON images come from an `images`
@@ -506,10 +555,11 @@ fn load_with(
             Ok((doc.into(), false))
         }
         _ => {
-            if let Some(r) = figcraft_format::fig::try_import(bytes, &file_stem(name_hint)) {
-                let (mut doc, warnings) = r.map_err(|e| EngineError::Other(e.to_string()))?;
-                link_instances(&mut doc);
-                return Ok((figcraft_format::Loaded { issues: warnings, ..doc.into() }, true));
+            if let Some(r) = load_fig(bytes, &file_stem(name_hint)) {
+                return Ok((r?, true));
+            }
+            if let Some(r) = load_sketch(bytes, &file_stem(name_hint)) {
+                return Ok((r?, true));
             }
             if let Some(r) = figcraft_format::rest::try_import_with(bytes, variables, images) {
                 let (mut doc, warnings) = r.map_err(|e| EngineError::Other(e.to_string()))?;
@@ -517,7 +567,8 @@ fn load_with(
                 return Ok((figcraft_format::Loaded { issues: warnings, ..doc.into() }, true));
             }
             let mut loaded = figcraft_format::load_bytes_with_versions(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
-            if loaded.doc.name.is_empty() {
+            // Older files saved an untouched default title even after the user chose a filename.
+            if loaded.doc.name.is_empty() || loaded.doc.name == "Untitled" {
                 loaded.doc.name = file_stem(name_hint);
             }
             Ok((loaded, false))
@@ -525,10 +576,234 @@ fn load_with(
     }
 }
 
+/// Gives `None` when `bytes` are not a `.sketch` file. Then other readers can try.
+fn load_sketch(bytes: &[u8], name: &str) -> Option<Result<figcraft_format::Loaded>> {
+    if !figcraft_format::sketch::is_sketch(bytes) {
+        return None;
+    }
+    // The import and what follows read the installed fonts: the system's must be known first (the
+    // desktop app scans them in the background; this waits for that scan).
+    figcraft_text::fontdb::scan_system_fonts();
+    let fonts: figcraft_format::sketch::FontLookup = Box::new(figcraft_text::fontdb::postscript_face);
+    let r = figcraft_format::sketch::try_import_with_fonts(bytes, name, Some(fonts))?;
+    Some(r.map_err(|e| EngineError::Other(e.to_string())).map(|(mut doc, warnings)| {
+        match_font_families(&mut doc);
+        platform_tracking(&mut doc);
+        sketch_line_heights(&mut doc);
+        link_instances(&mut doc);
+        reflow_overridden_text(&mut doc);
+        figcraft_format::Loaded { issues: warnings, ..doc.into() }
+    }))
+}
+
+/// Instances of a stack sized apart from their main are laid out at their size, and texts in
+/// instances whose string an override changed are measured again with the auto layout around them
+/// re-flowing (Sketch saves layouts measured with the master's string). The rest keeps the layout
+/// Sketch saved.
+fn reflow_overridden_text(doc: &mut Document) {
+    let changed: Vec<NodeId> = doc
+        .nodes()
+        .filter(|n| match (&n.kind, n.source.and_then(|s| doc.node(s)).map(|s| &s.kind)) {
+            (NodeKind::Text(t), Some(NodeKind::Text(main))) => t.characters != main.characters,
+            _ => false,
+        })
+        .map(|n| n.id)
+        .collect();
+    let m = crate::measure::TextMeasure;
+    // Instances of a stack at another size than their main: the stack at their size, innermost first.
+    let mut resized: Vec<(usize, NodeId)> = doc
+        .nodes()
+        .filter(|n| n.layout.is_some())
+        .filter(|n| match &n.kind {
+            NodeKind::Instance { component, .. } => {
+                doc.node(*component).is_some_and(|c| (c.width - n.width).abs() > 1e-6 || (c.height - n.height).abs() > 1e-6)
+            }
+            _ => false,
+        })
+        .map(|n| (doc.ancestors(n.id).len(), n.id))
+        .collect();
+    resized.sort_by_key(|r| std::cmp::Reverse(r.0));
+    for (_, id) in resized {
+        figcraft_layout::layout_frame(doc, id, &m);
+    }
+    for id in changed {
+        if let Some((w, h)) = doc.node(id).and_then(figcraft_text::auto_size) {
+            figcraft_layout::set_size(doc, id, w, h);
+        }
+        figcraft_layout::layout_up(doc, id, &m);
+    }
+}
+
+/// Font families a `.sketch` import guessed from PostScript names ("Ping Fang SC" from
+/// "PingFangSC-Semibold") take the installed family's name when they differ only in spaces and
+/// case.
+fn match_font_families(doc: &mut Document) {
+    let installed = figcraft_text::fontdb::family_names();
+    let mut cache: std::collections::BTreeMap<String, Option<String>> = std::collections::BTreeMap::new();
+    let mut fix = |style: &mut figcraft_doc::TextStyle| {
+        let found = cache.entry(style.font_family.clone()).or_insert_with(|| installed_family(&style.font_family, &installed));
+        if let Some(f) = found {
+            style.font_family = f.clone();
+        }
+    };
+    let ids: Vec<NodeId> = doc.nodes().filter(|n| matches!(n.kind, NodeKind::Text(_))).map(|n| n.id).collect();
+    for id in ids {
+        if let Some(NodeKind::Text(td)) = doc.node_mut(id).map(|n| &mut n.kind) {
+            fix(&mut td.style);
+            for r in &mut td.runs {
+                fix(&mut r.style);
+            }
+        }
+    }
+    // Shared text styles too, so they stay like the layers linked to them.
+    for st in &mut doc.styles {
+        if let StyleKind::Text { style } = &mut st.kind {
+            fix(style);
+        }
+    }
+}
+
+/// Sketch draws text with the tracking a font's `trak` table gives at its size (Apple's text engine
+/// adds it; FigCraft's, like Figma's, doesn't): the imported text keeps it as letter spacing, so
+/// lines measure and break as they did there. A named style's optical size follows the text size
+/// there too (FigCraft keeps the instance's), so the imported text carries it as an `opsz` value.
+fn platform_tracking(doc: &mut Document) {
+    let mut cache: std::collections::BTreeMap<(String, String), Option<std::sync::Arc<figcraft_text::fontdb::Face>>> =
+        std::collections::BTreeMap::new();
+    let mut face = |style: &figcraft_doc::TextStyle| {
+        cache
+            .entry((style.font_family.clone(), style.font_style.clone()))
+            .or_insert_with(|| {
+                figcraft_text::fontdb::has_family(&style.font_family)
+                    .then(|| figcraft_text::fontdb::find_face(&style.font_family, &style.font_style))
+                    .flatten()
+            })
+            .clone()
+    };
+    let mut track = |style: &mut figcraft_doc::TextStyle| {
+        let Some(f) = face(style) else { return };
+        let t = f.tracking(style.font_size);
+        if t != 0.0 && t.is_finite() {
+            let px = style.letter_spacing.resolve(style.font_size);
+            style.letter_spacing = figcraft_doc::LetterSpacing::Pixels(px + t);
+        }
+        if f.axis("opsz").is_some() && f.instance(&style.font_style).is_some() && style.font_size.is_finite() {
+            style.variations.entry("opsz".into()).or_insert(style.font_size);
+        }
+    };
+    let ids: Vec<NodeId> = doc.nodes().filter(|n| matches!(n.kind, NodeKind::Text(_))).map(|n| n.id).collect();
+    for id in ids {
+        if let Some(NodeKind::Text(td)) = doc.node_mut(id).map(|n| &mut n.kind) {
+            track(&mut td.style);
+            for r in &mut td.runs {
+                track(&mut r.style);
+            }
+        }
+    }
+    for st in &mut doc.styles {
+        if let StyleKind::Text { style } = &mut st.kind {
+            track(style);
+        }
+    }
+}
+
+/// Families Sketch (Apple's text system) gives a fifth more than their ascent and descent as their
+/// natural line: classic Mac fonts, found on `sketchtool` renders. Other fonts show none of this.
+const TALL_LINE_FAMILIES: [&str; 11] =
+    ["Academy Engraved LET", "Courier", "Helvetica", "Hoefler Text", "Palatino", "Sathu", "Silom", "Skia", "Times", "Webdings", "Zapf Dingbats"];
+
+/// Sketch's natural line for a font of `ascent` and `descent` in `upem` units at `size` px: its
+/// height in px and how far down the text moves so its baseline sits where Sketch puts it. Sketch
+/// rounds the ascent and descent to whole pixels each and leaves the font's line gap out (a fifth
+/// more for [`TALL_LINE_FAMILIES`]), with the baseline above the rounded descent; FigCraft centres
+/// the font's own ascent and descent in the line. `(0, 0)` without metrics.
+pub(crate) fn sketch_line(ascent: f64, descent: f64, upem: f64, family: &str, size: f64) -> (f64, f64) {
+    let k = size / upem;
+    let (a, d) = (ascent * k, descent * k);
+    if !(a.is_finite() && d.is_finite()) || a + d <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let natural = a.round() + d.round();
+    let line = if TALL_LINE_FAMILIES.iter().any(|f| f.eq_ignore_ascii_case(family)) { (natural * 1.2).round() } else { natural };
+    let sketch_baseline = line - d.round();
+    let figcraft_baseline = (line - (a + d)) / 2.0 + a;
+    (line, sketch_baseline - figcraft_baseline)
+}
+
+/// Text without a fixed line height takes the line Sketch drew it with (FigCraft's natural line,
+/// like Figma's, counts the font's line gap and centres the font in it; Sketch's doesn't), as a
+/// share of its size so it still follows the size, and moves to Sketch's baseline. Shared text
+/// styles take the line too.
+fn sketch_line_heights(doc: &mut Document) {
+    // Per family and style: the face's ascent, descent and units per em.
+    type Metrics = Option<(f64, f64, f64)>;
+    let mut cache: std::collections::BTreeMap<(String, String), Metrics> = std::collections::BTreeMap::new();
+    let mut set = |style: &mut TextStyle| -> f64 {
+        if style.line_height != LineHeight::Auto || !style.font_size.is_finite() || style.font_size <= 0.0 {
+            return 0.0;
+        }
+        let m = *cache.entry((style.font_family.clone(), style.font_style.clone())).or_insert_with(|| {
+            figcraft_text::fontdb::has_family(&style.font_family)
+                .then(|| figcraft_text::fontdb::find_face(&style.font_family, &style.font_style))
+                .flatten()
+                .map(|f| (f.ascent, f.descent, f.upem))
+        });
+        let Some((a, d, upem)) = m else { return 0.0 };
+        let (line, down) = sketch_line(a, d, upem, &style.font_family, style.font_size);
+        if line > 0.0 {
+            style.line_height = LineHeight::Percent(line / style.font_size * 100.0);
+        }
+        down
+    };
+    let ids: Vec<NodeId> = doc.nodes().filter(|n| matches!(n.kind, NodeKind::Text(_))).map(|n| n.id).collect();
+    for id in ids {
+        // An auto layout places its texts itself (its next pass would take a move back).
+        let laid_out =
+            doc.node(id).is_some_and(|n| !n.child_layout.absolute && n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some()));
+        let Some(n) = doc.node_mut(id) else { continue };
+        let NodeKind::Text(td) = &mut n.kind else { continue };
+        let down = set(&mut td.style);
+        for r in &mut td.runs {
+            set(&mut r.style);
+        }
+        // Down in the layer's own frame (a rotated text moves along its own axis).
+        if !laid_out && down.is_finite() && down != 0.0 {
+            n.transform *= figcraft_doc::geom::Affine::translate((0.0, down));
+        }
+    }
+    for st in &mut doc.styles {
+        if let StyleKind::Text { style } = &mut st.kind {
+            set(style);
+        }
+    }
+}
+
+/// The installed family `family` means when it isn't installed under that exact name: the one
+/// whose name is the same without spaces, ignoring case.
+pub(crate) fn installed_family(family: &str, installed: &[String]) -> Option<String> {
+    let key = |s: &str| s.chars().filter(|c| !c.is_whitespace()).flat_map(char::to_lowercase).collect::<String>();
+    if installed.iter().any(|f| f.eq_ignore_ascii_case(family)) {
+        return None;
+    }
+    let want = key(family);
+    installed.iter().find(|f| key(f) == want).cloned()
+}
+
+/// Gives `None` when `bytes` are not a `.fig` file. Then other readers can try.
+pub(crate) fn load_fig(bytes: &[u8], name: &str) -> Option<Result<figcraft_format::Loaded>> {
+    let r = figcraft_format::fig::try_import(bytes, name)?;
+    Some(r.map_err(|e| EngineError::Other(e.to_string())).map(|(mut doc, warnings)| {
+        link_instances(&mut doc);
+        figcraft_format::Loaded { issues: warnings, ..doc.into() }
+    }))
+}
+
 /// Link imported instances to their mains (layer sources, overrides found by comparing values),
 /// innermost first so outer instances settle last.
 fn link_instances(doc: &mut Document) {
+    super::styles::unfold_imported_bound_alpha(doc);
     crate::style_vars::after_load(doc);
+    super::styles::apply_paint_bindings_on_load(doc);
     let mut insts: Vec<(usize, NodeId)> =
         doc.nodes().filter(|n| matches!(n.kind, NodeKind::Instance { .. })).map(|n| (doc.ancestors(n.id).len(), n.id)).collect();
     insts.sort_by_key(|a| std::cmp::Reverse(a.0));
@@ -552,11 +827,9 @@ fn rest_images(path: &str) -> impl Fn(&str) -> Option<Vec<u8>> {
             return None;
         }
         let dir = dir.as_ref()?;
-        ["", ".png", ".jpg", ".jpeg", ".gif", ".webp"].iter().find_map(|e| {
-            let p = dir.join(format!("{r}{e}"));
-            let meta = std::fs::metadata(&p).ok()?;
-            if meta.is_file() && meta.len() <= MAX_IMAGE_FILE { std::fs::read(&p).ok() } else { None }
-        })
+        ["", ".png", ".jpg", ".jpeg", ".gif", ".webp"]
+            .iter()
+            .find_map(|e| crate::file_access::read_capped(dir.join(format!("{r}{e}")), MAX_IMAGE_FILE).ok())
     }
 }
 
@@ -579,11 +852,7 @@ fn sibling_variables(path: &str) -> Option<Value> {
     let file = std::path::Path::new(path);
     let dir = file.parent()?;
     [format!("{}.variables.json", file_stem(path)), "variables.json".to_string()].iter().map(|n| dir.join(n)).filter(|c| c != file).find_map(|c| {
-        let meta = std::fs::metadata(&c).ok()?;
-        if !meta.is_file() || meta.len() > MAX_VARIABLES_FILE {
-            return None;
-        }
-        let v: Value = serde_json::from_slice(&std::fs::read(&c).ok()?).ok()?;
+        let v: Value = serde_json::from_slice(&crate::file_access::read_capped(c, MAX_VARIABLES_FILE).ok()?).ok()?;
         figcraft_format::rest::is_variables_json(&v).then_some(v)
     })
 }
@@ -621,20 +890,29 @@ fn remember(s: &mut Session, path: &str) {
 }
 
 fn open_recent(s: &mut Session, p: &Value) -> Result<Value> {
+    use crate::file_access::{Access, allow, allowed};
     const CMD: &str = "file.openRecent";
+    // Confined to automation roots, the recent files outside them are never listed, opened, removed
+    // or named: `index` counts the files listed.
+    let listed = |r: &String| allowed(r, Access::Read);
     if p.get("clear").and_then(Value::as_bool) == Some(true) {
-        s.prefs.recent_files.clear();
+        s.prefs.recent_files.retain(|r| !listed(r));
     }
     if let Some(gone) = string(p, "remove") {
-        s.prefs.recent_files.retain(|r| *r != gone);
+        s.prefs.recent_files.retain(|r| *r != gone || !listed(r));
     }
     let path = match (string(p, "path"), num(p, "index")) {
-        (Some(path), _) => Some(path),
-        (None, Some(i)) => Some(s.prefs.recent_files.get(i.max(0.0) as usize).cloned().ok_or_else(|| bad(CMD, "no such recent file"))?),
+        (Some(path), _) => {
+            allow(&path, Access::Read)?;
+            Some(path)
+        }
+        (None, Some(i)) => {
+            Some(s.prefs.recent_files.iter().filter(|r| listed(r)).nth(i.max(0.0) as usize).cloned().ok_or_else(|| bad(CMD, "no such recent file"))?)
+        }
         _ => None,
     };
     if let Some(path) = path {
-        if !std::path::Path::new(&path).exists() {
+        if !crate::file_access::exists(&path) {
             s.prefs.recent_files.retain(|r| *r != path);
             return Err(bad(CMD, format!("{path} no longer exists")));
         }
@@ -644,17 +922,23 @@ fn open_recent(s: &mut Session, p: &Value) -> Result<Value> {
         .prefs
         .recent_files
         .iter()
+        .filter(|r| listed(r))
         .map(|r| {
             let name = std::path::Path::new(r).file_name().map_or_else(|| r.clone(), |f| f.to_string_lossy().into_owned());
-            json!({"path": r, "name": name, "exists": std::path::Path::new(r).exists()})
+            json!({"path": r, "name": name, "exists": crate::file_access::exists(r)})
         })
         .collect();
     Ok(json!({"files": files}))
 }
 
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
-    let path = req_string("file.open", p, "path")?;
     let variables = variables_param("file.open", p)?;
+    if string(p, "path").is_none()
+        && let Some(d) = string(p, "data")
+    {
+        return open_data(s, &d, p, variables.as_ref());
+    }
+    let path = req_string("file.open", p, "path")?;
     // Already open: switch to it.
     if let Some(i) = s.docs.iter().position(|d| d.path.as_deref() == Some(path.as_str())) {
         s.active = i;
@@ -672,9 +956,32 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
             more => format!("{}: {} problems were repaired or left out while opening it, e.g. {}", file_stem(&path), more.len(), more[0]),
         });
     }
-    s.docs.push(DocState::new(loaded.doc, native.then_some(path)).with_versions(loaded.versions).with_branches(loaded.branches));
+    let summary = import_summary(&loaded.doc);
+    let images_left_out = if native { loaded.images_past_budget } else { 0 };
+    s.docs.push(
+        DocState::new(loaded.doc, native.then(|| path.clone()))
+            .with_versions(loaded.versions)
+            .with_branches(loaded.branches)
+            .with_images_left_in_file(&path, images_left_out),
+    );
     s.active = s.docs.len() - 1;
-    let mut out = json!({"index": s.active});
+    let mut out = json!({"index": s.active, "summary": summary});
+    out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
+    Ok(out)
+}
+
+/// [`open`] for a file given as base64 `data` (a file dropped without a path on disk): `name` tells
+/// the format. It opens as a new document with no path, so the first save asks where to put it.
+fn open_data(s: &mut Session, data: &str, p: &Value, variables: Option<&Value>) -> Result<Value> {
+    let name = req_string("file.open", p, "name")?;
+    let data = data.split_once(',').map_or(data, |(_, b)| b);
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data.trim()).map_err(|e| bad("file.open", e.to_string()))?;
+    let (loaded, rest) = load_with(&bytes, &name, variables, &figcraft_format::rest::no_images)?;
+    let warnings = rest || ext(&name) == "svg";
+    let summary = import_summary(&loaded.doc);
+    s.docs.push(DocState::new(loaded.doc, None).with_versions(loaded.versions).with_branches(loaded.branches));
+    s.active = s.docs.len() - 1;
+    let mut out = json!({"index": s.active, "summary": summary});
     out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
     Ok(out)
 }
@@ -744,7 +1051,9 @@ impl FileSnapshot {
         let Some(ds) = s.docs.iter_mut().find(|d| d.uid == self.uid && d.path == self.path && Arc::ptr_eq(&d.saved_doc, &self.saved)) else {
             return Ok(false);
         };
-        write(self.path.as_deref().ok_or(EngineError::NoDocument)?, bytes)?;
+        let path = self.path.as_deref().ok_or(EngineError::NoDocument)?;
+        refuse_dropping_images(ds, path)?;
+        write(path, bytes)?;
         // The history or branches may have changed since: then they still count as unsaved.
         if ds.revision == self.revision {
             ds.versions_changed = false;
@@ -753,6 +1062,16 @@ impl FileSnapshot {
         ds.revision += 1;
         branch_tabs_saved(s, self.uid);
         Ok(true)
+    }
+}
+
+fn refuse_dropping_images(ds: &DocState, path: &str) -> Result<()> {
+    match ds.images_lost_saving_to(path) {
+        Some(count) => Err(EngineError::Other(format!(
+            "{} wasn't saved: {count} of its images weren't loaded (together they pass what FigCraft reads from one file), and saving over it would delete them. Save it under another name; this file keeps them.",
+            file_stem(path)
+        ))),
+        None => Ok(()),
     }
 }
 
@@ -775,27 +1094,76 @@ fn color_profile(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"profile": profile.id(), "changed": changed}))
 }
 
-/// Save the file of the active tab (the main file for a branch tab, with its branches).
-fn save_to(s: &mut Session, path: String) -> Result<Value> {
+/// Native saves act on the current document; a `.fig` copy exports the version shown, and a
+/// pending Save As choice must leave it shown until its destination is known.
+pub(crate) fn save_ends_preview(s: &Session, cmd: &str, p: &Value) -> bool {
+    let path =
+        string(p, "path").or_else(|| if cmd == "file.save" { s.docs.get(crate::branches::file_tab(s)).and_then(|ds| ds.path.clone()) } else { None });
+    path.is_some_and(|path| ext(&path) != "fig") || (cmd == "file.saveAs" && wants_data(p))
+}
+
+/// `file.saveAs` asked for the file's bytes instead of a path to write (the browser's download).
+fn wants_data(p: &Value) -> bool {
+    p.get("data").and_then(Value::as_bool) == Some(true)
+}
+
+/// Save the file of the active tab (the main file for a branch tab, with its branches), or export
+/// the active document as an experimental `.fig` copy without changing its native save state.
+/// Without a path the file comes back as base64 `data` for the caller to deliver (#969).
+fn save_to(s: &mut Session, path: Option<String>) -> Result<Value> {
+    if let Some(path) = path.as_deref().filter(|p| ext(p) == "fig") {
+        return export_fig(s, &json!({"path": path}));
+    }
     let i = crate::branches::file_tab(s);
     let ds = s.docs.get_mut(i).ok_or(EngineError::NoDocument)?;
-    let bytes = file_bytes(ds)?;
+    // A download (no path) writes over no file.
+    if let Some(path) = path.as_deref() {
+        refuse_dropping_images(ds, path)?;
+    }
+    let mut snapshot = FileSnapshot::of(ds);
+    let follows_path = ds.path.as_deref().map_or(ds.doc.name == "Untitled", |old| ds.doc.name == file_stem(old));
+    if let Some(path) = path.as_deref()
+        && follows_path
+        && ds.path.as_deref() != Some(path)
+    {
+        Arc::make_mut(&mut snapshot.doc).name = file_stem(path);
+    }
+    let bytes = snapshot.encode()?;
+    let Some(path) = path else {
+        // The download can still be refused: the caller marks the file saved once it was delivered.
+        let name = format!("{}.figcraft", ds.doc.name);
+        return Ok(json!({"name": name, "bytes": bytes.len(), "data": base64::engine::general_purpose::STANDARD.encode(&bytes)}));
+    };
     write(&path, &bytes)?;
+    ds.doc = snapshot.doc;
     ds.path = Some(path.clone());
-    ds.mark_saved();
-    ds.revision += 1;
-    let uid = ds.uid;
-    branch_tabs_saved(s, uid);
+    mark_saved(s, &json!({}))?;
     remember(s, &path);
     Ok(json!({"path": path, "bytes": bytes.len()}))
 }
 
+/// The file of the active tab (with its branch tabs) now matches what was written or delivered.
+fn mark_saved(s: &mut Session, _: &Value) -> Result<Value> {
+    let i = crate::branches::file_tab(s);
+    let ds = s.docs.get_mut(i).ok_or(EngineError::NoDocument)?;
+    ds.mark_saved();
+    ds.revision += 1;
+    let uid = ds.uid;
+    branch_tabs_saved(s, uid);
+    Ok(json!({"saved": true}))
+}
+
 fn save(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(path) = string(p, "path") {
-        return save_to(s, path);
+        return save_to(s, Some(path));
     }
     match s.docs.get(crate::branches::file_tab(s)).ok_or(EngineError::NoDocument)?.path.clone() {
-        Some(path) => save_to(s, path),
+        // Earlier builds wrote native data under a .fig name: never overwrite that file with an export.
+        Some(path) if ext(&path) == "fig" => {
+            s.request_ui("dialog.saveAs", json!({}));
+            Err(EngineError::Disabled("file.save".into(), "the saved path ends in .fig: choose Save as or pass `path`".into()))
+        }
+        Some(path) => save_to(s, Some(path)),
         None => {
             s.request_ui("dialog.saveAs", json!({}));
             Err(EngineError::Disabled("file.save".into(), "the file has no path yet: pass `path`".into()))
@@ -809,8 +1177,9 @@ fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
             if ext(&path).is_empty() {
                 path.push_str(".figcraft");
             }
-            save_to(s, path)
+            save_to(s, Some(path))
         }
+        None if wants_data(p) => save_to(s, None),
         None => {
             s.request_ui("dialog.saveAs", json!({}));
             Err(EngineError::Disabled("file.saveAs".into(), "pass `path`".into()))
@@ -843,14 +1212,37 @@ pub fn export_area(doc: &Document, ids: &[NodeId], setting: &ExportSetting) -> O
         .reduce(|a, b| a.union(b))
 }
 
-/// What an export of `ids` draws, bottom to top: the layers themselves, or (contents only off,
-/// and always for slices) every top-level layer of their page, so whatever shows in the area is in.
-fn drawn_layers(doc: &Document, ids: &[NodeId], setting: &ExportSetting) -> Vec<NodeId> {
-    let slice = ids.iter().any(|i| doc.node(*i).is_some_and(|n| matches!(n.kind, NodeKind::Slice)));
-    match ids.first().and_then(|i| doc.page_of(*i)).and_then(|p| doc.node(p)) {
-        Some(page) if slice || !setting.contents_only => page.children.clone(),
-        _ => super::edit::z_sorted(doc, ids),
+/// What an export of `ids` draws, bottom to top: the layers themselves, or (contents only off)
+/// every top-level layer of their page, so whatever shows in the area is in. A slice paints nothing
+/// itself: with contents only on, a slice inside a frame or group draws that frame or group, and a
+/// slice anywhere else draws every top-level layer of its page.
+pub fn drawn_layers(doc: &Document, ids: &[NodeId], setting: &ExportSetting) -> Vec<NodeId> {
+    let Some(page) = ids.first().and_then(|i| doc.page_of(*i)).and_then(|p| doc.node(p)) else {
+        return super::edit::z_sorted(doc, ids);
+    };
+    if !setting.contents_only {
+        return page.children.clone();
     }
+    let mut own = Vec::with_capacity(ids.len());
+    for &i in ids {
+        if !doc.node(i).is_some_and(|n| matches!(n.kind, NodeKind::Slice)) {
+            own.push(i);
+            continue;
+        }
+        match slice_container(doc, i) {
+            Some(c) => own.push(c),
+            None => return page.children.clone(),
+        }
+    }
+    own.sort_unstable();
+    own.dedup();
+    super::edit::z_sorted(doc, &super::edit::roots(doc, &own))
+}
+
+/// The frame or group a slice sits in: None on the page or in a section.
+fn slice_container(doc: &Document, slice: NodeId) -> Option<NodeId> {
+    let parent = doc.node(slice)?.parent?;
+    doc.node(parent).is_some_and(|p| p.kind.is_frame_like() || matches!(p.kind, NodeKind::Group)).then_some(parent)
 }
 
 /// [`export_bytes`] with an export setting's format and options (its size is `scale`: see
@@ -1038,6 +1430,20 @@ fn size_param(cmd: &str, p: &Value) -> Result<Option<ExportSize>> {
 
 /// Most files one `file.exportLayers` writes.
 const MAX_EXPORT_FILES: usize = 1000;
+/// Most bytes the files of one zip export add up to: the files, the archive and its base64 copy
+/// are all in memory at once (in the browser too).
+const MAX_ZIP_BYTES: usize = 256 << 20;
+
+/// Keep `bytes` as zip member `name`, unless the members would pass `limit` bytes together.
+fn add_member<'a>(members: &mut Vec<(&'a str, Vec<u8>)>, name: &'a str, bytes: Vec<u8>, limit: usize) -> Result<()> {
+    let total = members.iter().map(|(_, b)| b.len()).sum::<usize>().saturating_add(bytes.len());
+    if total > limit {
+        let mb = limit >> 20;
+        return Err(bad("file.exportLayers", format!("the files would pass {mb} MB as one zip: export fewer layers at a time, or to a folder")));
+    }
+    members.push((name, bytes));
+    Ok(())
+}
 
 /// One file of a layer export: the layer, its setting and the file name.
 pub struct ExportJob {
@@ -1083,9 +1489,15 @@ fn export_path(name: &str) -> String {
     if parts.is_empty() { "Untitled".into() } else { parts.join("/") }
 }
 
-/// `name` without path separators and characters file systems reject.
-fn safe_file_name(name: &str) -> String {
-    name.chars().take(200).map(|c| if c.is_control() || "/\\:*?\"<>|".contains(c) { '_' } else { c }).collect()
+/// Characters no file name may contain (path separators and ones file systems reject).
+pub(crate) const FORBIDDEN_FILE_NAME_CHARS: &str = "/\\:*?\"<>|";
+
+/// `name` without path separators and characters file systems reject (`/ \ : * ? " < > |` and
+/// control characters become `_`); everything else is kept, up to the first 200 characters.
+/// `figcraft-cli export` names its files by this rule too (and keeps at most 100 characters before
+/// the number and extension it adds).
+pub fn safe_file_name(name: &str) -> String {
+    name.chars().take(200).map(|c| if c.is_control() || FORBIDDEN_FILE_NAME_CHARS.contains(c) { '_' } else { c }).collect()
 }
 
 /// Layers on `page` that have export settings (document order).
@@ -1106,6 +1518,9 @@ fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Disabled(cmd.into(), "no export settings (add one with export.add)".into()));
     }
     let dir = string(p, "dir");
+    // The browser saves one download at a time: several files go as one zip (#969).
+    let zip = dir.is_none() && boolean(p, "zip").unwrap_or(false);
+    let mut members = Vec::new();
     // Print options passed here stand in for every PDF setting's own.
     let print = has_print_param(p).then(|| print_param(cmd, p, PrintSettings::default())).transpose()?;
     let mut files = Vec::with_capacity(jobs.len());
@@ -1119,18 +1534,24 @@ fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
                 let path = std::path::Path::new(d).join(&job.file);
                 // A layer name with slashes exports into folders.
                 if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
+                    let _ = crate::file_access::create_dir_all(parent);
                 }
                 let path = path.to_string_lossy().to_string();
                 write(&path, &bytes)?;
                 f["path"] = json!(path);
             }
+            None if zip => add_member(&mut members, job.file.as_str(), bytes, MAX_ZIP_BYTES)?,
             None => f["data"] = json!(base64::engine::general_purpose::STANDARD.encode(&bytes)),
         }
         files.push(f);
     }
     let with_settings: std::collections::BTreeSet<NodeId> = jobs.iter().map(|j| j.id).collect();
-    Ok(json!({"files": files, "skipped": ids.len().saturating_sub(with_settings.len())}))
+    let mut r = json!({"files": files, "skipped": ids.len().saturating_sub(with_settings.len())});
+    if zip {
+        let archive = figcraft_format::zip_files(members.iter().map(|(n, b)| (*n, b.as_slice()))).map_err(|e| EngineError::Other(e.to_string()))?;
+        r["data"] = json!(base64::engine::general_purpose::STANDARD.encode(&archive));
+    }
+    Ok(r)
 }
 
 /// A PDF with one page per group of layers (an sRGB document), titled after the file; `area`
@@ -1207,7 +1628,7 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
             }
             Ok(out)
         }
-        "figcraft" | "json" | "fig" => {
+        "figcraft" | "json" | "fig" | "sketch" => {
             let resolver = path.as_deref().map(rest_images);
             let images: figcraft_format::rest::ImageResolver = match &resolver {
                 Some(r) => r,
@@ -1215,8 +1636,9 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
             };
             let sibling = if variables.is_none() { path.as_deref().and_then(sibling_variables) } else { None };
             let (other, rest) = load_with(&bytes, &name, variables.as_ref().or(sibling.as_ref()), images)?;
+            let summary = import_summary(&other.doc);
             let pages = append_pages(s.doc_mut()?, &other.doc)?;
-            let mut out = json!({"pages": pages});
+            let mut out = json!({"pages": pages, "summary": summary});
             if rest {
                 out["warnings"] = json!(other.issues);
             }
@@ -1252,6 +1674,19 @@ fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
             map.insert(id, doc.alloc_id());
         }
     }
+    // Library copies a .fig import keeps (cached definitions) have no library record to follow:
+    // the layers of its store come along into the store of `doc`. Recorded copies are left to
+    // `merge_store`, which shares them with copies `doc` already has.
+    let cached: Vec<NodeId> = other
+        .library_store()
+        .and_then(|s| other.node(s))
+        .map(|s| s.children.iter().copied().filter(|root| other.libraries.import_of(*root).is_none()).collect())
+        .unwrap_or_default();
+    for root in &cached {
+        for id in other.subtree(*root) {
+            map.insert(id, doc.alloc_id());
+        }
+    }
     let mut new_pages = Vec::new();
     for pg in &other.pages {
         let Some(pn) = other.node(*pg) else { continue };
@@ -1269,6 +1704,13 @@ fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
         }
         new_pages.push(np);
     }
+    if !cached.is_empty() {
+        let store = doc.ensure_library_store();
+        for root in &cached {
+            let nodes: Vec<Node> = other.subtree(*root).into_iter().filter_map(|i| other.node(i).cloned()).collect();
+            doc.paste_nodes(&nodes, &map, *root, store, None)?;
+        }
+    }
     for new in map.values() {
         let src = doc.node(*new).and_then(|n| n.source).and_then(|s| map.get(&s).copied());
         if let (Some(src), Some(n)) = (src, doc.node_mut(*new)) {
@@ -1280,7 +1722,7 @@ fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
 }
 
 fn close(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = num(p, "index").map(|x| x as usize).unwrap_or(s.active);
+    let i = if get(p, "index").is_none() { s.active } else { req_index("file.close", p, "index")? };
     let Some(ds) = s.docs.get(i) else { return Err(bad("file.close", "no such document")) };
     // A branch tab's edits are in its main file already (which then has unsaved changes).
     if ds.branch_of.is_none() && ds.is_dirty() && !boolean(p, "force").unwrap_or(false) {
@@ -1288,12 +1730,34 @@ fn close(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Disabled("file.close".into(), "the document has unsaved changes (pass force: true to discard)".into()));
     }
     let uid = ds.uid;
+    let active_uid = s.docs.get(s.active).map(|d| d.uid);
     s.docs.remove(i);
-    if s.active >= s.docs.len() {
-        s.active = s.docs.len().saturating_sub(1);
-    }
+    // Removing a tab before the active one shifts its index; keep the same document selected.
+    s.active = active_uid.and_then(|a| s.docs.iter().position(|d| d.uid == a)).unwrap_or(i.min(s.docs.len().saturating_sub(1)));
     crate::branches::close_tabs(s, uid, None);
     ok()
+}
+
+#[cfg(test)]
+mod tab_order_tests {
+    use super::*;
+
+    #[test]
+    fn moving_and_closing_inactive_tabs_preserves_the_active_document() {
+        let mut session = Session::new();
+        for name in ["Two", "Three", "Four"] {
+            session.execute("file.new", &json!({"name": name})).unwrap();
+        }
+        session.execute("doc.switch", &json!({"index": 2})).unwrap();
+        let active_uid = session.docs[session.active].uid;
+        let moved_uid = session.docs[0].uid;
+        session.execute("file.moveTab", &json!({"from": 0, "to": 2})).unwrap();
+        assert_eq!(session.docs[2].uid, moved_uid);
+        assert_eq!(session.docs[session.active].uid, active_uid);
+        session.execute("file.close", &json!({"index": 0})).unwrap();
+        assert_eq!(session.docs[session.active].uid, active_uid);
+        assert!(session.execute("file.moveTab", &json!({"from": 0, "to": 99})).is_err());
+    }
 }
 
 /// Ctrl+Tab / Ctrl+Shift+Tab: the next or previous open document, wrapping around.
@@ -1334,6 +1798,70 @@ mod rest_import_tests {
         doc.nodes().find(|n| matches!(n.kind, NodeKind::Instance { .. })).unwrap()
     }
 
+    /// What a .fig import with a cached library component leaves: the main in the hidden store, a
+    /// visible instance of it and a layer linked to the main's layer.
+    fn cached_import() -> Document {
+        let mut doc = Document::new("Cached");
+        let page = doc.first_page().unwrap();
+        let store = doc.ensure_library_store();
+        let main = doc
+            .create(store, NodeKind::Component { description: String::new(), props: Default::default() }, "Cached main", 0.0, 0.0, 20.0, 20.0)
+            .unwrap();
+        let body = doc.create(main, NodeKind::Rectangle, "Body", 0.0, 0.0, 20.0, 20.0).unwrap();
+        let inst =
+            doc.create(page, NodeKind::Instance { component: main, props: Default::default() }, "Cached instance", 0.0, 0.0, 20.0, 20.0).unwrap();
+        let mut copy = doc.node(body).unwrap().clone();
+        copy.id = doc.alloc_id();
+        copy.parent = None;
+        copy.source = Some(body);
+        let copy_id = copy.id;
+        doc.insert(copy, inst, None).unwrap();
+        assert!(doc.is_remote(main) && doc.node(copy_id).unwrap().source == Some(body));
+        doc
+    }
+
+    /// Pasting layers that use a cached main into another document leaves the main behind, as it
+    /// does for other mains that are not published: no link points at a layer of the target.
+    #[test]
+    fn pasting_instances_of_cached_components_leaves_no_dangling_links() {
+        let src = cached_import();
+        let mut doc = Document::new("Target");
+        let page = doc.first_page().unwrap();
+        for i in 0..8 {
+            doc.create(page, NodeKind::Rectangle, &format!("Filler {i}"), 0.0, 0.0, 5.0, 5.0).unwrap();
+        }
+        let inst = src.nodes().find(|n| n.name == "Cached instance").unwrap().id;
+        let ids = src.subtree(inst);
+        let map: std::collections::BTreeMap<NodeId, NodeId> = ids.iter().map(|i| (*i, doc.alloc_id())).collect();
+        let nodes: Vec<Node> = ids.iter().filter_map(|i| src.node(*i).cloned()).collect();
+        doc.paste_nodes(&nodes, &map, inst, page, None).unwrap();
+        crate::library::adopt_pasted(&mut doc, &src, None, &map).unwrap();
+        let pasted = doc.node(map[&inst]).unwrap();
+        let NodeKind::Instance { component, .. } = pasted.kind else { panic!() };
+        assert!(!doc.contains(component), "the main stays behind: {component:?}");
+        assert!(doc.node(pasted.children[0]).unwrap().source.is_none_or(|s| !doc.contains(s)));
+    }
+
+    #[test]
+    fn appending_pages_with_cached_library_components_brings_the_components() {
+        let other = cached_import();
+        let mut doc = Document::new("Target");
+        let page = doc.first_page().unwrap();
+        // Ids of the target that would collide with the other document's store.
+        for i in 0..8 {
+            doc.create(page, NodeKind::Rectangle, &format!("Filler {i}"), 0.0, 0.0, 5.0, 5.0).unwrap();
+        }
+        append_pages(&mut doc, &other).unwrap();
+        assert!(doc.validate().is_empty(), "{:?}", doc.validate());
+        assert!(crate::components::mirror_issues(&doc).is_empty(), "{:?}", crate::components::mirror_issues(&doc));
+        let inst = doc.nodes().find(|n| n.name == "Cached instance").unwrap();
+        let NodeKind::Instance { component, .. } = inst.kind else { panic!() };
+        assert_eq!(doc.node(component).unwrap().name, "Cached main");
+        assert!(doc.is_remote(component), "the main comes along into the store");
+        let layer = doc.node(inst.children[0]).unwrap();
+        assert_eq!(layer.source, doc.node(component).unwrap().children.first().copied());
+    }
+
     #[test]
     fn rest_json_loads_with_linked_instances() {
         let bytes = serde_json::to_vec(&kit()).unwrap();
@@ -1349,6 +1877,44 @@ mod rest_import_tests {
         assert!(label.overrides.contains("characters"), "{:?}", label.overrides);
         assert!(crate::components::mirror_issues(&doc).is_empty());
         assert!(thumbnail(&doc).is_some());
+    }
+
+    #[test]
+    fn open_takes_data_and_a_name_as_a_new_unsaved_document() {
+        let mut saved = Session::new();
+        saved.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
+        let bytes = file_bytes(saved.ds().unwrap()).unwrap();
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let mut s = Session::new();
+        let recent = s.prefs.recent_files.clone();
+        let r = s.execute("file.open", &json!({"data": data, "name": "Dropped.figcraft"})).unwrap();
+        let open = s.docs.len();
+        assert_eq!(r["index"], open - 1, "a document of its own, made active");
+        assert_eq!(s.ds().unwrap().path, None, "no path to save over");
+        assert!(s.doc().unwrap().nodes().any(|n| matches!(n.kind, NodeKind::Rectangle)));
+        assert_eq!(s.prefs.recent_files, recent, "nothing on disk to remember");
+        assert!(s.execute("file.open", &json!({"data": data})).is_err(), "the name tells the format");
+        assert!(s.execute("file.open", &json!({"data": "not base64!", "name": "x.svg"})).is_err());
+        assert_eq!(s.docs.len(), open, "a refused open adds nothing");
+    }
+
+    #[test]
+    fn save_as_data_hands_back_the_file_and_marks_it_saved_once_delivered() {
+        // The browser has no paths: Save as returns the file for a download (#969).
+        let mut s = Session::new();
+        s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
+        assert!(s.execute("file.saveAs", &json!({})).is_err(), "no path and no data: still asks for a path");
+        let recent = s.prefs.recent_files.clone();
+        let r = s.execute("file.saveAs", &json!({"data": true})).unwrap();
+        assert_eq!(r["name"], "Untitled.figcraft");
+        assert!(s.ds().unwrap().is_dirty(), "not delivered yet: a refused download must not lose the edits");
+        s.execute("file.markSaved", &json!({})).unwrap();
+        assert!(!s.ds().unwrap().is_dirty());
+        assert_eq!(s.ds().unwrap().path, None, "still no path to save over");
+        assert_eq!(s.prefs.recent_files, recent, "nothing on disk to remember");
+        let mut t = Session::new();
+        t.execute("file.open", &json!({"data": r["data"], "name": r["name"]})).unwrap();
+        assert!(t.doc().unwrap().nodes().any(|n| matches!(n.kind, NodeKind::Rectangle)), "the bytes reopen");
     }
 
     #[test]
@@ -1516,5 +2082,20 @@ mod staging_write_tests {
             std::fs::set_permissions(&ro, perms).unwrap();
         }
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod zip_cap_tests {
+    use super::add_member;
+
+    #[test]
+    fn zip_members_stop_at_the_limit_and_keep_what_fit() {
+        let mut members = Vec::new();
+        add_member(&mut members, "a.png", vec![0; 6], 10).unwrap();
+        add_member(&mut members, "b.png", vec![0; 4], 10).unwrap();
+        let err = add_member(&mut members, "c.png", vec![0; 1], 10).unwrap_err().to_string();
+        assert!(err.contains("as one zip"), "{err}");
+        assert_eq!(members.iter().map(|(n, _)| *n).collect::<Vec<_>>(), ["a.png", "b.png"]);
     }
 }
