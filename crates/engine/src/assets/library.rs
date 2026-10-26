@@ -1331,5 +1331,4 @@ pub fn published_variables(lib: &PublishedLibrary) -> impl Iterator<Item = &Vari
 }
 
 #[cfg(test)]
-#[path = "library_tests.rs"]
 mod tests;
