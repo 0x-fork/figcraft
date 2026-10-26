@@ -241,8 +241,10 @@ pub fn invoke(app: &mut FigApp, id: &str) {
             app.toast(tr("Copied as text"));
         }
         "edit.copyLink" => {
+            // Only a selected layer has a link, and the copy goes through the control-channel fence
+            // (`clipboard_set_text`): a synthetic gesture never replaces the user's clipboard.
             if let Some(id) = app.session.selection().first() {
-                app.services.clipboard_set_text(&format!("figcraft://node/{}", id.0));
+                app.clipboard_set_text(&format!("figcraft://node/{}", id.0));
                 app.toast(tr("Link copied"));
             }
         }
@@ -311,6 +313,15 @@ pub fn invoke(app: &mut FigApp, id: &str) {
 /// Every visible top-level frame of the page as one PDF page each, through a save dialog.
 fn export_frames_pdf(app: &mut FigApp) {
     let name = app.session.doc().map(|d| d.name.clone()).unwrap_or_else(|_| "Untitled".into());
+    if app.services.downloads() {
+        let file = format!("{name}.pdf");
+        if let Some(r) = app.run("file.exportFramesPdf", json!({}))
+            && app.download(&file, &r)
+        {
+            app.toast(trf("Exported {name}", &[("name", &file)]));
+        }
+        return;
+    }
     app.pick_save(tr("Export"), &format!("{name}.pdf"), &["pdf"], |app, p| {
         if app.run("file.exportFramesPdf", json!({"path": p.to_string_lossy()})).is_some() {
             app.toast(trf("Exported {name}", &[("name", &p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())]));

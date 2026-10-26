@@ -131,6 +131,37 @@ fn a_copy_command_invoked_for_a_synthetic_click_still_keeps_the_clipboard() {
     assert_eq!(w.writes(), (1, 0));
 }
 
+/// Asserts a real `ui.menu.invoke` of Copy link is fenced from the system clipboard, while the
+/// same menu item invoked by the user writes the selected layer's link.
+#[test]
+fn a_synthetic_ui_menu_invoke_copy_link_keeps_the_clipboard_then_a_user_copy_writes_the_link() {
+    let mut w = Win::new();
+    let selected = *w.app.session.selection().first().expect("a selected layer");
+    let link = format!("figcraft://node/{}", selected.0);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    w.app.control_queue.push(ControlRequest {
+        id: json!(1),
+        method: "ui.menu.invoke".into(),
+        params: json!({"id": "edit.copyLink"}),
+        reply: tx,
+        state: Default::default(),
+    });
+    w.frame(vec![]);
+    let reply = rx.try_recv().expect("the menu invocation is acknowledged");
+    assert_eq!(reply.id, json!(1));
+    assert!(reply.result.is_ok(), "the menu item ran: {:?}", reply.result);
+    assert_eq!(w.writes(), (0, 0), "a synthetic menu invocation never replaces the user's clipboard");
+    assert_eq!(w.app.ui.toast.as_ref().map(|t| t.0.as_str()), Some("Link copied"));
+    assert!(!w.app.control_synthetic, "the fence ends with the frame");
+
+    crate::menus::invoke(&mut w.app, "edit.copyLink");
+    assert_eq!(w.writes(), (1, 0), "the user's invocation writes exactly one text clipboard entry");
+    let recorded = w.recorded.lock().unwrap();
+    assert_eq!(recorded.text, vec![link.clone()]);
+    assert_eq!(recorded.last_text.as_deref(), Some(link.as_str()));
+}
+
 /// Return the characters of a text node in the test window.
 fn edit_text(w: &Win, id: NodeId) -> String {
     match &w.app.session.doc().unwrap().node(id).unwrap().kind {
