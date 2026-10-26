@@ -203,6 +203,14 @@ icons! {
     PenNib,
     /// A board file (and the sticky note tool): a note with its bottom corner folded up.
     Board,
+    /// Board templates: a board laid out in blocks, a note and lines of text. A table: a grid.
+    /// The table bar's rows and columns: a strip with a plus or a minus beyond its end.
+    Templates,
+    Table,
+    AddRow,
+    RemoveRow,
+    AddColumn,
+    RemoveColumn,
     /// Board tools: a chisel-tipped marker; a broad highlighter over its band; a connector
     /// between two boxes; shapes (a square behind a circle); a stamp (a badge with a check).
     Marker,
@@ -1171,6 +1179,36 @@ fn draw(p: &P, icon: Icon) {
             p.fill(&[(9.5, 13.5), (9.5, 9.5), (13.5, 9.5)]);
             p.line(5.0, 6.5, 11.0, 6.5);
             p.line(5.0, 9.5, 8.0, 9.5);
+        }
+        Templates => {
+            p.rect(1.5, 2.5, 14.5, 13.5, 1.5);
+            p.fill_rect(3.5, 4.5, 7.5, 8.5, 0.5);
+            p.line(9.5, 5.5, 12.5, 5.5);
+            p.line(9.5, 7.5, 12.5, 7.5);
+            p.line(3.5, 11.0, 12.5, 11.0);
+        }
+        Table => {
+            p.rect(1.5, 2.5, 14.5, 13.5, 1.0);
+            p.line(1.5, 6.5, 14.5, 6.5);
+            p.line(1.5, 10.0, 14.5, 10.0);
+            p.line(6.0, 2.5, 6.0, 13.5);
+            p.line(10.0, 2.5, 10.0, 13.5);
+        }
+        AddRow | RemoveRow => {
+            p.rect(1.5, 2.5, 14.5, 8.5, 1.0);
+            p.line(8.0, 2.5, 8.0, 8.5);
+            p.line(5.5, 12.5, 10.5, 12.5);
+            if icon == AddRow {
+                p.line(8.0, 10.0, 8.0, 15.0);
+            }
+        }
+        AddColumn | RemoveColumn => {
+            p.rect(2.5, 1.5, 8.5, 14.5, 1.0);
+            p.line(2.5, 8.0, 8.5, 8.0);
+            p.line(10.0, 8.0, 15.0, 8.0);
+            if icon == AddColumn {
+                p.line(12.5, 5.5, 12.5, 10.5);
+            }
         }
         Marker => {
             p.poly(&[(3.0, 13.0), (3.0, 10.5), (10.0, 3.5), (12.5, 6.0), (5.5, 13.0)], true);

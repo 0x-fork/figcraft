@@ -414,6 +414,17 @@ one undo step and returns the ids it made:
 - `board.setColor {ids?, color}`: stickies and shapes take it as their fill, connectors and ink as
   their line. `board.setStyle {ids?, shape?, fontSize?, style?: straight|elbow|curved, startCap?,
   endCap?}`: a shape's outline and text size, a connector's routing and arrowheads.
+- `board.templates` → `[{id, name, description, width, height}]` lists the built-in templates:
+  `retrospective brainstorm weeklyPlanner flowChart kanban`. `board.template {name, x?, y?}` →
+  `{name, ids}` places one (its top-left at `x`, `y`; centred in the view without them) as ordinary
+  sections, stickies, shapes, connectors and text, selected, in one undo step.
+- `board.table {rows?, columns?, cells?, x?, y?}` → `{id, rows, columns, cells}`: a table (default
+  3 × 3, at most 50 × 20; `cells` is `[["Name", "Role"], …]` row by row and sets the size when
+  `rows`/`columns` are left out). It is an auto layout frame of row frames holding cell frames, each
+  with one text layer; `cells` in the answer holds those text layers' ids row by row, so
+  `node.set {id, props: {characters}}` changes a cell. A cell's row grows with its text. `board.tableEdit {id?, action: addRow|addColumn|removeRow|removeColumn,
+  index?}` → the same answer: `index` is where the new row or column goes, or which one goes
+  (default the last); `id` may be the table or any layer in it.
 - Tools for `pointer`: `tool.sticky {color?}`, `tool.shape {shape?}`, `tool.connector {style?: straight|elbow|curved}`
   (drag from one object to another), `tool.marker {color?}`, `tool.highlighter {color?}`,
   `tool.eraser` (drag over strokes), `tool.stamp {stamp?}`; Text and Section are the usual tools.

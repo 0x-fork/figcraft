@@ -34,7 +34,7 @@ const STICKY_GAP: f64 = 24.0;
 /// A new shape's size.
 const SHAPE: f64 = 160.0;
 /// Text on board objects, and the author line under a sticky's note.
-const INK: Color = Color::from_rgb8_const(0x1E, 0x1E, 0x1E);
+pub(crate) const INK: Color = Color::from_rgb8_const(0x1E, 0x1E, 0x1E);
 const AUTHOR_INK: Color = Color::from_rgb8_const(0x5C, 0x5A, 0x55);
 /// Connectors' default colour and weight.
 const LINE: Color = Color::from_rgb8_const(0x3A, 0x39, 0x36);
@@ -285,7 +285,7 @@ fn soft_shadow() -> Effect {
 }
 
 /// A text layer filling its frame's width (the frame's auto layout places it).
-fn add_text(doc: &mut Document, parent: NodeId, text: &str, size: f64, color: Color, align: TextAlignH, width: f64) -> Result<NodeId> {
+pub(crate) fn add_text(doc: &mut Document, parent: NodeId, text: &str, size: f64, color: Color, align: TextAlignH, width: f64) -> Result<NodeId> {
     let first: String = text.lines().next().unwrap_or("").chars().take(64).collect();
     let name = if first.trim().is_empty() { "Text" } else { first.as_str() };
     let mut td = TextData {
@@ -774,7 +774,7 @@ fn set_color(s: &mut Session, p: &Value) -> Result<Value> {
                 n.strokes = vec![Paint::solid(line_shade(color))];
             }
             BoardItem::Connector(_) | BoardItem::Ink => doc.get_mut(id)?.strokes = vec![Paint::solid(line_shade(color))],
-            BoardItem::Label { .. } | BoardItem::Stamp { .. } => continue,
+            BoardItem::Label { .. } | BoardItem::Stamp { .. } | BoardItem::Table => continue,
         }
         changed.push(id);
     }
@@ -1472,7 +1472,7 @@ impl Session {
     /// label to type in). True when it was one.
     pub(crate) fn board_double_click(&mut self, doc: &Document, leaf: NodeId, sel: &[NodeId]) -> Result<bool> {
         let whole = figcraft_doc::geometry::select_target(doc, leaf, sel, false);
-        let editing = self.ds()?.text_edit.as_ref().is_some_and(|te| owner_of_text(doc, te.id) == Some(whole));
+        let editing = self.ds()?.text_edit.as_ref().is_some_and(|te| doc.is_ancestor(whole, te.id));
         let Some(item) = doc.node(whole).and_then(|n| n.board.clone()).filter(|_| !editing) else { return Ok(false) };
         self.tool.gesture = Gesture::None;
         self.cancel_interaction()?;
@@ -1487,6 +1487,7 @@ impl Session {
                 };
                 edit_text(self, label)
             }
+            BoardItem::Table => crate::board_table::edit_cell(self, doc, leaf),
             b if b.has_text() => edit_text(self, whole),
             _ => Ok(false),
         }

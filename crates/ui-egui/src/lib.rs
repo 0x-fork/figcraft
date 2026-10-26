@@ -10,6 +10,7 @@ pub mod assets_panel;
 pub mod bidi;
 pub mod board_bar;
 pub mod board_facilitate;
+mod board_picker;
 pub mod branch_ui;
 pub mod canvas;
 pub mod cjk;
@@ -72,6 +73,8 @@ pub mod versions;
 pub mod widgets;
 pub mod windows;
 
+#[cfg(test)]
+mod board_picker_tests;
 #[cfg(test)]
 mod board_ui_tests;
 #[cfg(test)]

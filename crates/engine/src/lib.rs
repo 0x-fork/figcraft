@@ -15,6 +15,8 @@ pub mod arc_handles;
 pub mod background;
 pub mod batch;
 pub mod board;
+pub mod board_table;
+pub mod board_templates;
 pub mod booleans;
 pub mod branches;
 pub mod catalog;
@@ -1639,6 +1641,8 @@ mod batch_step_ref_tests;
 mod binding_lists_tests;
 #[cfg(test)]
 mod board_connector_tests;
+#[cfg(test)]
+mod board_tables_tests;
 #[cfg(test)]
 mod board_tests;
 #[cfg(test)]
