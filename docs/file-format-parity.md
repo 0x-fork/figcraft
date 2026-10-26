@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-26 · **Change:** minor (Save and auto-save don't replace changes another app made to the open file (#1330); `.sketch` import, best effort, Sketch 48 and newer; the PNG row names ignore overlapping layers and where include bounding box is offered; the Fonts table's missing-font row describes the Missing fonts window; `.figcraft` carries the file kind (boards); `.fig` import: resized instances and variable modes by asset key; atomic saves; auto-save; SVG export clip of nested frames; SVG/PDF export depth refusal (#208); `.fig` export: instance sizes, variables with modes, shared styles, variable-width strokes; `.fig` export: written files checked by opening them in other software; experimental `.fig` export; export and inspect behaviour suite and fixes; .fig import: editable vector networks and more layer kinds; embedded image colour profiles; `.fig` import, best effort; animated GIF fills and TIFF images; last major: created, formats from the installed Figma's Info.plist and help center, ours from source; REST import keeps slot layers and instances' slot content (#792); REST import reads grid track sizes (#465); `.fig` import fidelity from the community batches, budgets for large files, the import report, a `.fig` copy from Save as, paste from another design app; instance layers' size and resizing and Hug on import (#731, #732)) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-26 · **Change:** minor (`.fig` export: files the incumbent imports, with component set properties, and grid track sizes at its field ids; Save and auto-save don't replace changes another app made to the open file (#1330); `.sketch` import, best effort, Sketch 48 and newer; the PNG row names ignore overlapping layers and where include bounding box is offered; the Fonts table's missing-font row describes the Missing fonts window; `.figcraft` carries the file kind (boards); `.fig` import: resized instances and variable modes by asset key; atomic saves; auto-save; SVG export clip of nested frames; SVG/PDF export depth refusal (#208); `.fig` export: instance sizes, variables with modes, shared styles, variable-width strokes; `.fig` export: written files checked by opening them in other software; experimental `.fig` export; export and inspect behaviour suite and fixes; .fig import: editable vector networks and more layer kinds; embedded image colour profiles; `.fig` import, best effort; animated GIF fills and TIFF images; last major: created, formats from the installed Figma's Info.plist and help center, ours from source; REST import keeps slot layers and instances' slot content (#792); REST import reads grid track sizes (#465); `.fig` import fidelity from the community batches, budgets for large files, the import report, a `.fig` copy from Save as, paste from another design app; instance layers' size and resizing and Hug on import (#731, #732)) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every format Figma reads or writes, with FigCraft's support. Sources: `Info.plist` of
 `/Applications/Figma.app` (document types only; nothing inside the bundle's code was read), Figma's
@@ -84,17 +84,21 @@ each.
   their filled areas), text, boolean groups, slices; the fill outline of frames and shapes and the
   stroke outline of plain strokes (a ring around boxes and whole ellipses, the widened path of other
   centred strokes);
-  solid, gradient (handles as the paint transform) and image paints (the image bytes, scale mode,
+  solid, gradient (handles as the paint transform) and image paints (the image bytes, named by their SHA-1, scale mode,
   rotation, tile scale, crop); strokes (weight, align, join, caps, dashes, miter limit, per-side
   weights); shadows, layer and background blurs (progressive too), noise and texture; corners and
   smoothing, constraints, clip content, masks with their type; auto layout (direction, wrap, gaps, padding,
-  alignment, hug, strokes in layout, stacking order, grids with their tracks and cells) and how
-  layers sit in it (fill, absolute, min/max sizes); layout grids; export settings; text style
-  (font, with styles under their standard names such as "Semi Bold"; size; line height, a share of
+  alignment, hug, strokes in layout, stacking order, grids with their tracks, their sizes (fixed, hug, fill) and cells) and how
+  layers sit in it (fill, absolute, min/max sizes, an axis without a maximum as infinite); layout grids; export settings; text style
+  (font, with styles under the names font families give their faces: "SemiBold", "ExtraBold"…, and
+  "Semi Bold" in Inter; size; line height, a share of
   the font size as a raw multiplier; letter spacing, case, decoration, links), alignment, auto resize,
   truncation, paragraph spacing and indent, list types and styled runs with their fills (indexed
   by UTF-16 unit); components (description, boolean, text and instance swap properties and the
-  layers bound to them), component sets, instances (their main, property values, what the instance
+  layers bound to them, with their values also as variable data), component sets (the set holds
+  the definitions, variant properties included with their values in order; each variant has its
+  own copy of each definition and its variant values, and its layers and instances name that
+  copy), instances (their main, property values, what the instance
   itself changes from its main, such as its size, name and paints, as an override addressed by the
   main's id, the fields its layers change, by id path, through nested instances and swaps, and what
   follows from those as derived data: each layer's size, place and outline and the colours its
@@ -138,6 +142,16 @@ each.
   Not working or unchecked there: number, string and boolean bindings and bindings on effects, layout guides and gradient stops come across as the values they give but did not show as bound there (their entries now also name the layer field they set, not yet checked there), and strokes wider on one side of the path are written as filled outlines, no longer editable strokes there (the stroke itself is kept as plugin data and our own import puts it back; not yet checked there); effects such as
   glass and noise, images and prototype interactions are unchecked. Text boxes sized to their content can come out
   a pixel wider or narrower there.
+  Then (2026-10-22), importing synthetic files into the incumbent (Drafts ▸ Import): any file with an
+  image failed ("Internal error during import") while images were named by their SHA-256; named by
+  their SHA-1 they import with their images. Component sets came in without their variant
+  properties and with boolean, text and instance swap properties unbound; with the set holding the
+  definitions and each variant its own copies (the layout of a file the incumbent saves itself),
+  the set lists every property, the variants' layers are bound to them and instances keep their
+  values. Frames with only a maximum width collapsed (the missing maximum height was written as 0),
+  and text in a family that spells compound weights without a space (Libre Franklin Semi Bold) was
+  a missing font and not drawn; both fixed. Variables with their modes, shared styles and their
+  links, colour bindings and the modes frames set came across.
 - **Round trips through our own importer:** 60 generated documents (every layer
   kind above, components, nested instances with overrides, a grid inside a component,
   interactions) are exported, read back and compared layer by layer: structure, geometry within
@@ -171,6 +185,8 @@ each.
 | 2026-10-24 | patch | Fonts: the missing-font row said "warnings only (REST import)"; it now names the Missing fonts window (#752), `text.missingFonts` and the `missing font` lines of `figcraft-cli info`. Replacing a missing font is still missing. Numbers unchanged |
 | 2026-10-24 | minor | Slices and contents only (Figma's Ignore overlapping layers): with it on, a slice inside a frame or group exports only that frame or group and the layers in it, and its Export preview shows the same; with it off, or for a slice on the page or in a section, the slice exports everything in its area as before |
 | 2026-10-24 | minor | Boards (M12): `.figcraft` saves the file kind (`kind: "board"`, absent for design files) and each board object's `board` metadata; the `.jam` row points at boards |
+| 2026-10-22 | minor | `.fig` export writes grid track sizes (`gridColumnsSizing` / `gridRowsSizing`) at the field ids the incumbent reads (474 / 475). Checked on a synthetic grid there (fixed 320/140/112/34/34 px columns): its columns keep their sizes. Numbers unchanged |
+| 2026-10-22 | minor | `.fig` export imports into the incumbent (checked with synthetic files, black-box): images are named and referenced by their SHA-1 (with SHA-256 names any file with an image failed to import); component sets hold their property definitions, variant properties included, with a copy per variant that its layers and instances name, and values also as variable data, so properties, bindings and instance values come across; an axis without a maximum size is written as infinite (0 collapsed frames with only a maximum width); compound weights are spelt the way font families name their faces ("SemiBold"; "Semi Bold" in Inter), so their text isn't a missing font; the kiwi encoder writes infinite floats. Numbers unchanged |
 | 2026-10-21 | minor | `.sketch` import (best effort): files saved by Sketch 48 and newer open and import like `.fig` files (open, import, drop, CLI, MCP), mapped onto the REST importer: layers, paths, shape groups and booleans, styles and effects, masks, text, symbols with overrides (live instances), shared styles, Color Variables, prototype links, export settings and grids; older files are refused with a message. Sketch 2025 and newer: frames, graphics, stacks as auto layout, corners, pins and sizing, tints, per-side borders, blur lists. Checked on fixtures and locally on real Sketch 50, 64 and 2026 files and the IBM Carbon Design Kit (Sketch 68 and 83 open; the Sketch 47 edition is refused). Numbers unchanged |
 | 2026-10-15 | minor | `.fig` import (#279, #281; #266, #267): resized instances lay out their layers by their constraints, and explicit variable modes whose collection is named by its asset key come across (before, they were dropped and bound layers resolved in the default mode); fixture-tested, real files still owed. `.figcraft`: atomic saves and exports through unique staging files (#284), optional auto-save (#305). SVG export keeps a nested frame's fill and stroke inside its parent's clip (#327). Numbers unchanged |
 | 2026-10-20 | minor | `.fig` export writes grid track sizes (`gridColumnsSizing` / `gridRowsSizing`): fixed px, fractional fill and content-sized tracks keep their sizes and come back through our own importer (#465). Tracks whose size the format can't hold (a negative or out-of-range value) keep their id and read back equal, with a warning. Numbers unchanged |
