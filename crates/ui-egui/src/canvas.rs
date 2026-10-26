@@ -163,12 +163,16 @@ fn pointer_event(app: &FigApp, kind: PointerKind, pos: Pos2, m: &egui::Modifiers
     }
 }
 
+/// Run one canvas pass: update the viewport size and first-fit zoom; handle pointer/key input
+/// and accessibility; draw the drop overlay, guides, live pointer and preedit; request/poll
+/// renders and upload the texture; draw the page background and last texture; then draw overlays,
+/// labels, handles, comments, versions/branch/dev/live UI and the cursor.
 pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     let rect = ui.max_rect();
     app.canvas.rect = rect;
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
-    let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
+    let resp = ui.interact(rect, ui.scope_id().with("canvas"), Sense::click_and_drag());
     let key_box = app.ui.key_box;
     crate::a11y::canvas(&mut app.ui.nav, &resp, || key_box.map_or_else(|| describe(&app.session), describe_box));
     if let Ok(ds) = app.session.ds_mut()
@@ -183,9 +187,17 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         }
     }
     let own_cursor = input(app, ui, &resp);
-    // A browser names no dragged file until the drop, so documents there still say "import".
+    // A browser names no dragged file until the drop, so documents there still say "import", or
+    // in Dev Mode show the Dev Mode note, though they open when dropped.
     let documents = ctx.input(|i| i.raw.hovered_files.iter().all(|f| f.path.as_deref().is_some_and(crate::is_document)));
-    crate::drop_overlay(&ctx, ctx.content_rect(), if documents { tr("Drop to open") } else { tr("Drop to import") });
+    let label = if documents {
+        tr("Drop to open")
+    } else if app.ui.right_tab == crate::RightTab::Inspect {
+        tr("Dev Mode only inspects: switch to Design (Shift+D) to edit")
+    } else {
+        tr("Drop to import")
+    };
+    crate::drop_overlay(&ctx, ctx.content_rect(), label);
     crate::guides::end_released(&ctx);
     crate::live::track_pointer(app, &ctx);
     app.sync_preedit();
@@ -510,12 +522,18 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
         return false;
     }
     // Dropped files import onto the canvas, behind a card while they do ([`crate::pending_open`]);
-    // a dropped document opens as a file of its own, as on the home screen.
+    // a dropped document opens as a file of its own, as on the home screen. Dev Mode imports
+    // nothing into the design, and says so once for the whole drop.
     let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+    let mut refused = false;
     for f in dropped {
         let path = f.path().to_path_buf();
         if crate::is_document(&path) {
             crate::pending_open::open_dropped(app, &f);
+            continue;
+        }
+        if refused || crate::menus::dev_mode_refuses(app, "file.import") {
+            refused = true;
             continue;
         }
         let pt = hover_pos.map(|h| app.to_page(h)).unwrap_or_default();
@@ -542,7 +560,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
         }
         // Leaving the canvas: nothing is hovered there any more.
         if !app.canvas.dragging && std::mem::take(&mut app.canvas.hovering) {
-            app.session.vector_pointer_left();
+            app.session.pointer_left();
         }
         // A pan whose button was released off the canvas is over.
         if !ctx.input(|i| i.pointer.button_down(egui::PointerButton::Middle) || i.pointer.primary_down()) {
@@ -640,7 +658,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
     } else {
         // Something over the canvas took the pointer.
         if std::mem::take(&mut app.canvas.hovering) {
-            app.session.vector_pointer_left();
+            app.session.pointer_left();
         }
         None
     };
@@ -688,6 +706,7 @@ pub fn open_context_menu(app: &mut FigApp, pos: Pos2, deep: bool) {
         }
     }
     app.ui.context_menu = Some((pos, app.session.selection()));
+    app.ui.context_menu_shown = false;
 }
 
 fn stroke(c: Color32, w: f32) -> Stroke {
@@ -1470,7 +1489,9 @@ fn hatch(polys: &[Vec<Pos2>], gap: f32) -> Vec<[Pos2; 2]> {
 }
 
 /// The layers that get canvas labels and layout grids, in z-order: the page's visible top-level
-/// layers and, inside sections whose contents show, their visible children (sections nest).
+/// layers and, inside sections whose contents show, their visible children (sections nest). A
+/// section comes after its children, so its title pill draws over (and takes clicks from) the
+/// labels of frames near its top-left (#1150).
 fn boards(doc: &Document, page: NodeId) -> Vec<NodeId> {
     fn walk(doc: &Document, id: NodeId, depth: usize, out: &mut Vec<NodeId>) {
         let Some(n) = doc.node(id) else { return };
@@ -1479,10 +1500,10 @@ fn boards(doc: &Document, page: NodeId) -> Vec<NodeId> {
             if !cn.visible {
                 continue;
             }
-            out.push(*c);
             if matches!(cn.kind, NodeKind::Section { contents_hidden: false }) && depth < 32 {
                 walk(doc, *c, depth + 1, out);
             }
+            out.push(*c);
         }
     }
     let mut out = Vec::new();
