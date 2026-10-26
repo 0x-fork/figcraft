@@ -1810,7 +1810,11 @@ impl FigApp {
         let on = !cfg!(target_arch = "wasm32") && self.session.prefs.auto_save;
         let saving = &self.ui.auto_saving;
         let due = |d: &&figcraft_engine::DocState| {
-            d.path.is_some() && d.branch_of.is_none() && d.preview.is_none() && d.is_dirty() && !saving.iter().any(|(uid, _)| *uid == d.uid)
+            d.path.as_deref().is_some_and(|p| d.images_lost_saving_to(p).is_none())
+                && d.branch_of.is_none()
+                && d.preview.is_none()
+                && d.is_dirty()
+                && !saving.iter().any(|(uid, _)| *uid == d.uid)
         };
         let changes = if on { self.session.docs.iter().filter(due).map(|d| d.revision).reduce(u64::wrapping_add) } else { None };
         match changes {

@@ -163,7 +163,10 @@ pub fn specs() -> Vec<CommandSpec> {
             let i = s.active;
             let uid = s.ds()?.uid;
             if let Some(slot) = s.docs.get_mut(i) {
-                *slot = DocState::new(loaded.doc, Some(path)).with_versions(loaded.versions).with_branches(loaded.branches);
+                *slot = DocState::new(loaded.doc, Some(path.clone()))
+                    .with_versions(loaded.versions)
+                    .with_branches(loaded.branches)
+                    .with_images_left_in_file(&path, loaded.images_past_budget);
             }
             // Edits on its branch tabs are reverted too.
             crate::branches::close_tabs(s, uid, None);
@@ -738,7 +741,13 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         });
     }
     let summary = import_summary(&loaded.doc);
-    s.docs.push(DocState::new(loaded.doc, native.then_some(path)).with_versions(loaded.versions).with_branches(loaded.branches));
+    let images_left_out = if native { loaded.images_past_budget } else { 0 };
+    s.docs.push(
+        DocState::new(loaded.doc, native.then(|| path.clone()))
+            .with_versions(loaded.versions)
+            .with_branches(loaded.branches)
+            .with_images_left_in_file(&path, images_left_out),
+    );
     s.active = s.docs.len() - 1;
     let mut out = json!({"index": s.active, "summary": summary});
     out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
@@ -826,7 +835,9 @@ impl FileSnapshot {
         let Some(ds) = s.docs.iter_mut().find(|d| d.uid == self.uid && d.path == self.path && Arc::ptr_eq(&d.saved_doc, &self.saved)) else {
             return Ok(false);
         };
-        write(self.path.as_deref().ok_or(EngineError::NoDocument)?, bytes)?;
+        let path = self.path.as_deref().ok_or(EngineError::NoDocument)?;
+        refuse_dropping_images(ds, path)?;
+        write(path, bytes)?;
         // The history or branches may have changed since: then they still count as unsaved.
         if ds.revision == self.revision {
             ds.versions_changed = false;
@@ -835,6 +846,16 @@ impl FileSnapshot {
         ds.revision += 1;
         branch_tabs_saved(s, self.uid);
         Ok(true)
+    }
+}
+
+fn refuse_dropping_images(ds: &DocState, path: &str) -> Result<()> {
+    match ds.images_lost_saving_to(path) {
+        Some(count) => Err(EngineError::Other(format!(
+            "{} wasn't saved: {count} of its images weren't loaded (together they pass what FigCraft reads from one file), and saving over it would delete them. Save it under another name; this file keeps them.",
+            file_stem(path)
+        ))),
+        None => Ok(()),
     }
 }
 
@@ -879,6 +900,10 @@ fn save_to(s: &mut Session, path: Option<String>) -> Result<Value> {
     }
     let i = crate::branches::file_tab(s);
     let ds = s.docs.get_mut(i).ok_or(EngineError::NoDocument)?;
+    // A download (no path) writes over no file.
+    if let Some(path) = path.as_deref() {
+        refuse_dropping_images(ds, path)?;
+    }
     let mut snapshot = FileSnapshot::of(ds);
     let follows_path = ds.path.as_deref().map_or(ds.doc.name == "Untitled", |old| ds.doc.name == file_stem(old));
     if let Some(path) = path.as_deref()
