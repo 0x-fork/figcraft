@@ -780,7 +780,7 @@ fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
             // It is remembered for the server it was typed for, so it never leaks to another one.
             ui.horizontal(|ui| {
                 widgets::label(ui, tr("Server key"), t.text);
-                let shown = app.ui.live.share_key.as_ref().map(|(_, key)| key.as_str()).unwrap_or_default();
+                let shown = app.ui.live.share_key.as_ref().and_then(|(at, key)| (*at == server).then_some(key.as_str())).unwrap_or_default();
                 if let Some(key) = widgets::secret_field_named(ui, egui::Id::unique("live_share_key"), shown, 200.0, tr("Server key")) {
                     let key: String = key.trim().chars().filter(|c| !c.is_whitespace() && !c.is_control()).take(128).collect();
                     app.ui.live.share_key = if key.is_empty() { None } else { Some((server.trim().to_string(), key)) };
