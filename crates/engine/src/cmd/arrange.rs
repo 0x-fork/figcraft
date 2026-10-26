@@ -495,6 +495,9 @@ pub fn scale_node(doc: &mut Document, id: NodeId, k: f64) -> Result<()> {
             t.paragraph_spacing *= k;
             t.paragraph_indent *= k;
             t.list_spacing *= k;
+            if let Some(tp) = &mut t.path {
+                tp.scale(k, k);
+            }
         }
         if let NodeKind::Vector { network } = &mut n.kind {
             network.scale(k, k);
