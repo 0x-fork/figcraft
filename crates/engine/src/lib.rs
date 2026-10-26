@@ -117,6 +117,18 @@ impl From<figcraft_doc::DocError> for EngineError {
     }
 }
 
+impl EngineError {
+    /// This error from step `step` of a batch, saying so in its message; the kind stays (errors
+    /// without a message stay as they are).
+    fn at_step(self, step: usize) -> Self {
+        match self {
+            EngineError::BadParams { cmd, msg } => EngineError::BadParams { cmd, msg: format!("step {step}: {msg}") },
+            EngineError::Other(msg) => EngineError::Other(format!("step {step}: {msg}")),
+            e => e,
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, EngineError>;
 
 pub fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
@@ -1258,16 +1270,8 @@ impl Session {
     /// so its steps resolve references the same way, inside its own [`Session::grouped`].
     pub fn batch_step(&mut self, scope: &mut BatchScope, cmd: &str, params: &Value) -> Result<()> {
         let p = if cmd == "command.batch" { params.clone() } else { scope.resolve(params)? };
-        let step = scope.next_step();
-        let v = self.execute(cmd, &p).map_err(|e| match e {
-            // Say which step failed; a nested batch's error already does.
-            EngineError::UnknownCommand(_) | EngineError::BadParams { .. } | EngineError::NoNode(_) | EngineError::Other(_)
-                if !e.to_string().starts_with("step ") =>
-            {
-                EngineError::Other(format!("step {step}: {e}"))
-            }
-            e => e,
-        })?;
+        // Say which step failed; a nested batch names its own steps.
+        let v = self.execute(cmd, &p).map_err(|e| if cmd == "command.batch" { e } else { e.at_step(scope.next_step()) })?;
         scope.push(v);
         Ok(())
     }
