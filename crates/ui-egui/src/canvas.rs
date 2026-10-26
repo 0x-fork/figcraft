@@ -360,9 +360,7 @@ fn describe_box([x0, y0, x1, y1]: [f64; 4]) -> String {
 }
 
 #[cfg(test)]
-#[path = "builder_poly_tests.rs"]
 mod builder_poly_tests;
 
 #[cfg(test)]
-#[path = "zoom_preview_tests.rs"]
 mod zoom_preview_tests;
