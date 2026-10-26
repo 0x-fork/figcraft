@@ -57,13 +57,16 @@ pub enum BoardItem {
     },
     /// A marker or highlighter stroke (what the eraser takes).
     Ink,
+    /// A table: a frame of row frames holding cell frames with text (its column lines are thin
+    /// rectangles laid over it).
+    Table,
 }
 
 impl BoardItem {
     /// Objects selected and moved as a whole: a click on their text or outline picks them, and
     /// they never take other layers in.
     pub fn is_atom(&self) -> bool {
-        matches!(self, BoardItem::Sticky { .. } | BoardItem::Shape { .. } | BoardItem::Label { .. } | BoardItem::Stamp { .. })
+        matches!(self, BoardItem::Sticky { .. } | BoardItem::Shape { .. } | BoardItem::Label { .. } | BoardItem::Stamp { .. } | BoardItem::Table)
     }
 
     /// Objects whose first text layer is their text (a double-click or Enter edits it).
@@ -109,6 +112,7 @@ impl BoardItem {
             BoardItem::Label { .. } => "label",
             BoardItem::Stamp { .. } => "stamp",
             BoardItem::Ink => "ink",
+            BoardItem::Table => "table",
         }
     }
 }

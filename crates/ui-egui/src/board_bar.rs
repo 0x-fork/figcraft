@@ -96,6 +96,7 @@ struct Has {
     shape: Option<BoardShape>,
     text: bool,
     connector: Option<(Routing, bool)>,
+    table: bool,
 }
 
 /// What the selected board objects take from the bar (layers that aren't board objects, a section
@@ -116,10 +117,11 @@ fn has(app: &FigApp) -> Option<Has> {
                 h.connector = Some((c.routing, n.stroke.cap_end != StrokeCap::None));
             }
             Some(BoardItem::Label { .. }) => h.text = true,
+            Some(BoardItem::Table) => h.table = true,
             Some(BoardItem::Stamp { .. }) | None => {}
         }
     }
-    (h.color || h.text || h.connector.is_some()).then_some(h)
+    (h.color || h.text || h.connector.is_some() || h.table).then_some(h)
 }
 
 const CELL: f32 = 28.0;
@@ -143,6 +145,9 @@ impl Has {
         }
         if self.connector.is_some() {
             w += 4.0 * (CELL + 2.0) + PART_END;
+        }
+        if self.table {
+            w += crate::board_picker::TABLE_PART_W;
         }
         w
     }
@@ -187,6 +192,9 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         }
         if h.text {
             x = size_part(app, ui, x, cy, &t);
+        }
+        if h.table {
+            x = crate::board_picker::table_part(app, ui, x, cy, &t);
         }
         if let Some((routing, arrow)) = h.connector {
             line_part(app, ui, (routing, arrow), pos2(x, cy), &t);
@@ -274,7 +282,7 @@ fn line_part(app: &mut FigApp, ui: &mut Ui, line: (Routing, bool), at: Pos2, t: 
 }
 
 /// A thin separator after `x`; where the next part starts.
-fn divider(ui: &Ui, t: &Tokens, x: f32, cy: f32) -> f32 {
+pub(crate) fn divider(ui: &Ui, t: &Tokens, x: f32, cy: f32) -> f32 {
     ui.painter().line_segment([pos2(x + 2.0, cy - 10.0), pos2(x + 2.0, cy + 10.0)], Stroke::new(1.0, t.border));
     x + 8.0
 }
