@@ -61,6 +61,7 @@ pub mod snap;
 pub mod style_vars;
 pub mod synthetic;
 pub mod synthetic_ds;
+pub mod tailwind;
 pub mod templates;
 pub mod textedit;
 pub mod textfit;
@@ -1862,6 +1863,8 @@ mod style_vars_tests;
 mod styles_behaviour_tests;
 #[cfg(test)]
 mod svg_import_tests;
+#[cfg(test)]
+mod tailwind_tests;
 #[cfg(test)]
 mod templates_tests;
 #[cfg(test)]
