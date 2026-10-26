@@ -20,7 +20,7 @@ pub mod width;
 #[cfg(test)]
 mod width_tests;
 
-use figcraft_doc::{BoolOp, StrokeAlign, StrokeCap, StrokeJoin, StrokeProps, VectorNetwork};
+use figcraft_doc::{BoolOp, StrokeAlign, StrokeCap, StrokeJoin, StrokeProps, VectorNetwork, WindingRule};
 use figcraft_geom::kurbo::{self, BezPath, Cap, Join, PathEl, PathSeg, Point, Shape, Vec2};
 
 #[derive(Debug, PartialEq)]
@@ -69,13 +69,18 @@ fn sweep<T>(f: impl FnOnce() -> Result<T, PathOpsError>) -> Result<T, PathOpsErr
 }
 
 fn binary(a: &BezPath, b: &BezPath, op: linesweeper::BinaryOp) -> Result<BezPath, PathOpsError> {
+    binary_by(a, b, linesweeper::FillRule::NonZero, op)
+}
+
+/// [`binary`] with both operands read by fill rule `rule`.
+fn binary_by(a: &BezPath, b: &BezPath, rule: linesweeper::FillRule, op: linesweeper::BinaryOp) -> Result<BezPath, PathOpsError> {
     if a.elements().is_empty() && b.elements().is_empty() {
         return Ok(BezPath::new());
     }
     if !finite(a) || !finite(b) {
         return Err(PathOpsError::BadInput);
     }
-    let contours = sweep(|| linesweeper::binary_op(&closed(a), &closed(b), linesweeper::FillRule::NonZero, op).map_err(|_| PathOpsError::BadInput))?;
+    let contours = sweep(|| linesweeper::binary_op(&closed(a), &closed(b), rule, op).map_err(|_| PathOpsError::BadInput))?;
     let mut out = BezPath::new();
     for c in contours.contours() {
         out.extend(c.path.elements().iter().copied());
@@ -323,16 +328,20 @@ pub fn stroke_outline_of(path: &BezPath, props: &StrokeProps, closed_shape: bool
         (None, None, None) => stroke_center(path, width, props),
     };
     let align = if closed_shape { props.align } else { StrokeAlign::Center };
+    // Inside/Outside clip against the shape's own fill, so an even-odd shape's holes stay holes.
+    let even_odd = net.is_some_and(|n| n.regions.iter().any(|r| r.winding == WindingRule::EvenOdd));
+    let clip = |s: BezPath, op: linesweeper::BinaryOp| {
+        if even_odd {
+            // The stroke overlaps itself (non-zero): flatten it to even-odd contours first.
+            simplify(&s).and_then(|s| binary_by(&s, path, linesweeper::FillRule::EvenOdd, op)).unwrap_or(s)
+        } else {
+            binary(&s, path, op).unwrap_or(s)
+        }
+    };
     let mut out = match align {
         StrokeAlign::Center => centred(w),
-        StrokeAlign::Inside => {
-            let s = centred(w * 2.0);
-            binary(&s, path, linesweeper::BinaryOp::Intersection).unwrap_or(s)
-        }
-        StrokeAlign::Outside => {
-            let s = centred(w * 2.0);
-            binary(&s, path, linesweeper::BinaryOp::Difference).unwrap_or(s)
-        }
+        StrokeAlign::Inside => clip(centred(w * 2.0), linesweeper::BinaryOp::Intersection),
+        StrokeAlign::Outside => clip(centred(w * 2.0), linesweeper::BinaryOp::Difference),
     };
     if let Some(st) = styled.as_ref().filter(|_| !closed_shape) {
         out.extend(st.arrowheads(w, props).elements().iter().copied());
@@ -708,5 +717,29 @@ mod tests {
         let props = StrokeProps { weight: 2.0, dashes: vec![10.0, 10.0], align: StrokeAlign::Center, ..Default::default() };
         let s = stroke_center(&line, 2.0, &props);
         assert!((s.area().abs() - 100.0).abs() < 2.0, "{}", s.area());
+    }
+
+    #[test]
+    fn inside_and_outside_strokes_respect_an_even_odd_hole() {
+        // A ring: both loops run the same way, so only the even-odd rule leaves the hole open.
+        let mut ring = sq(0.0, 0.0, 100.0);
+        ring.extend(sq(30.0, 30.0, 40.0).elements().iter().copied());
+        let mut net = VectorNetwork::from_path(&ring);
+        for r in &mut net.regions {
+            r.winding = figcraft_doc::WindingRule::EvenOdd;
+        }
+        let (material, hole) = (Point::new(29.0, 50.0), Point::new(31.0, 50.0));
+        let inside = StrokeProps { weight: 4.0, align: StrokeAlign::Inside, ..Default::default() };
+        let s = stroke_outline_of(&ring, &inside, true, Some(&net));
+        assert_ne!(s.winding(material), 0, "inside stroke misses the material");
+        assert_eq!(s.winding(hole), 0, "inside stroke leaks into the hole");
+        let outside = StrokeProps { align: StrokeAlign::Outside, ..inside.clone() };
+        let s = stroke_outline_of(&ring, &outside, true, Some(&net));
+        assert_eq!(s.winding(material), 0, "outside stroke covers the material");
+        assert_ne!(s.winding(hole), 0, "outside stroke misses the hole");
+        // Non-zero: the inner loop doesn't cut a hole, so its inside stroke covers both sides.
+        let nz = VectorNetwork::from_path(&ring);
+        let s = stroke_outline_of(&ring, &inside, true, Some(&nz));
+        assert!(s.winding(material) != 0 && s.winding(hole) != 0);
     }
 }
