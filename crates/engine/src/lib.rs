@@ -372,6 +372,7 @@ pub struct DocState {
     /// The last duplicate while its copies are the selection: Duplicate repeats its offset (see
     /// [`cmd::edit::Duplicated`]; not saved).
     pub(crate) last_duplicate: Option<cmd::edit::Duplicated>,
+    images_left_in_file: Option<(String, usize)>,
 }
 
 /// A version shown on the canvas in place of the document: read-only until it's restored or the
@@ -434,9 +435,19 @@ impl DocState {
             rotation_origin: None,
             view_from_prefs: false,
             last_duplicate: None,
+            images_left_in_file: None,
         };
         st.zoom_to_fit();
         st
+    }
+
+    pub fn with_images_left_in_file(mut self, path: &str, count: usize) -> Self {
+        self.images_left_in_file = (count > 0).then(|| (path.to_string(), count));
+        self
+    }
+
+    pub fn images_lost_saving_to(&self, path: &str) -> Option<usize> {
+        self.images_left_in_file.as_ref().filter(|(file, _)| file_access::same_file(file, path)).map(|(_, count)| *count)
     }
 
     /// The selected ruler guide (its owner and index): it counts while no layer is selected and it
@@ -1726,6 +1737,8 @@ mod html_codegen_tests;
 mod huge_stroke_tests;
 #[cfg(test)]
 mod id_params_behaviour_tests;
+#[cfg(test)]
+mod images_left_in_file_tests;
 #[cfg(test)]
 mod import_export_tests;
 #[cfg(test)]
