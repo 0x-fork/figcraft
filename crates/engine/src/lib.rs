@@ -15,6 +15,8 @@ pub mod arc_handles;
 pub mod background;
 pub mod batch;
 pub mod board;
+pub mod board_table;
+pub mod board_templates;
 pub mod booleans;
 pub mod branches;
 pub mod catalog;
@@ -1213,8 +1215,9 @@ impl Session {
         }
         let Some(e) = ds.history.undo.pop() else { return Ok(false) };
         let redo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page };
-        ds.history.redo.push(redo);
         ds.doc = e.doc;
+        cmd::facilitate::keep(&redo.doc, &mut ds.doc);
+        ds.history.redo.push(redo);
         ds.selection = e.selection;
         if ds.doc.pages.contains(&e.page) {
             ds.page = e.page;
@@ -1249,8 +1252,9 @@ impl Session {
         }
         let Some(e) = ds.history.redo.pop() else { return Ok(false) };
         let undo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page };
-        ds.history.undo.push(undo);
         ds.doc = e.doc;
+        cmd::facilitate::keep(&undo.doc, &mut ds.doc);
+        ds.history.undo.push(undo);
         ds.selection = e.selection;
         if ds.doc.pages.contains(&e.page) {
             ds.page = e.page;
@@ -1636,6 +1640,10 @@ mod batch_step_ref_tests;
 #[cfg(test)]
 mod binding_lists_tests;
 #[cfg(test)]
+mod board_connector_tests;
+#[cfg(test)]
+mod board_tables_tests;
+#[cfg(test)]
 mod board_tests;
 #[cfg(test)]
 mod board_tools_tests;
@@ -1643,6 +1651,8 @@ mod board_tools_tests;
 mod booleans_tests;
 #[cfg(test)]
 mod bound_alpha_tests;
+#[cfg(test)]
+mod branch_live_tests;
 #[cfg(test)]
 mod branch_tests;
 #[cfg(test)]
@@ -1709,6 +1719,8 @@ mod export_behaviour_tests;
 mod export_depth_tests;
 #[cfg(test)]
 mod extended_chain_tests;
+#[cfg(test)]
+mod facilitate_tests;
 #[cfg(test)]
 mod fig_export_assets_tests;
 #[cfg(test)]
@@ -1953,6 +1965,8 @@ mod version_preview_tests;
 mod version_tests;
 #[cfg(test)]
 mod view_behaviour_tests;
+#[cfg(test)]
+mod widget_input_tests;
 #[cfg(test)]
 mod widgets_tests;
 
