@@ -156,19 +156,26 @@ pub(crate) fn hash_path(p: &BezPath, h: &mut impl Hasher) {
     }
 }
 
+/// Per-side strokes on rectangles and frames (a ring under non-zero winding too), if `n` has them.
+fn side_strokes(n: &Node) -> Option<Arc<BezPath>> {
+    let props = &n.stroke;
+    let sides = props.sides?;
+    if !matches!(n.kind, NodeKind::Rectangle | NodeKind::Frame | NodeKind::Component { .. } | NodeKind::Instance { .. }) {
+        return None;
+    }
+    let c = &n.corners;
+    Some(Arc::new(if c.uniform() == Some(0.0) {
+        figcraft_pathops::rect_side_strokes(n.width, n.height, sides, props.align)
+    } else {
+        figcraft_pathops::rounded_side_strokes(n.width, n.height, c.radii, c.smoothing, sides, props.align)
+    }))
+}
+
 /// The stroke area of a node in local coordinates.
 pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
     let props = &n.stroke;
-    // Per-side strokes on rectangles/frames.
-    if let Some(sides) = props.sides
-        && matches!(n.kind, NodeKind::Rectangle | NodeKind::Frame | NodeKind::Component { .. } | NodeKind::Instance { .. })
-    {
-        let c = &n.corners;
-        return Arc::new(if c.uniform() == Some(0.0) {
-            figcraft_pathops::rect_side_strokes(n.width, n.height, sides, props.align)
-        } else {
-            figcraft_pathops::rounded_side_strokes(n.width, n.height, c.radii, c.smoothing, sides, props.align)
-        });
+    if let Some(p) = side_strokes(n) {
+        return p;
     }
     // Rect/ellipse inside/outside strokes without booleans: an even-odd ring of two outlines.
     if props.dashes.is_empty() && props.profile().is_none() && props.brush.is_none() && closed && props.align != StrokeAlign::Center {
@@ -212,15 +219,15 @@ pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
     cached_stroke_outline(n, path, closed)
 }
 
-/// A non-zero stroke outline, shared by painting and boolean operands.
+/// The stroke a boolean operand contributes: like [`stroke_area`], but never an even-odd ring
+/// (boolean folding uses non-zero winding).
+fn operand_stroke(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
+    side_strokes(n).unwrap_or_else(|| cached_stroke_outline(n, path, closed))
+}
+
+/// A non-zero stroke outline (cached), shared by painting and boolean operands.
 fn cached_stroke_outline(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
     let props = &n.stroke;
-    if let Some(sides) = props.sides
-        && matches!(n.kind, NodeKind::Rectangle | NodeKind::Frame | NodeKind::Component { .. } | NodeKind::Instance { .. })
-        && n.corners.uniform() == Some(0.0)
-    {
-        return Arc::new(figcraft_pathops::rect_side_strokes(n.width, n.height, sides, props.align));
-    }
     let mut h = std::collections::hash_map::DefaultHasher::new();
     hash_path(path, &mut h);
     (props.weight.to_bits(), props.align as u8, props.cap_start as u8, props.cap_end as u8, props.join as u8, props.miter_limit.to_bits(), closed)
@@ -334,7 +341,7 @@ fn subtree_outline_at(doc: &Document, n: &Node, depth: usize, stroke_only: bool)
                 if n.fills.iter().any(|f| f.visible) {
                     out.extend(p.elements().iter().copied());
                 } else if stroke_only && n.has_visible_stroke() {
-                    out.extend(cached_stroke_outline(n, &p, true).elements().iter().copied());
+                    out.extend(operand_stroke(n, &p, true).elements().iter().copied());
                 }
             }
             for c in n.children.iter().filter_map(|c| doc.node(*c)) {
@@ -352,9 +359,7 @@ fn subtree_outline_at(doc: &Document, n: &Node, depth: usize, stroke_only: bool)
             let (path, _) = node_outline_at(doc, n, depth)?;
             let path = if matches!(n.kind, NodeKind::Text(_)) { path } else { figcraft_doc::geometry::stroke_geometry(n).unwrap_or(path) };
             let closed = figcraft_doc::geometry::is_closed(n) || matches!(n.kind, NodeKind::BooleanOp { .. });
-            // Boolean folding uses non-zero winding; the canvas stroke cache also contains
-            // even-odd rectangle rings, so use the winding-correct stroke outline here.
-            Some(((*cached_stroke_outline(n, &path, closed)).clone(), FillRule::Winding))
+            Some(((*operand_stroke(n, &path, closed)).clone(), FillRule::Winding))
         }
         _ => node_outline_at(doc, n, depth),
     }
