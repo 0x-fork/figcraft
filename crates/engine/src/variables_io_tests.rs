@@ -430,6 +430,9 @@ fn dart_export_names_never_shadow_dart_types() {
     for name in ["double", "int", "bool", "num"] {
         ex(&mut s, "variable.create", json!({"collection": "Color", "name": name, "type": "number", "value": 1}));
     }
+    ex(&mut s, "variable.create", json!({"collection": "Color", "name": "ratio", "type": "number", "value": 0.125}));
+    ex(&mut s, "variable.create", json!({"collection": "Color", "name": "third", "type": "number", "value": 1.0 / 3.0}));
+    ex(&mut s, "variable.create", json!({"collection": "Color", "name": "huge", "type": "number", "value": 1.5e21}));
     let dart = ex(&mut s, "variable.export", json!({"format": "dart"}))["text"].as_str().unwrap().to_string();
     // A class `Color` would hide dart:ui's `Color`, a constant `double` the type of those after it.
     for want in [
@@ -439,6 +442,11 @@ fn dart_export_names_never_shadow_dart_types() {
         "static const double int_ = 1;",
         "static const double bool_ = 1;",
         "static const double num_ = 1;",
+        // Numbers keep their full precision.
+        "static const double ratio = 0.125;",
+        "static const double third = 0.3333333333333333;",
+        // Too big for an exact integer literal: an exponent, still a double.
+        "static const double huge = 1.5e21;",
     ] {
         assert!(dart.contains(want), "{want:?} in\n{dart}");
     }

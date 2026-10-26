@@ -203,6 +203,12 @@ fn dart_string(text: &str) -> String {
     out
 }
 
+/// `x` at full precision as a Dart literal: whole numbers as integers (`4`), the rest in Rust's
+/// shortest round-trip form (`0.125`, `1e21`), which Dart reads as the same double.
+fn dart_number(x: f64) -> String {
+    if x.fract() == 0.0 && x.abs() < 1e15 { format!("{x}") } else { format!("{x:?}") }
+}
+
 /// `text` on one line of a Dart comment.
 fn dart_comment(text: &str) -> String {
     text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect()
@@ -230,7 +236,7 @@ fn dart(vars: &Variables, colls: &[&Collection]) -> String {
                         let [r, g, b, a] = col.to_rgba8();
                         ("Color", format!("Color(0x{a:02X}{r:02X}{g:02X}{b:02X})"))
                     }
-                    Some(VariableValue::Number(x)) if x.is_finite() => ("double", trim_num(x)),
+                    Some(VariableValue::Number(x)) if x.is_finite() => ("double", dart_number(x)),
                     Some(VariableValue::String(t)) => ("String", format!("'{}'", dart_string(&t))),
                     Some(VariableValue::Boolean(b)) => ("bool", b.to_string()),
                     _ => continue,
