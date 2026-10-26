@@ -82,6 +82,14 @@ pub fn paste(app: &mut FigApp, event_text: Option<&str>, at: Option<(f64, f64)>)
             }
             use base64::Engine as _;
             let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+            // One selected layer that can have fills takes the image as its top fill.
+            if let [target] = app.session.selection()[..]
+                && at.is_none()
+                && app.session.doc().ok().and_then(|d| d.node(target)).is_some_and(|n| figcraft_engine::cmd::create::accepts_image_fill(&n.kind))
+            {
+                app.run("image.place", json!({"data": b64, "target": target}));
+                return;
+            }
             // Centred in the view; Paste here puts its top-left at the point, as it does layers.
             let (x, y) = if at.is_some() { (cx, cy) } else { ((cx - f64::from(w) / 2.0).round(), (cy - f64::from(h) / 2.0).round()) };
             app.run("file.import", json!({"data": b64, "name": "Pasted image.png", "x": x, "y": y}));
