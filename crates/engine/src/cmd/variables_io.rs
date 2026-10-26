@@ -116,12 +116,16 @@ const DART_RESERVED: &[&str] = &[
     "while", "with", "yield",
 ];
 
-/// Words Dart takes as a member's name but not as a class's.
+/// Dart's built-in identifiers (no type may take them), and the types the constants use or name,
+/// which a class or constant of that name would shadow.
 const DART_BUILT_IN: &[&str] = &[
     "abstract",
     "as",
+    "bool",
+    "Color",
     "covariant",
     "deferred",
+    "double",
     "dynamic",
     "export",
     "extension",
@@ -131,15 +135,20 @@ const DART_BUILT_IN: &[&str] = &[
     "get",
     "implements",
     "import",
+    "int",
     "interface",
     "late",
     "library",
+    "List",
     "mixin",
+    "num",
+    "Object",
     "operator",
     "part",
     "required",
     "set",
     "static",
+    "String",
     "typedef",
 ];
 
@@ -160,7 +169,7 @@ fn dart_ident(name: &str, pascal: bool) -> String {
     if out.is_empty() || out.starts_with(|c: char| c.is_ascii_digit()) {
         out.insert(0, if pascal { 'V' } else { 'v' });
     }
-    if DART_RESERVED.contains(&out.as_str()) || (pascal && DART_BUILT_IN.contains(&out.as_str())) {
+    if DART_RESERVED.contains(&out.as_str()) || DART_BUILT_IN.contains(&out.as_str()) {
         out.push('_');
     }
     out

@@ -423,6 +423,28 @@ fn dart_export_names_are_valid_dart() {
 }
 
 #[test]
+fn dart_export_names_never_shadow_dart_types() {
+    let mut s = Session::new();
+    ex(&mut s, "variable.createCollection", json!({"name": "Color"}));
+    ex(&mut s, "variable.createCollection", json!({"name": "String"}));
+    for name in ["double", "int", "bool", "num"] {
+        ex(&mut s, "variable.create", json!({"collection": "Color", "name": name, "type": "number", "value": 1}));
+    }
+    let dart = ex(&mut s, "variable.export", json!({"format": "dart"}))["text"].as_str().unwrap().to_string();
+    // A class `Color` would hide dart:ui's `Color`, a constant `double` the type of those after it.
+    for want in [
+        "abstract final class Color_ {",
+        "abstract final class String_ {",
+        "static const double double_ = 1;",
+        "static const double int_ = 1;",
+        "static const double bool_ = 1;",
+        "static const double num_ = 1;",
+    ] {
+        assert!(dart.contains(want), "{want:?} in\n{dart}");
+    }
+}
+
+#[test]
 fn paints_replaced_through_node_set_keep_unchanged_stop_bindings() {
     let mut s = Session::new();
     let r = gradient_rect(&mut s);
