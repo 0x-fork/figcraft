@@ -2416,6 +2416,8 @@ status = "draft — needs native review"
 "widget.click" = "Napsauta pienoisohjelmaa"
 "widget.insert" = "Lisää pienoisohjelma"
 "widget.list" = "Luettele pienoisohjelmat"
+"widget.menu" = "Pienoisohjelman valikko"
+"widget.setText" = "Muokkaa pienoisohjelman kenttää"
 "window.focus" = "Tuo ikkuna etummaiseksi"
 "window.new" = "Uusi ikkuna"
 

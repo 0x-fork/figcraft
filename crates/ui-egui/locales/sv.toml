@@ -2432,6 +2432,8 @@ name = "Svenska"
 "widget.click" = "Klicka på widget"
 "widget.insert" = "Infoga widget"
 "widget.list" = "Lista widgetar"
+"widget.menu" = "Widgetmeny"
+"widget.setText" = "Redigera widgetfält"
 "window.focus" = "Placera fönstret längst fram"
 "window.new" = "Nytt fönster"
 

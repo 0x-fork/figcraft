@@ -70,6 +70,7 @@ pub mod variable_ui;
 pub mod variables_panel;
 pub mod vector_panel;
 pub mod versions;
+pub mod widget_bar;
 pub mod widgets;
 pub mod windows;
 

@@ -2407,6 +2407,8 @@ status = "draft — reviewed by a native speaker, awaiting a maintainer's approv
 "widget.click" = "ვიჯეტზე დაწკაპუნება"
 "widget.insert" = "ვიჯეტის ჩასმა"
 "widget.list" = "ვიჯეტების სია"
+"widget.menu" = "ვიჯეტის მენიუ"
+"widget.setText" = "ვიჯეტის ველის რედაქტირება"
 "window.focus" = "ფანჯრის წინა პლანზე გადმოტანა"
 "window.new" = "ახალი ფანჯარა"
 

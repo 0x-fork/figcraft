@@ -2411,6 +2411,8 @@ status = "draft — needs native review"
 "widget.click" = "Op widget klikken"
 "widget.insert" = "Widget invoegen"
 "widget.list" = "Widgets weergeven"
+"widget.menu" = "Widgetmenu"
+"widget.setText" = "Widgetveld bewerken"
 "window.focus" = "Venster naar voren brengen"
 "window.new" = "Nieuw venster"
 

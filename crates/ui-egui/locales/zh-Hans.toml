@@ -2322,6 +2322,8 @@ status = "draft — needs native review"
 "widget.click" = "点击小组件"
 "widget.insert" = "插入小组件"
 "widget.list" = "列出小组件"
+"widget.menu" = "小组件菜单"
+"widget.setText" = "编辑小组件字段"
 "window.focus" = "将窗口置于前台"
 "window.new" = "新建窗口"
 

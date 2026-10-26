@@ -2308,6 +2308,8 @@ status = "draft — needs native review"
 "widget.click" = "위젯 클릭"
 "widget.insert" = "위젯 삽입"
 "widget.list" = "위젯 목록"
+"widget.menu" = "위젯 메뉴"
+"widget.setText" = "위젯 필드 편집"
 "window.focus" = "창을 맨 앞으로 가져오기"
 "window.new" = "새 창"
 

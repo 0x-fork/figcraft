@@ -1429,17 +1429,24 @@ Plugin settings are kept per plugin with the preferences (in a headless session,
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"plugin.event","params":{"id":"org.figcraft.examples.swatch-grid","control":"generate"}}}}
 ```
 
-Widgets (API 3, layers on the canvas a plugin draws) are driven the same way: `widget.insert
+Widgets (API 3 and 4, layers on the canvas a plugin draws) are driven the same way: `widget.insert
 {plugin, x?, y?}` puts one on the page (centred in the view without a position) and returns `{id,
 plugin, state, targets, output, logs, calls, fuel}`; `widget.click {id, target}` clicks one of its
 `targets` as a click on the canvas would (the plugin redraws it; one undo step; returns the same);
-`widget.list` lists every widget in the file with its plugin, page, state and targets. A widget's
-state is layer data, so it is saved, undone and synced with the file.
+`widget.list` lists every widget in the file with its plugin, page, state and targets. With plugin
+API 4 a widget can have editable text fields and a property menu (both listed with it, as `fields`
+and `menu`): `widget.setText {id, field, value}` sets a field as typing in it would (the value,
+at most 1,000 characters, goes into the state under the field's name and the plugin redraws; one
+undo step), and `widget.menu {id, item, value?}` uses a menu item (a toggle's `value` is `true` or
+`false`, by default the opposite of now; a colour's is one of its options). A widget's state is
+layer data, so it is saved, undone and synced with the file.
 
 ```json
 {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.insert","params":{"plugin":"org.figcraft.examples.counter"}}}}
 {"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.click","params":{"id":12,"target":"increment"}}}}
 {"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.list","params":{}}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.setText","params":{"id":12,"field":"label","value":"Votes"}}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.menu","params":{"id":12,"item":"big"}}}}
 ```
 
 Plugins from a `figcraft-server`'s plugin directory ([`plugins.md`](plugins.md#plugin-directories)):
