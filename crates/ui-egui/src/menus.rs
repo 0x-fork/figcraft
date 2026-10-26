@@ -1025,7 +1025,7 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                     .session
                     .doc()
                     .ok()
-                    .is_some_and(|doc| ids.iter().any(|i| doc.node(*i).is_some_and(|n| matches!(n.kind, figcraft_doc::NodeKind::Instance { .. }))))
+                    .is_some_and(|doc| ids.iter().all(|i| doc.node(*i).is_some_and(|n| matches!(n.kind, figcraft_doc::NodeKind::Instance { .. }))))
                     && let Some(at) = entries.iter().position(|e| e.1 == "component.create")
                 {
                     entries[at] = (tr("Go to main component"), "component.goToMain");
