@@ -1020,7 +1020,7 @@ mod tests {
     }
 
     #[test]
-    fn non_finite_numbers_are_refused_at_save() {
+    fn non_finite_numbers_are_saved_as_zero() {
         let mut d = Document::new("NaN");
         let p = d.first_page().unwrap();
         let r = d.create(p, NodeKind::Rectangle, "R", 1.0, 2.0, 3.0, 4.0).unwrap();
