@@ -837,8 +837,11 @@ fn next_message(ws: &mut WebSocket<Duplex>, max: usize, deadline: Option<Instant
                 message::decode::<ClientMsg>(&b, max).map(|m| Some((m, b.len()))).map_err(|_| "that message couldn't be read".to_string())
             }
             Ok(Message::Text(_)) => Err("only binary messages are spoken here".into()),
-            // Pings keep the per-read timeout alive, but not the overall deadline (slowloris).
-            Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)) if deadline.is_some_and(|d| Instant::now() >= d) => {
+            // Pings keep the per-read timeout alive, but not the overall deadline (slowloris), and
+            // a message trickled in is cut off by it (`Duplex::read_until`).
+            Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)) | Err(tungstenite::Error::Io(_))
+                if deadline.is_some_and(|d| Instant::now() >= d) =>
+            {
                 Err("no hello in time".into())
             }
             Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)) => continue,
@@ -871,7 +874,9 @@ fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimit
     }
     let Ok(peer) = stream.peer_addr().map(|a| a.ip().to_canonical()) else { return };
     let proxied = limits.trusted_proxy.is_some_and(|p| p.to_canonical() == peer);
-    let Ok((rd, wr, sock)) = Duplex::split(stream, None) else { return };
+    let Ok((mut rd, wr, sock)) = Duplex::split(stream, None) else { return };
+    // The handshake and the hello must be in by the deadline, however slowly they trickle in.
+    rd.read_until(Some(hello_deadline));
     let cfg = config(limits.max_client_message);
     let mut forwarded = None;
     // The handshake callback's type is tungstenite's (its error is an HTTP response).
@@ -935,7 +940,10 @@ fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimit
         log::info!("event=refused ip={ip} reason=connections_per_address");
         end(Some("too many connections from your address: close some and try again"));
     } else {
-        match next_message(&mut ws, limits.max_hello, Some(hello_deadline)) {
+        let hello = next_message(&mut ws, limits.max_hello, Some(hello_deadline));
+        // In time or not, the hello's deadline is over: what's read next has timeouts of its own.
+        ws.get_mut().read_until(None);
+        match hello {
             Ok(Some((
                 first @ (ClientMsg::Hello(_)
                 | ClientMsg::Manage(_)
@@ -978,6 +986,7 @@ fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimit
     drop(counted);
     // The block's counters go with the last handle on them (the table forgets it then).
     drop(block);
+    ws.get_mut().read_until(None);
     linger(&mut ws);
     drop(out);
     // The writer closes the socket once it has sent what's queued (a refusal, a close).

@@ -74,7 +74,7 @@ fn paint(r: &mut Lcg, image: &str) -> Paint {
             p.kind
         }
     };
-    Paint { kind, opacity: r.pick(&[1.0, 0.5, 0.25]), visible: r.chance(85), blend: r.pick(&BLENDS), color_alpha: false }
+    Paint { kind, opacity: r.pick(&[1.0, 0.5, 0.25]), visible: r.chance(85), blend: r.pick(&BLENDS), color_alpha: 1.0 }
 }
 
 fn effect(r: &mut Lcg) -> Effect {
@@ -1059,6 +1059,42 @@ fn grid_track_sizes_round_trip() {
     let (back, _) = import(&bytes, "File").unwrap();
     let l = back.node(back.pages[0]).and_then(|p| p.children.first()).and_then(|c| back.node(*c)).and_then(|n| n.layout.clone()).unwrap();
     assert_eq!(l.column_tracks[0], GridTrack::fill(1.0), "an unwritable track reads back equal");
+}
+
+/// An instance layer whose grid tracks are equal doesn't read back its main layer's track sizes.
+#[test]
+fn instance_grid_tracks_clear_the_mains_sizes() {
+    let mut doc = Document::new("File");
+    let page = doc.first_page().unwrap();
+    let main = doc.create(page, NodeKind::Component { description: String::new(), props: BTreeMap::new() }, "Main", 0.0, 0.0, 400.0, 200.0).unwrap();
+    let grid = doc.create(main, NodeKind::Frame, "Grid", 0.0, 0.0, 400.0, 200.0).unwrap();
+    let layout = AutoLayout {
+        mode: LayoutMode::Grid,
+        grid_columns: 2,
+        grid_rows: 1,
+        column_tracks: vec![GridTrack::fixed(120.0); 2],
+        ..AutoLayout::default()
+    };
+    doc.node_mut(grid).unwrap().layout = Some(layout.clone());
+    let inst = doc.alloc_id();
+    let mut n = doc.node(main).unwrap().clone();
+    (n.id, n.kind, n.parent, n.children) = (inst, NodeKind::Instance { component: main, props: BTreeMap::new() }, None, Vec::new());
+    doc.insert(n, page, None).unwrap();
+    let mut layer = doc.node(grid).unwrap().clone();
+    (layer.id, layer.parent, layer.source) = (doc.alloc_id(), None, Some(grid));
+    layer.layout = Some(AutoLayout { column_tracks: Vec::new(), ..layout });
+    doc.insert(layer, inst, None).unwrap();
+    let (bytes, _) = export(&doc, None).unwrap();
+    let (back, _) = import(&bytes, "File").unwrap();
+    let tracks = |inside: bool| {
+        let n = back.nodes().find(|n| {
+            n.name == "Grid"
+                && back.ancestors(n.id).iter().any(|a| matches!(back.node(*a).map(|p| &p.kind), Some(NodeKind::Instance { .. }))) == inside
+        });
+        n.and_then(|n| n.layout.clone()).unwrap().column_tracks
+    };
+    assert_eq!(tracks(false), vec![GridTrack::fixed(120.0); 2]);
+    assert!(tracks(true).iter().all(|t| *t == GridTrack::fill(1.0)), "{:?}", tracks(true));
 }
 
 /// A frame's own min/max size survives whatever its parent is, not only under auto layout.
