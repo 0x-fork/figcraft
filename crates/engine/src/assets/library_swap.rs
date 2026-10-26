@@ -245,5 +245,4 @@ pub fn swap_library(doc: &mut Document, from: &str, to: &PublishedLibrary) -> Re
 }
 
 #[cfg(test)]
-#[path = "library_swap_tests.rs"]
 mod tests;
