@@ -25,6 +25,12 @@ On Linux and other Unix systems except macOS, user fonts are read from
 `$XDG_DATA_HOME/fonts`, or `$HOME/.local/share/fonts` when `XDG_DATA_HOME` is unset,
 empty or relative. The legacy `$HOME/.fonts` directory is also scanned.
 
+On macOS the font folders (`/System/Library/Fonts`, `/Library/Fonts`, `~/Library/Fonts` and the
+system's downloadable fonts) are read, and so is every other font file Core Text lists as
+available: fonts a font manager such as RightFont, FontBase or Typeface activates from its own
+library, without copying them into a font folder. Fonts activated while the app runs are found by
+`text.rescanFonts`, like newly installed ones.
+
 On macOS, fonts activated through Adobe Fonts are read where Creative Cloud keeps them
 (`~/Library/Application Support/Adobe/CoreSync/plugins/livetype`), so they're available while
 they're active there. Files without an extension are read when they start like a font file.
