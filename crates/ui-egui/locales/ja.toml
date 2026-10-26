@@ -2394,6 +2394,8 @@ status = "draft — needs native review"
 "widget.click" = "ウィジェットをクリック"
 "widget.insert" = "ウィジェットを挿入"
 "widget.list" = "ウィジェットを一覧表示"
+"widget.menu" = "ウィジェットのメニュー"
+"widget.setText" = "ウィジェットのフィールドを編集"
 "window.focus" = "ウィンドウを最前面に表示"
 "window.new" = "新しいウィンドウ"
 

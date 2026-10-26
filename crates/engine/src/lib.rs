@@ -1652,6 +1652,8 @@ mod booleans_tests;
 #[cfg(test)]
 mod bound_alpha_tests;
 #[cfg(test)]
+mod branch_live_tests;
+#[cfg(test)]
 mod branch_tests;
 #[cfg(test)]
 mod branch_versions_tests;
@@ -1963,6 +1965,8 @@ mod version_preview_tests;
 mod version_tests;
 #[cfg(test)]
 mod view_behaviour_tests;
+#[cfg(test)]
+mod widget_input_tests;
 #[cfg(test)]
 mod widgets_tests;
 

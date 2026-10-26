@@ -99,6 +99,15 @@ fit FigCraft's architecture:
   collide with what a connected client makes, because a client's numbers continue above every id of
   its space already in the document. Removed entries are part of the saved session state
   (`SessionState::removed`).
+- **Branches** of a file in a session stay with the person who made them; nothing about them goes
+  over the wire until a merge, which is an ordinary batch from that person (no message or format
+  change). So that the server takes the layers a branch made, a branch made in the session makes
+  its ids in its author's own client space, 2^24 above every id made there on the main file and the
+  author's other branches. Layers of the branch's base that main deleted during the session come
+  back with their ids (the server accepts re-creating deleted ids). Merging a branch whose new
+  layers, styles, variables or comments lie in another id space (one made offline or in an earlier
+  session) is refused by the app before anything is sent, since the server would refuse it (see
+  `crates/engine/src/branches.rs`).
 - Objects inside an entry are not separate objects: modes are part of their collection, a
   variable's values per mode part of the variable and replies part of their comment thread. Two
   people adding a mode to the same collection, editing different modes of one variable, or replying

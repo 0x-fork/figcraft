@@ -2317,6 +2317,8 @@ status = "draft — needs native review"
 "widget.click" = "Widget anklicken"
 "widget.insert" = "Widget einfügen"
 "widget.list" = "Widgets auflisten"
+"widget.menu" = "Widget-Menü"
+"widget.setText" = "Widget-Feld bearbeiten"
 "window.focus" = "Fenster in den Vordergrund holen"
 "window.new" = "Neues Fenster"
 

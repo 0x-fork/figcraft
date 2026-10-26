@@ -1168,7 +1168,8 @@ branches). Driven with `run_command`:
 
 - `branch.create {name?}` copies the file into a new branch tab and returns `{id, name, index}`.
   The branch remembers the file as it is now (its base) and makes new ids in its own id space, so
-  layers, styles and comments made on both sides never clash.
+  layers, styles and comments made on both sides never clash. Its history starts with a `Branch
+  created` version.
 - `branch.list` lists the branches of the file shown (or of the file a branch tab belongs to):
   `[{id, name, time, state: active|merged|archived, index?}]` (`index`: its open tab).
 - `branch.open {id}` opens a branch in a tab (or switches to it). Edit it like any document.
@@ -1190,15 +1191,26 @@ branches). Driven with `run_command`:
   conflict key to `"branch"` or `"main"`; the merge is refused while a conflict has none, so
   neither side's work is dropped without a choice.
 - `branch.updateFromMain {id?, resolutions?}` brings the main file's changes since the base into the
-  branch the same way (the new base is the main file as it is now). It is not undoable: the branch
-  tab's undo history starts over.
+  branch the same way (the new base is the main file as it is now) and adds an `Updated from main`
+  version to the branch's history. It is not undoable: the branch tab's undo history starts over.
 - `branch.archive {id?}` sets a branch aside without merging (it stays in the file and can still be
   opened, but not merged).
 
 Each branch keeps its own version history: on a branch tab, `file.saveVersion`, `version.autosave`
 and the `version.*` commands (list, preview, restore, rename, delete, duplicate) act on the
 branch's versions, which are saved in the file with the branch and stay with it when it is merged
-or archived. Branches aren't available in a live session.
+or archived.
+
+In a live session branches work the same way and stay with the person who made them (others
+don't see them). A branch made in the session makes its ids in your own client space, far above
+the ids the main file makes, so the session server takes them. Everyone's edits on main while the
+branch is open are main's changes in the review (against the branch's own base), and conflicts
+with them are resolved as offline. `branch.merge` is one edit of the session document: everyone
+gets it, and it is one step of your own undo history. It is refused on a view link, and for a
+branch made outside the session (or in an earlier one) whose new layers, styles, variables or
+comments lie in another id space, which the server would refuse; merge those once the file has
+left the session. While a session is still starting, branch commands that need your client id
+wait for it.
 
 ### Collaboration changes
 
@@ -1429,17 +1441,24 @@ Plugin settings are kept per plugin with the preferences (in a headless session,
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"plugin.event","params":{"id":"org.figcraft.examples.swatch-grid","control":"generate"}}}}
 ```
 
-Widgets (API 3, layers on the canvas a plugin draws) are driven the same way: `widget.insert
+Widgets (API 3 and 4, layers on the canvas a plugin draws) are driven the same way: `widget.insert
 {plugin, x?, y?}` puts one on the page (centred in the view without a position) and returns `{id,
 plugin, state, targets, output, logs, calls, fuel}`; `widget.click {id, target}` clicks one of its
 `targets` as a click on the canvas would (the plugin redraws it; one undo step; returns the same);
-`widget.list` lists every widget in the file with its plugin, page, state and targets. A widget's
-state is layer data, so it is saved, undone and synced with the file.
+`widget.list` lists every widget in the file with its plugin, page, state and targets. With plugin
+API 4 a widget can have editable text fields and a property menu (both listed with it, as `fields`
+and `menu`): `widget.setText {id, field, value}` sets a field as typing in it would (the value,
+at most 1,000 characters, goes into the state under the field's name and the plugin redraws; one
+undo step), and `widget.menu {id, item, value?}` uses a menu item (a toggle's `value` is `true` or
+`false`, by default the opposite of now; a colour's is one of its options). A widget's state is
+layer data, so it is saved, undone and synced with the file.
 
 ```json
 {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.insert","params":{"plugin":"org.figcraft.examples.counter"}}}}
 {"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.click","params":{"id":12,"target":"increment"}}}}
 {"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.list","params":{}}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.setText","params":{"id":12,"field":"label","value":"Votes"}}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.menu","params":{"id":12,"item":"big"}}}}
 ```
 
 Plugins from a `figcraft-server`'s plugin directory ([`plugins.md`](plugins.md#plugin-directories)):

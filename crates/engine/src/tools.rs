@@ -2105,6 +2105,19 @@ impl Session {
     /// cancel an in-progress move/resize/draw/marquee, handle board double-clicks, enter text
     /// editing (select-all on entry, word-select inside the running edit), enter vector editing
     /// for selected shapes, and step groups/frames one level deeper.
+    /// A double-click on `leaf` that a board object or a widget's editable field takes (typing into
+    /// a sticky or a shape on a board; editing the field like any text, its plugin told when editing
+    /// ends). Whether it was taken.
+    fn object_double_click(&mut self, doc: &Document, leaf: NodeId, sel: &[NodeId], p: Point, edits: bool) -> Result<bool> {
+        if matches!(self.tool.tool, ToolId::Move | ToolId::Scale) && self.board_double_click(doc, leaf, sel)? {
+            return Ok(true);
+        }
+        match crate::widgets::field_at(doc, leaf, p).filter(|_| edits) {
+            Some(field) => textedit::begin(self, field, None, false).map(|()| true),
+            None => Ok(false),
+        }
+    }
+
     fn double_click(&mut self, ev: &PointerEvent) -> Result<()> {
         let ds = self.ds()?;
         let (doc, sel, page) = (ds.doc.clone(), ds.selection.clone(), ds.page);
@@ -2157,7 +2170,7 @@ impl Session {
             return crate::vectoredit::begin_many(self, &[id]);
         }
         let Some(leaf) = hit_here else { return Ok(()) };
-        if matches!(self.tool.tool, ToolId::Move | ToolId::Scale) && self.board_double_click(&doc, leaf, &sel)? {
+        if self.object_double_click(&doc, leaf, &sel, ev.p(), edits)? {
             return Ok(());
         }
         let target = select_target(&doc, leaf, &sel, true);

@@ -2422,6 +2422,8 @@ status = "draft — needs native review"
 "widget.click" = "Clicar no widget"
 "widget.insert" = "Inserir widget"
 "widget.list" = "Listar widgets"
+"widget.menu" = "Menu do widget"
+"widget.setText" = "Editar campo do widget"
 "window.focus" = "Trazer a janela para a frente"
 "window.new" = "Nova janela"
 
