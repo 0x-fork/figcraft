@@ -1273,5 +1273,4 @@ pub fn local_styles(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
 }
 
 #[cfg(test)]
-#[path = "style_picker_tests.rs"]
 mod tests;
