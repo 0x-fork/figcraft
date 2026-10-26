@@ -1,13 +1,15 @@
 //! Fonts a document names that this machine doesn't have (#752): text layers, their styled
 //! ranges, text styles and the string variables bound to a font family. Text in such a family
-//! is drawn in a fallback font, so the user is told which ones are missing.
+//! is drawn in a fallback font, so the user is told which ones are missing. Once such a font is
+//! there, [`refit`] lets auto-sizing text measure its box in it again.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use figcraft_doc::{Document, NodeKind, StyleKind, VariableValue, Variables};
+use figcraft_doc::{Document, NodeId, NodeKind, StyleKind, VariableValue, Variables};
 use serde_json::{Value, json};
 
 use crate::cmd::CommandSpec;
+use crate::params::{get, req_targets};
 use crate::{Result, Session, spec};
 
 /// A family the document names that no installed or built-in font provides.
@@ -62,21 +64,73 @@ pub fn missing(doc: &Document) -> Vec<Missing> {
     used.into_values().filter(|(family, _)| !figcraft_text::has_family(family)).map(|(family, layers)| Missing { family, layers }).collect()
 }
 
-/// Every string value of variable `id` in any mode, following aliases (at most 32 deep).
+/// Every string value of variable `id` in any mode, following aliases (each variable once).
 fn string_values(vars: &Variables, id: &str) -> Vec<String> {
     let mut out = Vec::new();
-    let mut todo = vec![(id.to_string(), 0)];
-    while let Some((id, depth)) = todo.pop() {
+    let mut seen = BTreeSet::new();
+    let mut todo = vec![id.to_string()];
+    while let Some(id) = todo.pop() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
         let Some(var) = vars.get(&id) else { continue };
         for v in var.values.values() {
             match v {
                 VariableValue::String(s) => out.push(s.clone()),
-                VariableValue::Alias(a) if depth < 32 => todo.push((a.clone(), depth + 1)),
+                VariableValue::Alias(a) => todo.push(a.clone()),
                 _ => {}
             }
         }
     }
     out
+}
+
+/// Auto-sizing text layers measure their boxes again: a box measured while its family was missing
+/// (in a fallback font) follows the real face once that's installed or loaded. Only layers under
+/// `under` (every layer: `None`) that use one of `families` (any family: `None`). Returns the
+/// layers whose size changed.
+pub fn refit(doc: &mut Document, under: Option<&[NodeId]>, families: Option<&[String]>) -> Vec<NodeId> {
+    let want: Option<BTreeSet<String>> = families.map(|f| f.iter().map(|x| x.trim().to_lowercase()).collect());
+    let scope: Option<BTreeSet<NodeId>> = under.map(|ids| ids.iter().flat_map(|i| doc.subtree(*i)).collect());
+    let ids: Vec<NodeId> = doc
+        .nodes()
+        .filter(|n| scope.as_ref().is_none_or(|s| s.contains(&n.id)))
+        .filter(|n| {
+            let NodeKind::Text(t) = &n.kind else { return false };
+            let uses = |w: &BTreeSet<String>| {
+                w.contains(&t.style.font_family.trim().to_lowercase())
+                    || t.spans().iter().any(|(_, _, st)| w.contains(&st.font_family.trim().to_lowercase()))
+            };
+            want.as_ref().is_none_or(uses)
+                && figcraft_text::auto_size(n).is_some_and(|(w, h)| (w - n.width).abs() > 1e-6 || (h - n.height).abs() > 1e-6)
+        })
+        .map(|n| n.id)
+        .collect();
+    if !ids.is_empty() {
+        let before = doc.clone();
+        doc.mark_dirty(ids.iter().copied());
+        crate::normalize(doc, &before);
+    }
+    ids
+}
+
+/// [`refit`] in the open document, if there is one.
+pub(crate) fn refit_open(s: &mut Session, under: Option<&[NodeId]>, families: Option<&[String]>) -> Vec<NodeId> {
+    match s.doc_mut() {
+        Ok(doc) => refit(doc, under, families),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// `text.refit`: the layers `ids` names (an `ids` that isn't a list of layers is refused), else the
+/// whole document.
+fn refit_text(s: &mut Session, p: &Value) -> Result<Value> {
+    let under = match get(p, "ids") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(req_targets("text.refit", s, p)?),
+    };
+    s.doc()?;
+    Ok(json!({"refitted": refit_open(s, under.as_deref(), None)}))
 }
 
 fn missing_fonts(s: &mut Session, _: &Value) -> Result<Value> {
@@ -85,14 +139,24 @@ fn missing_fonts(s: &mut Session, _: &Value) -> Result<Value> {
     Ok(json!({"families": families}))
 }
 
+/// The font commands: `text.missingFonts` and `text.refit`.
 pub fn specs() -> Vec<CommandSpec> {
-    vec![spec!(
-        "text.missingFonts",
-        "Missing fonts",
-        "{}  fonts the open document names that aren't installed (text layers, styled ranges, text styles, font family variables); the app shows them → {families: [{family, layers}]}",
-        false,
-        missing_fonts
-    )]
+    vec![
+        spec!(
+            "text.missingFonts",
+            "Missing fonts",
+            "{}  fonts the open document names that aren't installed (text layers, styled ranges, text styles, font family variables); the app shows them → {families: [{family, layers}]}",
+            false,
+            missing_fonts
+        ),
+        spec!(
+            "text.refit",
+            "Fit text to fonts",
+            "{ids? (these layers and the text in them; default: the whole document)}  auto-sizing text measures its box again, e.g. a box measured in a fallback font while its family was missing → {refitted: [ids whose size changed]}",
+            true,
+            refit_text
+        ),
+    ]
 }
 
 #[cfg(test)]

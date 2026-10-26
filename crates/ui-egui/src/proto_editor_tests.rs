@@ -78,6 +78,9 @@ fn condition(u: &Ui, btn: NodeId, block: usize) -> String {
     blocks[block].condition.as_ref().map(|c| c.display(&doc.variables)).unwrap_or_default()
 }
 
+/// Asserts the interaction editor shows conditional blocks and nested actions, restarts a
+/// condition when a variable of another type is picked, ignores a right-hand-side variable pick
+/// for a complex condition, and one undo restores the previous condition.
 #[test]
 fn the_interaction_editor_shows_conditionals_and_picks_their_variables() {
     let (mut s, _, b, btn) = setup();
@@ -95,7 +98,7 @@ fn the_interaction_editor_shows_conditionals_and_picks_their_variables() {
     u.app.ui.right_tab = crate::RightTab::Prototype;
     crate::proto_panel::open_editor(&u.ctx, Some((btn, 0)));
     // The conditional open, then its nested set variable, then the else-if as an expression.
-    let open = egui::Id::new(("proto_open_action", btn, 0usize));
+    let open = egui::Id::unique(("proto_open_action", btn, 0usize));
     for path in [vec![1usize], vec![1, 0, 1], vec![1, 2, 0]] {
         u.ctx.data_mut(|d| d.insert_temp(open, path));
         u.frames(3, Vec::new);
@@ -154,6 +157,8 @@ fn the_builder_takes_variable_operator_value_conditions() {
     }
 }
 
+/// Asserts invalid typed conditions keep their draft and show errors without saving, a valid
+/// one clears the error and saves, and Enter does not leak to shortcuts.
 #[test]
 fn typed_conditions_are_checked_and_errors_show_until_fixed() {
     let (mut s, _, b, btn) = setup();
@@ -169,7 +174,7 @@ fn typed_conditions_are_checked_and_errors_show_until_fixed() {
     let mut u = Ui::new(s);
     u.app.ui.right_tab = crate::RightTab::Prototype;
     crate::proto_panel::open_editor(&u.ctx, Some((btn, 0)));
-    u.ctx.data_mut(|d| d.insert_temp(egui::Id::new(("proto_open_action", btn, 0usize)), vec![1usize]));
+    u.ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("proto_open_action", btn, 0usize)), vec![1usize]));
     u.frames(3, Vec::new);
     // The else if is complex: it shows as an expression field.
     let field = Slot { node: btn, k: 0, path: vec![1] }.id("proto_cond_expr").with(1usize);
@@ -303,4 +308,27 @@ fn escape_closes_prototype_editor_without_deselecting_layer() {
     // Third Escape deselects all.
     u.key(pos2(100.0, 100.0), egui::Key::Escape);
     assert!(u.app.session.selection().is_empty(), "selection cleared on third escape");
+}
+
+/// After a click in the Pages list, Delete that removes an interaction ends the list's hold on the
+/// keyboard: with the layer deselected afterwards, Delete doesn't take the page (#859).
+#[test]
+fn deleting_an_interaction_ends_the_pages_list_focus() {
+    let (s, _a, _b, btn) = setup();
+    let mut u = Ui::new(s);
+    let first = u.app.session.page().unwrap();
+    u.run("page.add", json!({}));
+    u.run("page.select", json!({"id": first}));
+    // As after a click on the page's row (layers_keys_tests clicks the real row).
+    u.app.ui.pages_focus = u.app.session.ds().ok().map(|d| d.uid);
+    u.app.ui.right_tab = crate::RightTab::Prototype;
+    u.run("select.set", json!({"ids": [btn]}));
+    crate::proto_panel::open_editor(&u.ctx, Some((btn, 0)));
+    u.frames(1, Vec::new);
+    u.key(pos2(100.0, 100.0), egui::Key::Delete);
+    assert_eq!(u.app.session.doc().unwrap().node(btn).unwrap().interactions.len(), 0);
+    assert!(u.app.ui.pages_focus.is_none());
+    u.run("select.none", json!({}));
+    u.key(pos2(100.0, 100.0), egui::Key::Delete);
+    assert_eq!(u.app.session.doc().unwrap().pages.len(), 2, "the page stays");
 }
