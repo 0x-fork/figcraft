@@ -10,14 +10,11 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 mod assets;
-pub mod background;
 pub mod batch;
 mod boards;
-pub mod branches;
 mod canvas;
 pub mod catalog;
 pub mod cmd;
-pub mod collab;
 pub mod datafill;
 mod dev;
 pub mod doc_urls;
@@ -25,16 +22,14 @@ pub mod file_access;
 pub mod fonts;
 pub mod guard;
 pub mod inspect;
-pub mod invite_links;
 pub mod keymap;
-pub mod live;
 pub mod measure;
-pub mod online;
 pub mod params;
 pub mod plugin_directory;
 pub mod plugins;
 pub mod proto_run;
 mod selection;
+mod sharing;
 pub mod synthetic;
 pub mod synthetic_ds;
 pub mod templates;
@@ -77,6 +72,12 @@ pub use selection::rename;
 pub use selection::selection_colors;
 pub use selection::selection_reorder;
 pub use selection::selection_spacing;
+pub use sharing::background;
+pub use sharing::branches;
+pub use sharing::collab;
+pub use sharing::invite_links;
+pub use sharing::live;
+pub use sharing::online;
 
 pub use batch::{BatchScope, BatchStep};
 pub use cmd::{CommandSpec, all_commands, find_command};
