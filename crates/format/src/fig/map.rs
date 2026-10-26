@@ -84,7 +84,6 @@ pub(super) fn to_rest(msg: &Kv, name: &str, max_nodes: usize) -> (Value, Vec<Str
 }
 
 #[cfg(test)]
-#[path = "map_image_filter_tests.rs"]
 mod image_filter_tests;
 
 /// REST importer warnings reworded for a `.fig` import (`None`: drop it).
@@ -110,7 +109,6 @@ fn guid(v: &Kv) -> Option<String> {
 }
 
 #[cfg(test)]
-#[path = "map_connector_snapshot_budget_tests.rs"]
 mod connector_snapshot_budget_tests;
 
 /// A `GUID`-holding reference (`StyleId`, `VariableID`, …): its `guid`.
