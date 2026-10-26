@@ -241,8 +241,10 @@ pub fn invoke(app: &mut FigApp, id: &str) {
             app.toast(tr("Copied as text"));
         }
         "edit.copyLink" => {
+            // Only a selected layer has a link, and the copy goes through the control-channel fence
+            // (`clipboard_set_text`): a synthetic gesture never replaces the user's clipboard.
             if let Some(id) = app.session.selection().first() {
-                app.services.clipboard_set_text(&format!("figcraft://node/{}", id.0));
+                app.clipboard_set_text(&format!("figcraft://node/{}", id.0));
                 app.toast(tr("Link copied"));
             }
         }
