@@ -188,6 +188,9 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             o.insert("letterSpacing".into(), json!(t.style.letter_spacing.label()));
             o.insert("textAlign".into(), json!(t.align_h));
             o.insert("textAutoResize".into(), json!(t.auto_resize));
+            if t.max_lines > 0 {
+                o.insert("maxLines".into(), json!(t.max_lines));
+            }
             if let Some(tp) = &t.path {
                 o.insert("textPath".into(), json!(tp));
             }

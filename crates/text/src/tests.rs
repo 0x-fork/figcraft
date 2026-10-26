@@ -232,7 +232,9 @@ fn truncate_max_lines_with_ellipsis() {
     assert_eq!(l.lines.len(), 2);
     let last = l.glyphs.last().unwrap();
     assert_eq!(last.gid, face.glyph_for('…'));
-    // max_lines is ignored unless truncating.
+    // Auto height truncates at max_lines too; a fixed box shows every line.
+    t.auto_resize = figcraft_doc::TextAutoResize::Height;
+    assert_eq!(layout(&t, Some(300.0), None).lines.len(), 2);
     t.auto_resize = figcraft_doc::TextAutoResize::None;
     assert_eq!(layout(&t, Some(300.0), Some(1000.0)).lines.len(), 3);
 }
