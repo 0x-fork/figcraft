@@ -956,11 +956,18 @@ fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimit
                 // Sessions and the operator may use the last connections; one-shot requests
                 // (hosting, libraries, browsing plugins) leave them free.
                 let session = matches!(first, ClientMsg::Hello(_) | ClientMsg::Manage(_));
+                // A publish uploads a whole file; a large one on a slow link takes the server a
+                // while to receive and answer. The manage/hosting connections that carry uploads
+                // wait the longer request-reply timeout, not the short request idle.
+                let idle = match first {
+                    ClientMsg::Manage(_) | ClientMsg::OpenHosting(_) => limits.request_reply_timeout,
+                    ClientMsg::Hello(_) => limits.idle_timeout,
+                    _ => limits.request_idle,
+                };
                 let max = match &first {
                     ClientMsg::OpenPlugins(o) if o.key.is_empty() => limits.max_request,
                     _ => limits.max_client_message,
                 };
-                let idle = if session { limits.idle_timeout } else { limits.request_idle };
                 let reserved = !session && open.0.load(Ordering::Relaxed) > limits.max_connections.saturating_sub(limits.reserve_for_sessions);
                 // (In flight is only taken when the connection goes on: the hub gives it back.)
                 if reserved || !shared.in_flight.take(bytes, limits.max_in_flight) {
