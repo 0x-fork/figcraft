@@ -1168,7 +1168,8 @@ branches). Driven with `run_command`:
 
 - `branch.create {name?}` copies the file into a new branch tab and returns `{id, name, index}`.
   The branch remembers the file as it is now (its base) and makes new ids in its own id space, so
-  layers, styles and comments made on both sides never clash.
+  layers, styles and comments made on both sides never clash. Its history starts with a `Branch
+  created` version.
 - `branch.list` lists the branches of the file shown (or of the file a branch tab belongs to):
   `[{id, name, time, state: active|merged|archived, index?}]` (`index`: its open tab).
 - `branch.open {id}` opens a branch in a tab (or switches to it). Edit it like any document.
@@ -1190,15 +1191,26 @@ branches). Driven with `run_command`:
   conflict key to `"branch"` or `"main"`; the merge is refused while a conflict has none, so
   neither side's work is dropped without a choice.
 - `branch.updateFromMain {id?, resolutions?}` brings the main file's changes since the base into the
-  branch the same way (the new base is the main file as it is now). It is not undoable: the branch
-  tab's undo history starts over.
+  branch the same way (the new base is the main file as it is now) and adds an `Updated from main`
+  version to the branch's history. It is not undoable: the branch tab's undo history starts over.
 - `branch.archive {id?}` sets a branch aside without merging (it stays in the file and can still be
   opened, but not merged).
 
 Each branch keeps its own version history: on a branch tab, `file.saveVersion`, `version.autosave`
 and the `version.*` commands (list, preview, restore, rename, delete, duplicate) act on the
 branch's versions, which are saved in the file with the branch and stay with it when it is merged
-or archived. Branches aren't available in a live session.
+or archived.
+
+In a live session branches work the same way and stay with the person who made them (others
+don't see them). A branch made in the session makes its ids in your own client space, far above
+the ids the main file makes, so the session server takes them. Everyone's edits on main while the
+branch is open are main's changes in the review (against the branch's own base), and conflicts
+with them are resolved as offline. `branch.merge` is one edit of the session document: everyone
+gets it, and it is one step of your own undo history. It is refused on a view link, and for a
+branch made outside the session (or in an earlier one) whose new layers, styles, variables or
+comments lie in another id space, which the server would refuse; merge those once the file has
+left the session. While a session is still starting, branch commands that need your client id
+wait for it.
 
 ### Collaboration changes
 
