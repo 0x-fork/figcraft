@@ -441,7 +441,7 @@ fn japanese_korean_and_chinese_have_no_plural_forms() {
     assert_eq!(code("system", Some("ja-JP")), "ja");
     assert_eq!(code("system", Some("ko_KR.UTF-8")), "ko");
     assert_eq!(code("system", Some("ja,en-US")), "ja");
-    for code in ["ja", "ko", "zh-Hans"] {
+    for code in ["ja", "ko", "th", "zh-Hans"] {
         let lang = LANGS.iter().position(|l| l.code == code).unwrap();
         assert!(!plural_one(lang, 0) && !plural_one(lang, 1) && !plural_one(lang, 2), "{code}");
         let ones: Vec<_> = LANGS[lang].ui.iter().filter(|(_, t)| matches!(t, Text::Plural { one: Some(_), .. })).map(|(k, _)| k).collect();
