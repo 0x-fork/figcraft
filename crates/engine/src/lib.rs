@@ -1886,6 +1886,8 @@ mod shapes_behaviour_tests;
 #[cfg(test)]
 mod shortcut_parity_tests;
 #[cfg(test)]
+mod sketch_import_tests;
+#[cfg(test)]
 mod slot_tests;
 #[cfg(test)]
 mod stroke_style_tests;
