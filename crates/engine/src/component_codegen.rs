@@ -576,12 +576,12 @@ pub(crate) fn value_expr(doc: &Document, c: &Component, p: &Param, value: &Value
 pub(crate) fn slot_name(c: &Component, p: &Param) -> String {
     let mut used = Vec::new();
     for q in c.params.iter().filter(|q| matches!(q.kind, ParamKind::Slot)) {
-        let name = class_name(&q.ident, &mut used);
+        let name = class_name(&q.ident, "slot", &mut used);
         if q.ident == p.ident {
             return name;
         }
     }
-    class_name(&p.ident, &mut Vec::new())
+    class_name(&p.ident, "slot", &mut Vec::new())
 }
 
 /// The values an instance sets for `c`'s parameters, in order (`None` for other layers): variant
@@ -678,7 +678,7 @@ pub(crate) fn usage_with_styles(doc: &Document, id: NodeId, lang: CodeLang, dept
                 .filter(|(name, _, _)| is_slot(name))
                 .map(|(name, expr, _)| {
                     let slot = c.params.iter().find(|q| q.ident == *name);
-                    let name = slot.map(|p| slot_name(&c, p)).unwrap_or_else(|| class_name(name, &mut Vec::new()));
+                    let name = slot.map(|p| slot_name(&c, p)).unwrap_or_else(|| class_name(name, "slot", &mut Vec::new()));
                     format!("{pad}  <template #{name}>\n{expr}{pad}  </template>\n")
                 })
                 .collect();
@@ -770,7 +770,7 @@ pub fn definition(doc: &Document, c: &Component, lang: CodeLang) -> String {
 /// `data-*` attribute names for variant parameters, unique among them (in order).
 fn data_attrs(variants: &[&Param]) -> Vec<String> {
     let mut used = Vec::new();
-    variants.iter().map(|p| format!("data-{}", class_name(&p.prop, &mut used))).collect()
+    variants.iter().map(|p| format!("data-{}", class_name(&p.prop, "prop", &mut used))).collect()
 }
 
 /// `c`'s markup in React or Leptos (two levels in) and its stylesheet (variables as custom
@@ -778,7 +778,7 @@ fn data_attrs(variants: &[&Param]) -> Vec<String> {
 fn web(doc: &Document, c: &Component, lang: CodeLang) -> (String, String, String) {
     let ctx = Ctx { doc, root: c.comp, comp: Some(c), base: 2 };
     let root_name = c.set.and_then(|s| doc.node(s)).or_else(|| doc.node(c.comp)).map(|n| n.name.clone()).unwrap_or_default();
-    let root_class = class_name(&root_name, &mut Vec::new());
+    let root_class = class_name(&root_name, "component", &mut Vec::new());
     let variants: Vec<&Param> = c.params.iter().filter(|p| matches!(p.kind, ParamKind::Variant(_))).collect();
     let attr_names = data_attrs(&variants);
     let pass = |root: NodeId| {

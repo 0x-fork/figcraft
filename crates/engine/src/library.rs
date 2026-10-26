@@ -439,9 +439,9 @@ pub fn publish(doc: &Document, prev: Option<&PublishedLibrary>, sel: &Selection,
     Ok(PublishedLibrary { manifest, doc: Arc::new(snap) })
 }
 
-/// When a library file was last read.
+/// When a file was last read: its length and modification time (also a document's own file, #1330).
 #[derive(Clone, Debug, PartialEq)]
-struct Stamp {
+pub(crate) struct Stamp {
     len: u64,
     modified: Option<std::time::SystemTime>,
 }
@@ -545,7 +545,7 @@ fn now() -> Option<std::time::SystemTime> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn stat(path: &str) -> std::result::Result<Stamp, String> {
+pub(crate) fn stat(path: &str) -> std::result::Result<Stamp, String> {
     let m = crate::file_access::metadata(path).map_err(|e| e.to_string())?;
     if !m.is_file() {
         return Err(format!("{path} is not a file"));
@@ -554,7 +554,7 @@ fn stat(path: &str) -> std::result::Result<Stamp, String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn stat(_path: &str) -> std::result::Result<Stamp, String> {
+pub(crate) fn stat(_path: &str) -> std::result::Result<Stamp, String> {
     Err(NO_FILES.into())
 }
 

@@ -1555,7 +1555,7 @@ impl<'d> Exporter<'d> {
             ("textTracking", fl(0.0)),
             ("emojiImageSet", e("APPLE")),
         ]);
-        if td.auto_resize == TextAutoResize::Truncate {
+        if td.truncates() {
             f.push(("textTruncation", e("ENDING")));
         }
         if td.max_lines > 0 {

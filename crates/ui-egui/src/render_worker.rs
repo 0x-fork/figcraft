@@ -97,6 +97,7 @@ fn run(job: &Job, view: &View, retained: &mut Retained, coarse: bool) -> Option<
         skip: job.skip.clone(),
         solo: job.solo,
         lod: true,
+        magnified_image_pixels: true,
         dots: job.dots,
         ..Default::default()
     };
