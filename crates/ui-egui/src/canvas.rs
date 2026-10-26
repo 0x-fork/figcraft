@@ -13,6 +13,20 @@ use crate::FigApp;
 use crate::i18n::{tr, trf, trn};
 use crate::render_worker::{Done, Job, Worker};
 use crate::theme::{COMPONENT, Tokens, doc_c32, regular, semibold};
+pub mod board_bar;
+pub mod board_facilitate;
+pub mod comments;
+pub mod cursors;
+pub mod frame_labels;
+pub mod frame_stats;
+pub mod guides;
+pub mod handles;
+pub mod live_text;
+pub mod measure_overlay;
+pub mod proto_canvas;
+pub mod render_worker;
+pub(crate) mod selection_spacing;
+pub mod widget_bar;
 
 pub struct CanvasState {
     pub rect: Rect,
