@@ -310,7 +310,7 @@ fn the_scan_offers_installed_styles_an_embedded_family_lacks() {
     face.instances.clear();
     let mut db = FontDb::default();
     db.add(face);
-    let entry = |s: &str| Pending { path: format!("no-such-dir/{s}.ttf").into(), index: 0, style: s.into() };
+    let entry = |s: &str| Pending { path: format!("no-such-dir/{s}.ttf").into(), index: 0, style: s.into(), postscript: None };
     let found =
         |family: &str, styles: &[&str]| BTreeMap::from([(family.to_lowercase(), (family.to_string(), styles.iter().map(|s| entry(s)).collect()))]);
     db.merge_scan(found("Brand Sans", &["Regular"]));
