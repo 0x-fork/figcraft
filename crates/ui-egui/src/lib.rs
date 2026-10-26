@@ -1939,7 +1939,7 @@ impl FigApp {
     fn mobile_buttons(&mut self, ctx: &egui::Context, at: egui::Pos2) {
         use a11y::Tip as _;
         let t = theme::Tokens::get(ctx);
-        egui::Area::new(egui::Id::new("mobile_panel_buttons")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
+        egui::Area::new(egui::Id::unique("mobile_panel_buttons")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
             for (side, icon, name) in
                 [(MobilePanel::Left, icons::Icon::Layers, i18n::tr("Layers")), (MobilePanel::Right, icons::Icon::Panels, i18n::tr("Design"))]
             {

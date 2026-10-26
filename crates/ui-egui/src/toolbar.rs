@@ -169,11 +169,11 @@ fn main_toolbar(app: &mut FigApp, ui: &mut Ui, canvas: Rect, t: &Tokens, board: 
 /// How far the buttons of a pill `width` wide drawn at `rect` are scrolled: wider than the pill (a
 /// phone), they slide sideways under a drag or the wheel.
 fn pill_scroll(ui: &Ui, rect: Rect, width: f32) -> f32 {
-    let scroll_id = ui.id().with("tb_scroll");
+    let scroll_id = ui.scope_id().with("tb_scroll");
     let max_scroll = (width - rect.width()).max(0.0);
     let mut scroll = 0.0;
     if max_scroll > 0.0 {
-        let drag = ui.ctx().read_response(ui.id().with("pill")).map_or(0.0, |r| r.drag_delta().x);
+        let drag = ui.ctx().read_response(ui.scope_id().with("pill")).map_or(0.0, |r| r.drag_delta().x);
         let wheel = if ui.rect_contains_pointer(rect) { ui.input(|i| i.smooth_scroll_delta.x + i.smooth_scroll_delta.y) } else { 0.0 };
         scroll = (ui.data(|d| d.get_temp::<f32>(scroll_id)).unwrap_or(0.0) - drag - wheel).clamp(0.0, max_scroll);
     }
