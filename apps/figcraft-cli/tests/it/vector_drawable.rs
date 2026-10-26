@@ -1,5 +1,4 @@
 //! `figcraft-cli export … -o out.xml` (Android Vector Drawable) end to end.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::process::Command;
 

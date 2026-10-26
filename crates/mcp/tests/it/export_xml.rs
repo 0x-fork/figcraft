@@ -1,9 +1,6 @@
 //! The `export` tool's Android Vector Drawable format: the XML as text, then its warnings.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-mod common;
-
-use common::Client;
+use crate::common::Client;
 use serde_json::{Value, json};
 
 #[test]
