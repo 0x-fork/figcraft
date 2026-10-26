@@ -1007,14 +1007,7 @@ impl Session {
                 } else {
                     self.cancel_interaction()?;
                     if click_clears {
-                        set_state(self, |e| {
-                            e.vertices.clear();
-                            e.segments.clear();
-                            for o in &mut e.others {
-                                o.vertices.clear();
-                                o.segments.clear();
-                            }
-                        })?;
+                        self.clear_points()?;
                     }
                 }
             }
@@ -1041,23 +1034,7 @@ impl Session {
                 }
             })?,
             VGesture::Erase { .. } | VGesture::Paint { .. } => self.commit_interaction()?,
-            VGesture::BoxScale { pick, .. } => {
-                let ds = self.ds()?;
-                let clicked = ds.interaction.as_ref().is_some_and(|it| Arc::ptr_eq(&it.doc, &ds.doc));
-                match pick.filter(|_| clicked) {
-                    Some(v) => {
-                        self.cancel_interaction()?;
-                        set_state(self, |e| {
-                            if let Some(i) = e.vertices.iter().position(|x| *x == v) {
-                                e.vertices.remove(i);
-                            } else {
-                                e.vertices.push(v);
-                            }
-                        })?;
-                    }
-                    None => self.commit_interaction()?,
-                }
-            }
+            VGesture::BoxScale { pick, .. } => self.box_scale_up(pick)?,
             VGesture::Cut { start, hit } => self.cut_up(ve, start, hit, ev)?,
             VGesture::Width(g) => self.width_up(g)?,
         }
@@ -1065,6 +1042,34 @@ impl Session {
             ds.revision += 1;
         }
         Ok(())
+    }
+
+    /// Clears the point selection of the active layer and of the other layers being edited.
+    fn clear_points(&mut self) -> Result<()> {
+        set_state(self, |e| {
+            e.vertices.clear();
+            e.segments.clear();
+            for o in &mut e.others {
+                o.vertices.clear();
+                o.segments.clear();
+            }
+        })
+    }
+
+    /// The transform box's corner or edge was let go: a Shift-click (no drag) on the corner's
+    /// point `pick` toggles it in the selection; anything else keeps the scale.
+    fn box_scale_up(&mut self, pick: Option<usize>) -> Result<()> {
+        let ds = self.ds()?;
+        let clicked = ds.interaction.as_ref().is_some_and(|it| Arc::ptr_eq(&it.doc, &ds.doc));
+        let Some(v) = pick.filter(|_| clicked) else { return self.commit_interaction() };
+        self.cancel_interaction()?;
+        set_state(self, |e| {
+            if let Some(i) = e.vertices.iter().position(|x| *x == v) {
+                e.vertices.remove(i);
+            } else {
+                e.vertices.push(v);
+            }
+        })
     }
 
     /// Point `v` of vector `id`, dragged and dropped within `tol` (page units) of another of its

@@ -122,7 +122,8 @@ impl Color {
     /// Parse hex the way the colour field does: `#` optional, 1, 2, 3, 4, 6 or 8 digits
     /// (`F` → `FFFFFF`, `AB` → `ABABAB`, `ABC` → `AABBCC`).
     pub fn from_hex(s: &str) -> Option<Self> {
-        let s = s.trim().trim_start_matches('#');
+        let s = s.trim();
+        let s = s.strip_prefix('#').unwrap_or(s);
         if !s.chars().all(|c| c.is_ascii_hexdigit()) {
             return None;
         }
@@ -355,7 +356,7 @@ impl ImageFilters {
     }
 
     /// The built-in adjustment presets: `(id, label, adjustments)`. "Reset" is the identity.
-    pub const PRESETS: [(&'static str, &'static str, ImageFilters); 7] = [
+    pub const PRESETS: [(&str, &str, ImageFilters); 7] = [
         ("vivid", "Vivid", ImageFilters { contrast: 0.2, saturation: 0.45, highlights: -0.1, shadows: 0.1, ..ImageFilters::NONE }),
         ("muted", "Muted", ImageFilters { contrast: -0.15, saturation: -0.45, ..ImageFilters::NONE }),
         ("warm", "Warm", ImageFilters { temperature: 0.5, tint: 0.1, saturation: 0.1, ..ImageFilters::NONE }),
@@ -559,10 +560,11 @@ pub struct Paint {
     pub visible: bool,
     #[serde(default)]
     pub blend: BlendMode,
-    /// The opacity holds the alpha of a typed solid colour (see [`Paint::solid`]) rather than an
-    /// opacity set on its own: a colour variable bound to the paint replaces it.
-    #[serde(default, rename = "colorAlpha", skip_serializing_if = "std::ops::Not::not")]
-    pub color_alpha: bool,
+    /// The part of the opacity that is the alpha of a typed solid colour (see [`Paint::solid`]),
+    /// the rest being an opacity set on its own: a colour variable bound to the paint replaces
+    /// this part only. 1: all of it is the paint's own.
+    #[serde(default = "one", rename = "colorAlpha", skip_serializing_if = "is_one")]
+    pub color_alpha: f32,
 }
 
 /// Paints compare by what they paint; where the opacity came from doesn't matter.
@@ -576,6 +578,10 @@ fn yes() -> bool {
     true
 }
 
+fn is_one(x: &f32) -> bool {
+    *x == 1.0
+}
+
 impl Paint {
     pub fn solid(color: Color) -> Self {
         Self {
@@ -583,12 +589,12 @@ impl Paint {
             opacity: color.a,
             visible: true,
             blend: BlendMode::Normal,
-            color_alpha: color.a < 1.0,
+            color_alpha: color.a,
         }
     }
 
     pub fn gradient(g: Gradient) -> Self {
-        Self { kind: PaintKind::Gradient(g), opacity: 1.0, visible: true, blend: BlendMode::Normal, color_alpha: false }
+        Self { kind: PaintKind::Gradient(g), opacity: 1.0, visible: true, blend: BlendMode::Normal, color_alpha: 1.0 }
     }
 
     pub fn image(hash: impl Into<String>, mode: ImageScaleMode) -> Self {
@@ -604,13 +610,13 @@ impl Paint {
             opacity: 1.0,
             visible: true,
             blend: BlendMode::Normal,
-            color_alpha: false,
+            color_alpha: 1.0,
         }
     }
 
     /// Layer `source` (a node id) tiled at its own size.
     pub fn pattern(source: u64) -> Self {
-        Self { kind: PaintKind::Pattern(PatternPaint::new(source)), opacity: 1.0, visible: true, blend: BlendMode::Normal, color_alpha: false }
+        Self { kind: PaintKind::Pattern(PatternPaint::new(source)), opacity: 1.0, visible: true, blend: BlendMode::Normal, color_alpha: 1.0 }
     }
 
     /// The solid colour (with the paint opacity folded into alpha), if solid.
