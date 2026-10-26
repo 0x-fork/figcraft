@@ -308,7 +308,7 @@ Or in a project's `.mcp.json`:
 | Tool | What it does |
 |---|---|
 | `list_commands {filter?}` | Every command: id, label, menu, shortcut, undoable, params doc. |
-| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, Leptos, SwiftUI or Jetpack Compose for a layer; components take their properties as parameters and instances are calls, see Dev Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names; `colorFormat`: hex, rgb, css, hsl or hsb), `inspect.assets` (layers under the selection with export settings, icons and images, each with its `kind`), `inspect.code` takes `unit: rem` and `rootFontSize` for CSS, HTML, React and Leptos, `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`, `codeConnect.set` (components linked to real code, see Dev Mode below)). |
+| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, Leptos, SwiftUI, Jetpack Compose or ArkUI for a layer; components take their properties as parameters and instances are calls, see Dev Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names; `colorFormat`: hex, rgb, css, hsl or hsb), `inspect.assets` (layers under the selection with export settings, icons and images, each with its `kind`), `inspect.code` takes `unit: rem` and `rootFontSize` for CSS, HTML, React and Leptos, `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`, `codeConnect.set` (components linked to real code, see Dev Mode below)). |
 | `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing for open documents and their document state. Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. A step can use what an earlier step returned: name it with `"as": "card"` and `{"$ref": "card"}` anywhere in a later step's params becomes the `id` in its result (`{"$step": n}` does the same by zero-based position); `"field"` takes another key or a slash path such as `ids/0` (see Step references below). |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
 | `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`; marking again clears "Changed"), a section's `sectionContentsHidden`, text…); returns the updated layers. |
@@ -317,7 +317,7 @@ Or in a project's `.mcp.json`:
 | `select {ids}` | Replace the selection (`[]` deselects). |
 | `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?, contentsOnly?, includeBoundingBox?, svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?}` | png, jpg, svg, webp, pdf, or `fig`: the whole file as `.fig`, experimental (see Exporting `.fig` files below); `size` is `2x`, `512w` or `512h`. The image covers what the layers paint (shadows towards their offset, strokes, unclipped children, a mask group's mask; hidden layers take no room; a slice is its area with everything under it, or only the frame or group it sits in while `contentsOnly` is on); `contentsOnly: false` also draws every other layer showing in that area, `includeBoundingBox` exports the layers' own boxes; SVG: `svgOutlineText: false` keeps `<text>`, `svgIdAttribute` writes unique ids from layer names, `svgSimplifyStroke: false` writes every stroke as an outline. The same options go in export settings (`export.add` / `export.update`). PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?, assets?}` (every layer once per setting, named `<layer><suffix>.<format>`, a slash in a layer name making a folder; `assets: true` exports the Inspect tab's assets instead: icons as SVG, images as PNG). |
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window in front when attached, a window id (see Windows below) that window. |
-| `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` (best effort, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. `open_file` returns `opened` (for a file opened anew, a `summary` of `name`, `pages`, `layers` and `images`, and `warnings` or `repairs`; a file that was already open just gives its `index`) and the document's `document` outline. |
+| `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` (best effort, see below), `.sketch` (Sketch 48 and newer, best effort), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. `open_file` returns `opened` (for a file opened anew, a `summary` of `name`, `pages`, `layers` and `images`, and `warnings` or `repairs`; a file that was already open just gives its `index`) and the document's `document` outline. |
 | `undo` / `redo` | Step through history. |
 | `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. A dragged layer drops into the frame or auto layout slot under the pointer, except one inside a group, a boolean group or an instance (outside its slots), which only moves. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). |
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity, arrows that pan the view when nothing is selected; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
@@ -396,20 +396,36 @@ one undo step and returns the ids it made:
   (`Shift+Cmd/Ctrl+Enter` in the app does both).
 - `board.shape {shape, x, y, width?, height?, text?, color?, parent?}` → `{id, text}`: a shape with centred,
   wrapping text: `rectangle roundedRectangle ellipse diamond triangle speechBubble chevron`.
-- `board.connector {from, to, fromSide?, toSide?, style?: straight|elbow, startCap?, endCap?, label?}`
+- `board.connector {from, to, fromSide?, toSide?, style?: straight|elbow|curved, startCap?, endCap?, label?}`
   → `{id, label?}`: `from`/`to` are layer ids or `{x, y}` page points; sides are `auto` (the side
   facing the other end) or `top right bottom left`; caps are stroke caps (default an arrow at the
-  end). The connector re-routes itself whenever what it joins moves or resizes, also when someone
-  else in a live session moves it; a deleted end stays where it was as a point. `board.label {id,
-  text}` sets its label (empty removes it).
+  end). An elbow goes around the objects it joins when the short way would cross them; a curved
+  one leaves and arrives along the sides. The connector re-routes itself whenever what it joins
+  moves or resizes, also when someone else in a live session moves it; a deleted end stays where it
+  was as a point. `board.label {id, text}` sets its label (empty removes it).
+- `board.reattach {id?, end: from|to, target, side?}` → `{id}`: moves one end of a connector
+  (default the selected one; its label stands for it) onto `target`, a layer id or an `{x, y}`
+  page point where the end stays free. Refused when both ends would be on one layer or the target
+  is a connector. Dragging a selected connector's end handle in the app does the same.
 - `board.stamp {x, y, stamp: thumbsUp|heart|plusOne|star|question|check}` → `{id}`: a round badge
   centred there, with your name on it for hover.
 - `board.ink {path | points, highlighter?, color?, select? (default true)}` → `{id}`: a marker (or
   wide, see-through highlighter) stroke.
 - `board.setColor {ids?, color}`: stickies and shapes take it as their fill, connectors and ink as
-  their line. `board.setStyle {ids?, shape?, fontSize?, style?, startCap?, endCap?}`: a shape's
-  outline and text size, a connector's routing and arrowheads.
-- Tools for `pointer`: `tool.sticky {color?}`, `tool.shape {shape?}`, `tool.connector {style?}`
+  their line. `board.setStyle {ids?, shape?, fontSize?, style?: straight|elbow|curved, startCap?,
+  endCap?}`: a shape's outline and text size, a connector's routing and arrowheads.
+- `board.templates` → `[{id, name, description, width, height}]` lists the built-in templates:
+  `retrospective brainstorm weeklyPlanner flowChart kanban`. `board.template {name, x?, y?}` →
+  `{name, ids}` places one (its top-left at `x`, `y`; centred in the view without them) as ordinary
+  sections, stickies, shapes, connectors and text, selected, in one undo step.
+- `board.table {rows?, columns?, cells?, x?, y?}` → `{id, rows, columns, cells}`: a table (default
+  3 × 3, at most 50 × 20; `cells` is `[["Name", "Role"], …]` row by row and sets the size when
+  `rows`/`columns` are left out). It is an auto layout frame of row frames holding cell frames, each
+  with one text layer; `cells` in the answer holds those text layers' ids row by row, so
+  `node.set {id, props: {characters}}` changes a cell. A cell's row grows with its text. `board.tableEdit {id?, action: addRow|addColumn|removeRow|removeColumn,
+  index?}` → the same answer: `index` is where the new row or column goes, or which one goes
+  (default the last); `id` may be the table or any layer in it.
+- Tools for `pointer`: `tool.sticky {color?}`, `tool.shape {shape?}`, `tool.connector {style?: straight|elbow|curved}`
   (drag from one object to another), `tool.marker {color?}`, `tool.highlighter {color?}`,
   `tool.eraser` (drag over strokes), `tool.stamp {stamp?}`; Text and Section are the usual tools.
 
@@ -424,6 +440,40 @@ one undo step and returns the ids it made:
 `from` and `to` are the `id`s the two `board.sticky` calls returned (here `{"id": 2, "text": 3}` and
 `{"id": 4, "text": 5}` in a new board without an author name; a sticky with its author's name takes
 one more id). In a `batch`, step references (`{"from": {"$step": 1}, "to": {"$step": 2}}`, the `id`s steps 1 and 2 returned) avoid counting.
+
+Running a session on a board: a countdown and votes. Both are part of the board, so everyone in a
+live session sees the same, and neither is an undo step (undo leaves them as they are). On a
+design file they refuse.
+
+- `board.timer {action: start|pause|resume|add|stop, minutes?}` → `{state, left, text, ends}`: one
+  countdown per board. `start` takes `minutes` (default 5) and `add` adds them (default 1), from
+  one second up to 1440 minutes in all; `pause` keeps the time left, `resume` counts it down again.
+  The timer keeps its end time (milliseconds since 1970) or, paused, the time left, and each
+  client counts down on its own clock. `board.timerState {}` reads it: `state` is `off`,
+  `running`, `paused` or `done` (it ran out: 0:00 until someone stops it), `left` milliseconds,
+  `text` as `m:ss` (or `h:mm:ss`).
+- `board.vote {action: start|cast|retract|end|clear, …}` → the vote as `board.voteResults` gives
+  it. One vote at a time: `start {votes? (per person, 1–99, default 3), on?: all|stickies|selection
+  (default all), ids? (with selection; default the selected layers)}` (a vote that ended may be
+  replaced; one still running is refused), `cast {id}` puts one of your votes on an object (several
+  on the same object are fine; once yours are used up it refuses), `retract {id}` takes one back,
+  `end` shows everyone's votes, `clear` removes the vote and its results. `voter` (any action)
+  votes as someone else, for scripts and tests; by default you are your live-session client, or
+  your name (`pref.userName`) when the file isn't shared. In the app a click on an object votes
+  while a vote runs, and a click on your badge (or an Alt-click) takes the vote back.
+- `board.voteResults {voter?}` → `{state: off|running|ended, votesPerPerson, on, by, left, mine:
+  [{id, votes}], voters, results?}`: while it runs you see your own votes only (`mine`, `left`) and
+  how many have voted; once it ends `results` lists `[{id, name, votes, rank}]`, most votes first
+  (ties share a rank), with `name` the sticky's text or the layer's name. Votes on deleted objects
+  don't count.
+
+```json
+{"command": "board.timer", "params": {"action": "start", "minutes": 10}}
+{"command": "board.vote", "params": {"action": "start", "votes": 2, "on": "stickies"}}
+{"command": "board.vote", "params": {"action": "cast", "id": 2}}
+{"command": "board.vote", "params": {"action": "end"}}
+{"command": "board.voteResults", "params": {}}
+```
 
 ### Sections, handoff and arrow keys
 
@@ -535,7 +585,7 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
 - `pref.startOnHome {on?}`: the desktop app starts on the Home screen instead of in a new file
   (off by default; files named on the command line still open, and `--control` starts in a new
   file anyway, so control callers have a document).
-- `pref.language {language: system|en|cs|ru|es|es-419|fr|de|pt-BR|ja|ka|ko|sv|zh-Hans|…}`: the app's interface language, applied live ("system":
+- `pref.language {language: system|en|cs|ru|es|es-419|fr|de|pt-BR|ja|ka|ko|sv|vi|zh-Hans|…}`: the app's interface language, applied live ("system":
   the OS or browser language; a language without a catalog shows English). Command ids, labels and
   every result stay English.
 
@@ -1118,7 +1168,8 @@ branches). Driven with `run_command`:
 
 - `branch.create {name?}` copies the file into a new branch tab and returns `{id, name, index}`.
   The branch remembers the file as it is now (its base) and makes new ids in its own id space, so
-  layers, styles and comments made on both sides never clash.
+  layers, styles and comments made on both sides never clash. Its history starts with a `Branch
+  created` version.
 - `branch.list` lists the branches of the file shown (or of the file a branch tab belongs to):
   `[{id, name, time, state: active|merged|archived, index?}]` (`index`: its open tab).
 - `branch.open {id}` opens a branch in a tab (or switches to it). Edit it like any document.
@@ -1140,15 +1191,26 @@ branches). Driven with `run_command`:
   conflict key to `"branch"` or `"main"`; the merge is refused while a conflict has none, so
   neither side's work is dropped without a choice.
 - `branch.updateFromMain {id?, resolutions?}` brings the main file's changes since the base into the
-  branch the same way (the new base is the main file as it is now). It is not undoable: the branch
-  tab's undo history starts over.
+  branch the same way (the new base is the main file as it is now) and adds an `Updated from main`
+  version to the branch's history. It is not undoable: the branch tab's undo history starts over.
 - `branch.archive {id?}` sets a branch aside without merging (it stays in the file and can still be
   opened, but not merged).
 
 Each branch keeps its own version history: on a branch tab, `file.saveVersion`, `version.autosave`
 and the `version.*` commands (list, preview, restore, rename, delete, duplicate) act on the
 branch's versions, which are saved in the file with the branch and stay with it when it is merged
-or archived. Branches aren't available in a live session.
+or archived.
+
+In a live session branches work the same way and stay with the person who made them (others
+don't see them). A branch made in the session makes its ids in your own client space, far above
+the ids the main file makes, so the session server takes them. Everyone's edits on main while the
+branch is open are main's changes in the review (against the branch's own base), and conflicts
+with them are resolved as offline. `branch.merge` is one edit of the session document: everyone
+gets it, and it is one step of your own undo history. It is refused on a view link, and for a
+branch made outside the session (or in an earlier one) whose new layers, styles, variables or
+comments lie in another id space, which the server would refuse; merge those once the file has
+left the session. While a session is still starting, branch commands that need your client id
+wait for it.
 
 ### Collaboration changes
 
@@ -1379,17 +1441,24 @@ Plugin settings are kept per plugin with the preferences (in a headless session,
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"plugin.event","params":{"id":"org.figcraft.examples.swatch-grid","control":"generate"}}}}
 ```
 
-Widgets (API 3, layers on the canvas a plugin draws) are driven the same way: `widget.insert
+Widgets (API 3 and 4, layers on the canvas a plugin draws) are driven the same way: `widget.insert
 {plugin, x?, y?}` puts one on the page (centred in the view without a position) and returns `{id,
 plugin, state, targets, output, logs, calls, fuel}`; `widget.click {id, target}` clicks one of its
 `targets` as a click on the canvas would (the plugin redraws it; one undo step; returns the same);
-`widget.list` lists every widget in the file with its plugin, page, state and targets. A widget's
-state is layer data, so it is saved, undone and synced with the file.
+`widget.list` lists every widget in the file with its plugin, page, state and targets. With plugin
+API 4 a widget can have editable text fields and a property menu (both listed with it, as `fields`
+and `menu`): `widget.setText {id, field, value}` sets a field as typing in it would (the value,
+at most 1,000 characters, goes into the state under the field's name and the plugin redraws; one
+undo step), and `widget.menu {id, item, value?}` uses a menu item (a toggle's `value` is `true` or
+`false`, by default the opposite of now; a colour's is one of its options). A widget's state is
+layer data, so it is saved, undone and synced with the file.
 
 ```json
 {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.insert","params":{"plugin":"org.figcraft.examples.counter"}}}}
 {"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.click","params":{"id":12,"target":"increment"}}}}
 {"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.list","params":{}}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.setText","params":{"id":12,"field":"label","value":"Votes"}}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.menu","params":{"id":12,"item":"big"}}}}
 ```
 
 Plugins from a `figcraft-server`'s plugin directory ([`plugins.md`](plugins.md#plugin-directories)):
@@ -1424,24 +1493,27 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
   same layer names, mobile layout) the code is mobile first: the mobile frame's classes, the
   desktop frame's that differ behind `lg:`, and layers only on desktop `hidden` plus `lg:flex`
   (auto layout frames) or `lg:block` (other layers).
-- **Component code:** `inspect.code {id, language: react|leptos|swiftui|compose}` on a component,
+- **Component code:** `inspect.code {id, language: react|leptos|swiftui|compose|arkui}` on a component,
   a component set or a variant writes the component as a reusable unit: React (TSX) with a props
   interface, Leptos with a `#[component]` function (`#[prop]` defaults, `view!` markup), SwiftUI
-  with a `View` struct, Compose with a `@Composable` function. Its component properties are the
+  with a `View` struct, Compose with a `@Composable` function, ArkUI with a `@Component` ArkTS
+  struct (`@Prop` parameters, `@BuilderParam` for swaps and slots). Its component properties are the
   parameters, with their defaults: variant properties become string unions (React) or enums,
   booleans become flags around the layers they show, text properties strings, instance swaps views
-  (`React.ReactNode`, Leptos `ViewFn`, `AnyView`, a composable lambda) and slots optional content.
+  (`React.ReactNode`, Leptos `ViewFn`, `AnyView`, a composable lambda, an ArkUI builder) and slots
+  optional content.
   Every variant of a set shares one definition; in React and Leptos the other variants'
   differences become CSS rules on `data-*` attributes. On an instance (or a layer tree containing
   instances) each instance is a call passing only the values it changes, e.g. `<Button
   state="Hover" label="Buy" />`, `<Button state=ButtonState::Hover label="Buy" />`, `Button(state:
-  .hover, label: "Buy")`, `Button(state = ButtonState.Hover, label = "Buy")`. Names are escaped and
+  .hover, label: "Buy")`, `Button(state = ButtonState.Hover, label = "Buy")`, `Button({ state:
+  ButtonState.Hover, label: "Buy" })`. Names are escaped and
   unique (keywords get a suffix, `default` → `defaultValue`, Rust's `type` → `type_`; Leptos names
   are snake_case; names that would shadow framework types get one too, `Text` → `TextComponent`). `inspect.componentCode
   {id?, language?}` returns the parts: `{component, name, set, properties: [{name, param, type,
   default, value? (instances)}], definition, usage? (instances)}`.
 - **Code connect:** link a component (a variant links its set) to the code component it is built
-  as, per language (`react`, `leptos`, `swiftui`, `compose`): `codeConnect.set {id?, language?, importPath?,
+  as, per language (`react`, `leptos`, `swiftui`, `compose`, `arkui`): `codeConnect.set {id?, language?, importPath?,
   name?, template?}` (undoable; fields left out keep their value; the defaults are the generated
   name and a call passing every property) → `{component, language, code, unknown}`. Templates are
   text, never executed: `{property}` (its name or parameter name) is the instance's value escaped
