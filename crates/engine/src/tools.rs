@@ -1383,8 +1383,12 @@ impl Session {
                 .map(|leaf| select_target(&doc, leaf, &sel, ev.cmd))
         });
         // A press inside the selection's box that reaches nothing above it (an unfilled shape's
-        // inside, the frame or canvas behind it, or a layer stacked below it) drags the selection.
-        let behind_sel = |t: Option<NodeId>| t.is_none_or(|t| sel.iter().any(|s| *s != t && paints_below(&doc, t, *s)));
+        // inside, the frame or canvas behind it, or a layer stacked below the selected layer the
+        // press is in) drags the selection. In a gap between selected layers, what's there is hit.
+        let in_own_box = |s: NodeId| selection_box(&doc, &[s]).is_some_and(|q| in_quad(&q, ev.p()));
+        let behind_sel = |t: Option<NodeId>| {
+            t.is_none_or(|t| sel.iter().any(|s| *s != t && (doc.is_ancestor(t, *s) || (in_own_box(*s) && paints_below(&doc, t, *s)))))
+        };
         let target = match sel.iter().copied().find(|s| !locked_in(&doc, *s)) {
             Some(first) if label.is_none() && !ev.shift && behind_sel(target) && selection_box(&doc, &sel).is_some_and(|q| in_quad(&q, ev.p())) => {
                 Some(first)

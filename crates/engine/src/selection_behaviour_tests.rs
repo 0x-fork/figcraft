@@ -429,6 +429,17 @@ fn a_layer_stacked_below_the_selection_doesnt_take_a_drag_from_inside_it() {
             assert!(s.undo().unwrap(), "{why}: one undo step");
         }
     }
+    // A filled layer below two selected shapes, in the gap between them (inside the selection's
+    // box but neither shape's), is still hit there.
+    let rect_at = |s: &mut Session, x: f64, w: f64| id(&ex(s, "shape.rectangle", json!({"x": x, "y": 400, "width": w, "height": 100})));
+    let gap = rect_at(&mut s, 720.0, 60.0);
+    let (a, b) = (rect_at(&mut s, 600.0, 100.0), rect_at(&mut s, 800.0, 100.0));
+    ex(&mut s, "node.set", json!({"ids": [a, b], "props": {"fills": [], "strokes": ["#000000"], "strokeWeight": 1}}));
+    ex(&mut s, "select.set", json!({"ids": [a, b]}));
+    let home = at(&s, gap);
+    drag(&mut s, (750.0, 450.0), (760.0, 460.0), NONE);
+    assert_eq!(s.selection(), vec![gap], "a layer in the gap between selected layers takes the press");
+    assert_eq!(at(&s, gap), Point::new(home.x + 10.0, home.y + 10.0));
 }
 
 #[test]
