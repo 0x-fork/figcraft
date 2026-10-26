@@ -126,8 +126,13 @@ fn playground_combo(u: &mut crate::layers_drag_tests::Ui, name: &str) -> Option<
         if centre(&combo).y < 860.0 {
             return Some(combo);
         }
-        let wheel =
-            Event::MouseWheel { unit: MouseWheelUnit::Point, delta: vec2(0.0, -100.0), phase: TouchPhase::Move, modifiers: Default::default() };
+        let wheel = Event::MouseWheel {
+            unit: MouseWheelUnit::Point,
+            source: egui::MouseWheelSource::Unknown,
+            delta: vec2(0.0, -100.0),
+            phase: TouchPhase::Move,
+            modifiers: Default::default(),
+        };
         u.frame(vec![Event::PointerMoved(pos2(1300.0, 500.0)), wheel]);
         for _ in 0..30 {
             u.frame(vec![]);
