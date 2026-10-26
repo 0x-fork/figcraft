@@ -1213,8 +1213,9 @@ impl Session {
         }
         let Some(e) = ds.history.undo.pop() else { return Ok(false) };
         let redo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page };
-        ds.history.redo.push(redo);
         ds.doc = e.doc;
+        cmd::facilitate::keep(&redo.doc, &mut ds.doc);
+        ds.history.redo.push(redo);
         ds.selection = e.selection;
         if ds.doc.pages.contains(&e.page) {
             ds.page = e.page;
@@ -1249,8 +1250,9 @@ impl Session {
         }
         let Some(e) = ds.history.redo.pop() else { return Ok(false) };
         let undo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page };
-        ds.history.undo.push(undo);
         ds.doc = e.doc;
+        cmd::facilitate::keep(&undo.doc, &mut ds.doc);
+        ds.history.undo.push(undo);
         ds.selection = e.selection;
         if ds.doc.pages.contains(&e.page) {
             ds.page = e.page;
@@ -1711,6 +1713,8 @@ mod export_behaviour_tests;
 mod export_depth_tests;
 #[cfg(test)]
 mod extended_chain_tests;
+#[cfg(test)]
+mod facilitate_tests;
 #[cfg(test)]
 mod fig_export_assets_tests;
 #[cfg(test)]

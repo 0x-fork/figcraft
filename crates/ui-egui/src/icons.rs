@@ -212,6 +212,11 @@ icons! {
     CurvedConnector,
     Shapes,
     Stamp,
+    /// Running a board session: a stopwatch (the timer), two bars (pause) and a ballot going
+    /// into a box (voting).
+    Timer,
+    Pause,
+    Vote,
     /// A measurement: a dimension line with arrowheads between two end ticks.
     Measure,
 }
@@ -1196,6 +1201,22 @@ fn draw(p: &P, icon: Icon) {
         Stamp => {
             p.circle(8.0, 8.0, 6.0);
             p.poly(&[(5.0, 8.3), (7.2, 10.5), (11.0, 6.0)], false);
+        }
+        Timer => {
+            p.circle(8.0, 9.0, 5.5);
+            p.line(8.0, 9.0, 8.0, 6.0);
+            p.line(6.0, 1.5, 10.0, 1.5);
+            p.line(8.0, 1.5, 8.0, 3.5);
+            p.line(12.0, 4.0, 13.5, 2.5);
+        }
+        Pause => {
+            p.fill_rect(4.0, 3.0, 6.5, 13.0, 0.5);
+            p.fill_rect(9.5, 3.0, 12.0, 13.0, 0.5);
+        }
+        Vote => {
+            p.rect(2.5, 8.5, 13.5, 13.5, 1.0);
+            p.poly(&[(5.5, 8.5), (5.5, 2.5), (10.5, 2.5), (10.5, 8.5)], false);
+            p.poly(&[(6.6, 5.6), (7.7, 6.7), (9.4, 4.6)], false);
         }
         Measure => {
             p.line(2.5, 4.0, 2.5, 12.0);

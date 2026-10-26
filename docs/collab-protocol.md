@@ -142,7 +142,11 @@ As built:
   colour profile, image presets, annotation categories and library data (whole values); styles,
   comment threads, variable collections and variables (one entry per id plus the order of ids;
   the whole list when ids aren't unique); dev-mode snapshots (per layer); images (per content
-  hash, the encoded bytes as base64). The page order is the pages' positions.
+  hash, the encoded bytes as base64); a board's timer and vote (whole values, `DocProp::Timer` and
+  `DocProp::Vote`) and the vote's ballots (`Entry::Ballot(voter)`, one per voter, so people voting
+  at once write different entries). The timer travels as its end time (or, paused, the time left),
+  never as ticks: each client counts down on its own clock. The page order is the pages'
+  positions.
 - **Next**: this file's published library (it embeds a snapshot document; it moves with an asset
   channel, together with images, which then stop travelling inside batches); the version history
   (kept beside the document, not in it) on the standalone server; finer entries for modes,

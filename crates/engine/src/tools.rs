@@ -1110,6 +1110,10 @@ impl Session {
             PointerKind::Hover => self.hover(ev),
             PointerKind::Down => match tool {
                 ToolId::Move | ToolId::Scale => {
+                    // While a board's vote runs, a click on an object votes.
+                    if tool == ToolId::Move && !self.tool.dev_mode && self.vote_down(ev)? {
+                        return Ok(());
+                    }
                     // A click on the canvas deselects a ruler guide (the UI selects guides itself).
                     self.ds_mut()?.guide = None;
                     self.move_down(ev)

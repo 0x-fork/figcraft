@@ -9,6 +9,7 @@ pub mod a11y;
 pub mod assets_panel;
 pub mod bidi;
 pub mod board_bar;
+pub mod board_facilitate;
 pub mod branch_ui;
 pub mod canvas;
 pub mod cjk;

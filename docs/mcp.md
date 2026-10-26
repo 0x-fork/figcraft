@@ -430,6 +430,40 @@ one undo step and returns the ids it made:
 `{"id": 4, "text": 5}` in a new board without an author name; a sticky with its author's name takes
 one more id). In a `batch`, step references (`{"from": {"$step": 1}, "to": {"$step": 2}}`, the `id`s steps 1 and 2 returned) avoid counting.
 
+Running a session on a board: a countdown and votes. Both are part of the board, so everyone in a
+live session sees the same, and neither is an undo step (undo leaves them as they are). On a
+design file they refuse.
+
+- `board.timer {action: start|pause|resume|add|stop, minutes?}` → `{state, left, text, ends}`: one
+  countdown per board. `start` takes `minutes` (default 5) and `add` adds them (default 1), from
+  one second up to 1440 minutes in all; `pause` keeps the time left, `resume` counts it down again.
+  The timer keeps its end time (milliseconds since 1970) or, paused, the time left, and each
+  client counts down on its own clock. `board.timerState {}` reads it: `state` is `off`,
+  `running`, `paused` or `done` (it ran out: 0:00 until someone stops it), `left` milliseconds,
+  `text` as `m:ss` (or `h:mm:ss`).
+- `board.vote {action: start|cast|retract|end|clear, …}` → the vote as `board.voteResults` gives
+  it. One vote at a time: `start {votes? (per person, 1–99, default 3), on?: all|stickies|selection
+  (default all), ids? (with selection; default the selected layers)}` (a vote that ended may be
+  replaced; one still running is refused), `cast {id}` puts one of your votes on an object (several
+  on the same object are fine; once yours are used up it refuses), `retract {id}` takes one back,
+  `end` shows everyone's votes, `clear` removes the vote and its results. `voter` (any action)
+  votes as someone else, for scripts and tests; by default you are your live-session client, or
+  your name (`pref.userName`) when the file isn't shared. In the app a click on an object votes
+  while a vote runs, and a click on your badge (or an Alt-click) takes the vote back.
+- `board.voteResults {voter?}` → `{state: off|running|ended, votesPerPerson, on, by, left, mine:
+  [{id, votes}], voters, results?}`: while it runs you see your own votes only (`mine`, `left`) and
+  how many have voted; once it ends `results` lists `[{id, name, votes, rank}]`, most votes first
+  (ties share a rank), with `name` the sticky's text or the layer's name. Votes on deleted objects
+  don't count.
+
+```json
+{"command": "board.timer", "params": {"action": "start", "minutes": 10}}
+{"command": "board.vote", "params": {"action": "start", "votes": 2, "on": "stickies"}}
+{"command": "board.vote", "params": {"action": "cast", "id": 2}}
+{"command": "board.vote", "params": {"action": "end"}}
+{"command": "board.voteResults", "params": {}}
+```
+
 ### Sections, handoff and arrow keys
 
 `run_command` with `object.wrapInSection {ids?, name?}` (Wrap in new section: layers on the page or

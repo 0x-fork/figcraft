@@ -271,8 +271,10 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     }
     crate::dev_mode::draw(app, &painter);
     crate::handles::draw(app, &painter);
+    crate::board_facilitate::badges(app, &painter);
     crate::board_bar::stamp_author(app, &painter, ctx.input(|i| i.pointer.hover_pos()).filter(|p| rect.contains(*p)));
     crate::board_bar::show(app, &ctx);
+    crate::board_facilitate::show(app, &ctx, rect);
     crate::selection_spacing::draw(app, &painter);
     crate::comments::draw(app, &painter);
     crate::live_text::draw(app, &painter);

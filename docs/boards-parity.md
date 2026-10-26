@@ -1,13 +1,13 @@
 # Boards parity
 
-> **Last reviewed:** 2026-10-24 · **Last updated:** 2026-10-24 · **Change:** minor (the dot grid, dragging a connector's end to re-attach it, curved connectors, elbows that go around what they join) · **Target:** the incumbent's whiteboard product (behaviour from its public help centre)
+> **Last reviewed:** 2026-10-24 · **Last updated:** 2026-10-24 · **Change:** minor (facilitation: a shared timer and voting sessions; the dot grid, dragging a connector's end to re-attach it, curved connectors, elbows that go around what they join) · **Target:** the incumbent's whiteboard product (behaviour from its public help centre)
 
-**Breadth ~37%, ready ~21% (estimated, erring low).** A board is a FigCraft file of its own kind
+**Breadth ~42%, ready ~25% (estimated, erring low).** A board is a FigCraft file of its own kind
 (`file.newBoard`) with a dot grid on the page, sticky notes, shapes with text, connectors that
 follow what they join (straight, elbow or curved, their ends dragged onto other objects), marker,
-highlighter and eraser, stamps, text and sections, edited together in the existing live sessions.
-The facilitation tools (timer, voting, widgets), templates, tables, mind maps and the rest of the
-tail are missing. Remaining: ~28–56 h. Tracked as area 22 of
+highlighter and eraser, stamps, text and sections, edited together in the existing live sessions,
+with a shared countdown and voting sessions to run a workshop. Music, board widgets, templates,
+tables, mind maps and the rest of the tail are missing. Remaining: ~24–50 h. Tracked as area 22 of
 [`target-app-parity.md`](target-app-parity.md) (not in its weighted sum: the target there is the
 design product). The work item is gap 24 in [`gaps.md`](gaps.md).
 
@@ -44,8 +44,10 @@ all end with the same geometry.
 | Stamps sticking to the object they land on, the stamp wheel, emotes, stickers | missing | |
 | Text and sections | done | the existing Text tool and sections |
 | Live sessions: cursors, selections, cursor chat, spotlight | done | the existing sessions; board objects, connectors following moved objects, colours and stamps sync both ways (checked with two app instances) |
-| Timer and music | missing | |
-| Voting sessions | missing | |
+| Timer | done | a pill at the top right of the board: presets (1, 3, 5, 10, 15 min) or any whole minutes, pause, resume, a minute more, stop; red at 0:00 until stopped; no sound. `board.timer {action, minutes?}`, `board.timerState`. Synced as its end time (or the time left while paused), so every client counts down on its own clock: nothing ticks over the network. Not an undo step |
+| Timer music, timer sounds | missing | |
+| Voting sessions | done | one at a time: votes per person (1–99), on every object, on sticky notes or on the selection; a click on an object places a vote (several on one object allowed), a click on your badge or an Alt-click takes it back; your own votes show as badges while it runs, everyone's once it ends, with a ranked list (ties share a rank) that selects an object from its row; Clear results. `board.vote {action: start\|cast\|retract\|end\|clear}`, `board.voteResults`. Ballots sync per voter (keyed by the live-session client id, or your name offline), so people voting at once never overwrite each other. Not undo steps |
+| Voting: only the facilitator ends or clears it, who voted for what | missing | anyone who can edit the board can end or clear a vote; results are counts only |
 | Board widgets | missing | design-file widgets exist (`crates/engine/src/widgets.rs`), not wired to boards |
 | Templates (retrospective, brainstorm, flow chart…) | missing | |
 | Tables | missing | |
@@ -61,4 +63,5 @@ all end with the same geometry.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-24 | minor | M12: the dot grid on board pages (a render pass under the layers), dragging a selected connector's end onto another object or empty canvas (`board.reattach`), curved connectors, and elbows that go around the objects they join. Breadth ~35% → ~37%, ready ~20% → ~21%, ~30–60 h → ~28–56 h |
+| 2026-10-24 | minor | Facilitation (M12): a shared timer and voting sessions. Breadth ~35% → ~40%, ready ~20% → ~24%, ~30–60 h → ~26–54 h |
 | 2026-10-24 | major | Created with board files (M12): sticky notes, shapes with text, connectors, ink and eraser, stamps, the board toolbar and contextual bar, live-session sync |

@@ -240,7 +240,7 @@ fn line_shade(c: Color) -> Color {
 
 /// Your name on what you make: the name from Preferences, else the one a live session gave you
 /// (none for the default name outside a session).
-fn author(s: &Session) -> String {
+pub(crate) fn author(s: &Session) -> String {
     let name = crate::live::display_name(&s.prefs);
     if name.is_empty() { s.live().info.as_ref().map(|i| i.name.clone()).unwrap_or_default() } else { name }
 }
