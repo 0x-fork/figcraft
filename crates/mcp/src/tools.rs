@@ -746,7 +746,7 @@ fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, S
             }
         }
         if used_wire + MARKER_RESERVE <= budget {
-            return Ok(ToolResult::json(&with_marker(value, depth, used, wire, used_wire, max_bytes, true, None)));
+            return Ok(ToolResult::json(&with_marker(value, Cut { asked: depth, used, asked_wire: wire, used_wire }, max_bytes, true, None)));
         }
     }
 
@@ -771,10 +771,7 @@ fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, S
     let over = wire > budget || next.is_some();
     let mut out = with_marker(
         value,
-        depth,
-        used,
-        wire,
-        used_wire,
+        Cut { asked: depth, used, asked_wire: wire, used_wire },
         max_bytes,
         over,
         Some(json!({
@@ -816,19 +813,19 @@ fn children_window(value: &mut Value, offset: usize, budget: usize) -> bool {
     true
 }
 
-/// `value` with the `truncated` object saying how it was cut. `over`: the subtree asked for passed
-/// the limit (else the window is only the `offset` asked for). `children`: the window, when the
-/// children were cut as well as (or instead of) the depth.
-fn with_marker(
-    mut value: Value,
+/// How a subtree was cut: the depth asked for and the depth reported, with their sizes on the wire.
+struct Cut {
     asked: u64,
     used: u64,
     asked_wire: usize,
     used_wire: usize,
-    max_bytes: usize,
-    over: bool,
-    children: Option<Value>,
-) -> Value {
+}
+
+/// `value` with the `truncated` object saying how it was cut. `over`: the subtree asked for passed
+/// the limit (else the window is only the `offset` asked for). `children`: the window, when the
+/// children were cut as well as (or instead of) the depth.
+fn with_marker(mut value: Value, cut: Cut, max_bytes: usize, over: bool, children: Option<Value>) -> Value {
+    let Cut { asked, used, asked_wire, used_wire } = cut;
     if let Some(obj) = value.as_object_mut() {
         let mut marker = json!({
             "requestedDepth": asked,
