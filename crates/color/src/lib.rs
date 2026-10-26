@@ -122,7 +122,8 @@ impl Color {
     /// Parse hex the way the colour field does: `#` optional, 1, 2, 3, 4, 6 or 8 digits
     /// (`F` → `FFFFFF`, `AB` → `ABABAB`, `ABC` → `AABBCC`).
     pub fn from_hex(s: &str) -> Option<Self> {
-        let s = s.trim().trim_start_matches('#');
+        let s = s.trim();
+        let s = s.strip_prefix('#').unwrap_or(s);
         if !s.chars().all(|c| c.is_ascii_hexdigit()) {
             return None;
         }
@@ -194,7 +195,14 @@ impl Color {
     /// CSS `rgba(...)` / hex text for copy-as-CSS.
     pub fn to_css(self) -> String {
         let [r, g, b, _] = self.to_rgba8();
-        if self.a >= 0.999 { self.to_css_hex() } else { format!("rgba({r}, {g}, {b}, {:.2})", self.a) }
+        if self.a >= 0.999 {
+            return self.to_css_hex();
+        }
+        // Two decimals when they keep the 8-bit alpha, three otherwise (near-transparent colours).
+        let a8 = |a: f32| (a.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let short = format!("{:.2}", self.a);
+        let alpha = if short.parse::<f32>().is_ok_and(|v| a8(v) == a8(self.a)) { short } else { format!("{:.3}", self.a) };
+        format!("rgba({r}, {g}, {b}, {alpha})")
     }
 
     /// Linear interpolation in sRGB (as gradients render).
@@ -355,7 +363,7 @@ impl ImageFilters {
     }
 
     /// The built-in adjustment presets: `(id, label, adjustments)`. "Reset" is the identity.
-    pub const PRESETS: [(&'static str, &'static str, ImageFilters); 7] = [
+    pub const PRESETS: [(&str, &str, ImageFilters); 7] = [
         ("vivid", "Vivid", ImageFilters { contrast: 0.2, saturation: 0.45, highlights: -0.1, shadows: 0.1, ..ImageFilters::NONE }),
         ("muted", "Muted", ImageFilters { contrast: -0.15, saturation: -0.45, ..ImageFilters::NONE }),
         ("warm", "Warm", ImageFilters { temperature: 0.5, tint: 0.1, saturation: 0.1, ..ImageFilters::NONE }),
