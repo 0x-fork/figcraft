@@ -1283,7 +1283,7 @@ pub fn paint_outlines(painter: &Painter, rect: Rect, size: f64, parts: &[(&figcr
 /// Every icon at the sizes the UI uses, labelled: for reviewing the set (`ui.set {iconGallery}`).
 pub fn gallery(ctx: &egui::Context) {
     let t = crate::theme::Tokens::get(ctx);
-    egui::Area::new(egui::Id::new("icon_gallery")).order(egui::Order::Foreground).fixed_pos(Pos2::ZERO).show(ctx, |ui| {
+    egui::Area::new(egui::Id::unique("icon_gallery")).order(egui::Order::Foreground).fixed_pos(Pos2::ZERO).show(ctx, |ui| {
         let screen = ctx.content_rect();
         let (r, _) = ui.allocate_exact_size(screen.size(), egui::Sense::click());
         ui.painter().rect_filled(r, 0.0, t.panel);
@@ -1381,7 +1381,7 @@ mod tests {
         let mut u = crate::layers_drag_tests::Ui::new(s);
         u.frame(vec![]);
         let shapes = u.frame_output(vec![]).shapes;
-        let lead = |name: &str| u.ctx.read_response(egui::Id::new(name).with("lead")).map(|r| r.rect).unwrap_or_else(|| panic!("{name} is shown"));
+        let lead = |name: &str| u.ctx.read_response(egui::Id::unique(name).with("lead")).map(|r| r.rect).unwrap_or_else(|| panic!("{name} is shown"));
         let (rotation, radius) = (marks(&shapes, lead("pos_rot")), marks(&shapes, lead("ap_rad")));
         assert!(!rotation.is_empty() && !radius.is_empty(), "both draw an icon");
         assert_ne!(rotation, radius);
