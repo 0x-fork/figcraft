@@ -148,5 +148,4 @@ impl Session {
 }
 
 #[cfg(test)]
-#[path = "background_tests.rs"]
 mod tests;
