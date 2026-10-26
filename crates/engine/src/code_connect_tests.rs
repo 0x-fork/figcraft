@@ -255,3 +255,17 @@ fn vue_links_are_a_default_import_with_quoted_bindings() {
     assert!(s.execute("codeConnect.set", &json!({"id": c, "language": "css"})).is_err(), "not a code language");
     assert!(s.execute("codeConnect.set", &json!({"id": c, "language": "vue", "importPath": "a b"})).is_err(), "no spaces in a path");
 }
+
+#[test]
+fn vue_layer_trees_import_connected_components_in_script_setup() {
+    let mut s = Session::new();
+    let c = card(&mut s);
+    ex(&mut s, "codeConnect.set", json!({"id": c, "language": "vue", "importPath": "./Card.vue"}));
+    let screen = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 500, "width": 400, "height": 300, "name": "Screen"})));
+    ex(&mut s, "instance.create", json!({"component": c, "x": 20, "y": 30, "parent": screen}));
+    // A single-file component's imports belong in its `<script setup>`, not before the template.
+    let code = code(&mut s, screen, "vue");
+    let want = "<script setup lang=\"ts\">\n\nimport Card from \"./Card.vue\";\n\n</script>\n\n<template>\n";
+    assert!(code.starts_with(want), "{code}");
+    assert_eq!(code.matches("import Card").count(), 1, "{code}");
+}

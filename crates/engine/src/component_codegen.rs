@@ -147,7 +147,29 @@ pub fn code(doc: &Document, id: NodeId, lang: CodeLang) -> String {
             }
         },
     };
-    crate::code_connect::with_imports(&crate::code_connect::tree_imports(doc, id, lang), code)
+    let imports = crate::code_connect::tree_imports(doc, id, lang);
+    if lang == CodeLang::Vue && !imports.is_empty() {
+        return vue_with_imports(&imports, code);
+    }
+    crate::code_connect::with_imports(&imports, code)
+}
+
+/// A Vue single-file component imports in its `<script setup>`, which is added when it has none.
+fn vue_with_imports(imports: &[String], code: String) -> String {
+    const SETUP: &str = "<script setup lang=\"ts\">\n\n";
+    let lines = imports.join("\n");
+    // `find` returns char boundaries, so the splits below are safe.
+    if let Some(at) = code.find(SETUP).map(|at| at + SETUP.len()) {
+        let (head, tail) = code.split_at(at);
+        return format!("{head}{lines}\n\n{tail}");
+    }
+    match code.find("<template>") {
+        Some(at) => {
+            let (head, tail) = code.split_at(at);
+            format!("{head}{SETUP}{lines}\n\n</script>\n\n{tail}")
+        }
+        None => crate::code_connect::with_imports(imports, code),
+    }
 }
 
 fn is_component(doc: &Document, id: NodeId) -> bool {
