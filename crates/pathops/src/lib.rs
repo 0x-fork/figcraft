@@ -696,6 +696,29 @@ mod tests {
     }
 
     #[test]
+    fn layer_end_arrow_is_drawn_when_a_closed_run_follows_the_open_one() {
+        let verts = [(0.0, 0.0), (50.0, 0.0), (0.0, 100.0), (50.0, 100.0), (25.0, 150.0)];
+        let net = VectorNetwork {
+            vertices: verts
+                .iter()
+                .enumerate()
+                .map(|(i, &(x, y))| figcraft_doc::Vertex { cap: (i == 0).then_some(StrokeCap::Round), ..figcraft_doc::Vertex::new(x, y) })
+                .collect(),
+            segments: vec![
+                figcraft_doc::Segment::line(0, 1),
+                figcraft_doc::Segment::line(2, 3),
+                figcraft_doc::Segment::line(3, 4),
+                figcraft_doc::Segment::line(4, 2),
+            ],
+            ..Default::default()
+        };
+        let path = BezPath::new();
+        let plain = StrokeProps { weight: 2.0, ..Default::default() };
+        let arrow = StrokeProps { cap_end: StrokeCap::TriangleArrow, ..plain.clone() };
+        assert_ne!(stroke_outline_of(&path, &arrow, false, Some(&net)), stroke_outline_of(&path, &plain, false, Some(&net)));
+    }
+
+    #[test]
     fn equal_joins_do_not_break_closed_stroke_runs() {
         let path = sq(0.0, 0.0, 20.0);
         let mut net = VectorNetwork::from_points(&[Point::new(0.0, 0.0), Point::new(20.0, 0.0), Point::new(20.0, 20.0), Point::new(0.0, 20.0)], true);
