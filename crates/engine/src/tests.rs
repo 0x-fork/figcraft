@@ -276,6 +276,20 @@ fn align_distribute_zorder() {
 }
 
 #[test]
+fn distribute_spans_the_outermost_edge() {
+    let mut s = sess();
+    let a = id(&s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap());
+    let b = id(&s.execute("shape.rectangle", &json!({"x": 150, "y": 150, "width": 500, "height": 500})).unwrap());
+    let c = id(&s.execute("shape.rectangle", &json!({"x": 160, "y": 160, "width": 10, "height": 10})).unwrap());
+    s.execute("distribute.horizontal", &json!({"ids": [a, b, c]})).unwrap();
+    let xs: Vec<f64> = [a, b, c].iter().map(|i| s.doc().unwrap().world_bounds(*i).unwrap().x0).collect();
+    assert_eq!(xs, [0.0, 75.0, 640.0]);
+    s.execute("distribute.vertical", &json!({"ids": [a, b, c]})).unwrap();
+    let ys: Vec<f64> = [a, b, c].iter().map(|i| s.doc().unwrap().world_bounds(*i).unwrap().y0).collect();
+    assert_eq!(ys, [0.0, 75.0, 640.0]);
+}
+
+#[test]
 fn a_layer_alone_on_the_page_has_nothing_to_align_to() {
     use crate::cmd::arrange::can_align;
     let mut s = sess();
@@ -434,6 +448,11 @@ fn every_command_survives_junk_params() {
         // would write to it.)
         json!({"ids": [2, 3], "type": "vector", "path": [5], "width": -1e308, "props": {"path": "M0 0 L1e308 0 L-1e308 1e308", "height": "NaN", "x": 1e308}}),
         json!({"id": 2, "type": "vector", "path": {"d": 1}, "props": {"path": "M NaN 0 Z", "width": 1e-308}}),
+        // Batch step names and reference paths as junk.
+        json!({"commands": [{"command": "select.none", "as": "a"}, {"command": "select.none", "as": [1]}, {"command": "select.none", "as": "a"}]}),
+        json!({"commands": [{"command": "select.all", "as": "\u{0}"}, {"command": "node.set", "params": {"ids": [
+            {"$ref": "\u{0}", "field": "ids/18446744073709551616/x"}, {"$ref": {"x": 1}}, {"$step": 0, "field": "//"}, {"$ref": "\u{0}", "field": "/"}],
+            "props": {"name": {"$ref": "nope", "field": 5}}}}]}),
     ];
     for spec in all_commands() {
         if matches!(
