@@ -17,11 +17,11 @@ Simplified.
 The catalogs: English (`en`, the source), and Spanish (`es`, with the Latin American overlay
 `es-419`), French (`fr`), German (`de`), Dutch (`nl`), Brazilian Portuguese (`pt-BR`), Japanese
 (`ja`), Korean (`ko`), Simplified Chinese (`zh-Hans`), Czech (`cs`), Indonesian (`id`), Finnish
-(`fi`), Bengali (`bn`) and Thai (`th`), machine-drafted and waiting for native speakers' review.
-Polish (`pl`, Polski) was reviewed and approved by Lucas (@lukasz-sklad). Georgian (`ka`) was written
-with AI assistance and reviewed by a native speaker, and stays a draft until a maintainer changes its
-status. Russian (`ru`, Русский) was reviewed and approved by VanTan; its catalog keeps Frame, Dev Mode
-and Smart animate as familiar tool names and uses « » quotes. Turkish (`tr`) was machine-drafted and
+(`fi`), Bengali (`bn`), Italian (`it`), Vietnamese (`vi`) and Thai (`th`), machine-drafted and waiting for native speakers' review. Polish (`pl`,
+Polski) was reviewed and approved by Lucas (@lukasz-sklad). Georgian (`ka`) was written with AI
+assistance and reviewed by a native speaker, and stays a draft until a maintainer changes its status.
+Russian (`ru`, Русский) was reviewed and approved by VanTan; its catalog keeps Frame, Dev Mode and
+Smart animate as familiar tool names and uses « » quotes. Turkish (`tr`) was machine-drafted and
 reviewed by a native speaker, and Swedish (`sv`) translates every UI string, command label and menu wording.
 
 ## The catalogs
@@ -61,7 +61,9 @@ formal Anda (never kamu), keeps established design terms in English (frame, laye
 instance, auto layout, plugin, file) and keeps a noun unchanged after a count, so its plural entries
 give only `other`. Georgian has no letter case (never write Mtavruli for capitals), uses verbal nouns
 for commands (გვერდის დამატება) and keeps a noun singular after a numeral, so counts read
-"შრე: {n}" and its plural entries give the same text for `one` and `other`. Thai is concise, with bare imperatives for buttons and
+"შრე: {n}" and its plural entries give the same text for `one` and `other`. Vietnamese uses concise
+imperatives for buttons and menu items (Lưu, Xóa) and keeps a noun unchanged after a count, so its
+plural entries give only `other`. Thai is concise, with bare imperatives for buttons and
 menu items (บันทึก, ลบ), no ครับ/ค่ะ endings, no spaces between Thai words (a space only separates
 clauses, and Thai from Latin words or numbers), and design terms transliterated as Thai designers say
 them (เฟรม, เลเยอร์, คอมโพเนนต์, อินสแตนซ์, ออโต้เลย์เอาต์). It has no plural forms: plural entries give
@@ -85,8 +87,8 @@ picker leaves Georgian out. A new CJK or other non-Latin language also needs its
    set `[meta] name` and `status = "draft — needs native review"`.
 2. Translate every value; keep the keys. Keep `{placeholders}` exactly, "…" where English has it,
    brand names and keyboard glyphs. English labels of commands: `figcraft-cli commands`.
-3. Plurals: give `one` only if the language has a singular form (Japanese, Korean and Chinese give
-   only `other`). `other` is required; `one`, `few` and `many` are optional. `trn` picks `one` for
+3. Plurals: give `one` only if the language has a singular form (Japanese, Korean, Chinese and
+   Vietnamese give only `other`). `other` is required; `one`, `few` and `many` are optional. `trn` picks `one` for
    1 (also 0 in French and Brazilian Portuguese). Russian uses `one` for 1, 21, 31… except 11;
    `few` for 2–4, 22–24… except 12–14; and `many` for the other integers, including 0. Keep `{n}`
    in all Russian forms. Add new rules to `plural` in
