@@ -232,10 +232,7 @@ fn dart(vars: &Variables, colls: &[&Collection]) -> String {
             let modes = BTreeMap::from([(c.id.clone(), m.id.clone())]);
             for (v, name) in &names {
                 let (ty, value) = match vars.resolve(&v.id, &modes) {
-                    Some(VariableValue::Color(col)) => {
-                        let [r, g, b, a] = col.to_rgba8();
-                        ("Color", format!("Color(0x{a:02X}{r:02X}{g:02X}{b:02X})"))
-                    }
+                    Some(VariableValue::Color(col)) => ("Color", crate::codegen::kotlin_color(col)),
                     Some(VariableValue::Number(x)) if x.is_finite() => ("double", dart_number(x)),
                     Some(VariableValue::String(t)) => ("String", format!("'{}'", dart_string(&t))),
                     Some(VariableValue::Boolean(b)) => ("bool", b.to_string()),

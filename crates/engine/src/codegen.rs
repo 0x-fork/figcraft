@@ -1083,7 +1083,8 @@ fn swift_layer(ctx: &Ctx, n: &Node, depth: usize, out: &mut String, extra: &[Str
 
 // ------------------------------------------------------------------ Jetpack Compose
 
-fn kotlin_color(c: Color) -> String {
+/// `Color(0xAARRGGBB)`, as Compose and Flutter both write a colour.
+pub(crate) fn kotlin_color(c: Color) -> String {
     let [r, g, b, a] = c.to_rgba8();
     format!("Color(0x{a:02X}{r:02X}{g:02X}{b:02X})")
 }
