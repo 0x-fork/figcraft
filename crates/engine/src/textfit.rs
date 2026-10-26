@@ -29,6 +29,8 @@ pub fn specs() -> Vec<CommandSpec> {
 /// paragraph of its own after a hard break, which no size can fix).
 fn measure(t: &TextData, k: f64, width: f64) -> (usize, f64, bool) {
     let mut t = t.clone();
+    // Every line counts, not only those the layer's own line limit shows.
+    t.max_lines = 0;
     let n = t.char_count();
     t.restyle(0, n, |s| s.font_size = (s.font_size * k).clamp(1.0, 5000.0));
     let l = figcraft_text::layout(&t, Some(width), None);
