@@ -137,6 +137,12 @@ pub(crate) fn num(v: f64) -> String {
     }
 }
 
+/// `v` without trailing zeros (6 decimals), for lengths that must convert back to the same pixels.
+fn num6(v: f64) -> String {
+    let r = (v * 1_000_000.0).round() / 1_000_000.0;
+    if r.is_finite() && r != 0.0 { format!("{r}") } else { "0".into() }
+}
+
 /// `code` with every pixel length (`12px`) in rem of `root` pixels (`0.75rem`); names that end
 /// in "px", markup lines (layer text), string literals and comments are left alone.
 pub fn px_to_rem(code: &str, root: f64) -> String {
@@ -202,7 +208,7 @@ fn lengths_to_rem(code: &str, root: f64) -> String {
         match number.parse::<f64>() {
             Ok(v) if free && v.is_finite() => {
                 out.push_str(before);
-                out.push_str(&format!("{}rem", num(v / root)));
+                out.push_str(&format!("{}rem", num6(v / root)));
             }
             _ => {
                 out.push_str(head);
@@ -627,18 +633,60 @@ fn css_gradient(g: &figcraft_color::Gradient, w: f64, h: f64) -> String {
 
 // ------------------------------------------------------------------ HTML and React markup
 
-/// A CSS class name from a layer name ("Card / Title" → "card-title"), unique in `used`.
-pub(crate) fn class_name(name: &str, used: &mut Vec<String>) -> String {
+/// A word for the node's kind, naming layers whose name transliterates to nothing ("###" →
+/// `.text`, `.frame`), instead of the anonymous `layer-`.
+fn kind_word(n: &Node) -> &str {
+    match &n.kind {
+        NodeKind::Page { .. } => "page",
+        NodeKind::Frame => "frame",
+        NodeKind::Group => "group",
+        NodeKind::Section { .. } => "section",
+        NodeKind::Rectangle => "rectangle",
+        NodeKind::Ellipse { .. } => "ellipse",
+        NodeKind::Polygon { .. } => "polygon",
+        NodeKind::Star { .. } => "star",
+        NodeKind::Line => "line",
+        NodeKind::Vector { .. } => "vector",
+        NodeKind::Text(_) => "text",
+        NodeKind::BooleanOp { .. } => "boolean",
+        NodeKind::Component { .. } | NodeKind::ComponentSet { .. } => "component",
+        NodeKind::Instance { .. } => "instance",
+        NodeKind::Slice => "slice",
+    }
+}
+
+/// A CSS class name from a layer name ("Card / Title" → "card-title"), unique in `used`. The name
+/// is transliterated to ASCII first, so non-Latin names stay readable: 로그인 화면 →
+/// `rogeuin-hwamyeon`, кнопка → `knopka`, über → `uber` (per-codepoint transliteration, the slug
+/// libraries' way); a name left with nothing (symbols only) takes `kind`, and one starting with a
+/// digit keeps the `layer-` prefix.
+pub(crate) fn class_name(name: &str, kind: &str, used: &mut Vec<String>) -> String {
     let mut base = String::new();
-    for c in name.chars().flat_map(char::to_lowercase) {
+    for c in deunicode::deunicode(name).chars().flat_map(char::to_lowercase) {
         if c.is_ascii_alphanumeric() {
             base.push(c);
         } else if !base.ends_with('-') && !base.is_empty() {
             base.push('-');
         }
     }
-    let base = base.trim_end_matches('-').chars().take(40).collect::<String>();
-    let base = if base.is_empty() || base.starts_with(|c: char| c.is_ascii_digit()) { format!("layer-{base}") } else { base };
+    // The 40-character cut lands on a word boundary when there is one past the first word.
+    let base = if base.chars().count() > 40 {
+        let cut: String = base.chars().take(40).collect();
+        match cut.rfind('-') {
+            Some(i) if i > 0 => cut[..i].to_string(),
+            _ => cut,
+        }
+    } else {
+        base
+    };
+    let base = base.trim_end_matches('-');
+    let base = if base.is_empty() {
+        kind.to_string()
+    } else if base.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("layer-{base}")
+    } else {
+        base.to_string()
+    };
     let name = (1..).map(|k| if k == 1 { base.clone() } else { format!("{base}-{k}") }).find(|n| !used.contains(n)).unwrap_or(base);
     used.push(name.clone());
     name
@@ -770,7 +818,7 @@ impl<'c, 'a> Markup<'c, 'a> {
                 self.used.push(c.clone());
                 c
             }
-            None => class_name(&n.name, &mut self.used),
+            None => class_name(&n.name, kind_word(n), &mut self.used),
         };
         let pad = self.pad(depth);
         let attr = if self.lang == CodeLang::React { "className" } else { "class" };

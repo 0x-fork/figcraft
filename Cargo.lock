@@ -1114,6 +1114,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "deunicode"
+version = "1.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1645,6 +1651,7 @@ version = "0.11.2"
 dependencies = [
  "base64 0.22.1",
  "craft-docpath",
+ "deunicode",
  "figcraft-collab",
  "figcraft-color",
  "figcraft-doc",
@@ -1875,6 +1882,7 @@ dependencies = [
 name = "figcraft-web"
 version = "0.11.2"
 dependencies = [
+ "base64 0.22.1",
  "eframe",
  "egui",
  "figcraft-collab-net",
@@ -1882,6 +1890,7 @@ dependencies = [
  "figcraft-ui-egui",
  "js-sys",
  "log",
+ "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

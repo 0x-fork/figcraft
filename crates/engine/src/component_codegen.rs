@@ -656,7 +656,7 @@ pub fn definition(doc: &Document, c: &Component, lang: CodeLang) -> String {
 /// `data-*` attribute names for variant parameters, unique among them (in order).
 fn data_attrs(variants: &[&Param]) -> Vec<String> {
     let mut used = Vec::new();
-    variants.iter().map(|p| format!("data-{}", class_name(&p.prop, &mut used))).collect()
+    variants.iter().map(|p| format!("data-{}", class_name(&p.prop, "prop", &mut used))).collect()
 }
 
 /// `c`'s markup in React or Leptos (two levels in) and its stylesheet (variables as custom
@@ -664,7 +664,7 @@ fn data_attrs(variants: &[&Param]) -> Vec<String> {
 fn web(doc: &Document, c: &Component, lang: CodeLang) -> (String, String, String) {
     let ctx = Ctx { doc, root: c.comp, comp: Some(c), base: 2 };
     let root_name = c.set.and_then(|s| doc.node(s)).or_else(|| doc.node(c.comp)).map(|n| n.name.clone()).unwrap_or_default();
-    let root_class = class_name(&root_name, &mut Vec::new());
+    let root_class = class_name(&root_name, "component", &mut Vec::new());
     let variants: Vec<&Param> = c.params.iter().filter(|p| matches!(p.kind, ParamKind::Variant(_))).collect();
     let attr_names = data_attrs(&variants);
     let pass = |root: NodeId| {
