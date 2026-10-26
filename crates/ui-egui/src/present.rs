@@ -441,23 +441,18 @@ pub fn anchored_overlay_rect(
 }
 
 #[cfg(test)]
-#[path = "present_variables_tests.rs"]
 mod variables_tests;
 
 #[cfg(test)]
-#[path = "present_behaviour_tests.rs"]
 mod behaviour_tests;
 
 #[cfg(test)]
-#[path = "present_tail_tests.rs"]
 mod tail_tests;
 
 #[cfg(test)]
-#[path = "present_delay_tests.rs"]
 mod delay_tests;
 
 #[cfg(test)]
-#[path = "present_overlay_anchor_tests.rs"]
 mod overlay_anchor_tests;
 
 #[cfg(test)]
