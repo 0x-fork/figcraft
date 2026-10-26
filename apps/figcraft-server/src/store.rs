@@ -296,7 +296,8 @@ fn clean_name(s: &str) -> String {
 
 /// A report's reason: trimmed, control and bidi characters turned into spaces, at most `MAX_REASON` characters.
 fn clean_reason(s: &str) -> String {
-    s.trim().chars().map(|c| if c.is_control() || is_bidi_control(c) { ' ' } else { c }).take(MAX_REASON).collect()
+    let s: String = s.chars().map(|c| if c.is_control() || is_bidi_control(c) { ' ' } else { c }).collect();
+    s.trim().chars().take(MAX_REASON).collect()
 }
 
 /// Bidirectional format characters, which could reorder what a terminal shows.
@@ -1479,14 +1480,18 @@ impl Backend for Store {
     }
 
     fn idle(&mut self, file: &str, server: &mut Server) -> bool {
-        let dirty = self.files.get_mut(file).and_then(|e| e.log.as_mut()).is_some_and(|log| {
-            let _ = flush_log(file, log);
-            log.dirty
+        let compact = self.files.get_mut(file).is_some_and(|entry| {
+            let snapshot_seq = entry.meta.seq;
+            entry.log.as_mut().is_some_and(|log| {
+                // Issued client ids and refusals are durable in the log; only edits need a
+                // new image-bearing snapshot. Still try a snapshot if syncing the log failed.
+                flush_log(file, log).is_err() || (log.dirty && server.seq() > snapshot_seq)
+            })
         });
-        if dirty {
+        if compact {
             self.compact(file, server);
         }
-        // It closes anyway, everything in its snapshot: a compaction cut short needs no report.
+        // It closes anyway, with its state in the snapshot and durable log.
         self.cut_short.retain(|f| f != file);
         if let Some(e) = self.files.get_mut(file) {
             e.log = None;

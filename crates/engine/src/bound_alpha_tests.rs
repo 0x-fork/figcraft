@@ -151,3 +151,14 @@ fn binding_keeps_an_opacity_set_on_the_paint() {
     ex(&mut s, "variable.bind", json!({"ids": [r.0], "field": "fill", "variable": "tint"}));
     assert!(near(alpha(&s, r), 0.25), "{}", alpha(&s, r));
 }
+
+#[test]
+fn an_unbind_and_rebind_keeps_the_opacity_set_on_the_paint() {
+    // A paint at 50% bound to a half-transparent colour shows a quarter, unbound or bound again.
+    let (mut s, r) = setup("#FF000080", "#FF000080");
+    ex(&mut s, "fill.set", json!({"ids": [r.0], "index": 0, "opacity": 0.5}));
+    for variable in [json!("tint"), json!(null), json!("tint"), json!(null)] {
+        ex(&mut s, "variable.bind", json!({"ids": [r.0], "field": "fill", "variable": variable}));
+        assert!(near(alpha(&s, r), HALF / 2.0), "{variable}: {}", alpha(&s, r));
+    }
+}
